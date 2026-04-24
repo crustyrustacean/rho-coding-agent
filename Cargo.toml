@@ -1,6 +1,26 @@
-[package]
-name = "rho-coding-agent"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+members = [
+    "rho-core",
+    "xtask",
+]
+resolver = "3"
 
-[dependencies]
+[workspace.package]
+version = "0.1.1"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/crustyrustacean/rho-coding-agent"
+description = "A coding agent written in Rust"
+readme = "README.md"
+keywords = ["coding-agent", "ai", "cli"]
+categories = ["command-line-utilities", "development-tools"]
+publish = false
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+missing_docs_in_private_items = "warn"
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
