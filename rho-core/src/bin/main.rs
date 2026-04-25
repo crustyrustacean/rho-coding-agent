@@ -1,3 +1,4 @@
+//! src/bin/main.rs
 //! Binary entry point for rho-coding-agent.
 
 use rho_core::greeting;

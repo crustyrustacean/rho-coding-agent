@@ -10,5 +10,13 @@ repository.workspace = true
 version.workspace = true
 categories.workspace = true
 
+[[bin]]
+name = "rho"
+path = "src/bin/main.rs"
+
 [lints]
 workspace = true
+
+[dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
