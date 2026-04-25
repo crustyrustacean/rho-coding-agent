@@ -129,6 +129,12 @@ impl RhoHttpClient {
         }
     }
 
+    /// Send a chat completion request to the model API.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails or the response body cannot be parsed as a
+    /// [`ModelResponse`].
     pub async fn chat(&self, chat_request: &ChatRequest) -> Result<ModelResponse> {
         Ok(self
             .http_client
