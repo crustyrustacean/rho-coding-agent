@@ -12,7 +12,7 @@ pub struct ChatRequest {
     pub messages: Vec<ChatMessage>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ChatMessage {
     pub role: Role,
     pub content: String,
@@ -66,11 +66,11 @@ pub struct ModelMessage {
     pub role: Role,
     pub content: String,
     pub reasoning_content: String,
-    pub tool_calls: Vec<ModelToolCalls>,
+    pub tool_calls: Vec<ModelToolCall>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
-pub struct ModelToolCalls {
+pub struct ModelToolCall {
     #[serde(rename = "type")]
     pub tool_call_type: String,
     pub id: String,
@@ -150,6 +150,64 @@ impl RhoHttpClient {
 impl Default for RhoHttpClient {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Conversation type
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Conversation {
+    /// The model identifier used for chat completion requests.
+    model: String,
+    /// The accumulated conversation history.
+    messages: Vec<ChatMessage>,
+}
+
+impl Conversation {
+    pub fn new(model: String, system_prompt: Option<&str>) -> Self {
+        Self {
+            model,
+            messages: match system_prompt {
+                Some(prompt) => vec![ChatMessage {
+                    role: Role::System,
+                    content: prompt.to_string(),
+                }],
+                None => vec![],
+            },
+        }
+    }
+
+    /// Send a user message, append it and the assistant response to the history,
+    /// and return the assistant's reply content.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`RhoError`] if the HTTP request fails or the response body
+    /// cannot be parsed as a [`ModelResponse`].
+    pub async fn send(&mut self, message: &str, http_client: &RhoHttpClient) -> Result<String> {
+        let user_message = ChatMessage {
+            role: Role::User,
+            content: message.to_string(),
+        };
+
+        self.messages.push(user_message);
+
+        let user_chat_request = ChatRequest {
+            model: self.model.clone(),
+            messages: self.messages.clone(),
+        };
+
+        let assistant_chat_response = http_client.chat(&user_chat_request).await?;
+
+        let content = assistant_chat_response.choices[0].message.content.clone();
+
+        let assistant_message = ChatMessage {
+            role: Role::Assistant,
+            content: content.clone(),
+        };
+
+        self.messages.push(assistant_message);
+
+        Ok(content)
     }
 }
 

@@ -1,13 +1,11 @@
-# Changelog
+## [0.2.2] - 2026-04-26
 
-All notable changes to this project will be documented in this file.
+### 💼 Other
 
-## [unreleased]
-
-### 🚀 Features
-- **(core)** Add domain types for chat completion API request/response
-- **(core)** Program functions end to end — takes a chat message, sends it to the model, returns the response and prints it to the console
+- Program functions end to end, takes a chat message, send it to the model, returns the response and prints it to the console
 
 ### ⚙️ Miscellaneous Tasks
-- Initial project scaffold (workspace layout, xtask, clippy config, git-cliff, cargo-release)
+
+- Initial project scaffold
 - Bump version to 0.1.1
+- Resolve clippy lints from CI
