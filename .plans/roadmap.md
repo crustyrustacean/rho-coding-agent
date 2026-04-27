@@ -156,11 +156,42 @@ At the end of each phase, the test suite is audited and refactored:
 
 This is not optional — the test suite is the safety net for every subsequent phase.
 
+### Dependency Philosophy
+
+Every external crate is a liability. Before adding a dependency:
+
+1. **Can we write it ourselves?** If it's a few hundred lines of straightforward code, write it. We control it, we understand it, and it won't break on a minor version bump.
+2. **Is it a foundation?** Async runtime, serialization, HTTP — these are non-negotiable infrastructure. Accept them.
+3. **Is it a standard?** Tree-sitter grammars, LSP protocol types — these are domain standards with complex specs. Use the ecosystem crate.
+4. **Is it a user interface?** Terminal rendering, input handling — these are deep specialties with edge cases across platforms. Use the ecosystem crate, but wrap it behind our own traits so we're not coupled to its API.
+
+The dependency list for each phase below reflects this analysis. Crates marked **(foundation)** are accepted without question. Crates marked **(evaluated)** were considered against the write-it-ourselves bar. Crates marked **(wrapped)** are used but abstracted behind our own traits.
+
+**Accepted foundations (all phases):**
+
+| Crate | Why it's non-negotiable |
+|---|---|
+| `tokio` | Async runtime — everything is async |
+| `serde` + `serde_json` | Serialization — every API boundary speaks JSON |
+| `reqwest` | HTTP client — the agent talks to model APIs over HTTP |
+| `thiserror` | Error type derivation — boilerplate elimination with zero runtime cost |
+| `anyhow` | Error propagation in application code — ergonomics for non-recoverable paths |
+| `clap` | CLI parsing — the binary needs argument handling |
+
 ### Phase 1: The Agent Loop
 
 **Goal:** The model can invoke tools and receive structured results. The agent runs autonomously until it's done or needs user input.
 
 **Milestone:** `rho` reads a file when asked, instead of just saying "I would read the file."
+
+**New dependencies:**
+
+| Crate | For | Decision |
+|---|---|---|
+| `tree-sitter` **(foundation)** | `rho-highlight` | Standard parser generator runtime — writing a parser from scratch is not feasible |
+| `tree-sitter-rust` **(foundation)** | `rho-highlight` | Rust grammar — this *is* the spec, thousands of rules, not writable by hand |
+
+No other new dependencies. Tool trait, tool registry, agent loop, `ChatClient` trait, and the three basic tools are all straightforward Rust that we write ourselves.
 
 **Tasks:**
 
@@ -222,6 +253,14 @@ This is not optional — the test suite is the safety net for every subsequent p
 
 **Milestone:** The agent can be asked "list the Rust source files in this project and tell me what each does" and it works.
 
+**New dependencies:**
+
+| Crate | For | Decision |
+|---|---|---|
+| None | — | — |
+
+`RunCommand` shells out to `pwsh`/`powershell` via `tokio::process::Command` (already in `tokio`). `EditFile` does string matching in pure Rust. `ListDir` uses `std::fs` and walks `.gitignore` rules — the ignore logic is the one place we'd consider a crate, but `.gitignore` matching is well-understood and can be written in ~200 lines. If it proves painful, `ignore` (the ripgrep crate) would be the fallback.
+
 **Tasks:**
 
 1. Expand `RunCommand`:
@@ -263,6 +302,14 @@ This is not optional — the test suite is the safety net for every subsequent p
 **Goal:** The agent understands Rust compilation errors and Clippy lints as structured data, not text. It can fix code using the compiler's own suggestions.
 
 **Milestone:** The agent runs `cargo check`, parses the JSON diagnostics, applies the machine-applicable fix, and verifies the fix compiles.
+
+**New dependencies:**
+
+| Crate | For | Decision |
+|---|---|---|
+| None | — | — |
+
+All Rust tooling shells out to `cargo`/`rustc` via `tokio::process::Command` (already available). JSON message parsing uses `serde_json` (already available). The diagnostic types are our own data model. No new crates needed.
 
 **Tasks:**
 
@@ -324,6 +371,21 @@ This is not optional — the test suite is the safety net for every subsequent p
 
 **Milestone:** The agent displays in a split-pane TUI with syntax-highlighted output, tool call previews, and approval prompts.
 
+**New dependencies:**
+
+| Crate | For | Decision |
+|---|---|---|
+| `crossterm` **(foundation)** | `rho-tui` | Cross-platform terminal control — writing raw Win32 + VT100 escape sequences ourselves is not feasible |
+| `ratatui` **(wrapped)** | `rho-tui` | Terminal UI framework — wraps crossterm, provides layout, rendering, and event handling. Deeply specialized, thousands of edge cases. We wrap it behind our own `View` trait so the agent loop and tools are not coupled to ratatui's API |
+| `tree-sitter-powershell` **(evaluated)** | `rho-highlight` | PowerShell grammar for syntax highlighting — defer to Phase 4. Only add if the grammar is mature; otherwise, fall back to regex-based highlighting for PowerShell |
+| `tree-sitter-toml` **(evaluated)** | `rho-highlight` | TOML grammar — same evaluation as PowerShell |
+| `tree-sitter-json` **(evaluated)** | `rho-highlight` | JSON grammar — may not be worth it; JSON is simple enough for regex highlighting |
+| `tree-sitter-markdown` **(evaluated)** | `rho-highlight` | Markdown grammar — complex grammar, worth it if we want accurate inline code block detection |
+
+**Decision on markdown rendering:** We write our own minimal markdown parser. Full markdown (CommonMark + GFM) is a large spec, but we only need: headers, bold/italic, code blocks (with language tag), and lists. A ~300-line parser handles this. If it proves insufficient, `pulldown-cmark` would be the fallback.
+
+**Decision on diff rendering:** We write our own unified diff generator. We have the old text and the new text — computing line-level diffs is ~150 lines using a simple LCS algorithm. If we need word-level diffs later, consider `similar`.
+
 **Tasks:**
 
 1. Create the `rho-tui` crate with `ratatui` + `crossterm`.
@@ -375,6 +437,21 @@ This is not optional — the test suite is the safety net for every subsequent p
 **Goal:** The agent is configurable and extensible. Users can add tools, customize prompts, and integrate their own workflows.
 
 **Milestone:** A user can add a custom tool via config, restart the agent, and the model can use it.
+
+**New dependencies:**
+
+| Crate | For | Decision |
+|---|---|---|
+| `toml` **(foundation)** | `rho-ext` | TOML parsing for config files — the format is non-trivial to parse correctly, and `toml` is the standard Rust crate |
+
+**Decision on extension format:** Phase 5 starts with TOML-defined tools (command name + args template). No Lua, no WASM. These add enormous complexity (runtime embedding, sandboxing, FFI) for marginal benefit at this stage. If TOML tools prove too limited, the next step would be Lua via `mlua` — but that's a Phase 6+ decision.
+
+**Decision on LSP client:** `rust-analyzer` integration requires an LSP client. The LSP protocol is complex (JSON-RPC + dozens of message types). Options:
+- Write our own JSON-RPC client over stdio (~500 lines) — feasible, and we control it
+- Use `lsp-server` (the rust-analyzer team's own crate) — well-maintained, but brings in `lsp-types` which is enormous
+- Defer to Phase 6+ — the agent is already useful without LSP
+
+Recommendation: start with a minimal hand-written JSON-RPC client, supporting only the messages we need (initialize, hover, goto-definition). Defer the full `lsp-types` integration.
 
 **Tasks:**
 
@@ -430,11 +507,11 @@ This is not optional — the test suite is the safety net for every subsequent p
 
 | Crate | Phase | Depends On | Purpose |
 |---|---|---|---|
-| `rho-core` | 1 | External only | Agent kernel: data model, types, traits, loop, registry |
-| `rho-highlight` | 1 | `rho-core`, `tree-sitter` | Tree-sitter parsing, highlighting, and structural queries |
+| `rho-core` | 1 | External only (`tokio`, `serde`, `reqwest`, `thiserror`, `anyhow`, `clap`) | Agent kernel: data model, types, traits, loop, registry |
+| `rho-highlight` | 1 | `rho-core`, `tree-sitter`, `tree-sitter-rust` | Tree-sitter parsing, highlighting, and structural queries |
 | `rho-tools` | 1–3 | `rho-core`, `rho-highlight` | Built-in tools: files, shell, Rust tooling |
-| `rho-tui` | 4 | `rho-core`, `rho-highlight` | Terminal UI: rendering, input, approval |
-| `rho-ext` | 5 | `rho-core` | Extension API and runtime |
+| `rho-tui` | 4 | `rho-core`, `rho-highlight`, `crossterm` **(foundation)**, `ratatui` **(wrapped)** | Terminal UI: rendering, input, approval |
+| `rho-ext` | 5 | `rho-core`, `toml` **(foundation)** | Extension API and runtime |
 | `rho` (binary) | 1+ | All above | Top-level assembly and CLI |
 | `xtask` | existing | External only | Dev task runner (unchanged) |
 
@@ -463,3 +540,7 @@ These are choices that seem right now but may need adjustment as we build:
 9. **Data model evolution** — The data model will evolve as new tools and capabilities are added. Each phase should include an audit: are the existing types still ergonomic? Do any need to be split, merged, or promoted to newtypes? This is not a one-time design — it's an ongoing practice.
 
 10. **Test fixture management** — As the project grows, JSON fixtures for API responses, compiler output, and tool results will proliferate. Decide early on a fixture naming convention and directory structure. Consider generating fixtures from real API responses (captured during development) rather than hand-writing them — they stay in sync with reality.
+
+11. **When to write it ourselves vs. depend on a crate** — The bar for adding a dependency should stay high. Each phase documents its dependency decisions. Revisit these at the phase boundary: did we end up needing a crate we initially wrote ourselves? Did a crate we added turn out to be a thin wrapper we could replace? The audit is part of the phase retrospective.
+
+12. **Grammar crate maturity** — Tree-sitter grammar crates vary widely in quality. `tree-sitter-rust` is mature and well-maintained. PowerShell, TOML, and Markdown grammars may be less so. Evaluate each grammar before committing: does it parse real-world files correctly? Is it actively maintained? If not, regex-based highlighting is an acceptable fallback — it's better than a broken grammar.
