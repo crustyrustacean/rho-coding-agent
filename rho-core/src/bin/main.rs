@@ -2,19 +2,28 @@
 //! Binary entry point for rho-coding-agent.
 
 use anyhow::Result;
+use clap::Parser;
 use rho_core::{Conversation, RhoHttpClient};
 use std::io::{self, Write};
 
-/// Model identifier sent with each chat completion request.
-const MODEL: &str = "qwen3-8b";
-/// System prompt prepended to every conversation.
-const SYSTEM_PROMPT: Option<&str> =
-    Some("You are an expert in the Rust programming language and its associated ecosystem.");
+/// A coding agent powered by local LLMs.
+#[derive(Debug, Parser)]
+#[command(version, about)]
+struct Cli {
+    /// Model identifier to use for chat completion requests.
+    #[arg(short, long, default_value = "qwen3-8b")]
+    model: String,
+
+    /// System prompt prepended to every conversation.
+    #[arg(short, long)]
+    system: Option<String>,
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let cli = Cli::parse();
     let rho_http_client = RhoHttpClient::new();
-    let mut conversation = Conversation::new(MODEL.to_string(), SYSTEM_PROMPT);
+    let mut conversation = Conversation::new(cli.model, cli.system.as_deref());
 
     loop {
         print!("User: ");

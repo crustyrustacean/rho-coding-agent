@@ -943,6 +943,7 @@ name = "rho-core"
 version = "0.2.2"
 dependencies = [
  "anyhow",
+ "clap",
  "reqwest",
  "serde",
  "serde_json",
