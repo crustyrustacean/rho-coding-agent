@@ -38,9 +38,9 @@ async fn main() -> Result<()> {
         let response = conversation.send(input.trim(), &rho_http_client).await?;
         match response {
             AssistantResponse::Message(msg) => println!("Assistant: {msg}"),
-            AssistantResponse::ToolCall { name, arguments } => println!(
-                "Model wants to call: Tool: {name} with arguments: {arguments}"
-            ),
+            AssistantResponse::ToolCall { name, arguments } => {
+                println!("Model wants to call: Tool: {name} with arguments: {arguments}");
+            }
         }
     }
 
