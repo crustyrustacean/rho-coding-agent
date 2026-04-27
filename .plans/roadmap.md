@@ -139,6 +139,23 @@ The entry point. Its only job is to wire the layers together:
 
 Each phase produces a runnable agent. No phase requires a rewrite of the previous one.
 
+### Testing Approach
+
+All development follows test-driven development:
+
+1. **Write the failing test first.** Before implementing a feature, write a test that defines the expected behavior. The test fails because the code doesn't exist yet.
+2. **Make it pass.** Write the minimum implementation to satisfy the test.
+3. **Refactor.** Clean up the implementation while keeping the test green.
+
+At the end of each phase, the test suite is audited and refactored:
+- Promote shared helpers out of individual test modules into reusable locations
+- Extract inline fixtures (JSON blobs, file contents) into `tests/fixtures/` files
+- Adopt consistent naming conventions
+- Remove redundant tests
+- Ensure the suite is fast, deterministic, and maintainable
+
+This is not optional — the test suite is the safety net for every subsequent phase.
+
 ### Phase 1: The Agent Loop
 
 **Goal:** The model can invoke tools and receive structured results. The agent runs autonomously until it's done or needs user input.
@@ -189,6 +206,12 @@ Each phase produces a runnable agent. No phase requires a rewrite of the previou
 
 9. Add integration tests: mock `ChatClient` returns tool calls, verify the loop executes and feeds back.
 
+10. **Test suite audit:**
+    - Promote shared `ChatClient` mock into a reusable test helper module
+    - Extract JSON fixtures into `tests/fixtures/` files (avoid inline JSON blobs in test bodies)
+    - Ensure every public type has at least a construction/serialization test
+    - Remove any tests that duplicate coverage without adding value
+
 **Exit criteria:** The agent can read, write, and execute commands when the model requests it. The loop terminates correctly on `Stop`. `rho-highlight` can parse and highlight a Rust source file.
 
 ---
@@ -224,6 +247,12 @@ Each phase produces a runnable agent. No phase requires a rewrite of the previou
 5. Add the `ChatRequest.tools` serialization so tool definitions are sent to the model API.
 
 6. Add deserialization tests for tool-call responses (JSON fixtures with `finish_reason: "tool_calls"`).
+
+7. **Test suite audit:**
+   - Promote PowerShell command execution into a test helper (handle `pwsh` vs `powershell` detection once)
+   - Extract file-system test fixtures into a tempdir helper (create/verify/cleanup)
+   - Ensure `EditFile` tests cover: exact match, ambiguous match, no match, overlapping edits, syntax-node-splitting warning
+   - Deduplicate any JSON fixture overlap with Phase 1 fixtures — consolidate into shared fixture files
 
 **Exit criteria:** The agent reliably uses PowerShell commands, reads and edits files, and the model generates syntactically valid PowerShell.
 
@@ -278,6 +307,13 @@ Each phase produces a runnable agent. No phase requires a rewrite of the previou
 
 9. Add a `CargoCheck` → `EditFile` → `CargoCheck` integration test loop.
 
+10. **Test suite audit:**
+    - Promote `cargo * --message-format=json` output parsing into shared test helpers
+    - Extract compiler message JSON fixtures (check, clippy, test) into `tests/fixtures/`
+    - Ensure `Diagnostic` / `DiagnosticSpan` / `DiagnosticSuggestion` types have round-trip serde tests
+    - Audit tree-sitter structural query tests — ensure they cover edge cases (empty files, malformed syntax, multi-byte characters)
+    - Review test naming: adopt a consistent convention (e.g., `deserializes_X`, `executes_X_correctly`, `rejects_invalid_X`)
+
 **Exit criteria:** The agent can diagnose and fix compilation errors using structured compiler output. It prefers compiler suggestions over its own guesses.
 
 ---
@@ -322,6 +358,13 @@ Each phase produces a runnable agent. No phase requires a rewrite of the previou
 
 7. Status bar:
    - Current model, conversation turn count, agent state (idle / thinking / executing)
+
+8. **Test suite audit:**
+   - TUI rendering tests are inherently fragile — prefer snapshot tests for rendered output over pixel-level assertions
+   - Extract a `TestBackend` (ratatui's `TestBackend`) helper for rendering assertions
+   - Ensure streaming tests use deterministic mock token streams (no timing-dependent assertions)
+   - Audit approval flow tests for coverage: approve, deny, skip, and edge cases (tool call with missing arguments)
+   - Review the full test suite across all crates — are there helpers that should be promoted to `rho-core`'s test module? Are there fixture files that are now shared across 3+ crates and deserve their own `rho-test-helpers` crate?
 
 **Exit criteria:** The agent is usable as a daily terminal tool. The REPL feels responsive, informative, and safe (approval on destructive actions).
 
@@ -371,6 +414,14 @@ Each phase produces a runnable agent. No phase requires a rewrite of the previou
    - Logging (file-based, for debugging)
    - Performance profiling (tool execution times, token usage tracking)
 
+8. **Test suite audit:**
+   - Review the entire test suite across all workspace crates for consistency
+   - Ensure extension/tool registration tests cover: duplicate names, invalid schemas, missing dependencies
+   - Verify config loading tests cover: missing files, malformed TOML, unknown keys
+   - Consider whether any integration tests should be promoted to property-based tests (proptest) for type serialization
+   - Final naming convention check — all tests follow the established pattern
+   - Document the testing conventions in `AGENTS.md` and the crate-level doc comments
+
 **Exit criteria:** The agent is configurable, extensible, and production-ready for daily Rust development on Windows.
 
 ---
@@ -410,3 +461,5 @@ These are choices that seem right now but may need adjustment as we build:
 8. **Tree-sitter grammar scope** — Starting with just Rust is safe. Adding PowerShell, TOML, and Markdown grammars increases binary size and compile time. Consider feature-gating grammars so users only compile what they need.
 
 9. **Data model evolution** — The data model will evolve as new tools and capabilities are added. Each phase should include an audit: are the existing types still ergonomic? Do any need to be split, merged, or promoted to newtypes? This is not a one-time design — it's an ongoing practice.
+
+10. **Test fixture management** — As the project grows, JSON fixtures for API responses, compiler output, and tool results will proliferate. Decide early on a fixture naming convention and directory structure. Consider generating fixtures from real API responses (captured during development) rather than hand-writing them — they stay in sync with reality.
