@@ -3,7 +3,7 @@
 
 use anyhow::Result;
 use clap::Parser;
-use rho_core::{Conversation, RhoHttpClient};
+use rho_core::{AssistantResponse, Conversation, RhoHttpClient};
 use std::io::{self, Write};
 
 /// A coding agent powered by local LLMs.
@@ -23,7 +23,7 @@ struct Cli {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let rho_http_client = RhoHttpClient::new();
-    let mut conversation = Conversation::new(cli.model, cli.system.as_deref());
+    let mut conversation = Conversation::new(cli.model, cli.system.as_deref(), vec![]);
 
     loop {
         print!("User: ");
@@ -36,9 +36,12 @@ async fn main() -> Result<()> {
         }
 
         let response = conversation.send(input.trim(), &rho_http_client).await?;
-        print!("Agent: ");
-        print!("{response}");
-        println!();
+        match response {
+            AssistantResponse::Message(msg) => println!("Assistant: {msg}"),
+            AssistantResponse::ToolCall { name, arguments } => println!(
+                "Model wants to call: Tool: {name} with arguments: {arguments}"
+            ),
+        }
     }
 
     Ok(())
