@@ -1,0 +1,22 @@
+[package]
+name = "rho-test-helpers"
+description.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+publish.workspace = true
+readme.workspace = true
+repository.workspace = true
+version.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+rho-core = { path = "../rho-core" }
+anyhow = "1.0.102"
+async-trait = "0.1"
+serde_json = "1.0.149"
+tempfile = "3"
+tokio = { version = "1.52.1", features = ["macros", "rt-multi-thread", "sync"] }

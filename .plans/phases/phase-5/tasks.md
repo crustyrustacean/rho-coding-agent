@@ -40,7 +40,25 @@
    - Logging (file-based, for debugging)
    - Performance profiling (tool execution times, token usage tracking)
 
-8. **Test suite audit:**
+8. **Snapshot test for the composed system prompt:**
+   Given a fixed tool registry, a fixed set of project context files, a fixed shell-guidance string, a fixed Rust-guidance string, and the bundled base prompt, the output of the composition function must be byte-for-byte stable. The expected output is stored as a snapshot file at `rho-core/tests/fixtures/prompts/composed_full.md`; the test fails when the live output diverges.
+
+   This catches three classes of bug that are otherwise invisible:
+   - **Reordering** — a refactor of the composition function causes layers to come out in a different order. Agent behaviour shifts but no other test fails.
+   - **Whitespace drift** — a stray newline or section delimiter changes the prompt's shape. Models can be sensitive to formatting; the snapshot makes this visible.
+   - **Unintended inclusion** — an extension or context file that should have been filtered out makes it into the composed prompt. Surfaces immediately.
+
+   The full composition chain (per task 6 above) is:
+   1. Base identity prompt (from `rho-core/src/prompts/base.md`)
+   2. Project context files in scan-list order
+   3. Shell guidance (PowerShell idioms, from Phase 2)
+   4. Rust guidance (compiler diagnostic conventions, from Phase 3)
+   5. Extension tool descriptions (auto-generated)
+   6. Tool schemas (auto-generated)
+
+   Updating the snapshot is a deliberate action (e.g., `INSTA_UPDATE=1 cargo test` or a dedicated `cargo xtask` subcommand); the diff in the snapshot file goes through code review like any other change. Component-level tests (each layer in isolation) are also useful but smaller in scope — the snapshot test is the integration-level contract.
+
+9. **Test suite audit:**
    - Review the entire test suite across all workspace crates for consistency
    - Ensure extension/tool registration tests cover: duplicate names, invalid schemas, missing dependencies
    - Verify config loading tests cover: missing files, malformed TOML, unknown keys (config loading tests should already exist from Phase 2 — extend for extension-specific keys)

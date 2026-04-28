@@ -1,0 +1,38 @@
+{
+  "id": "chatcmpl-tool-call-example",
+  "object": "chat.completion",
+  "created": 1777002100,
+  "model": "qwen/qwen2.5-coder-14b",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "",
+        "reasoning_content": "",
+        "tool_calls": [
+          {
+            "id": "call_abc123",
+            "type": "function",
+            "function": {
+              "name": "read_file",
+              "arguments": "{\"path\": \"src/main.rs\"}"
+            }
+          }
+        ]
+      },
+      "logprobs": null,
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 50,
+    "completion_tokens": 20,
+    "total_tokens": 70,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  },
+  "stats": {},
+  "system_fingerprint": "qwen/qwen2.5-coder-14b"
+}

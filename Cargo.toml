@@ -1,6 +1,8 @@
 [workspace]
 members = [
     "rho-core",
+    "rho-tools",
+    "rho-test-helpers",
     "xtask",
 ]
 resolver = "3"
