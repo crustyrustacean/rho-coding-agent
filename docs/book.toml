@@ -1,0 +1,15 @@
+[book]
+title = "rho"
+authors = ["crustyrustacean"]
+language = "en"
+src = "src"
+description = "A Rust coding agent for local LLMs on Windows"
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+default-theme = "navy"
+git-repository-url = "https://github.com/crustyrustacean/rho-coding-agent"
+edit-url-template = "https://github.com/crustyrustacean/rho-coding-agent/edit/trunk/docs/{path}"

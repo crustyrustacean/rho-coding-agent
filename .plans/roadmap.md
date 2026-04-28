@@ -18,9 +18,19 @@ The project is organized as a layered workspace. Dependencies flow downward only
 ├─────────────────────────────────────────────────┤
 │                   rho-core                       │  ← Agent kernel (loop, types, traits, data model)
 └─────────────────────────────────────────────────┘
+
+   ┌──────────────────┐  ┌──────────────────┐
+   │ rho-test-helpers  │  │    rho-eval       │  ← Dev-only: mocks, fixtures, benchmarks
+   └──────────────────┘  └──────────────────┘
 ```
 
 **Dependency rule:** a crate may only depend on crates below it in the stack. `rho-core` depends on nothing but external libraries. `rho-tools` depends on `rho-core`. And so on.
+
+**Platform scope:** rho is a Windows-first, PowerShell-native agent. The shell, paths, and tooling assumptions target Windows. Unix support is welcome but not a priority. Shell execution is abstracted behind a `ShellExecutor` trait so cross-platform support can be added later without rewriting the tool layer.
+
+Two auxiliary crates sit outside the main stack:
+- **`rho-test-helpers`** — shared test utilities (mock `ChatClient`, fixture loaders, tempdir helpers). Available as a dev-dependency to every crate.
+- **`rho-eval`** — behavioural benchmark suite for evaluating agent success rate on canonical coding tasks.
 
 ## Crate Responsibilities
 
@@ -36,17 +46,43 @@ The foundation. Defines the contract everything else implements.
   - **Newtype where it matters** — `FilePath`, `ToolName`, `DiagnosticCode` etc. as distinct types rather than raw strings, so the type system prevents misuse
 - **Domain types** — `ChatMessage`, `Role`, `ChatRequest`, `ModelResponse`, `FinishReason`, etc. (already exists, will be refined)
 - **Tool trait** — `Tool`: the interface all tools implement (`name`, `description`, `parameters`, `execute`)
-- **Tool registry** — Maps tool names to `dyn Tool` implementations
-- **Agent loop** — The core cycle: send prompt → receive response → if tool call, execute and feed back → repeat until `Stop`
-- **Conversation** — Message history management (already exists, will gain tool result handling)
-- **HTTP client** — Abstracted behind a trait so the agent loop is testable without a live server
+- **Tool registry** — Maps tool names to `dyn Tool` implementations. Tools are registered with a risk level (`Read`, `Write`, `Destructive`) that feeds into the approval policy.
+- **Approval policy** — Every tool call passes through an `ApprovalPolicy` before execution. The default policy requires human confirmation for destructive operations (`WriteFile`, `EditFile`, `RunCommand`). The approval gate lives in `rho-core`, not the UI layer — the TUI just renders the prompt and collects the response. Even the bare REPL enforces this with a simple `y/n` prompt.
+- **File sandbox** — File tools operate within a sandbox root (the project directory, or an explicit `--root` argument). `FilePath` canonicalises the path (resolving `..`, symlinks, junctions) and validates it's within the root. Users can opt out in config (`sandbox = false`), but the default is safe.
+- **Secret redaction** — Tool results pass through a redaction layer before entering conversation history. Patterns for API keys (`sk-...`, `ghp_...`), tokens, and environment variable values are replaced with `[REDACTED]`. This prevents secrets from being sent to model APIs or persisted in conversation logs.
+- **Command surface** — The set of operations the user can invoke beyond sending a message to the model. These are not model interactions — they are agent control actions (clear history, switch provider, list tools, etc.). `rho-core` defines the capabilities; the UI layer (bare REPL or TUI) handles parsing and dispatch. See the command table below for the full surface.
+- **Agent loop** — The core cycle: send prompt → receive response → if tool call, execute and feed back → repeat until `Stop`. The loop is modelled as an `AgentLoopState` state machine with explicit states for `Idle`, `Thinking`, `AwaitingApproval`, `ExecutingTool`, `Error(RhoError)`, and `RetryPending`. Every tool call passes through the `ApprovalPolicy` before execution. Retry semantics are built in: retryable errors (rate limits, transient HTTP failures) trigger exponential backoff up to a configurable budget; fatal errors (auth failure, malformed schemas) terminate the loop immediately. A configurable max-iteration guard prevents infinite loops.
+- **Conversation** — Message history management (already exists, will gain tool result handling). File contents enter the conversation under a `Role::Context` role, distinct from `Role::User`, signalling to the model that this is data, not instructions. This is a defense-in-depth measure against prompt injection via file contents.
+- **Context window management** — A `ContextManager` that uses a sliding window algorithm to keep the conversation within the model's context limit. The system message is always pinned (never evicted). The window slides over the remaining message history, evicting the oldest messages first when capacity is exceeded. This preserves the agent's core instructions while gracefully handling long sessions.
+- **Project context files** — The agent detects and loads project-level instruction files from the sandbox root. These are files like `AGENTS.md`, `.agents.md`, `CLAUDE.md`, `.cursorrules`, and `.rho/prompt.md` that contain project-specific instructions the user wants incorporated into the system prompt. The default scan list covers the common ecosystem conventions; the list is configurable in `.rho/config.toml`. All project context files go through the same trust model: hash verification on first load, user confirmation required, re-confirmation if the file changes. This is both an ergonomics feature (the agent respects existing project conventions) and a security concern (these files are project-local and carry supply-chain risk identical to `.rho/prompt.md`).
+- **Provider abstraction** — A `ChatClient` trait that decouples the agent loop from any specific model provider. The trait defines the contract for sending chat completions: request in, response out. Local models are the primary target (LM Studio, Ollama, etc. over OpenAI-compatible endpoints), but the trait is designed so external providers (OpenAI, Anthropic, Google) can implement it without modifying `rho-core`. Each provider handles its own authentication, endpoint construction, and any request/response translation. The concrete `LocalChatClient` (talking to `localhost`) ships as the default. Tests use a mock implementation from `rho-test-helpers`.
+- **Network egress** — An egress allowlist controls which hosts the agent is permitted to contact. `LocalChatClient` defaults to `localhost` only. External providers add their API hostname to the allowlist. When switching from local to an external provider, the user is warned that conversation contents (including file contents) will be sent to that provider.
 - **Error types** — `RhoError` and `Result` (already exists)
+
+**Command surface** — These operations must be supported by `rho-core` APIs. The UI layer decides how to expose them (slash commands in the REPL/TUI, keybindings, etc.), but `rho-core` provides the methods.
+
+| Command | Agent operation | Required API |
+|---|---|---|
+| `/help` | List available commands | N/A (UI-only) |
+| `/clear` | Reset conversation history (keep system message) | `Conversation::clear()` |
+| `/history` | Show conversation history | `Conversation::messages()` |
+| `/system` | Show or replace the system prompt | `Conversation::system_prompt()` getter/setter |
+| `/model` | Show or switch the current model | `Conversation::set_model()`, config access |
+| `/provider` | Show or switch the provider | `ChatClient` swap, config access |
+| `/tools` | List registered tools | `ToolRegistry::list()` |
+| `/context` | Show loaded project context files and their trust status | Context file scanner API |
+| `/config` | Show current configuration | Config access |
+| `/quit` | Exit the agent | N/A (UI-only) |
+
+Phase 1 implements the APIs that `rho-core` owns (`Conversation::clear()`, `ToolRegistry::list()`, etc.). The bare REPL handles `/quit` and `/clear` minimally. Phase 4 (TUI) builds out full slash-command parsing, autocomplete, and rendering. Phase 5 (extensions) may allow custom commands via `rho-ext`.
 
 `rho-core` does **not** know about:
 - PowerShell, shells, or any specific command execution
-- File systems
+- File systems (beyond sandbox root validation)
 - Terminal rendering
 - Extensions or plugins
+- Slash-command parsing or dispatch
+- How approval prompts are rendered (it decides *whether* to approve; the UI decides *how* to ask)
 
 ### `rho-tools` — Built-in Tool Implementations
 
@@ -66,6 +102,11 @@ Concrete tools that ship with the agent. Split internally by domain:
 | `RunCommand` | Execute a PowerShell command, capture stdout/stderr and exit code |
 
 This tool is PowerShell-first. The system prompt instructs the model to generate PowerShell commands. On Windows, `pwsh` is the default; `powershell` is the fallback. The tool normalizes path separators and handles execution policies.
+
+**Security controls:**
+- **Command denylist** — `RunCommand` refuses to execute a configurable list of dangerous commands by default: `Remove-Item`, `Invoke-WebRequest`, `Invoke-RestMethod`, `Start-Process`, `New-Service`, `Set-ExecutionPolicy`, and any command with `-Recurse -Force`. Users can extend the denylist in `.rho/config.toml`.
+- **Working directory** — `RunCommand` executes within the sandbox root. Commands that attempt to `cd` outside the project directory are flagged.
+- **Structured output** — stdout/stderr are captured and returned as structured data, never shell-interpolated back into command strings.
 
 **Rust tooling:**
 | Tool | Description |
@@ -116,28 +157,65 @@ The interactive terminal experience. Replaces the current bare REPL.
 
 Allows users to add custom tools and hooks without modifying the core.
 
-- **Tool plugins** — Users define tools in a config file (Lua, TOML, or WASM — TBD) that get registered in the tool registry at startup
+- **Tool plugins** — Users define tools in a config file (Lua, TOML, or WASM — TBD) that get registered in the tool registry at startup. Extension command templates use **structured argument substitution** — each argument is passed as a separate parameter to the command, never shell-interpolated. This is the difference between `Command::arg()` (safe) and `Command::new("/bin/sh -c ...")` (unsafe). Extension authors are responsible for their tools' safety; the framework prevents the most common injection vector.
 - **Hooks** — Pre/post execution callbacks (e.g., log every tool call, block certain commands)
 - **Configuration** — Per-project `.rho/` config: model, system prompt extensions, enabled tools, approval policies
 - **Prompt templates** — User-defined system prompt fragments that get composed at startup
+- **Project prompt trust** — `.rho/prompt.md` and other project context files (`AGENTS.md`, `.cursorrules`, etc.) require user confirmation on first load. The file's hash is stored in `~/.rho/trusted_projects.toml`. If any file changes, re-confirmation is required. This prevents a supply-chain attack where a cloned repository contains a malicious prompt that instructs the model to exfiltrate data or execute destructive commands.
 
 `rho-ext` depends on `rho-core` (for the `Tool` trait and registry). It does not depend on `rho-tui`.
+
+### `rho-test-helpers` — Shared Test Utilities
+
+A dev-only crate containing reusable test infrastructure shared across the workspace.
+
+- **Mock `ChatClient`** — A `ChatClient` trait implementation that returns canned responses, used by integration tests in `rho-core` and beyond
+- **Fixture loaders** — Helpers for loading JSON fixtures from `tests/fixtures/` directories
+- **Tempdir helpers** — Create/verify/cleanup temporary directories for file-system tests
+- **PowerShell detection** — Shared helper for `pwsh` vs `powershell` availability (used by `rho-tools` tests)
+
+`rho-test-helpers` depends on `rho-core` (for the `ChatClient` trait and domain types). It is only included as a `dev-dependency` and never published.
+
+### `rho-eval` — Behavioural Benchmark Suite
+
+A standalone evaluation tool that runs the agent against fixed coding tasks and tracks success rate.
+
+- **Task definitions** — 10–20 canonical tasks (fix this compile error, refactor this function, add this test) with known correct outcomes
+- **Automated scoring** — Run each task, compare the agent's result against the expected outcome, produce a pass/fail report
+- **Regression tracking** — Compare success rates across phases to ensure new features don't regress existing behaviour
+
+`rho-eval` depends on `rho-core` (for the agent loop and types). It is a dev-only tool, not published.
 
 ### `rho` — Binary (Top-Level Assembly)
 
 The entry point. Its only job is to wire the layers together:
 
 1. Parse CLI arguments (model, system prompt, config path)
-2. Create the tool registry and register built-in tools from `rho-tools`
-3. Load extensions from `rho-ext`
-4. Start the agent loop from `rho-core`
-5. Connect it to the TUI from `rho-tui`
+2. Select and instantiate the `ChatClient` provider based on config (default: `LocalChatClient`)
+3. Scan sandbox root for project context files (`AGENTS.md`, `.agents.md`, `CLAUDE.md`, `.cursorrules`, `.rho/prompt.md`), verify trust, and compose the system prompt
+4. Create the tool registry and register built-in tools from `rho-tools`
+5. Load extensions from `rho-ext`
+6. Start the agent loop from `rho-core`
+7. Connect it to the TUI from `rho-tui`
 
 ---
 
 ## Development Phases
 
 Each phase produces a runnable agent. No phase requires a rewrite of the previous one.
+
+| Phase | Directory | Goal |
+|---|---|---|
+| 1: The Agent Loop | [`phases/phase-1/`](phases/phase-1/) | Model invokes tools, agent loop runs autonomously |
+| 2: PowerShell and File Tools | [`phases/phase-2/`](phases/phase-2/) | PowerShell-native assistant, file system navigation |
+| 3: Rust Tooling | [`phases/phase-3/`](phases/phase-3/) | Structured compiler diagnostics, Cargo integration |
+| 4: Terminal UI | [`phases/phase-4/`](phases/phase-4/) | Rich TUI with approval prompts and streaming |
+| 5: Extensions and Polish | [`phases/phase-5/`](phases/phase-5/) | Custom tools, config, prompt composition |
+| 6: LSP (Future) | [`phases/phase-6/`](phases/phase-6/) | rust-analyzer LSP integration (deferred) |
+
+Each phase directory contains:
+- **`phase.md`** — goal, milestone, dependencies, decisions, and exit criteria
+- **`tasks.md`** — ordered task list with details
 
 ### Testing Approach
 
@@ -165,7 +243,7 @@ Every external crate is a liability. Before adding a dependency:
 3. **Is it a standard?** Tree-sitter grammars, LSP protocol types — these are domain standards with complex specs. Use the ecosystem crate.
 4. **Is it a user interface?** Terminal rendering, input handling — these are deep specialties with edge cases across platforms. Use the ecosystem crate, but wrap it behind our own traits so we're not coupled to its API.
 
-The dependency list for each phase below reflects this analysis. Crates marked **(foundation)** are accepted without question. Crates marked **(evaluated)** were considered against the write-it-ourselves bar. Crates marked **(wrapped)** are used but abstracted behind our own traits.
+The dependency list for each phase reflects this analysis. Crates marked **(foundation)** are accepted without question. Crates marked **(evaluated)** were considered against the write-it-ourselves bar. Crates marked **(wrapped)** are used but abstracted behind our own traits.
 
 **Accepted foundations (all phases):**
 
@@ -178,328 +256,34 @@ The dependency list for each phase below reflects this analysis. Crates marked *
 | `anyhow` | Error propagation in application code — ergonomics for non-recoverable paths |
 | `clap` | CLI parsing — the binary needs argument handling |
 
-### Phase 1: The Agent Loop
-
-**Goal:** The model can invoke tools and receive structured results. The agent runs autonomously until it's done or needs user input.
-
-**Milestone:** `rho` reads a file when asked, instead of just saying "I would read the file."
-
-**New dependencies:**
-
-| Crate | For | Decision |
-|---|---|---|
-| `tree-sitter` **(foundation)** | `rho-highlight` | Standard parser generator runtime — writing a parser from scratch is not feasible |
-| `tree-sitter-rust` **(foundation)** | `rho-highlight` | Rust grammar — this *is* the spec, thousands of rules, not writable by hand |
-
-No other new dependencies. Tool trait, tool registry, agent loop, `ChatClient` trait, and the three basic tools are all straightforward Rust that we write ourselves.
-
-**Tasks:**
-
-1. Refine the data model in `rho-core`:
-   - Audit existing types for ergonomics — can they be constructed without boilerplate? Are they composable?
-   - Introduce newtypes where they prevent misuse: `FilePath`, `ToolName`, `DiagnosticCode`
-   - Ensure every type round-trips through serde (JSON for API, TOML for future config)
-   - Add builder-style or `From` impls for common construction patterns
-   - Document the design philosophy in the crate-level doc comment
-
-2. Define the `Tool` trait in `rho-core`:
-   ```rust
-   pub trait Tool: Send + Sync {
-       fn name(&self) -> ToolName;
-       fn description(&self) -> &str;
-       fn parameters_schema(&self) -> serde_json::Value;
-       fn execute(&self, arguments: serde_json::Value) -> Result<ToolResult>;
-   }
-   ```
-
-3. Define `ToolResult` and `ToolRegistry` in `rho-core`.
-
-4. Implement the agent loop in `rho-core`:
-   - `Conversation::send` returns `AssistantResponse::ToolCall`
-   - The loop looks up the tool in the registry, executes it, appends a `Role::Tool` message with the result, and sends again
-   - Configurable max iterations to prevent infinite loops
-   - Returns when `FinishReason::Stop` or user input is needed
-
-5. Abstract the HTTP client behind a `ChatClient` trait for testability.
-
-6. Create the `rho-tools` crate. Implement three minimal tools:
-   - `ReadFile` — read a file's text content
-   - `WriteFile` — write content to a file
-   - `RunCommand` — execute a PowerShell command
-
-7. Create the `rho-highlight` crate with initial scaffolding:
-   - Add `tree-sitter` and `tree-sitter-rust` as dependencies
-   - Implement a `parse` function that takes source text and returns a tree-sitter `Tree`
-   - Implement a `highlight` function that produces ANSI-highlighted output for Rust source
-   - This is minimal — just enough to validate the integration path. Richer grammars and queries come in Phase 4.
-
-8. Update the binary to register tools and run the agent loop.
-
-9. Add integration tests: mock `ChatClient` returns tool calls, verify the loop executes and feeds back.
-
-10. **Test suite audit:**
-    - Promote shared `ChatClient` mock into a reusable test helper module
-    - Extract JSON fixtures into `tests/fixtures/` files (avoid inline JSON blobs in test bodies)
-    - Ensure every public type has at least a construction/serialization test
-    - Remove any tests that duplicate coverage without adding value
-
-**Exit criteria:** The agent can read, write, and execute commands when the model requests it. The loop terminates correctly on `Stop`. `rho-highlight` can parse and highlight a Rust source file.
-
 ---
 
-### Phase 2: PowerShell and File Tools
-
-**Goal:** The agent is a credible PowerShell-native assistant that can navigate and manipulate the file system.
-
-**Milestone:** The agent can be asked "list the Rust source files in this project and tell me what each does" and it works.
-
-**New dependencies:**
-
-| Crate | For | Decision |
-|---|---|---|
-| None | — | — |
-
-`RunCommand` shells out to `pwsh`/`powershell` via `tokio::process::Command` (already in `tokio`). `EditFile` does string matching in pure Rust. `ListDir` uses `std::fs` and walks `.gitignore` rules — the ignore logic is the one place we'd consider a crate, but `.gitignore` matching is well-understood and can be written in ~200 lines. If it proves painful, `ignore` (the ripgrep crate) would be the fallback.
-
-**Tasks:**
-
-1. Expand `RunCommand`:
-   - Detect `pwsh` vs `powershell` availability
-   - Set appropriate execution policy flags
-   - Normalize path separators in arguments
-   - Capture and return structured output (stdout, stderr, exit code)
-   - Timeout support
-
-2. Add `ListDir` tool (recursive directory listing with `.gitignore` awareness).
-
-3. Add `EditFile` tool:
-   - Exact-match replacement (old text → new text)
-   - Non-overlapping edits in a single call
-   - Validation: refuse if old text is not found or is ambiguous
-   - Tree-sitter validation (via `rho-highlight`): warn if a replacement would split a syntax node (e.g., replacing half a string literal)
-
-4. Compose a PowerShell-aware system prompt:
-   - "You are running on Windows. Use PowerShell commands."
-   - Common PowerShell idioms for file operations, process management, etc.
-   - Few-shot examples of correct PowerShell usage
-
-5. Add the `ChatRequest.tools` serialization so tool definitions are sent to the model API.
-
-6. Add deserialization tests for tool-call responses (JSON fixtures with `finish_reason: "tool_calls"`).
-
-7. **Test suite audit:**
-   - Promote PowerShell command execution into a test helper (handle `pwsh` vs `powershell` detection once)
-   - Extract file-system test fixtures into a tempdir helper (create/verify/cleanup)
-   - Ensure `EditFile` tests cover: exact match, ambiguous match, no match, overlapping edits, syntax-node-splitting warning
-   - Deduplicate any JSON fixture overlap with Phase 1 fixtures — consolidate into shared fixture files
-
-**Exit criteria:** The agent reliably uses PowerShell commands, reads and edits files, and the model generates syntactically valid PowerShell.
-
----
-
-### Phase 3: Rust Tooling
-
-**Goal:** The agent understands Rust compilation errors and Clippy lints as structured data, not text. It can fix code using the compiler's own suggestions.
-
-**Milestone:** The agent runs `cargo check`, parses the JSON diagnostics, applies the machine-applicable fix, and verifies the fix compiles.
-
-**New dependencies:**
-
-| Crate | For | Decision |
-|---|---|---|
-| None | — | — |
-
-All Rust tooling shells out to `cargo`/`rustc` via `tokio::process::Command` (already available). JSON message parsing uses `serde_json` (already available). The diagnostic types are our own data model. No new crates needed.
-
-**Tasks:**
-
-1. Add `CargoCheck` tool:
-   - Run `cargo check --message-format=json`
-   - Parse the NDJSON stream into structured `Diagnostic` types
-   - Return: error code, message, file, line, column, suggested replacements
-   - Filter to the relevant crate/project (not dependency noise)
-
-2. Add `CargoClippy` tool:
-   - Same as `CargoCheck` but with `cargo clippy --message-format=json`
-   - Include lint name and severity
-
-3. Add `RustcExplain` tool:
-   - Run `rustc --explain E0XXX`
-   - Return the formatted explanation text
-
-4. Add `CargoTest` tool:
-   - Run `cargo test --message-format=json`
-   - Parse test results: which passed, which failed, failure output
-
-5. Add `CargoFix` tool:
-   - Run `cargo fix --allow-dirty` for machine-applicable suggestions
-   - Or: apply individual `MachineApplicable` suggestions from check/clippy output directly (more surgical)
-
-6. Define `rho-tools::rust` types — these are part of the data model and should be designed with the same care as `rho-core` types:
-   - `Diagnostic` — a structured compiler diagnostic
-   - `DiagnosticSpan` — file, line range, column range
-   - `DiagnosticSuggestion` — suggested replacement text for a span
-   - `TestResult` — pass/fail with output
-   - All types round-trip through serde, use newtypes where appropriate
-
-7. Use `rho-highlight` to map diagnostic spans to AST nodes:
-   - When a diagnostic points to a span, query the tree-sitter tree for the enclosing syntax node
-   - Include the enclosing node type in the tool result (e.g., "this error is inside a `fn` item")
-   - This gives the model richer context than raw line/column numbers
-
-8. Compose a Rust-aware system prompt extension:
-   - "You have access to structured Rust compiler diagnostics."
-   - "When code fails to compile, use CargoCheck before attempting fixes."
-   - "Trust machine-applicable suggestions from the compiler."
-
-9. Add a `CargoCheck` → `EditFile` → `CargoCheck` integration test loop.
-
-10. **Test suite audit:**
-    - Promote `cargo * --message-format=json` output parsing into shared test helpers
-    - Extract compiler message JSON fixtures (check, clippy, test) into `tests/fixtures/`
-    - Ensure `Diagnostic` / `DiagnosticSpan` / `DiagnosticSuggestion` types have round-trip serde tests
-    - Audit tree-sitter structural query tests — ensure they cover edge cases (empty files, malformed syntax, multi-byte characters)
-    - Review test naming: adopt a consistent convention (e.g., `deserializes_X`, `executes_X_correctly`, `rejects_invalid_X`)
-
-**Exit criteria:** The agent can diagnose and fix compilation errors using structured compiler output. It prefers compiler suggestions over its own guesses.
-
----
-
-### Phase 4: Terminal UI
-
-**Goal:** Replace the bare REPL with a rich, interactive terminal experience.
-
-**Milestone:** The agent displays in a split-pane TUI with syntax-highlighted output, tool call previews, and approval prompts.
-
-**New dependencies:**
-
-| Crate | For | Decision |
-|---|---|---|
-| `crossterm` **(foundation)** | `rho-tui` | Cross-platform terminal control — writing raw Win32 + VT100 escape sequences ourselves is not feasible |
-| `ratatui` **(wrapped)** | `rho-tui` | Terminal UI framework — wraps crossterm, provides layout, rendering, and event handling. Deeply specialized, thousands of edge cases. We wrap it behind our own `View` trait so the agent loop and tools are not coupled to ratatui's API |
-| `tree-sitter-powershell` **(evaluated)** | `rho-highlight` | PowerShell grammar for syntax highlighting — defer to Phase 4. Only add if the grammar is mature; otherwise, fall back to regex-based highlighting for PowerShell |
-| `tree-sitter-toml` **(evaluated)** | `rho-highlight` | TOML grammar — same evaluation as PowerShell |
-| `tree-sitter-json` **(evaluated)** | `rho-highlight` | JSON grammar — may not be worth it; JSON is simple enough for regex highlighting |
-| `tree-sitter-markdown` **(evaluated)** | `rho-highlight` | Markdown grammar — complex grammar, worth it if we want accurate inline code block detection |
-
-**Decision on markdown rendering:** We write our own minimal markdown parser. Full markdown (CommonMark + GFM) is a large spec, but we only need: headers, bold/italic, code blocks (with language tag), and lists. A ~300-line parser handles this. If it proves insufficient, `pulldown-cmark` would be the fallback.
-
-**Decision on diff rendering:** We write our own unified diff generator. We have the old text and the new text — computing line-level diffs is ~150 lines using a simple LCS algorithm. If we need word-level diffs later, consider `similar`.
-
-**Tasks:**
-
-1. Create the `rho-tui` crate with `ratatui` + `crossterm`.
-
-2. Implement the input pane:
-   - Multi-line editor (Shift+Enter for newline, Enter to submit)
-   - Command history (up/down arrows)
-   - Autocomplete for tool names and file paths
-
-3. Implement the output pane:
-   - Markdown rendering (headers, bold, code blocks)
-   - Syntax-highlighted code blocks via `rho-highlight` (supports Rust, PowerShell, TOML, JSON, Markdown)
-   - Diff view for file edits (show old → new, both syntax-highlighted)
-   - Inline diagnostic context with syntax-highlighted source lines
-   - Incremental re-rendering: as streaming tokens arrive, only re-parse the changed region
-
-4. Implement tool call display:
-   - Show tool name and arguments before execution
-   - Show tool result after execution (collapsible)
-   - Ask for user approval on destructive operations (WriteFile, EditFile, RunCommand)
-   - Allow/deny/skip approval with a single keypress
-
-5. Implement streaming output:
-   - Switch from `POST and wait for full response` to SSE/streaming API
-   - Render tokens as they arrive
-   - Show "thinking" indicator while waiting
-
-6. Implement a diagnostic panel:
-   - Render structured `Diagnostic` objects with file/line context
-   - Color-code severity (error = red, warning = yellow)
-   - Show suggested fix inline
-
-7. Status bar:
-   - Current model, conversation turn count, agent state (idle / thinking / executing)
-
-8. **Test suite audit:**
-   - TUI rendering tests are inherently fragile — prefer snapshot tests for rendered output over pixel-level assertions
-   - Extract a `TestBackend` (ratatui's `TestBackend`) helper for rendering assertions
-   - Ensure streaming tests use deterministic mock token streams (no timing-dependent assertions)
-   - Audit approval flow tests for coverage: approve, deny, skip, and edge cases (tool call with missing arguments)
-   - Review the full test suite across all crates — are there helpers that should be promoted to `rho-core`'s test module? Are there fixture files that are now shared across 3+ crates and deserve their own `rho-test-helpers` crate?
-
-**Exit criteria:** The agent is usable as a daily terminal tool. The REPL feels responsive, informative, and safe (approval on destructive actions).
-
----
-
-### Phase 5: Extensions and Polish
-
-**Goal:** The agent is configurable and extensible. Users can add tools, customize prompts, and integrate their own workflows.
-
-**Milestone:** A user can add a custom tool via config, restart the agent, and the model can use it.
-
-**New dependencies:**
-
-| Crate | For | Decision |
-|---|---|---|
-| `toml` **(foundation)** | `rho-ext` | TOML parsing for config files — the format is non-trivial to parse correctly, and `toml` is the standard Rust crate |
-
-**Decision on extension format:** Phase 5 starts with TOML-defined tools (command name + args template). No Lua, no WASM. These add enormous complexity (runtime embedding, sandboxing, FFI) for marginal benefit at this stage. If TOML tools prove too limited, the next step would be Lua via `mlua` — but that's a Phase 6+ decision.
-
-**Decision on LSP client:** `rust-analyzer` integration requires an LSP client. The LSP protocol is complex (JSON-RPC + dozens of message types). Options:
-- Write our own JSON-RPC client over stdio (~500 lines) — feasible, and we control it
-- Use `lsp-server` (the rust-analyzer team's own crate) — well-maintained, but brings in `lsp-types` which is enormous
-- Defer to Phase 6+ — the agent is already useful without LSP
-
-Recommendation: start with a minimal hand-written JSON-RPC client, supporting only the messages we need (initialize, hover, goto-definition). Defer the full `lsp-types` integration.
-
-**Tasks:**
-
-1. Create the `rho-ext` crate.
-
-2. Define the extension API:
-   - `ExtTool` trait — user-defined tools with name, description, schema, and execute
-   - Initial implementation: tools defined in TOML config files (command + args template)
-   - Example: a `DockerRun` tool that runs `docker run` with the provided arguments
-
-3. Project-level configuration (`.rho/config.toml`):
-   - Model selection and system prompt extensions
-   - Enabled/disabled tools
-   - Approval policies (auto-approve reads, require approval for writes)
-   - Custom tool definitions
-
-4. Global configuration (`~/.rho/config.toml`):
-   - Default model
-   - API endpoint
-   - Theme preferences
-   - Keybindings
-
-5. Prompt composition:
-   - Base identity prompt
-   + PowerShell guidance
-   + Rust tooling guidance
-   + Project-specific `.rho/prompt.md` (if present)
-   + Tool schemas (auto-generated from the registry)
-
-6. `rust-analyzer` LSP integration (stretch goal for this phase):
-   - `RustAnalyzer` tool that communicates via LSP protocol
-   - Hover (type info), go-to-definition, find-references
-   - Requires running `rust-analyzer` as a background process
-
-7. Polish:
-   - Comprehensive error messages (no panics, all errors surfaced)
-   - Logging (file-based, for debugging)
-   - Performance profiling (tool execution times, token usage tracking)
-
-8. **Test suite audit:**
-   - Review the entire test suite across all workspace crates for consistency
-   - Ensure extension/tool registration tests cover: duplicate names, invalid schemas, missing dependencies
-   - Verify config loading tests cover: missing files, malformed TOML, unknown keys
-   - Consider whether any integration tests should be promoted to property-based tests (proptest) for type serialization
-   - Final naming convention check — all tests follow the established pattern
-   - Document the testing conventions in `AGENTS.md` and the crate-level doc comments
-
-**Exit criteria:** The agent is configurable, extensible, and production-ready for daily Rust development on Windows.
+## Security Model
+
+A coding agent takes untrusted input (LLM output), interprets it as instructions, and executes those instructions with the full privileges of the user. The attack surface is real: a compromised or confused model can delete source code, exfiltrate secrets, or pivot to the network. The security model is defense-in-depth — no single layer is sufficient, but each layer raises the bar.
+
+### Threat Model
+
+| Threat | Vector | Primary defense | Secondary defense |
+|---|---|---|---|
+| Destructive command execution | Model generates dangerous shell commands | Command denylist | Approval gate |
+| Data exfiltration via shell | Model runs `Invoke-WebRequest` with file contents | Command denylist (network cmdlets) | Egress allowlist |
+| Data exfiltration via provider | Conversation (including file contents) sent to external API | Provider switch warning + consent | Egress allowlist |
+| Path traversal | Model reads/writes files outside project | File sandbox (canonicalised paths) | Approval gate |
+| Secret exposure | Tool results contain API keys/tokens | Secret redaction layer | `Role::Context` separation |
+| Prompt injection via file contents | File contains "ignore all instructions" | `Role::Context` role | Approval gate |
+| Supply-chain prompt attack | Malicious `AGENTS.md` / `.rho/prompt.md` in cloned repo | Project prompt trust (hash verification) | User confirmation on first load |
+| Extension command injection | Model arguments escape command template | Structured argument substitution (`Command::arg()`) | Approval gate |
+| Runaway tool-call loop | Model generates infinite tool calls | Max iteration guard | Retry budget |
+| Credential at rest | API keys in plaintext config | Env var references (`api_key_env`) | Optional credential store integration |
+
+### Security Principles
+
+1. **Approval is an agent-loop concern, not a UI concern.** `rho-core` decides *whether* to execute; the UI decides *how* to ask. Even the bare REPL enforces approval for destructive operations.
+2. **Default deny.** The agent starts locked down: sandbox on, denylist active, redaction enabled, egress restricted. Users opt out explicitly.
+3. **Defense in depth.** Each threat has at least two layers of defense. The approval gate is the final backstop — even if every other defense fails, the user must confirm destructive actions.
+4. **Transparency.** Tool call previews, provider switch warnings, and extension audit views ensure the user can see what the agent is about to do before it does it.
+5. **Secrets never leave.** Redaction prevents secrets from entering the conversation (and thus the model API or logs). Credential storage uses env vars, not plaintext config.
 
 ---
 
@@ -507,11 +291,13 @@ Recommendation: start with a minimal hand-written JSON-RPC client, supporting on
 
 | Crate | Phase | Depends On | Purpose |
 |---|---|---|---|
-| `rho-core` | 1 | External only (`tokio`, `serde`, `reqwest`, `thiserror`, `anyhow`, `clap`) | Agent kernel: data model, types, traits, loop, registry |
+| `rho-core` | 1 | External only (`tokio`, `serde`, `reqwest`, `thiserror`, `anyhow`, `clap`, `toml`) | Agent kernel: data model, types, traits, loop, registry, config |
 | `rho-highlight` | 1 | `rho-core`, `tree-sitter`, `tree-sitter-rust` | Tree-sitter parsing, highlighting, and structural queries |
 | `rho-tools` | 1–3 | `rho-core`, `rho-highlight` | Built-in tools: files, shell, Rust tooling |
-| `rho-tui` | 4 | `rho-core`, `rho-highlight`, `crossterm` **(foundation)**, `ratatui` **(wrapped)** | Terminal UI: rendering, input, approval |
-| `rho-ext` | 5 | `rho-core`, `toml` **(foundation)** | Extension API and runtime |
+| `rho-tui` | 4 | `rho-core`, `rho-highlight`, `crossterm` **(foundation)**, `ratatui` **(wrapped)**, `pulldown-cmark` **(wrapped)** | Terminal UI: rendering, input, approval |
+| `rho-ext` | 5 | `rho-core` | Extension API and runtime |
+| `rho-test-helpers` | 1 | `rho-core` | Shared test utilities: mock `ChatClient`, fixture loaders, tempdir helpers |
+| `rho-eval` | 3 | `rho-core` | Behavioural benchmark suite |
 | `rho` (binary) | 1+ | All above | Top-level assembly and CLI |
 | `xtask` | existing | External only | Dev task runner (unchanged) |
 
@@ -521,26 +307,48 @@ Recommendation: start with a minimal hand-written JSON-RPC client, supporting on
 
 These are choices that seem right now but may need adjustment as we build:
 
-1. **Tool trait shape** — The initial `Tool` trait is async and takes/returns `serde_json::Value`. This may need to support streaming results (e.g., for long-running commands) or typed parameters.
+1. **Tool trait shape** — The initial `Tool` trait is async and takes/returns `serde_json::Value`. This may need to support streaming results (e.g., for long-running commands) or typed parameters. A `timeout: Option<Duration>` may be added to the registry invocation to cap long-running tools.
 
-2. **Approval model** — Phase 4 assumes a blocking "approve/deny" prompt. A more sophisticated model might allow auto-approval for reads, batch approval, or a trust-on-first-use model.
+2. **Approval model** — Phase 1 introduces `ApprovalPolicy` with a default that requires approval for destructive operations even in the bare REPL. Phase 4 enhances the UX (rich preview, single-keypress, batch approval). The policy is per-tool, not just read/write — `RunCommand` is always high-risk, `ReadFile` is low-risk, `EditFile`/`WriteFile` are medium-risk. Policies are loaded from config (Phase 2) and can be tuned per-project. A trust-on-first-use model (auto-approve after N successful calls) could be added later.
 
-3. **Streaming** — The current API does a full request/response. Phase 4 introduces streaming for the TUI, but the `ChatClient` trait in `rho-core` needs to support both modes.
+3. **Streaming** — The current `ChatClient` trait does a full request/response via `chat()`. Phase 4 introduces streaming for the TUI, and the trait will likely gain a `chat_stream()` method. Providers that don't support streaming can emulate it by returning the full response as a single chunk. The trait design must not break existing providers when streaming is added.
 
 4. **Extension format** — TOML-defined command tools are the simplest starting point. WASM or Lua would allow more sophisticated extensions but add significant complexity.
 
-5. **rust-analyzer integration** — LSP is powerful but adds a long-lived process and complex message protocol. May be better as a Phase 6 or later, once the tool trait supports persistent backends.
+5. **rust-analyzer integration** — LSP is deferred to Phase 6+. The protocol is complex (800–1200 lines, not the ~500 initially estimated). If pursued, accept `lsp-types` rather than hand-rolling — the protocol surface area is too large to reimplement safely.
 
-6. **Multi-turn tool composition** — The agent loop in Phase 1 handles one tool call per model turn. Some models return multiple tool calls in a single response. The loop should handle `Vec<ModelToolCall>`, executing them in sequence or parallel.
+6. **Multi-turn tool composition** — Resolved: `AssistantResponse` carries `Vec<ModelToolCall>` from Phase 1. Phase 2 implements sequential execution of all tool calls. Parallel execution remains a future optimisation.
 
-7. **Newtype vs. string** — Introducing newtypes like `FilePath` and `ToolName` improves type safety but adds conversion overhead at API boundaries (the model sends raw strings). Decide how much newtyping is worth it — probably: newtype for things the *agent* constructs and passes around, raw strings at the API deserialization boundary with `From` impls to convert.
+7. **Newtype vs. string** — Resolved: newtypes (`FilePath`, `ToolName`, etc.) implement `Deref<Target = _>` so they're ergonomic at API boundaries while preserving type safety internally. Raw strings at the API deserialization boundary, `From` impls to convert. Documented in the crate-level doc comment.
 
-8. **Tree-sitter grammar scope** — Starting with just Rust is safe. Adding PowerShell, TOML, and Markdown grammars increases binary size and compile time. Consider feature-gating grammars so users only compile what they need.
+8. **Tree-sitter grammar scope** — Starting with just Rust is safe. Adding PowerShell, TOML, and Markdown grammars increases binary size and compile time. Feature-gating is defined from Phase 1 (`rust` as default, `powershell`, `toml`, `json`, `markdown` as opt-in) so the retrofit is painless.
 
 9. **Data model evolution** — The data model will evolve as new tools and capabilities are added. Each phase should include an audit: are the existing types still ergonomic? Do any need to be split, merged, or promoted to newtypes? This is not a one-time design — it's an ongoing practice.
 
-10. **Test fixture management** — As the project grows, JSON fixtures for API responses, compiler output, and tool results will proliferate. Decide early on a fixture naming convention and directory structure. Consider generating fixtures from real API responses (captured during development) rather than hand-writing them — they stay in sync with reality.
+10. **Test fixture management** — Resolved: fixtures use `<crate>/tests/fixtures/<category>/<name>.json` from Phase 1. Generated from real API responses where possible. Shared helpers live in `rho-test-helpers`.
 
 11. **When to write it ourselves vs. depend on a crate** — The bar for adding a dependency should stay high. Each phase documents its dependency decisions. Revisit these at the phase boundary: did we end up needing a crate we initially wrote ourselves? Did a crate we added turn out to be a thin wrapper we could replace? The audit is part of the phase retrospective.
 
 12. **Grammar crate maturity** — Tree-sitter grammar crates vary widely in quality. `tree-sitter-rust` is mature and well-maintained. PowerShell, TOML, and Markdown grammars may be less so. Evaluate each grammar before committing: does it parse real-world files correctly? Is it actively maintained? If not, regex-based highlighting is an acceptable fallback — it's better than a broken grammar.
+
+13. **MCP (Model Context Protocol) compatibility** — The current `Tool` trait is entirely custom. MCP has become the dominant standard for tool interoperability. The `Tool` trait schema format is JSON Schema–compatible (via `serde_json::Value`), which leaves the door open. If the ecosystem converges on MCP, `rho-ext` could provide an MCP adapter layer. This should be revisited when the extension API is designed in Phase 5 — at minimum, ensure the tool schema format doesn't paint us into a corner.
+
+14. **Error recovery model** — The `AgentLoopState` state machine (Phase 1) distinguishes retryable from fatal errors. The retry budget and backoff strategy should be tuned based on real-world usage. If agents frequently get stuck in retry loops on particular error types, the model may need adjustment. The state machine makes this easy to iterate on.
+
+15. **Context window management strategy** — The initial `ContextManager` (Phase 1) uses a sliding window with system message pinning. This is the baseline. More sophisticated strategies — summarisation (ask the model to compress earlier turns), importance scoring within the window, or retrieval-augmented context — should be evaluated as conversation lengths grow. The `ContextManager` trait boundary makes swapping strategies possible without changing the agent loop. The pinning guarantee (system message is never evicted) must be preserved by any future strategy — the agent's core instructions are not optional context.
+
+16. **Cross-platform shell support** — Shell execution is abstracted behind `ShellExecutor` (Phase 2) with `PowerShellExecutor` as the first implementation. If Unix support becomes a priority, a `BashExecutor` can be added without rewriting the tool layer. The system prompt composition would also need per-platform shell guidance. The command denylist is shell-specific — each `ShellExecutor` implementation defines its own dangerous commands.
+
+17. **Provider extensibility** — The `ChatClient` trait is the seam for plugging in model providers. Local models (LM Studio, Ollama) are the primary target and ship as the default `LocalChatClient`. External providers (OpenAI, Anthropic, Google) can be added by implementing the trait — each provider handles its own authentication, endpoint construction, and any request/response translation. Providers should live in their own crates or behind feature flags to avoid pulling in unnecessary dependencies (e.g., an `OpenAI` provider shouldn't require `reqwest` features that `LocalChatClient` doesn't need). The config system (Phase 2) selects the provider; the agent loop is oblivious to the choice.
+
+18. **File sandbox scope** — The sandbox root defaults to the project directory. The boundary is enforced by canonicalising paths and checking they're within the root. Edge cases to revisit: what happens when the model needs to read from a system include path (e.g., Rust stdlib sources for diagnostics)? What about shared dependencies in a monorepo? A configurable `sandbox_paths` allowlist (in addition to the root) may be needed.
+
+19. **Secret redaction completeness** — The redaction layer uses pattern matching on tool results. This is a best-effort defense — it catches known secret formats (OpenAI keys, GitHub tokens, Slack tokens) but cannot catch arbitrary secrets (internal API keys with unknown formats). Users can add custom patterns in config. The redaction is applied at the `rho-core` boundary before secrets enter the conversation, but secrets that are already in the model's training data or that the model generates independently cannot be redacted.
+
+20. **Prompt injection defense** — `Role::Context` is a defense-in-depth measure, not a guarantee. Models vary in their ability to distinguish instructions from data in different roles. Local models may not respect role boundaries at all. The approval gate is the primary defense — even if the model is tricked into generating a destructive command, the user must approve it before execution. The system prompt should explicitly instruct the model to treat `Role::Context` as untrusted data, but this is a prompt-level defense, not a cryptographic one.
+
+21. **Egress control granularity** — The egress allowlist controls which hosts the `ChatClient` can contact. `RunCommand` with PowerShell networking (`Invoke-WebRequest`) is a separate egress path. The command denylist blocks the most common networking cmdlets, but a determined model could construct network requests using .NET APIs directly (`[System.Net.WebClient]::new()`). Full egress control would require OS-level network filtering, which is out of scope for the agent itself. The denylist + approval gate is the pragmatic balance.
+
+22. **Project context file scope** — The default scan list (`AGENTS.md`, `.agents.md`, `CLAUDE.md`, `.cursorrules`, `.rho/prompt.md`) covers the most common ecosystem conventions, but the landscape evolves. The list is fully configurable in `.rho/config.toml`. A future consideration: should the agent also scan subdirectories (e.g., `.claude/rules/`, `.cursor/rules/`)? This adds complexity and increases the attack surface — each additional file is another supply-chain vector. For now, only the sandbox root is scanned. Subdirectory scanning can be added if users request it, with the same trust model applied.
+
+23. **Prompt composition precedence** — The base identity prompt is always first in the system prompt and cannot be overridden by project context files. This ensures the agent's core safety instructions (e.g., "treat `Role::Context` as data", "wait for approval on destructive operations") are never displaced. Project context files extend the prompt but cannot rewrite it. If a context file contains instructions that conflict with the base prompt, the base prompt wins — the model sees both, but the base prompt's positioning (first) gives it primacy.
