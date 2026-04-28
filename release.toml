@@ -1,27 +1,26 @@
 # cargo-release configuration
 # https://github.com/crate-ci/cargo-release/blob/master/docs/reference.md
+#
+# Typical release flow:
+#   cargo xtask ci                        # all checks must pass
+#   cargo xtask changelog <version>       # regenerate CHANGELOG.md via git-cliff
+#   cargo release <version> --execute     # bump, commit, tag
+#   git push origin trunk --tags          # push when ready
 
-# Do not push or publish automatically — allow review before pushing.
+# Do not push or publish automatically — review before pushing.
 push = false
 publish = false
 
-# Sign the release commit and tag.
-sign-commit = true
-sign-tag = true
+# Never add a -dev suffix after tagging.
+# (dev-version was removed in cargo-release 1.x; omitting it achieves the same.)
 
-# Update the changelog before the release commit.
-pre-release-hook = [
-    "git", "cliff", "-o", "CHANGELOG.md", "--tag", "{{version}}"
-]
-
-# Include the changelog in the release commit.
-include = [
-    "CHANGELOG.md",
-]
-
-# Do not dev-version after release (prevent an unexpected 0.2.0-dev).
-dev-version = false
+# Release commit message follows the conventional-commits chore(release) pattern
+# so git-cliff skips it when generating the next CHANGELOG entry.
+pre-release-commit-message = "chore(release): prepare {{version}}"
 
 # Tag format.
 tag-name = "v{{version}}"
 tag-message = "Release {{version}}"
+
+# Only release from trunk.
+allow-branch = ["trunk"]
