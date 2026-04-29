@@ -1,9 +1,0 @@
-fn reverse_string(input: &str) -> String {
-    input.chars().rev().collect()
-}
-
-Example usage:
-let original = "hello";
-let reversed = reverse_string(original);
-println!("Original: {}", original);       // Original: hello
-println!("Reversed: {}", reversed);       // Reversed: olleh
