@@ -23,30 +23,47 @@ pub use tempfile::TempDir;
 
 // ── MockChatClient ────────────────────────────────────────────────────────────
 
-/// A [`ChatClient`] that returns pre-loaded responses in sequence.
+/// A [`ChatClient`] that returns pre-loaded results in sequence.
 ///
 /// Records every [`ChatRequest`] it receives so tests can inspect the full
 /// conversation that would have been sent to a real model API.
 ///
+/// Use [`MockChatClient::new`] for simple success-response sequences, or
+/// [`MockChatClient::with_results`] to mix successes and errors (e.g. for
+/// retry tests).
+///
 /// # Panics
 ///
-/// Panics if called more times than there are queued responses.
+/// Panics if called more times than there are queued results. This is
+/// intentional — an under-queued mock is a test-setup bug and should fail
+/// loudly rather than producing a confusing downstream error.
 #[derive(Clone)]
 pub struct MockChatClient {
-    /// Queued responses returned in order.
-    responses: Arc<Mutex<Vec<ModelResponse>>>,
+    /// Queued results (success or error) returned in order.
+    items: Arc<Mutex<Vec<Result<ModelResponse, RhoError>>>>,
     /// All requests received, in order.
     requests: Arc<Mutex<Vec<ChatRequest>>>,
 }
 
 impl MockChatClient {
-    /// Create a client with a sequence of canned responses.
+    /// Create a client with a sequence of successful responses.
     ///
     /// Responses are returned in order: the first call returns `responses[0]`,
     /// the second call returns `responses[1]`, and so on.
     pub fn new(responses: Vec<ModelResponse>) -> Self {
         Self {
-            responses: Arc::new(Mutex::new(responses)),
+            items: Arc::new(Mutex::new(responses.into_iter().map(Ok).collect())),
+            requests: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    /// Create a client with a sequence of results (successes and errors).
+    ///
+    /// Use this for retry tests where you need to queue retryable errors
+    /// followed by a successful response.
+    pub fn with_results(items: Vec<Result<ModelResponse, RhoError>>) -> Self {
+        Self {
+            items: Arc::new(Mutex::new(items)),
             requests: Arc::new(Mutex::new(Vec::new())),
         }
     }
@@ -65,13 +82,12 @@ impl MockChatClient {
 impl ChatClient for MockChatClient {
     async fn chat(&self, request: ChatRequest) -> rho_core::Result<ModelResponse> {
         self.requests.lock().unwrap().push(request);
-        let mut responses = self.responses.lock().unwrap();
-        if responses.is_empty() {
-            return Err(RhoError::Unexpected(anyhow::anyhow!(
-                "MockChatClient: no more canned responses"
-            )));
-        }
-        Ok(responses.remove(0))
+        let mut items = self.items.lock().unwrap();
+        assert!(
+            !items.is_empty(),
+            "MockChatClient: no more canned results — check test setup"
+        );
+        items.remove(0)
     }
 }
 

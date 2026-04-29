@@ -3,7 +3,18 @@
 ### 🚀 Features
 
 - *(cli)* Make model and system prompt configurable via CLI arguments
-- *(core)* Implement Phase 1a agent loop and Phase 1b security surface
+- *(core)* Implement agent loop with retry/backoff and max-iteration guard
+- *(core)* Add `Tool` trait, `ToolRegistry`, and `ToolRisk` classification
+- *(tools)* Implement `ReadFile`, `WriteFile`, and `RunCommand` tools
+- *(core)* Add file sandbox enforcement via `SandboxRoot` and `FilePath` validation
+- *(core)* Add approval gate (`ApprovalPolicy` + `ApprovalGate`) for write/destructive tools
+- *(core)* Add secret redaction (`Redactor`) for known prefix-shaped secrets
+- *(core)* Add untrusted-data framing (`<context>` tags) on file contents
+- *(core)* Add project context file scanner with SHA-256 trust verification
+- *(core)* Add context window management (`SlidingWindowContextManager`, turn-aware eviction)
+- *(core)* Add `ChatClient` trait abstraction with `LocalChatClient` default
+- *(core)* Embed base identity prompt at compile time
+- *(core)* Add `CancellationToken` (re-exported from `tokio_util::sync`)
 
 ### 💼 Other
 

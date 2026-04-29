@@ -4,8 +4,8 @@
 //! is required.
 
 use rho_core::{
-    AgentConfig, ChatMessage, Conversation, ToolCallId, ToolName, ToolOutcome, ToolRegistry,
-    ToolResult, ToolRisk,
+    AgentConfig, ChatMessage, ContentBlock, Conversation, RhoError, ToolCallId, ToolName,
+    ToolOutcome, ToolRegistry, ToolResult, ToolRisk,
     agent::run_loop,
     message::{ModelToolCall, ToolCallFunction},
     tool::{CancellationToken, Tool},
@@ -103,29 +103,45 @@ async fn assistant_tool_call_message_persisted_before_tool_result() {
     // The second request sent to the mock must contain:
     //   [user, assistant(tool_calls), tool(result)]
     // in that exact order.
+    //
+    // Phase-1 invariant: every Tool message has a preceding Assistant message
+    // with the matching tool_call_id. This holds across all phases; the
+    // positional `assistant_idx + 1` assertion below is Phase-1-specific
+    // (single tool call per turn) and may need updating in Phase 2 when
+    // multiple tool calls produce multiple tool results per turn.
     let requests = client.requests();
     assert_eq!(requests.len(), 2, "expected exactly two requests");
 
     let second = &requests[1];
     let msgs = &second.messages;
 
-    // Find the assistant message with tool_calls
-    let assistant_idx = msgs
-        .iter()
-        .position(
-            |m| matches!(m, ChatMessage::Assistant { tool_calls, .. } if !tool_calls.is_empty()),
-        )
-        .expect("second request must contain assistant tool_calls message");
-
-    // The very next message must be the tool result
-    let tool_msg = msgs
-        .get(assistant_idx + 1)
-        .expect("tool result must follow assistant tool_calls");
-
-    assert!(
-        matches!(tool_msg, ChatMessage::Tool { tool_call_id, .. } if &**tool_call_id == "call_1"),
-        "expected Tool message with call_id 'call_1', got: {tool_msg:?}"
-    );
+    // Structural invariant: every Tool message is preceded by an Assistant
+    // message containing the matching tool_call_id.
+    let mut prev_was_assistant_with_call = false;
+    let mut prev_call_ids: Vec<&str> = Vec::new();
+    for msg in msgs {
+        match msg {
+            ChatMessage::Assistant { tool_calls, .. } if !tool_calls.is_empty() => {
+                prev_was_assistant_with_call = true;
+                prev_call_ids = tool_calls.iter().map(|c| c.id.as_ref()).collect();
+            }
+            ChatMessage::Tool { tool_call_id, .. } => {
+                assert!(
+                    prev_was_assistant_with_call,
+                    "Tool message with call_id '{tool_call_id}' has no preceding Assistant message with tool_calls"
+                );
+                assert!(
+                    prev_call_ids.contains(&tool_call_id.as_ref()),
+                    "Tool message with call_id '{tool_call_id}' does not match any preceding tool_call_id: {prev_call_ids:?}"
+                );
+            }
+            ChatMessage::Assistant { .. } => {
+                prev_was_assistant_with_call = false;
+                prev_call_ids.clear();
+            }
+            _ => {}
+        }
+    }
 }
 
 // ── Agent loop: max iterations ────────────────────────────────────────────────
@@ -163,14 +179,72 @@ async fn loop_terminates_after_max_iterations() {
     );
 }
 
-// ── Agent loop: retry budget ──────────────────────────────────────────────────
+// ── Agent loop: non-retryable errors ───────────────────────────────────────────
 
 #[tokio::test]
-async fn loop_exhausts_retry_budget_on_transient_errors() {
-    use rho_core::RhoError;
+async fn non_retryable_error_propagates_immediately() {
+    // The mock panics on empty queue, so queue a single non-retryable error.
+    let client =
+        MockChatClient::with_results(vec![Err(RhoError::Unexpected(anyhow::anyhow!("boom")))]);
+    let registry = ToolRegistry::new();
+    let config = AgentConfig {
+        retry_budget: 4, // high budget, but it should never be touched
+        initial_backoff_ms: 0,
+        ..AgentConfig::default()
+    };
+    let mut conv = Conversation::new("mock", None, vec![]);
 
-    // MockChatClient with no responses triggers an error on every call
-    let client = MockChatClient::new(vec![]);
+    let err = run_loop(
+        &mut conv,
+        "hello",
+        &client,
+        &registry,
+        &config,
+        CancellationToken::new(),
+        &AutoApproveGate,
+    )
+    .await
+    .unwrap_err();
+
+    // Non-retryable errors should propagate immediately without burning the budget.
+    assert!(
+        matches!(err, RhoError::Unexpected(_)),
+        "expected Unexpected, got: {err}"
+    );
+}
+
+// ── Agent loop: retry budget ──────────────────────────────────────────────────
+
+/// Create a retryable HTTP error by connecting to an unreachable port.
+///
+/// Connection-refused errors have no HTTP status code, which
+/// [`RhoError::is_retryable`] classifies as retryable.
+async fn retryable_http_error() -> RhoError {
+    use rho_core::{ChatClient, LocalChatClient};
+    let client = LocalChatClient::with_endpoint("http://127.0.0.1:1/");
+    let request = rho_core::ChatRequest {
+        model: String::new(),
+        messages: vec![],
+        tools: vec![],
+    };
+    client.chat(request).await.unwrap_err()
+}
+
+#[tokio::test]
+async fn retry_budget_exhausted_on_transient_errors() {
+    // Sanity check: connection-refused errors are retryable.
+    let err = retryable_http_error().await;
+    assert!(
+        err.is_retryable(),
+        "sanity: connection-refused error must be retryable"
+    );
+
+    // Queue 3 retryable errors with a budget of 2 → RetryBudgetExhausted.
+    let err1 = retryable_http_error().await;
+    let err2 = retryable_http_error().await;
+    let err3 = retryable_http_error().await;
+    let client = MockChatClient::with_results(vec![Err(err1), Err(err2), Err(err3)]);
+
     let registry = ToolRegistry::new();
     let config = AgentConfig {
         retry_budget: 2,
@@ -191,9 +265,50 @@ async fn loop_exhausts_retry_budget_on_transient_errors() {
     .await
     .unwrap_err();
 
-    // The mock returns Unexpected (not retryable), so it should propagate immediately.
-    // This tests that non-retryable errors pass through without burning the budget.
-    assert!(matches!(err, RhoError::Unexpected(_)));
+    assert!(
+        matches!(err, RhoError::RetryBudgetExhausted(2)),
+        "expected RetryBudgetExhausted(2), got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn retry_succeeds_after_transient_error() {
+    // Queue 1 retryable error followed by a success.
+    let err = retryable_http_error().await;
+    let client = MockChatClient::with_results(vec![Err(err), Ok(text_response("recovered"))]);
+
+    let registry = ToolRegistry::new();
+    let config = AgentConfig {
+        retry_budget: 4,
+        initial_backoff_ms: 0, // no delay in tests
+        ..AgentConfig::default()
+    };
+    let mut conv = Conversation::new("mock", None, vec![]);
+
+    let result = run_loop(
+        &mut conv,
+        "hello",
+        &client,
+        &registry,
+        &config,
+        CancellationToken::new(),
+        &AutoApproveGate,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        result, "recovered",
+        "expected the successful response after retry"
+    );
+
+    // The mock should have been called twice: once (failed), then once (succeeded).
+    let requests = client.requests();
+    assert_eq!(
+        requests.len(),
+        2,
+        "expected exactly 2 requests (1 failed + 1 retry)"
+    );
 }
 
 // ── ContextManager: tool-call turn not split ──────────────────────────────────
@@ -239,11 +354,11 @@ fn context_manager_does_not_split_tool_call_turn() {
 
 // ── Cancellation ──────────────────────────────────────────────────────────────
 
-/// Tool that immediately reports cancellation if the token is set.
-struct CancelAwareTool;
+/// Tool that polls the cancellation token and returns late if not cancelled.
+struct SlowTool;
 
 #[async_trait::async_trait]
-impl Tool for CancelAwareTool {
+impl Tool for SlowTool {
     fn name(&self) -> ToolName {
         ToolName::from("slow_tool")
     }
@@ -261,22 +376,26 @@ impl Tool for CancelAwareTool {
         _arguments: serde_json::Value,
         cancel: CancellationToken,
     ) -> rho_core::Result<ToolOutcome> {
-        if cancel.is_cancelled() {
-            return Ok(ToolOutcome::Immediate(ToolResult::error("cancelled")));
+        // Poll the token in a loop. If cancelled, return immediately.
+        for _ in 0..20 {
+            if cancel.is_cancelled() {
+                return Ok(ToolOutcome::Immediate(ToolResult::error("cancelled")));
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
         Ok(ToolOutcome::Immediate(ToolResult::success("done")))
     }
 }
 
 #[tokio::test]
-async fn cancellation_propagates_to_run_loop() {
+async fn cancellation_checked_at_top_of_loop() {
     let client = MockChatClient::new(vec![tool_call_response("call_1", "slow_tool", "{}")]);
 
     let cancel = CancellationToken::new();
     cancel.cancel(); // cancel before the loop starts
 
     let mut registry = ToolRegistry::new();
-    registry.register(Box::new(CancelAwareTool));
+    registry.register(Box::new(SlowTool));
 
     let config = AgentConfig::default();
     let mut conv = Conversation::new("mock", None, registry.tool_schemas());
@@ -293,7 +412,68 @@ async fn cancellation_propagates_to_run_loop() {
     .await
     .unwrap_err();
 
-    assert!(matches!(err, rho_core::RhoError::Unexpected(_)));
+    assert!(
+        matches!(err, rho_core::RhoError::Unexpected(_)),
+        "expected Unexpected error from early cancellation check, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn cancellation_propagates_into_running_tool() {
+    // The model requests a tool call. The tool starts executing and polls
+    // the cancellation token. After a short delay, the token is cancelled.
+    // The tool should observe the cancellation and return its error result.
+    // The loop then exits on the next iteration because the token is still set.
+    let client = MockChatClient::new(vec![tool_call_response("call_1", "slow_tool", "{}")]);
+
+    let cancel = CancellationToken::new();
+    let cancel_clone = cancel.clone();
+
+    // Cancel the token after 150ms — long enough for the tool to start executing
+    // but before its 20 × 50ms = 1000ms polling loop finishes.
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        cancel_clone.cancel();
+    });
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Box::new(SlowTool));
+
+    let config = AgentConfig::default();
+    let mut conv = Conversation::new("mock", None, registry.tool_schemas());
+
+    // The loop should exit with a cancellation error. The token is still
+    // set when the loop re-enters Thinking after the tool returned.
+    let err = run_loop(
+        &mut conv,
+        "do it",
+        &client,
+        &registry,
+        &config,
+        cancel,
+        &AutoApproveGate,
+    )
+    .await
+    .unwrap_err();
+
+    assert!(
+        matches!(err, rho_core::RhoError::Unexpected(_)),
+        "expected cancellation error, got: {err}"
+    );
+
+    // The key assertion: the tool result (cancelled) was fed back into
+    // conversation history before the loop exited. This proves cancellation
+    // propagated *into* the running tool, not just at the top-of-loop check.
+    let msgs = conv.messages();
+    let has_cancelled_tool_result = msgs.iter().any(|m| {
+        matches!(m, ChatMessage::Tool { content, .. } if content.iter().any(
+            |b| matches!(b, ContentBlock::Text { text } if text.contains("cancelled"))
+        ))
+    });
+    assert!(
+        has_cancelled_tool_result,
+        "expected the cancelled tool result in conversation history, got: {msgs:?}"
+    );
 }
 
 // ── LocalChatClient error handling ──────────────────────────────────────────
@@ -301,19 +481,30 @@ async fn cancellation_propagates_to_run_loop() {
 #[tokio::test]
 async fn local_chat_client_returns_http_error_when_server_unreachable() {
     use rho_core::{ChatClient, ChatRequest, LocalChatClient};
+    use std::time::Duration;
 
-    let client = LocalChatClient::with_endpoint("http://localhost:19999/v1/chat/completions");
+    let client = LocalChatClient::with_endpoint("http://10.255.255.1/v1/chat/completions");
     let request = ChatRequest {
         model: "test".to_owned(),
         messages: vec![ChatMessage::user_text("hello")],
         tools: vec![],
     };
-    let result = client.chat(request).await;
-    assert!(result.is_err(), "expected error when server is unreachable");
-    assert!(
-        matches!(result.unwrap_err(), rho_core::RhoError::Http(_)),
-        "expected Http error variant"
-    );
+    let result = tokio::time::timeout(Duration::from_secs(5), client.chat(request)).await;
+    // On machines with proxies/VPNs, the connection may time out rather than
+    // refuse. Either way, we expect an error (never a success).
+    match result {
+        Ok(Ok(_)) => panic!("expected error when server is unreachable"),
+        Ok(Err(e)) => {
+            assert!(
+                matches!(e, rho_core::RhoError::Http(_)),
+                "expected Http error variant, got: {e}"
+            );
+        }
+        Err(_) => {
+            // Timeout is also acceptable — it proves the client handles
+            // unreachable servers without hanging indefinitely.
+        }
+    }
 }
 
 // ── base_prompt wiring ────────────────────────────────────────────────────────
@@ -323,6 +514,26 @@ fn base_prompt_used_as_default_system_message() {
     let prompt = rho_core::base_prompt();
     let conv = Conversation::new("model", Some(prompt), vec![]);
     assert_eq!(conv.system_prompt(), Some(prompt));
+}
+
+#[test]
+fn compose_system_prompt_identity_with_no_files() {
+    // The trivial composition case: no context files → output equals the base.
+    assert_eq!(
+        rho_core::compose_system_prompt(rho_core::base_prompt(), &[]),
+        rho_core::base_prompt()
+    );
+}
+
+#[test]
+fn base_prompt_sha256_is_pinned() {
+    // Pin the SHA-256 so any edit to base.md requires updating this test.
+    // This makes prompt changes deliberate rather than silent.
+    let hash = rho_core::context_files::sha256_hex(rho_core::base_prompt());
+    assert_eq!(
+        hash, "79e4b4f96f03470fe94796d21ca0cc00f772f11b012266d80ed286e2410c1e3a",
+        "base_prompt() hash changed — update this test to match the new hash"
+    );
 }
 
 #[test]

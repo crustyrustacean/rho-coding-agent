@@ -11,6 +11,7 @@ use rho_core::{
     sandbox::SandboxRoot,
     tool::CancellationToken,
 };
+use rho_tools::register_all;
 use std::io::{self, BufRead, Write};
 
 // ── REPL approval gate ────────────────────────────────────────────────────────
@@ -56,10 +57,6 @@ struct Cli {
     /// Project root / sandbox root (defaults to the current directory).
     #[arg(long, default_value = ".")]
     root: std::path::PathBuf,
-
-    /// Disable file sandbox enforcement (not recommended).
-    #[arg(long, hide = true)]
-    no_sandbox: bool,
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -77,14 +74,8 @@ async fn main() -> Result<()> {
     })?;
 
     // --- Tool registry ---
-    let registry = ToolRegistry::new();
-    // (rho-tools registers ReadFile, WriteFile, RunCommand — wired via workspace binary)
-    // For Phase 1b we keep the registry empty here; the binary crate will be
-    // extracted in a later phase. The sandbox is available but tools require the
-    // rho-tools crate which cannot depend on rho-core (circular).
-    // Tools are tested directly in rho-tools.
-    let _ = sandbox; // suppress unused warning until tool wiring lands
-    let _ = cli.no_sandbox;
+    let mut registry = ToolRegistry::new();
+    register_all(&mut registry, sandbox.clone());
 
     // --- Project context files ---
     let system_prompt = if let Some(custom) = &cli.system {

@@ -131,7 +131,17 @@ impl Default for AgentConfig {
 /// assignments are intentional stubs: Phase 4 will attach a state-change
 /// channel here so the TUI can render live status. The lints are suppressed
 /// until that wiring lands — do not remove the assignments.
-// Phase 4 stub: state assignments are not yet consumed but must not be removed.
+///
+/// # Phase 4 cleanup
+///
+/// TODO(Phase 4): Refactor the loop body into `state = step(state, event)?`
+/// where `step` is a free function that pattern-matches on the current state
+/// and returns the next one. This gives:
+/// - Testable individual transitions (no need to run the full loop)
+/// - No `#[allow(unused_assignments)]` — state is consumed by the next call
+/// - Clean surface for the state-change channel (emit after each `step`)
+///
+/// The current imperative structure is correct and sufficient for Phase 2.
 #[allow(unused_variables, unused_assignments)]
 pub async fn run_loop(
     conversation: &mut Conversation,

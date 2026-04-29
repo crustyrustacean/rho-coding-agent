@@ -74,28 +74,22 @@ impl Tool for RunCommand {
             .spawn()
             .map_err(|e| anyhow::anyhow!("run_command: failed to spawn `{shell}`: {e}"))?;
 
-        // Spawn a task that kills the child if the token is cancelled.
-        let cancel_clone = cancel.clone();
         let child_id = child.id();
-        let _guard = tokio::spawn(async move {
-            loop {
-                if cancel_clone.is_cancelled() {
-                    if let Some(id) = child_id {
-                        let _ = Command::new("taskkill")
-                            .args(["/PID", &id.to_string(), "/F"])
-                            .output()
-                            .await;
-                    }
-                    return;
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            }
-        });
 
-        let output = child
-            .wait_with_output()
-            .await
-            .map_err(|e| anyhow::anyhow!("run_command: failed to wait for process: {e}"))?;
+        let output = tokio::select! {
+            result = child.wait_with_output() => {
+                result.map_err(|e| anyhow::anyhow!("run_command: failed to wait for process: {e}"))?
+            }
+            () = cancel.cancelled() => {
+                if let Some(id) = child_id {
+                    let _ = Command::new("taskkill")
+                        .args(["/PID", &id.to_string(), "/F"])
+                        .output()
+                        .await;
+                }
+                return Ok(ToolOutcome::Immediate(ToolResult::error("cancelled")));
+            }
+        };
 
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();

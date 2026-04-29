@@ -37,8 +37,42 @@ impl Default for TokenBudget {
 }
 
 /// Approximate token count of a message using a character-count heuristic (≈ 4 chars/token).
+///
+/// Walks the message structure directly, summing string lengths without
+/// serializing to JSON. Falls back to 256 tokens (one message's worth)
+/// if the message somehow contains no text.
 fn approximate_tokens(msg: &ChatMessage) -> usize {
-    serde_json::to_string(msg).map_or(256, |s| s.len().div_ceil(4))
+    use crate::message::ContentBlock;
+
+    let mut chars = 0usize;
+
+    // Approximate overhead from role, JSON keys, and separators.
+    // Each message adds ~20 chars of structural JSON.
+    chars += 20;
+
+    match msg {
+        ChatMessage::System { content }
+        | ChatMessage::User { content }
+        | ChatMessage::Assistant { content, .. } => {
+            for block in content {
+                let ContentBlock::Text { text } = block;
+                chars += text.len();
+            }
+        }
+        ChatMessage::Tool {
+            tool_call_id,
+            content,
+        } => {
+            chars += tool_call_id.len() + 10; // tool_call_id + key overhead
+            for block in content {
+                let ContentBlock::Text { text } = block;
+                chars += text.len();
+            }
+        }
+    }
+
+    let tokens = chars.div_ceil(4);
+    tokens.max(1) // at least 1 token per message
 }
 
 /// Context window management interface.

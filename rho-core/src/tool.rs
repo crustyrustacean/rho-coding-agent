@@ -5,39 +5,18 @@ use crate::message::ModelToolCall;
 use crate::newtypes::ToolName;
 use crate::schema::ToolSchema;
 use async_trait::async_trait;
-use std::sync::Arc;
 
 // ── CancellationToken ─────────────────────────────────────────────────────────
 
 /// A cancellation signal passed to [`Tool::execute`].
 ///
-/// Cheap to clone (Arc-backed). Tools should check [`is_cancelled`] at I/O
-/// boundaries and return early when set.
+/// Re-exported from `tokio_util::sync::CancellationToken`. Provides both
+/// synchronous [`is_cancelled`] polling and an `await`-able [`cancelled()`]
+/// future that integrates with `tokio::select!`.
 ///
 /// [`is_cancelled`]: CancellationToken::is_cancelled
-#[derive(Clone, Default)]
-pub struct CancellationToken {
-    /// Shared flag set to `true` when cancellation is signalled.
-    cancelled: Arc<std::sync::atomic::AtomicBool>,
-}
-
-impl CancellationToken {
-    /// Create a new, uncancelled token.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Signal cancellation.
-    pub fn cancel(&self) {
-        self.cancelled
-            .store(true, std::sync::atomic::Ordering::SeqCst);
-    }
-
-    /// Returns `true` if cancellation has been signalled.
-    pub fn is_cancelled(&self) -> bool {
-        self.cancelled.load(std::sync::atomic::Ordering::SeqCst)
-    }
-}
+/// [`cancelled()`]: tokio_util::sync::CancellationToken::cancelled
+pub use tokio_util::sync::CancellationToken;
 
 // ── ToolRisk ──────────────────────────────────────────────────────────────────
 

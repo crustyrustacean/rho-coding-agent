@@ -77,7 +77,7 @@ pub fn test(release: bool, extra_args: &[String]) -> Result<()> {
 
 /// `cargo xtask run [-- <args>...]` — run the main binary.
 pub fn run(extra_args: &[String]) -> Result<()> {
-    let mut args: Vec<&str> = vec!["run", "-p", "rho-core"];
+    let mut args: Vec<&str> = vec!["run", "-p", "rho"];
     if !extra_args.is_empty() {
         args.push("--");
         args.extend(extra_args.iter().map(String::as_str));

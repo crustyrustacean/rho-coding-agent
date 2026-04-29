@@ -143,9 +143,7 @@ impl Tool for WriteFile {
         }
 
         // Create parent directories if needed.
-        if let Some(parent) = safe_path.parent()
-            && !parent.as_os_str().is_empty()
-        {
+        if let Some(parent) = safe_path.parent() {
             tokio::fs::create_dir_all(parent).await.map_err(|e| {
                 anyhow::anyhow!("write_file: failed to create directories for `{path_str}`: {e}")
             })?;
