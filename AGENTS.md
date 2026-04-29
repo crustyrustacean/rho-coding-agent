@@ -34,12 +34,13 @@ rho-core/           # Core library
     response.rs     # `ModelResponse`, `FinishReason`, `ModelUsage`
     sandbox.rs      # `SandboxRoot` — file sandbox validation
     schema.rs       # `ToolSchema` — wire-format tool definitions
+    shell.rs        # `ShellExecutor` trait, `ShellOutput` — shell execution abstraction
     tool.rs         # `Tool` trait, `ToolRegistry`, `ToolResult`, `ToolRisk`, `CancellationToken`
 rho-tools/          # Built-in tool implementations
   src/
     lib.rs          # `register_all()`
     files.rs        # `ReadFile`, `WriteFile`
-    shell.rs        # `RunCommand` (PowerShell)
+    shell.rs        # `PowerShellExecutor`, `RunCommand` (delegates to `ShellExecutor` trait)
 rho-test-helpers/   # Shared test infrastructure (dev-only)
   src/
     lib.rs          # `MockChatClient`, response builders, sandbox/trust helpers
@@ -102,6 +103,9 @@ The agent uses multiple defense-in-depth layers:
 | `ToolResult` | Immediate result of a tool execution (`output`, `is_error`) |
 | `ToolOutcome` | `Immediate(ToolResult)` or `Streamed(Receiver)` (streaming lands in Phase 4) |
 | `CancellationToken` | Cooperative cancellation signal (re-exported from `tokio_util::sync`) |
+| `ShellExecutor` | Trait: interface for executing shell commands |
+| `ShellOutput` | Structured shell output: `stdout`, `stderr`, `exit_code` |
+| `PowerShellExecutor` | Default `ShellExecutor` implementation (lives in `rho-tools`) |
 | `ApprovalPolicy` | Trait: decides whether a tool call needs human confirmation |
 | `ApprovalGate` | Trait: asks the user for confirmation at runtime |
 | `ChatClient` | Trait: sends `ChatRequest` and returns `ModelResponse` |

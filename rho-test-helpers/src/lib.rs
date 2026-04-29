@@ -4,6 +4,8 @@
 //!
 //! - [`MockChatClient`] — a [`ChatClient`] that returns canned [`ModelResponse`]
 //!   values and records every [`ChatRequest`] it receives.
+//! - [`MockShellExecutor`] — a [`ShellExecutor`] that returns canned [`ShellOutput`]
+//!   values and records every command it receives.
 //! - [`load_fixture`] — load a JSON fixture file from `tests/fixtures/`.
 //!
 //! Add this crate as a `dev-dependency`; it is never published.
@@ -11,14 +13,17 @@
 //! [`ChatClient`]: rho_core::ChatClient
 //! [`ChatRequest`]: rho_core::ChatRequest
 //! [`ModelResponse`]: rho_core::ModelResponse
+//! [`ShellExecutor`]: rho_core::ShellExecutor
+//! [`ShellOutput`]: rho_core::ShellOutput
 
 use async_trait::async_trait;
 use rho_core::{
-    ChatClient, ChatRequest, ModelResponse, RhoError, SandboxRoot, TrustStore,
-    approval::ApprovalGate, message::ModelToolCall, tool::ToolRisk,
+    ChatClient, ChatRequest, ModelResponse, RhoError, SandboxRoot, ShellExecutor, ShellOutput,
+    TrustStore, approval::ApprovalGate, message::ModelToolCall, tool::ToolRisk,
 };
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 pub use tempfile::TempDir;
 
 // ── MockChatClient ────────────────────────────────────────────────────────────
@@ -88,6 +93,65 @@ impl ChatClient for MockChatClient {
             "MockChatClient: no more canned results — check test setup"
         );
         items.remove(0)
+    }
+}
+
+// ── MockShellExecutor ───────────────────────────────────────────────────────
+
+/// A [`ShellExecutor`] that returns canned [`ShellOutput`] values.
+///
+/// Records every command it receives so tests can inspect what the tool
+/// layer asked the shell to run. Used by `RunCommand` unit tests that need
+/// to exercise argument parsing and result formatting without spawning a
+/// real shell.
+///
+/// # Panics
+///
+/// Panics if called more times than there are queued outputs. This is
+/// intentional — an under-queued mock is a test-setup bug.
+#[derive(Clone)]
+pub struct MockShellExecutor {
+    /// Queued outputs returned in order.
+    outputs: Arc<Mutex<Vec<ShellOutput>>>,
+    /// All commands received, in order.
+    commands: Arc<Mutex<Vec<String>>>,
+}
+
+impl MockShellExecutor {
+    /// Create a mock executor that returns the given outputs in sequence.
+    pub fn new(outputs: Vec<ShellOutput>) -> Self {
+        Self {
+            outputs: Arc::new(Mutex::new(outputs)),
+            commands: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    /// All commands that have been sent to this executor, in order.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal mutex is poisoned.
+    pub fn commands(&self) -> Vec<String> {
+        self.commands.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl ShellExecutor for MockShellExecutor {
+    async fn execute(
+        &self,
+        command: &str,
+        _working_dir: &Path,
+        _timeout: Option<Duration>,
+        _cancel: rho_core::CancellationToken,
+    ) -> rho_core::Result<ShellOutput> {
+        self.commands.lock().unwrap().push(command.to_owned());
+        let mut outputs = self.outputs.lock().unwrap();
+        assert!(
+            !outputs.is_empty(),
+            "MockShellExecutor: no more canned outputs — check test setup"
+        );
+        Ok(outputs.remove(0))
     }
 }
 

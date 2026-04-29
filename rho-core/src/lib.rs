@@ -10,6 +10,7 @@
 //! | [`newtypes`] | [`FilePath`], [`ToolName`], [`ToolCallId`], [`DiagnosticCode`] |
 //! | [`message`] | [`ChatMessage`], [`ContentBlock`], [`ModelToolCall`] |
 //! | [`schema`] | [`ToolSchema`] — wire-format tool definitions for API requests |
+//! | [`shell`] | [`ShellExecutor`] trait, [`ShellOutput`] — shell execution abstraction |
 //! | [`request`] | [`ChatRequest`] |
 //! | [`response`] | [`ModelResponse`], [`FinishReason`], etc. |
 //! | [`tool`] | [`Tool`] trait, [`ToolRegistry`], [`ToolRisk`], [`ToolResult`], [`CancellationToken`] |
@@ -71,6 +72,7 @@ pub mod request;
 pub mod response;
 pub mod sandbox;
 pub mod schema;
+pub mod shell;
 pub mod tool;
 
 // Convenience re-exports for the most commonly used types
@@ -89,4 +91,5 @@ pub use request::ChatRequest;
 pub use response::{FinishReason, ModelChoice, ModelResponse, ModelUsage};
 pub use sandbox::SandboxRoot;
 pub use schema::ToolSchema;
+pub use shell::{ShellExecutor, ShellOutput};
 pub use tool::{CancellationToken, Tool, ToolOutcome, ToolRegistry, ToolResult, ToolRisk};
