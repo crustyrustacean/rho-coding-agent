@@ -163,6 +163,43 @@ fn executor_reports_available_shell() {
     );
 }
 
+// ── Path normalization ───────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn normalizes_forward_slashes_in_paths() {
+    let executor = PowerShellExecutor::new();
+    // Use a path with forward slashes — should be normalized to backslashes.
+    let output = executor
+        .execute(
+            "Write-Output 'src/main.rs'",
+            Path::new("."),
+            None,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("execution should succeed");
+
+    // The output should show the path with backslashes.
+    assert_eq!(output.exit_code, 0);
+    assert!(
+        output.stdout.contains("src\\main.rs"),
+        "expected normalized path in output: {}",
+        output.stdout.trim()
+    );
+}
+
+#[tokio::test]
+async fn preserves_division_operator() {
+    let executor = PowerShellExecutor::new();
+    // `10 / 2` should NOT be normalized — spaces around `/` mean division.
+    let output = executor
+        .execute("10 / 2", Path::new("."), None, CancellationToken::new())
+        .await
+        .expect("execution should succeed");
+
+    assert_eq!(output.exit_code, 0);
+}
+
 // ── PowerShell-specific features ──────────────────────────────────────────────
 
 #[tokio::test]

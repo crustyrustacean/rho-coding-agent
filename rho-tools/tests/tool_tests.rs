@@ -7,7 +7,7 @@ use rho_core::{
     SandboxRoot, ShellOutput,
     tool::{CancellationToken, Tool, ToolOutcome},
 };
-use rho_tools::{ReadFile, RunCommand, WriteFile};
+use rho_tools::{CommandDenylist, ReadFile, RunCommand, WriteFile};
 use std::fs;
 use tempfile::TempDir;
 
@@ -169,6 +169,7 @@ async fn run_command_delegates_to_executor() {
     let tool = RunCommand {
         root,
         executor: Box::new(mock.clone()),
+        denylist: CommandDenylist::default_powershell(),
     };
 
     let args = serde_json::json!({ "command": "Get-Date" });
@@ -193,6 +194,7 @@ async fn run_command_formats_stderr_in_output() {
     let tool = RunCommand {
         root,
         executor: Box::new(mock),
+        denylist: CommandDenylist::default_powershell(),
     };
 
     let args = serde_json::json!({ "command": "bad-command" });
@@ -212,6 +214,7 @@ async fn run_command_returns_error_for_missing_command_argument() {
     let tool = RunCommand {
         root,
         executor: Box::new(mock),
+        denylist: CommandDenylist::default_powershell(),
     };
 
     let result = tool
@@ -227,7 +230,8 @@ async fn run_command_is_risk_destructive() {
     assert_eq!(
         RunCommand {
             root,
-            executor: Box::new(mock)
+            executor: Box::new(mock),
+            denylist: CommandDenylist::default_powershell(),
         }
         .risk(),
         rho_core::ToolRisk::Destructive
@@ -242,6 +246,7 @@ async fn run_command_returns_cancelled_when_token_is_set() {
     let tool = RunCommand {
         root,
         executor: Box::new(mock),
+        denylist: CommandDenylist::default_powershell(),
     };
 
     let cancel = CancellationToken::new();
@@ -250,6 +255,216 @@ async fn run_command_returns_cancelled_when_token_is_set() {
     let args = serde_json::json!({ "command": "echo hi" });
     let outcome = tool.execute(args, cancel).await.unwrap();
     assert!(immediate_is_error(&outcome));
+}
+
+// ── CommandDenylist ──────────────────────────────────────────────────────────
+
+#[test]
+fn denylist_blocks_remove_item() {
+    let denylist = CommandDenylist::default_powershell();
+    assert!(denylist.check("Remove-Item foo.txt").is_some());
+}
+
+#[test]
+fn denylist_blocks_invoke_webrequest() {
+    let denylist = CommandDenylist::default_powershell();
+    assert!(
+        denylist
+            .check("Invoke-WebRequest https://evil.com")
+            .is_some()
+    );
+}
+
+#[test]
+fn denylist_blocks_invoke_restmethod() {
+    let denylist = CommandDenylist::default_powershell();
+    assert!(
+        denylist
+            .check("Invoke-RestMethod https://evil.com")
+            .is_some()
+    );
+}
+
+#[test]
+fn denylist_blocks_start_process() {
+    let denylist = CommandDenylist::default_powershell();
+    assert!(denylist.check("Start-Process notepad").is_some());
+}
+
+#[test]
+fn denylist_blocks_new_service() {
+    let denylist = CommandDenylist::default_powershell();
+    assert!(denylist.check("New-Service -Name evil").is_some());
+}
+
+#[test]
+fn denylist_blocks_set_executionpolicy() {
+    let denylist = CommandDenylist::default_powershell();
+    assert!(denylist.check("Set-ExecutionPolicy Unrestricted").is_some());
+}
+
+#[test]
+fn denylist_blocks_recurse_force_combo() {
+    let denylist = CommandDenylist::default_powershell();
+    // The -Recurse -Force combination is denied regardless of command.
+    assert!(denylist.check("Get-ChildItem -Recurse -Force").is_some());
+}
+
+#[test]
+fn denylist_blocks_force_recurse_combo() {
+    let denylist = CommandDenylist::default_powershell();
+    // Order doesn't matter: -Force -Recurse is also denied.
+    assert!(denylist.check("Get-ChildItem -Force -Recurse").is_some());
+}
+
+#[test]
+fn denylist_allows_safe_commands() {
+    let denylist = CommandDenylist::default_powershell();
+    assert!(denylist.check("Get-ChildItem").is_none());
+    assert!(denylist.check("Write-Output 'hello'").is_none());
+    assert!(denylist.check("Get-Content file.txt").is_none());
+}
+
+#[test]
+fn denylist_is_case_insensitive() {
+    let denylist = CommandDenylist::default_powershell();
+    assert!(denylist.check("remove-item foo").is_some());
+    assert!(denylist.check("REMOVE-ITEM foo").is_some());
+    assert!(denylist.check("Remove-Item foo").is_some());
+}
+
+#[test]
+fn denylist_reason_mentions_denied_command() {
+    let denylist = CommandDenylist::default_powershell();
+    let reason = denylist.check("Remove-Item foo").unwrap();
+    assert!(
+        reason.to_lowercase().contains("remove-item"),
+        "reason should mention the denied command: {reason}"
+    );
+}
+
+#[test]
+fn denylist_recurse_without_force_is_allowed() {
+    let denylist = CommandDenylist::default_powershell();
+    assert!(denylist.check("Get-ChildItem -Recurse").is_none());
+}
+
+#[test]
+fn denylist_force_without_recurse_is_allowed() {
+    let denylist = CommandDenylist::default_powershell();
+    assert!(denylist.check("Stop-Process -Force").is_none());
+}
+
+// ── RunCommand denylist enforcement ────────────────────────────────────────────
+
+#[tokio::test]
+async fn run_command_denies_blacklisted_command() {
+    let (_dir, root) = setup();
+
+    let mock = MockShellExecutor::new(vec![]);
+    let tool = RunCommand {
+        root,
+        executor: Box::new(mock.clone()),
+        denylist: CommandDenylist::default_powershell(),
+    };
+
+    let args = serde_json::json!({ "command": "Remove-Item foo.txt" });
+    let outcome = tool.execute(args, CancellationToken::new()).await.unwrap();
+
+    assert!(immediate_is_error(&outcome));
+    let output = immediate_output(&outcome);
+    assert!(
+        output.to_lowercase().contains("denied"),
+        "output should mention denial: {output}"
+    );
+
+    // The executor should never have been called.
+    assert!(mock.commands().is_empty());
+}
+
+#[tokio::test]
+async fn run_command_allows_safe_command() {
+    let (_dir, root) = setup();
+
+    let mock = MockShellExecutor::new(vec![ShellOutput::new("ok", "", 0)]);
+    let tool = RunCommand {
+        root,
+        executor: Box::new(mock.clone()),
+        denylist: CommandDenylist::default_powershell(),
+    };
+
+    let args = serde_json::json!({ "command": "Get-ChildItem" });
+    let outcome = tool.execute(args, CancellationToken::new()).await.unwrap();
+
+    assert!(!immediate_is_error(&outcome));
+    assert_eq!(mock.commands().len(), 1);
+}
+
+// ── Working directory escape detection ─────────────────────────────────────────
+
+#[tokio::test]
+async fn run_command_warns_on_cd_with_dotdot() {
+    let (_dir, root) = setup();
+
+    let mock = MockShellExecutor::new(vec![ShellOutput::new("ok", "", 0)]);
+    let tool = RunCommand {
+        root,
+        executor: Box::new(mock),
+        denylist: CommandDenylist::default_powershell(),
+    };
+
+    let args = serde_json::json!({ "command": "cd .." });
+    let outcome = tool.execute(args, CancellationToken::new()).await.unwrap();
+
+    // The command should still execute (warning, not denial),
+    // but the output should include a warning prefix.
+    let output = immediate_output(&outcome);
+    assert!(
+        output.contains("[WARNING"),
+        "output should contain working directory warning: {output}"
+    );
+}
+
+#[tokio::test]
+async fn run_command_warns_on_set_location_with_dotdot() {
+    let (_dir, root) = setup();
+
+    let mock = MockShellExecutor::new(vec![ShellOutput::new("ok", "", 0)]);
+    let tool = RunCommand {
+        root,
+        executor: Box::new(mock),
+        denylist: CommandDenylist::default_powershell(),
+    };
+
+    let args = serde_json::json!({ "command": "Set-Location .." });
+    let outcome = tool.execute(args, CancellationToken::new()).await.unwrap();
+
+    let output = immediate_output(&outcome);
+    assert!(
+        output.contains("[WARNING"),
+        "output should contain working directory warning: {output}"
+    );
+}
+
+#[tokio::test]
+async fn run_command_no_warning_for_cd_within_sandbox() {
+    let (_dir, root) = setup();
+
+    let mock = MockShellExecutor::new(vec![ShellOutput::new("ok", "", 0)]);
+    let tool = RunCommand {
+        root,
+        executor: Box::new(mock),
+        denylist: CommandDenylist::default_powershell(),
+    };
+
+    let args = serde_json::json!({ "command": "cd src" });
+    let outcome = tool.execute(args, CancellationToken::new()).await.unwrap();
+
+    let output = immediate_output(&outcome);
+    assert!(
+        !output.contains("[WARNING"),
+        "output should not contain working directory warning: {output}"
+    );
 }
 
 // ── Cancellation ──────────────────────────────────────────────────────────────

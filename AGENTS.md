@@ -106,6 +106,7 @@ The agent uses multiple defense-in-depth layers:
 | `ShellExecutor` | Trait: interface for executing shell commands |
 | `ShellOutput` | Structured shell output: `stdout`, `stderr`, `exit_code` |
 | `PowerShellExecutor` | Default `ShellExecutor` implementation (lives in `rho-tools`) |
+| `CommandDenylist` | Dangerous command denylist for `RunCommand` (lives in `rho-tools`) |
 | `ApprovalPolicy` | Trait: decides whether a tool call needs human confirmation |
 | `ApprovalGate` | Trait: asks the user for confirmation at runtime |
 | `ChatClient` | Trait: sends `ChatRequest` and returns `ModelResponse` |
