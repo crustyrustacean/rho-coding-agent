@@ -531,7 +531,7 @@ fn base_prompt_sha256_is_pinned() {
     // This makes prompt changes deliberate rather than silent.
     let hash = rho_core::context_files::sha256_hex(rho_core::base_prompt());
     assert_eq!(
-        hash, "c600c6c6c80ac6eb07da80db1677dfec1ad13670b61b117b23fa44c049b003ff",
+        hash, "79e4b4f96f03470fe94796d21ca0cc00f772f11b012266d80ed286e2410c1e3a",
         "base_prompt() hash changed — update this test to match the new hash"
     );
 }
