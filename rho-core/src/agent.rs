@@ -114,10 +114,13 @@ impl Default for AgentConfig {
 /// - `Thinking`: send conversation to model, with retry on transient errors.
 /// - `AwaitingApproval`: consult `config.approval_policy`; if required, ask `gate`.
 ///   On denial, feed a synthetic denial result back and return to `Thinking`.
-/// - `ExecutingTool`: run the tool, append the result, return to `Thinking`.
+/// - `ExecutingTool`: run the tool, append the result. When multiple tool calls
+///   are present, each is executed sequentially before returning to `Thinking`.
 /// - `Idle`: model replied with text — done.
 ///
-/// Phase 1a/1b acts on the first tool call only; all calls are handled in Phase 2.
+/// All tool calls in a single model response are executed sequentially; each result
+/// is appended before re-sending to the model. Parallel execution is a future
+/// optimisation.
 ///
 /// # Errors
 ///
@@ -184,40 +187,46 @@ pub async fn run_loop(
             }
 
             AssistantResponse::ToolCalls(calls) => {
-                // Phase 1a/1b: act on the first tool call only.
-                // Phase 2 will iterate the full Vec.
-                let call = calls
-                    .into_iter()
-                    .next()
-                    .ok_or_else(|| RhoError::Unexpected(anyhow::anyhow!("empty tool_calls")))?;
-
-                let call_id = ToolCallId::new(call.id.to_string());
-                let risk = registry
-                    .get_by_name(&call.function.name)
-                    .map_or(crate::tool::ToolRisk::Destructive, Tool::risk);
-
-                // ── AwaitingApproval ──────────────────────────────────────────
-                if config
-                    .approval_policy
-                    .requires_approval(&call.function.name, risk)
-                {
-                    state = AgentState::AwaitingApproval;
-                    let approved = gate.request_approval(&call, risk).await;
-                    if !approved {
-                        conversation.push_tool_result(
-                            call_id,
-                            &ToolResult::error("Tool call denied by user."),
-                        );
-                        state = AgentState::Thinking;
-                        continue;
-                    }
+                if calls.is_empty() {
+                    return Err(RhoError::Unexpected(anyhow::anyhow!("empty tool_calls")));
                 }
 
-                // ── ExecutingTool ─────────────────────────────────────────────
-                state = AgentState::ExecutingTool;
-                let result = registry.execute(&call, cancel.clone()).await?;
-                conversation.push_tool_result(call_id, &result);
-                state = AgentState::Thinking;
+                // Execute each tool call sequentially. All results are appended
+                // before the conversation is re-sent to the model on the next
+                // loop iteration.
+                for call in calls {
+                    if cancel.is_cancelled() {
+                        return Err(RhoError::Unexpected(anyhow::anyhow!("cancelled")));
+                    }
+
+                    let call_id = ToolCallId::new(call.id.to_string());
+                    let risk = registry
+                        .get_by_name(&call.function.name)
+                        .map_or(crate::tool::ToolRisk::Destructive, Tool::risk);
+
+                    // ── AwaitingApproval ──────────────────────────────────────
+                    if config
+                        .approval_policy
+                        .requires_approval(&call.function.name, risk)
+                    {
+                        state = AgentState::AwaitingApproval;
+                        let approved = gate.request_approval(&call, risk).await;
+                        if !approved {
+                            conversation.push_tool_result(
+                                call_id,
+                                &ToolResult::error("Tool call denied by user."),
+                            );
+                            state = AgentState::Thinking;
+                            continue;
+                        }
+                    }
+
+                    // ── ExecutingTool ─────────────────────────────────────────
+                    state = AgentState::ExecutingTool;
+                    let result = registry.execute(&call, cancel.clone()).await?;
+                    conversation.push_tool_result(call_id, &result);
+                    state = AgentState::Thinking;
+                }
             }
         }
     }

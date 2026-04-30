@@ -236,6 +236,57 @@ pub fn tool_call_response(
     serde_json::from_value(json).expect("tool_call_response: invalid fixture")
 }
 
+/// Build a minimal [`ModelResponse`] that requests multiple tool calls.
+///
+/// Each tuple is `(call_id, tool_name, arguments)`.
+///
+/// # Panics
+///
+/// Panics if the internal fixture JSON is malformed (should never happen).
+pub fn multi_tool_call_response(
+    calls: Vec<(impl Into<String>, impl Into<String>, impl Into<String>)>,
+) -> ModelResponse {
+    let tool_calls: Vec<serde_json::Value> = calls
+        .into_iter()
+        .map(|(id, name, args)| {
+            serde_json::json!({
+                "id": id.into(),
+                "type": "function",
+                "function": {
+                    "name": name.into(),
+                    "arguments": args.into()
+                }
+            })
+        })
+        .collect();
+
+    let json = serde_json::json!({
+        "id": "mock-id",
+        "object": "chat.completion",
+        "created": 0,
+        "model": "mock-model",
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": "",
+                "reasoning_content": "",
+                "tool_calls": tool_calls
+            },
+            "logprobs": null,
+            "finish_reason": "tool_calls"
+        }],
+        "usage": {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0
+        },
+        "stats": {},
+        "system_fingerprint": ""
+    });
+    serde_json::from_value(json).expect("multi_tool_call_response: invalid fixture")
+}
+
 // ── Fixture loader ────────────────────────────────────────────────────────────
 
 /// Load a fixture file relative to the calling crate's `tests/fixtures/` directory.

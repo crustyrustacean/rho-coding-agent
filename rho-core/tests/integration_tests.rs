@@ -11,7 +11,8 @@ use rho_core::{
     tool::{CancellationToken, Tool},
 };
 use rho_test_helpers::{
-    AutoApproveGate, MockChatClient, load_fixture, text_response, tool_call_response,
+    AutoApproveGate, MockChatClient, load_fixture, multi_tool_call_response, text_response,
+    tool_call_response,
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -142,6 +143,453 @@ async fn assistant_tool_call_message_persisted_before_tool_result() {
             _ => {}
         }
     }
+}
+
+// ── Task 5: multi-tool-call handling ─────────────────────────────────────────
+
+#[tokio::test]
+async fn multiple_tool_calls_executed_sequentially() {
+    // Model requests two tool calls in one response, then returns text.
+    let client = MockChatClient::new(vec![
+        multi_tool_call_response(vec![("call_1", "echo_a", "{}"), ("call_2", "echo_b", "{}")]),
+        text_response("all done"),
+    ]);
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Box::new(EchoTool {
+        name: "echo_a",
+        response: "result_a",
+    }));
+    registry.register(Box::new(EchoTool {
+        name: "echo_b",
+        response: "result_b",
+    }));
+
+    let config = AgentConfig::default();
+    let mut conv = Conversation::new("mock", None, registry.tool_schemas());
+
+    let result = run_loop(
+        &mut conv,
+        "do two things",
+        &client,
+        &registry,
+        &config,
+        CancellationToken::new(),
+        &AutoApproveGate,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result, "all done");
+
+    // The second request must contain both tool results after the assistant message.
+    let requests = client.requests();
+    assert_eq!(requests.len(), 2, "expected exactly two requests");
+
+    let second = &requests[1];
+    let msgs = &second.messages;
+
+    // Both tool results must be present.
+    let tool_results: Vec<_> = msgs
+        .iter()
+        .filter(|m| matches!(m, ChatMessage::Tool { .. }))
+        .collect();
+    assert_eq!(
+        tool_results.len(),
+        2,
+        "expected 2 tool results, got {}: {tool_results:?}",
+        tool_results.len()
+    );
+
+    // Verify the content of each tool result.
+    let result_a = tool_results.iter().find(|m| {
+        if let ChatMessage::Tool { content, .. } = m {
+            content
+                .iter()
+                .any(|b| matches!(b, ContentBlock::Text { text } if text == "result_a"))
+        } else {
+            false
+        }
+    });
+    let result_b = tool_results.iter().find(|m| {
+        if let ChatMessage::Tool { content, .. } = m {
+            content
+                .iter()
+                .any(|b| matches!(b, ContentBlock::Text { text } if text == "result_b"))
+        } else {
+            false
+        }
+    });
+    assert!(result_a.is_some(), "result_a not found in tool results");
+    assert!(result_b.is_some(), "result_b not found in tool results");
+}
+
+#[tokio::test]
+async fn multi_tool_call_persistence_invariant() {
+    // Structural invariant: every Tool message must be preceded by an
+    // Assistant message containing the matching tool_call_id.
+    // With multiple tool calls in one response, all tool results must
+    // reference IDs from the same assistant message.
+    let client = MockChatClient::new(vec![
+        multi_tool_call_response(vec![
+            ("call_1", "echo_tool", "{}"),
+            ("call_2", "echo_tool", "{}"),
+        ]),
+        text_response("done"),
+    ]);
+
+    let registry = echo_registry("echo_tool", "echo");
+    let config = AgentConfig::default();
+    let mut conv = Conversation::new("mock", None, registry.tool_schemas());
+
+    let _ = run_loop(
+        &mut conv,
+        "do two things",
+        &client,
+        &registry,
+        &config,
+        CancellationToken::new(),
+        &AutoApproveGate,
+    )
+    .await
+    .unwrap();
+
+    let requests = client.requests();
+    let second = &requests[1];
+    let msgs = &second.messages;
+
+    // Collect all tool_call_ids from the assistant message(s).
+    let mut prev_was_assistant_with_call = false;
+    let mut prev_call_ids: Vec<&str> = Vec::new();
+    for msg in msgs {
+        match msg {
+            ChatMessage::Assistant { tool_calls, .. } if !tool_calls.is_empty() => {
+                prev_was_assistant_with_call = true;
+                prev_call_ids = tool_calls.iter().map(|c| c.id.as_ref()).collect();
+            }
+            ChatMessage::Tool { tool_call_id, .. } => {
+                assert!(
+                    prev_was_assistant_with_call,
+                    "Tool message with call_id '{tool_call_id}' has no preceding Assistant message with tool_calls"
+                );
+                assert!(
+                    prev_call_ids.contains(&tool_call_id.as_ref()),
+                    "Tool message with call_id '{tool_call_id}' does not match any preceding tool_call_id: {prev_call_ids:?}"
+                );
+            }
+            ChatMessage::Assistant { .. } => {
+                prev_was_assistant_with_call = false;
+                prev_call_ids.clear();
+            }
+            _ => {}
+        }
+    }
+}
+
+#[tokio::test]
+async fn mixed_approval_with_multi_tool_call() {
+    // Model requests one read (auto-approved) and one write (needs approval, denied).
+    // The denied tool gets a denial message; the approved tool gets its result.
+    // The model then replies with text.
+    use rho_test_helpers::AutoDenyGate;
+
+    let client = MockChatClient::new(vec![
+        multi_tool_call_response(vec![
+            ("call_1", "read_tool", "{}"),
+            ("call_2", "write_tool", "{}"),
+        ]),
+        text_response("understood"),
+    ]);
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Box::new(EchoTool {
+        name: "read_tool",
+        response: "read_result",
+    }));
+    registry.register(Box::new(WriteEchoTool));
+
+    let config = AgentConfig::default(); // DefaultApprovalPolicy: Read auto, Write needs approval
+    let mut conv = Conversation::new("mock", None, registry.tool_schemas());
+
+    let result = run_loop(
+        &mut conv,
+        "read then write",
+        &client,
+        &registry,
+        &config,
+        CancellationToken::new(),
+        &AutoDenyGate, // deny all approval requests
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result, "understood");
+
+    // The second request must have both tool results:
+    // call_1 (read, auto-approved) → "read_result"
+    // call_2 (write, denied) → denial message
+    let requests = client.requests();
+    let second = &requests[1];
+    let tool_msgs: Vec<_> = second
+        .messages
+        .iter()
+        .filter(|m| matches!(m, ChatMessage::Tool { .. }))
+        .collect();
+    assert_eq!(
+        tool_msgs.len(),
+        2,
+        "expected 2 tool results, got {}",
+        tool_msgs.len()
+    );
+
+    // First tool result: read_tool executed (auto-approved despite AutoDenyGate)
+    if let ChatMessage::Tool {
+        content,
+        tool_call_id,
+    } = tool_msgs[0]
+    {
+        assert_eq!(
+            &**tool_call_id, "call_1",
+            "first tool result should be for call_1"
+        );
+        let text = match &content[0] {
+            ContentBlock::Text { text } => text.clone(),
+        };
+        assert_eq!(text, "read_result");
+    }
+
+    // Second tool result: write_tool denied
+    if let ChatMessage::Tool {
+        content,
+        tool_call_id,
+    } = tool_msgs[1]
+    {
+        assert_eq!(
+            &**tool_call_id, "call_2",
+            "second tool result should be for call_2"
+        );
+        let text = match &content[0] {
+            ContentBlock::Text { text } => text.clone(),
+        };
+        assert!(
+            text.to_lowercase().contains("denied"),
+            "denied tool result should mention denial: {text}"
+        );
+    }
+}
+
+/// A write-risk echo tool for testing approval policy.
+struct WriteEchoTool;
+
+#[async_trait::async_trait]
+impl Tool for WriteEchoTool {
+    fn name(&self) -> ToolName {
+        ToolName::from("write_tool")
+    }
+    fn description(&self) -> &'static str {
+        "write echo"
+    }
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object", "properties": {}})
+    }
+    fn risk(&self) -> ToolRisk {
+        ToolRisk::Write
+    }
+    async fn execute(
+        &self,
+        _arguments: serde_json::Value,
+        _cancel: CancellationToken,
+    ) -> rho_core::Result<ToolOutcome> {
+        Ok(ToolOutcome::Immediate(ToolResult::success("written")))
+    }
+}
+
+#[tokio::test]
+async fn all_tool_calls_denied_still_feeds_results_and_resends() {
+    // Model requests two write tools; both are denied.
+    // Both denial messages are appended, then conversation re-sent.
+    // Model replies with text.
+    use rho_test_helpers::AutoDenyGate;
+
+    let client = MockChatClient::new(vec![
+        multi_tool_call_response(vec![
+            ("call_1", "write_tool", "{}"),
+            ("call_2", "write_tool", "{}"),
+        ]),
+        text_response("okay, won't write"),
+    ]);
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Box::new(WriteEchoTool));
+
+    let config = AgentConfig::default();
+    let mut conv = Conversation::new("mock", None, registry.tool_schemas());
+
+    let result = run_loop(
+        &mut conv,
+        "write two files",
+        &client,
+        &registry,
+        &config,
+        CancellationToken::new(),
+        &AutoDenyGate,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result, "okay, won't write");
+
+    // Both tool results must be denial messages.
+    let requests = client.requests();
+    let tool_msgs: Vec<_> = requests[1]
+        .messages
+        .iter()
+        .filter(|m| matches!(m, ChatMessage::Tool { .. }))
+        .collect();
+    assert_eq!(tool_msgs.len(), 2);
+    for msg in &tool_msgs {
+        if let ChatMessage::Tool { content, .. } = msg {
+            let text = match &content[0] {
+                ContentBlock::Text { text } => text.clone(),
+            };
+            assert!(
+                text.to_lowercase().contains("denied"),
+                "expected denial: {text}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn cancellation_between_tool_calls_in_batch() {
+    // Model requests two tool calls. The first is a slow tool that takes
+    // time to execute. We cancel while it's running. The loop should
+    // exit with an error after the tool returns (or on the next
+    // iteration's cancellation check).
+    //
+    // We use SlowTool (defined below) which polls the cancellation token
+    // and returns early if cancelled. This makes the test deterministic.
+    let client = MockChatClient::new(vec![multi_tool_call_response(vec![
+        ("call_1", "slow_tool", "{}"),
+        ("call_2", "slow_tool", "{}"),
+    ])]);
+
+    let cancel = CancellationToken::new();
+    let cancel_clone = cancel.clone();
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Box::new(SlowTool));
+
+    let config = AgentConfig::default();
+    let mut conv = Conversation::new("mock", None, registry.tool_schemas());
+
+    // Cancel after 150ms — the SlowTool runs 20 × 50ms = 1000ms polling loop.
+    // The first tool will observe the cancellation and return early.
+    // The loop then exits on the next iteration because the token is still set.
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        cancel_clone.cancel();
+    });
+
+    let err = run_loop(
+        &mut conv,
+        "do two things",
+        &client,
+        &registry,
+        &config,
+        cancel,
+        &AutoApproveGate,
+    )
+    .await
+    .unwrap_err();
+
+    assert!(
+        matches!(err, RhoError::Unexpected(_)),
+        "expected cancellation error, got: {err}"
+    );
+
+    // The first tool result (cancelled) should be in conversation history.
+    let msgs = conv.messages();
+    let has_cancelled_result = msgs.iter().any(|m| {
+        matches!(m, ChatMessage::Tool { content, .. } if content.iter().any(
+            |b| matches!(b, ContentBlock::Text { text } if text.contains("cancelled"))
+        ))
+    });
+    assert!(
+        has_cancelled_result,
+        "expected cancelled tool result in history"
+    );
+}
+
+#[tokio::test]
+async fn empty_tool_calls_vec_returns_error() {
+    // Edge case: model returns finish_reason=tool_calls but with an empty vec.
+    // This shouldn't happen in practice, but the loop should handle it.
+    let client = MockChatClient::new(vec![multi_tool_call_response(Vec::<(
+        String,
+        String,
+        String,
+    )>::new())]);
+
+    let registry = ToolRegistry::new();
+    let config = AgentConfig::default();
+    let mut conv = Conversation::new("mock", None, vec![]);
+
+    let err = run_loop(
+        &mut conv,
+        "hello",
+        &client,
+        &registry,
+        &config,
+        CancellationToken::new(),
+        &AutoApproveGate,
+    )
+    .await
+    .unwrap_err();
+
+    assert!(
+        matches!(err, RhoError::Unexpected(_)),
+        "expected Unexpected error for empty tool_calls, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn iteration_count_includes_multi_tool_call_response() {
+    // A single model response with multiple tool calls counts as one iteration.
+    // The loop should still terminate when the iteration limit is reached.
+    let responses: Vec<_> = (0..10)
+        .map(|i| {
+            multi_tool_call_response(vec![
+                (format!("call_{i}a"), "echo_tool", "{}"),
+                (format!("call_{i}b"), "echo_tool", "{}"),
+            ])
+        })
+        .collect();
+
+    let client = MockChatClient::new(responses);
+    let registry = echo_registry("echo_tool", "result");
+    let config = AgentConfig {
+        max_iterations: 5,
+        ..AgentConfig::default()
+    };
+    let mut conv = Conversation::new("mock", None, registry.tool_schemas());
+
+    let err = run_loop(
+        &mut conv,
+        "loop forever",
+        &client,
+        &registry,
+        &config,
+        CancellationToken::new(),
+        &AutoApproveGate,
+    )
+    .await
+    .unwrap_err();
+
+    assert!(
+        matches!(err, RhoError::MaxIterationsExceeded(5)),
+        "expected MaxIterationsExceeded(5), got: {err}"
+    );
 }
 
 // ── Agent loop: max iterations ────────────────────────────────────────────────
@@ -531,7 +979,7 @@ fn base_prompt_sha256_is_pinned() {
     // This makes prompt changes deliberate rather than silent.
     let hash = rho_core::context_files::sha256_hex(rho_core::base_prompt());
     assert_eq!(
-        hash, "c600c6c6c80ac6eb07da80db1677dfec1ad13670b61b117b23fa44c049b003ff",
+        hash, "79e4b4f96f03470fe94796d21ca0cc00f772f11b012266d80ed286e2410c1e3a",
         "base_prompt() hash changed — update this test to match the new hash"
     );
 }

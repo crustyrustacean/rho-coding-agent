@@ -1,14 +1,15 @@
 //! Built-in tool implementations for rho.
 //!
-//! Phase 2: [`ReadFile`], [`WriteFile`], [`RunCommand`], [`PowerShellExecutor`],
-//! and [`CommandDenylist`] with sandbox enforcement, `<context>` framing on file
-//! reads, shell execution abstracted behind the [`ShellExecutor`] trait, and
-//! command denylist enforcement.
+//! Phase 2: [`ReadFile`], [`WriteFile`], [`ListDir`], [`EditFile`],
+//! [`RunCommand`], [`PowerShellExecutor`], and [`CommandDenylist`] with sandbox
+//! enforcement, `<context>` framing on file reads, `.gitignore`-aware directory
+//! listing, exact-match file editing, shell execution abstracted behind the
+//! [`ShellExecutor`] trait, and command denylist enforcement.
 
 pub mod files;
 pub mod shell;
 
-pub use files::{ReadFile, WriteFile};
+pub use files::{EditFile, ListDir, ReadFile, WriteFile};
 pub use shell::{CommandDenylist, PowerShellExecutor, RunCommand};
 
 use rho_core::{SandboxRoot, ToolRegistry};
@@ -21,6 +22,8 @@ use rho_core::{SandboxRoot, ToolRegistry};
 pub fn register_all(registry: &mut ToolRegistry, root: SandboxRoot) {
     registry.register(Box::new(ReadFile { root: root.clone() }));
     registry.register(Box::new(WriteFile { root: root.clone() }));
+    registry.register(Box::new(ListDir { root: root.clone() }));
+    registry.register(Box::new(EditFile { root: root.clone() }));
     let executor = Box::new(PowerShellExecutor::new());
     let denylist = CommandDenylist::default_powershell();
     registry.register(Box::new(RunCommand {

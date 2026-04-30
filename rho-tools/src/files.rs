@@ -1,7 +1,10 @@
-//! File operation tools: [`ReadFile`] and [`WriteFile`].
+//! File operation tools: [`ReadFile`], [`WriteFile`], [`ListDir`], and [`EditFile`].
 //!
 //! Phase 1b: sandbox enforcement via [`SandboxRoot`], and `<context>` framing on
 //! `ReadFile` output so the model treats file contents as data, not instructions.
+//!
+//! Phase 2: [`ListDir`] with `.gitignore`-aware directory walking via the
+//! `ignore` crate, and [`EditFile`] with exact-match replacement and validation.
 
 use async_trait::async_trait;
 use rho_core::{
@@ -157,5 +160,358 @@ impl Tool for WriteFile {
             "wrote {} bytes to {path_str}",
             content.len()
         ))))
+    }
+}
+
+// ── ListDir ───────────────────────────────────────────────────────────────────
+
+/// List directory contents with `.gitignore` awareness.
+///
+/// Uses the `ignore` crate (from ripgrep) for walking, which respects
+/// `.gitignore`, `.ignore`, and nested override files. By default, only
+/// the top-level directory is listed; set `recursive: true` to walk subdirectories.
+///
+/// Paths are validated against the [`SandboxRoot`] before any I/O.
+pub struct ListDir {
+    /// Sandbox root — all paths are validated against this.
+    pub root: SandboxRoot,
+}
+
+#[async_trait]
+impl Tool for ListDir {
+    fn name(&self) -> ToolName {
+        ToolName::from("list_dir")
+    }
+
+    fn description(&self) -> &'static str {
+        "List files and directories within the project. \
+         Respects .gitignore rules by default. \
+         Set recursive to true to walk subdirectories."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Path to the directory to list (relative to the project root). Defaults to the project root."
+                },
+                "recursive": {
+                    "type": "boolean",
+                    "description": "Whether to list files recursively. Defaults to false."
+                }
+            },
+            "required": []
+        })
+    }
+
+    fn risk(&self) -> ToolRisk {
+        ToolRisk::Read
+    }
+
+    async fn execute(
+        &self,
+        arguments: serde_json::Value,
+        cancel: CancellationToken,
+    ) -> Result<ToolOutcome> {
+        let path_str = arguments["path"].as_str().unwrap_or(".");
+        let recursive = arguments["recursive"].as_bool().unwrap_or(false);
+
+        // Validate path is within the sandbox root.
+        // If the path doesn't exist, validate will error.
+        // If path is "." we validate the root itself.
+        let safe_path = if path_str == "." {
+            self.root.path().to_path_buf()
+        } else {
+            // Resolve relative paths against the sandbox root before validation.
+            let candidate = self.root.path().join(path_str);
+            self.root.validate(&candidate)?.to_path_buf()
+        };
+
+        if cancel.is_cancelled() {
+            return Ok(ToolOutcome::Immediate(ToolResult::error("cancelled")));
+        }
+
+        if !safe_path.is_dir() {
+            return Ok(ToolOutcome::Immediate(ToolResult::error(format!(
+                "list_dir: `{path_str}` is not a directory"
+            ))));
+        }
+
+        // Build the walker with .gitignore awareness.
+        let mut builder = ignore::WalkBuilder::new(&safe_path);
+        builder
+            .hidden(false) // show hidden files (dotfiles like .agents.md)
+            .git_ignore(true) // respect .gitignore
+            .git_global(true) // respect global gitignore
+            .git_exclude(true) // respect .git/info/exclude
+            .ignore(true) // respect .ignore
+            .require_git(false) // work even without a git repo
+            .sort_by_file_name(std::cmp::Ord::cmp); // deterministic ordering
+
+        if !recursive {
+            builder.max_depth(Some(1));
+        }
+
+        let walker = builder.build();
+
+        let mut entries = Vec::new();
+        let mut error_count = 0u32;
+
+        for entry in walker {
+            if cancel.is_cancelled() {
+                return Ok(ToolOutcome::Immediate(ToolResult::error("cancelled")));
+            }
+
+            match entry {
+                Ok(e) => {
+                    // Skip the root directory itself.
+                    if e.path() == safe_path {
+                        continue;
+                    }
+
+                    let relative = e.path().strip_prefix(&safe_path).unwrap_or(e.path());
+
+                    let path_display = relative.to_string_lossy();
+
+                    if e.file_type().is_some_and(|ft| ft.is_dir()) {
+                        entries.push(format!("{path_display}/"));
+                    } else {
+                        entries.push(path_display.into_owned());
+                    }
+                }
+                Err(_) => {
+                    error_count += 1;
+                }
+            }
+        }
+
+        let mut output = entries.join("\n");
+        if error_count > 0 {
+            use std::fmt::Write;
+            let _ = write!(output, "\n\n({error_count} entries could not be read)");
+        }
+
+        if output.is_empty() {
+            output.clear();
+            output.push_str("(empty directory)");
+        }
+
+        Ok(ToolOutcome::Immediate(ToolResult::success(output)))
+    }
+}
+
+// ── EditFile ──────────────────────────────────────────────────────────────────
+
+/// A single replacement operation for [`EditFile`].
+#[derive(Clone, Debug)]
+struct Edit {
+    /// The exact text to find.
+    old_text: String,
+    /// The replacement text.
+    new_text: String,
+}
+
+/// Apply targeted exact-match replacements to a file.
+///
+/// Validates that each `old_text` occurs exactly once in the file (not ambiguous),
+/// that edits don't overlap, and applies them all in a single write.
+///
+/// Tree-sitter node-splitting validation is deferred to Phase 3.
+pub struct EditFile {
+    /// Sandbox root — all writes are validated against this.
+    pub root: SandboxRoot,
+}
+
+#[async_trait]
+impl Tool for EditFile {
+    fn name(&self) -> ToolName {
+        ToolName::from("edit_file")
+    }
+
+    fn description(&self) -> &'static str {
+        "Apply targeted exact-match replacements to a file within the project. \
+         Each edit specifies old_text to find and new_text to replace it with. \
+         All old_text occurrences must be unique (exactly one match each) and \
+         edits must not overlap. The file is not modified if any edit fails validation."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Path to the file to edit (relative to the project root)."
+                },
+                "edits": {
+                    "type": "array",
+                    "description": "List of replacements to apply.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "old_text": {
+                                "type": "string",
+                                "description": "The exact text to find in the file."
+                            },
+                            "new_text": {
+                                "type": "string",
+                                "description": "The text to replace old_text with."
+                            }
+                        },
+                        "required": ["old_text", "new_text"]
+                    }
+                }
+            },
+            "required": ["path", "edits"]
+        })
+    }
+
+    fn risk(&self) -> ToolRisk {
+        ToolRisk::Write
+    }
+
+    async fn execute(
+        &self,
+        arguments: serde_json::Value,
+        cancel: CancellationToken,
+    ) -> Result<ToolOutcome> {
+        let path_str = arguments["path"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("edit_file: missing required argument `path`"))?;
+        let edits_arg = arguments["edits"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("edit_file: missing required argument `edits`"))?;
+
+        if edits_arg.is_empty() {
+            return Ok(ToolOutcome::Immediate(ToolResult::error(
+                "edit_file: no edits provided",
+            )));
+        }
+
+        // Parse edits from JSON.
+        let mut edits = Vec::with_capacity(edits_arg.len());
+        for (i, edit_val) in edits_arg.iter().enumerate() {
+            let old_text = edit_val["old_text"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("edit_file: edit {i} missing `old_text`"))?
+                .to_owned();
+            let new_text = edit_val["new_text"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("edit_file: edit {i} missing `new_text`"))?
+                .to_owned();
+            edits.push(Edit { old_text, new_text });
+        }
+
+        // Validate path is within the sandbox root.
+        let safe_path = self.root.validate(path_str)?;
+
+        if cancel.is_cancelled() {
+            return Ok(ToolOutcome::Immediate(ToolResult::error("cancelled")));
+        }
+
+        // Read the current file content.
+        let content = tokio::fs::read_to_string(&*safe_path)
+            .await
+            .map_err(|e| anyhow::anyhow!("edit_file: failed to read `{path_str}`: {e}"))?;
+
+        // Validate all edits: each old_text must occur exactly once, and edits
+        // must not overlap.
+        let mut match_ranges: Vec<(usize, usize, &Edit)> = Vec::with_capacity(edits.len());
+
+        for edit in &edits {
+            let occurrences: Vec<_> = content.match_indices(&edit.old_text).collect();
+            match occurrences.len() {
+                0 => {
+                    return Ok(ToolOutcome::Immediate(ToolResult::error(format!(
+                        "edit_file: old_text not found in `{path_str}`: {:?}",
+                        truncate_for_error(&edit.old_text, 80)
+                    ))));
+                }
+                1 => {
+                    let (start, _) = occurrences[0];
+                    let end = start + edit.old_text.len();
+                    match_ranges.push((start, end, edit));
+                }
+                _ => {
+                    return Ok(ToolOutcome::Immediate(ToolResult::error(format!(
+                        "edit_file: old_text is ambiguous ({} matches) in `{path_str}`: {:?}",
+                        occurrences.len(),
+                        truncate_for_error(&edit.old_text, 80)
+                    ))));
+                }
+            }
+        }
+
+        // Sort by start position to check for overlaps.
+        match_ranges.sort_by_key(|(start, _, _)| *start);
+
+        for window in match_ranges.windows(2) {
+            let (_, end_a, _) = window[0];
+            let (start_b, _, _) = window[1];
+            if start_b < end_a {
+                return Ok(ToolOutcome::Immediate(ToolResult::error(
+                    "edit_file: edits overlap — two edits target the same region of the file",
+                )));
+            }
+        }
+
+        // Apply edits from last to first so earlier positions remain valid.
+        let mut modified = content;
+        for (start, end, edit) in match_ranges.into_iter().rev() {
+            modified.replace_range(start..end, &edit.new_text);
+        }
+
+        // Write the modified content.
+        tokio::fs::write(&*safe_path, &modified)
+            .await
+            .map_err(|e| anyhow::anyhow!("edit_file: failed to write `{path_str}`: {e}"))?;
+
+        Ok(ToolOutcome::Immediate(ToolResult::success(format!(
+            "applied {} edit(s) to {path_str}",
+            edits.len()
+        ))))
+    }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Truncate `text` to `max_len` characters for inclusion in error messages.
+///
+/// Appends "…" if truncation occurred.
+fn truncate_for_error(text: &str, max_len: usize) -> String {
+    if text.len() <= max_len {
+        text.to_owned()
+    } else {
+        let truncated: String = text.chars().take(max_len).collect();
+        format!("{truncated}…")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_short_text_unchanged() {
+        assert_eq!(truncate_for_error("hello", 10), "hello");
+    }
+
+    #[test]
+    fn truncate_long_text() {
+        let long = "a".repeat(100);
+        let result = truncate_for_error(&long, 10);
+        assert_eq!(result, "aaaaaaaaaa…");
+    }
+
+    #[test]
+    fn truncate_exact_length_unchanged() {
+        assert_eq!(truncate_for_error("hello", 5), "hello");
+    }
+
+    #[test]
+    fn truncate_empty() {
+        assert_eq!(truncate_for_error("", 10), "");
     }
 }

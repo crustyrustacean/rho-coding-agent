@@ -39,7 +39,7 @@ rho-core/           # Core library
 rho-tools/          # Built-in tool implementations
   src/
     lib.rs          # `register_all()`
-    files.rs        # `ReadFile`, `WriteFile`
+    files.rs        # `ReadFile`, `WriteFile`, `ListDir`, `EditFile`
     shell.rs        # `PowerShellExecutor`, `RunCommand` (delegates to `ShellExecutor` trait)
 rho-test-helpers/   # Shared test infrastructure (dev-only)
   src/
@@ -68,7 +68,7 @@ The core flow is:
 
 1. **`ToolRegistry`** holds `Box<dyn Tool>` implementations, each with a name, schema, and risk level.
 2. **`Conversation`** accumulates `ChatMessage`s with an optional system prompt and tool schemas.
-3. **`run_loop`** (in `agent.rs`) drives the interaction: send to model → if tool call, get approval → execute tool → feed result back → repeat until the model returns a text reply.
+3. **`run_loop`** (in `agent.rs`) drives the interaction: send to model → if tool calls, get approval for each → execute each tool sequentially → feed results back → repeat until the model returns a text reply.
 4. **`ChatClient`** trait abstracts the model API. `LocalChatClient` targets `localhost:1234` (LM Studio, Ollama).
 
 ### Safety layers
@@ -107,6 +107,8 @@ The agent uses multiple defense-in-depth layers:
 | `ShellOutput` | Structured shell output: `stdout`, `stderr`, `exit_code` |
 | `PowerShellExecutor` | Default `ShellExecutor` implementation (lives in `rho-tools`) |
 | `CommandDenylist` | Dangerous command denylist for `RunCommand` (lives in `rho-tools`) |
+| `ListDir` | `.gitignore`-aware directory listing tool (lives in `rho-tools`) |
+| `EditFile` | Exact-match file editing tool (lives in `rho-tools`) |
 | `ApprovalPolicy` | Trait: decides whether a tool call needs human confirmation |
 | `ApprovalGate` | Trait: asks the user for confirmation at runtime |
 | `ChatClient` | Trait: sends `ChatRequest` and returns `ModelResponse` |
@@ -145,7 +147,7 @@ cargo xtask test -- --nocapture # Run with stdout visible
 - Unit tests live in `#[cfg(test)] mod tests` blocks within each source file.
 - Integration tests live in `rho-core/tests/integration_tests.rs`.
 - Tool integration tests live in `rho-tools/tests/tool_tests.rs`.
-- `rho-test-helpers` provides `MockChatClient`, response builders (`text_response`, `tool_call_response`), approval gates (`AutoApproveGate`, `AutoDenyGate`), sandbox helpers (`tempdir_with_sandbox`), and trust-store helpers (`empty_trust_store`).
+- `rho-test-helpers` provides `MockChatClient`, `MockShellExecutor`, response builders (`text_response`, `tool_call_response`, `multi_tool_call_response`), approval gates (`AutoApproveGate`, `AutoDenyGate`), sandbox helpers (`tempdir_with_sandbox`), and trust-store helpers (`empty_trust_store`).
 - When adding new deserialization logic, add a JSON fixture test.
 - For `Conversation` branching logic, prefer the trait-abstraction pattern over coupling to `LocalChatClient`.
 

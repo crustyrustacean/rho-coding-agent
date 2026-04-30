@@ -7,7 +7,7 @@ use rho_core::{
     SandboxRoot, ShellOutput,
     tool::{CancellationToken, Tool, ToolOutcome},
 };
-use rho_tools::{CommandDenylist, ReadFile, RunCommand, WriteFile};
+use rho_tools::{CommandDenylist, EditFile, ListDir, ReadFile, RunCommand, WriteFile};
 use std::fs;
 use tempfile::TempDir;
 
@@ -486,4 +486,429 @@ async fn read_file_respects_cancellation() {
         immediate_is_error(&outcome),
         "cancelled tool should return error result"
     );
+}
+
+// ── ListDir ──────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn list_dir_lists_files_in_root() {
+    let (dir, root) = setup();
+    fs::write(dir.path().join("a.txt"), "a").unwrap();
+    fs::write(dir.path().join("b.rs"), "b").unwrap();
+
+    let tool = ListDir { root };
+    let args = serde_json::json!({});
+    let outcome = tool.execute(args, CancellationToken::new()).await.unwrap();
+
+    let output = immediate_output(&outcome);
+    assert!(!immediate_is_error(&outcome));
+    assert!(output.contains("a.txt"), "expected a.txt in: {output}");
+    assert!(output.contains("b.rs"), "expected b.rs in: {output}");
+}
+
+#[tokio::test]
+async fn list_dir_marks_directories_with_trailing_slash() {
+    let (dir, root) = setup();
+    fs::create_dir(dir.path().join("src")).unwrap();
+    fs::write(dir.path().join("src").join("main.rs"), "fn main()").unwrap();
+
+    let tool = ListDir { root };
+    let args = serde_json::json!({});
+    let outcome = tool.execute(args, CancellationToken::new()).await.unwrap();
+
+    let output = immediate_output(&outcome);
+    assert!(
+        output.contains("src/"),
+        "directory should have trailing slash: {output}"
+    );
+    // Non-recursive: should NOT list files inside src/
+    assert!(
+        !output.contains("main.rs"),
+        "non-recursive should not list nested files: {output}"
+    );
+}
+
+#[tokio::test]
+async fn list_dir_recursive_lists_nested_files() {
+    let (dir, root) = setup();
+    fs::create_dir_all(dir.path().join("src").join("utils")).unwrap();
+    fs::write(dir.path().join("src").join("main.rs"), "fn main()").unwrap();
+    fs::write(
+        dir.path().join("src").join("utils").join("helpers.rs"),
+        "pub fn help()",
+    )
+    .unwrap();
+
+    let tool = ListDir { root };
+    let args = serde_json::json!({ "recursive": true });
+    let outcome = tool.execute(args, CancellationToken::new()).await.unwrap();
+
+    let output = immediate_output(&outcome);
+    assert!(output.contains("src/"), "expected src/ in: {output}");
+    assert!(
+        output.contains("src\\main.rs") || output.contains("src/main.rs"),
+        "expected main.rs in: {output}"
+    );
+    assert!(output.contains("utils"), "expected utils in: {output}");
+    assert!(
+        output.contains("helpers.rs"),
+        "expected helpers.rs in: {output}"
+    );
+}
+
+#[tokio::test]
+async fn list_dir_respects_gitignore() {
+    let (dir, root) = setup();
+    fs::write(dir.path().join("tracked.txt"), "visible").unwrap();
+    fs::write(dir.path().join("ignored.log"), "hidden").unwrap();
+    fs::write(dir.path().join(".gitignore"), "*.log\n").unwrap();
+
+    let tool = ListDir { root };
+    let args = serde_json::json!({});
+    let outcome = tool.execute(args, CancellationToken::new()).await.unwrap();
+
+    let output = immediate_output(&outcome);
+    assert!(
+        output.contains("tracked.txt"),
+        "expected tracked.txt in: {output}"
+    );
+    assert!(
+        !output.contains("ignored.log"),
+        "ignored file should not appear: {output}"
+    );
+    // .gitignore itself should appear
+    assert!(
+        output.contains(".gitignore"),
+        "expected .gitignore in: {output}"
+    );
+}
+
+#[tokio::test]
+async fn list_dir_shows_hidden_files() {
+    let (dir, root) = setup();
+    fs::write(dir.path().join(".hidden"), "secret").unwrap();
+    fs::write(dir.path().join("visible.txt"), "hello").unwrap();
+
+    let tool = ListDir { root };
+    let args = serde_json::json!({});
+    let outcome = tool.execute(args, CancellationToken::new()).await.unwrap();
+
+    let output = immediate_output(&outcome);
+    assert!(
+        output.contains(".hidden"),
+        "hidden files should appear: {output}"
+    );
+    assert!(
+        output.contains("visible.txt"),
+        "expected visible.txt in: {output}"
+    );
+}
+
+#[tokio::test]
+async fn list_dir_subdirectory() {
+    let (dir, root) = setup();
+    let sub = dir.path().join("sub");
+    fs::create_dir(&sub).unwrap();
+    fs::write(sub.join("file.txt"), "hi").unwrap();
+
+    let tool = ListDir { root };
+    let args = serde_json::json!({ "path": sub.to_str().unwrap() });
+    let outcome = tool.execute(args, CancellationToken::new()).await.unwrap();
+
+    let output = immediate_output(&outcome);
+    assert!(
+        output.contains("file.txt"),
+        "expected file.txt in: {output}"
+    );
+}
+
+#[tokio::test]
+async fn list_dir_empty_directory() {
+    let (dir, root) = setup();
+    let sub = dir.path().join("empty");
+    fs::create_dir(&sub).unwrap();
+
+    let tool = ListDir { root };
+    let args = serde_json::json!({ "path": sub.to_str().unwrap() });
+    let outcome = tool.execute(args, CancellationToken::new()).await.unwrap();
+
+    let output = immediate_output(&outcome);
+    assert!(
+        output.contains("empty directory"),
+        "expected empty directory message: {output}"
+    );
+}
+
+#[tokio::test]
+async fn list_dir_rejects_path_outside_sandbox() {
+    let (_dir, root) = setup();
+    let outside = tempfile::tempdir().unwrap();
+
+    let tool = ListDir { root };
+    let args = serde_json::json!({ "path": outside.path().to_str().unwrap() });
+    let result = tool.execute(args, CancellationToken::new()).await;
+    assert!(result.is_err(), "listing outside sandbox must fail");
+}
+
+#[tokio::test]
+async fn list_dir_not_a_directory_returns_error() {
+    let (dir, root) = setup();
+    let file = dir.path().join("file.txt");
+    fs::write(&file, "hello").unwrap();
+
+    let tool = ListDir { root };
+    let args = serde_json::json!({ "path": file.to_str().unwrap() });
+    let outcome = tool.execute(args, CancellationToken::new()).await.unwrap();
+
+    assert!(immediate_is_error(&outcome));
+}
+
+#[tokio::test]
+async fn list_dir_is_risk_read() {
+    let (_dir, root) = setup();
+    assert_eq!(ListDir { root }.risk(), rho_core::ToolRisk::Read);
+}
+
+#[tokio::test]
+async fn list_dir_respects_cancellation() {
+    let (dir, root) = setup();
+    fs::write(dir.path().join("file.txt"), "content").unwrap();
+
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+
+    let tool = ListDir { root };
+    let args = serde_json::json!({});
+    let outcome = tool.execute(args, cancel).await.unwrap();
+    assert!(immediate_is_error(&outcome));
+}
+
+// ── EditFile ─────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn edit_file_single_replacement() {
+    let (dir, root) = setup();
+    let path = dir.path().join("code.rs");
+    fs::write(&path, "fn hello() { println!(\"hi\"); }").unwrap();
+
+    let tool = EditFile { root };
+    let args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": [{
+            "old_text": "println!(\"hi\")",
+            "new_text": "println!(\"hello\")"
+        }]
+    });
+    let outcome = tool.execute(args, CancellationToken::new()).await.unwrap();
+
+    assert!(!immediate_is_error(&outcome));
+    let output = immediate_output(&outcome);
+    assert!(output.contains("1 edit"));
+
+    let content = fs::read_to_string(&path).unwrap();
+    assert_eq!(content, "fn hello() { println!(\"hello\"); }");
+}
+
+#[tokio::test]
+async fn edit_file_multiple_non_overlapping_edits() {
+    let (dir, root) = setup();
+    let path = dir.path().join("code.rs");
+    fs::write(&path, "let a = 1;\nlet b = 2;\nlet c = 3;").unwrap();
+
+    let tool = EditFile { root };
+    let args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": [
+            { "old_text": "let a = 1", "new_text": "let a = 10" },
+            { "old_text": "let c = 3", "new_text": "let c = 30" }
+        ]
+    });
+    let outcome = tool.execute(args, CancellationToken::new()).await.unwrap();
+
+    assert!(!immediate_is_error(&outcome));
+    let content = fs::read_to_string(&path).unwrap();
+    assert_eq!(content, "let a = 10;\nlet b = 2;\nlet c = 30;");
+}
+
+#[tokio::test]
+async fn edit_file_old_text_not_found_returns_error() {
+    let (dir, root) = setup();
+    let path = dir.path().join("code.rs");
+    fs::write(&path, "fn main() {}").unwrap();
+
+    let tool = EditFile { root };
+    let args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": [{
+            "old_text": "nonexistent text",
+            "new_text": "replacement"
+        }]
+    });
+    let outcome = tool.execute(args, CancellationToken::new()).await.unwrap();
+
+    assert!(immediate_is_error(&outcome));
+    let output = immediate_output(&outcome);
+    assert!(
+        output.contains("not found"),
+        "expected 'not found' in: {output}"
+    );
+
+    // File should be unchanged.
+    assert_eq!(fs::read_to_string(&path).unwrap(), "fn main() {}");
+}
+
+#[tokio::test]
+async fn edit_file_ambiguous_match_returns_error() {
+    let (dir, root) = setup();
+    let path = dir.path().join("code.rs");
+    fs::write(&path, "let x = 1; let x = 2;").unwrap();
+
+    let tool = EditFile { root };
+    let args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": [{
+            "old_text": "let x",
+            "new_text": "let y"
+        }]
+    });
+    let outcome = tool.execute(args, CancellationToken::new()).await.unwrap();
+
+    assert!(immediate_is_error(&outcome));
+    let output = immediate_output(&outcome);
+    assert!(
+        output.contains("ambiguous"),
+        "expected 'ambiguous' in: {output}"
+    );
+
+    // File should be unchanged.
+    assert_eq!(fs::read_to_string(&path).unwrap(), "let x = 1; let x = 2;");
+}
+
+#[tokio::test]
+async fn edit_file_overlapping_edits_return_error() {
+    let (dir, root) = setup();
+    let path = dir.path().join("code.rs");
+    fs::write(&path, "abcdef").unwrap();
+
+    let tool = EditFile { root };
+    let args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": [
+            { "old_text": "abcd", "new_text": "ABCD" },
+            { "old_text": "cdef", "new_text": "CDEF" }
+        ]
+    });
+    let outcome = tool.execute(args, CancellationToken::new()).await.unwrap();
+
+    assert!(immediate_is_error(&outcome));
+    let output = immediate_output(&outcome);
+    assert!(
+        output.contains("overlap"),
+        "expected 'overlap' in: {output}"
+    );
+
+    // File should be unchanged.
+    assert_eq!(fs::read_to_string(&path).unwrap(), "abcdef");
+}
+
+#[tokio::test]
+async fn edit_file_empty_edits_array_returns_error() {
+    let (dir, root) = setup();
+    let path = dir.path().join("code.rs");
+    fs::write(&path, "hello").unwrap();
+
+    let tool = EditFile { root };
+    let args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": []
+    });
+    let outcome = tool.execute(args, CancellationToken::new()).await.unwrap();
+
+    assert!(immediate_is_error(&outcome));
+}
+
+#[tokio::test]
+async fn edit_file_missing_path_returns_error() {
+    let (_dir, root) = setup();
+    let tool = EditFile { root };
+    let args = serde_json::json!({
+        "edits": [{ "old_text": "a", "new_text": "b" }]
+    });
+    let result = tool.execute(args, CancellationToken::new()).await;
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn edit_file_rejects_path_outside_sandbox() {
+    let (_dir, root) = setup();
+    let outside = tempfile::tempdir().unwrap();
+    let evil = outside.path().join("evil.rs");
+    fs::write(&evil, "evil").unwrap();
+
+    let tool = EditFile { root };
+    let args = serde_json::json!({
+        "path": evil.to_str().unwrap(),
+        "edits": [{ "old_text": "evil", "new_text": "good" }]
+    });
+    let result = tool.execute(args, CancellationToken::new()).await;
+    assert!(result.is_err(), "editing outside sandbox must fail");
+}
+
+#[tokio::test]
+async fn edit_file_is_risk_write() {
+    let (_dir, root) = setup();
+    assert_eq!(EditFile { root }.risk(), rho_core::ToolRisk::Write);
+}
+
+#[tokio::test]
+async fn edit_file_respects_cancellation() {
+    let (dir, root) = setup();
+    let path = dir.path().join("file.rs");
+    fs::write(&path, "content").unwrap();
+
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+
+    let tool = EditFile { root };
+    let args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": [{ "old_text": "content", "new_text": "new" }]
+    });
+    let outcome = tool.execute(args, cancel).await.unwrap();
+    assert!(immediate_is_error(&outcome));
+}
+
+#[tokio::test]
+async fn edit_file_file_not_found_returns_error() {
+    let (dir, root) = setup();
+    let path = dir.path().join("nonexistent.rs");
+
+    let tool = EditFile { root };
+    let args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": [{ "old_text": "x", "new_text": "y" }]
+    });
+    let result = tool.execute(args, CancellationToken::new()).await;
+    // validate_for_write allows non-existing paths, but read_to_string will fail.
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn edit_file_deletion_with_empty_new_text() {
+    let (dir, root) = setup();
+    let path = dir.path().join("code.rs");
+    fs::write(&path, "line1\nline2\nline3").unwrap();
+
+    let tool = EditFile { root };
+    let args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": [{
+            "old_text": "line2\n",
+            "new_text": ""
+        }]
+    });
+    let outcome = tool.execute(args, CancellationToken::new()).await.unwrap();
+
+    assert!(!immediate_is_error(&outcome));
+    assert_eq!(fs::read_to_string(&path).unwrap(), "line1\nline3");
 }
