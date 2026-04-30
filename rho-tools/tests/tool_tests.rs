@@ -912,3 +912,53 @@ async fn edit_file_deletion_with_empty_new_text() {
     assert!(!immediate_is_error(&outcome));
     assert_eq!(fs::read_to_string(&path).unwrap(), "line1\nline3");
 }
+
+// ── CommandDenylist::from_config ───────────────────────────────────────────────
+
+#[test]
+fn denylist_from_config_includes_builtins_and_extras() {
+    use rho_core::{RhoConfig, ShellConfig};
+
+    let config = RhoConfig {
+        shell: ShellConfig {
+            denied_commands: vec!["Stop-Process".to_owned()],
+            denied_flag_combos: vec![vec!["-Quiet".to_owned(), "-Force".to_owned()]],
+        },
+        ..Default::default()
+    };
+
+    let denylist = CommandDenylist::from_config(&config);
+
+    // Built-in denylist entries are still present.
+    assert!(denylist.check("Remove-Item foo").is_some());
+    assert!(denylist.check("Invoke-WebRequest https://x").is_some());
+
+    // Config-supplied entries are added.
+    assert!(denylist.check("Stop-Process notepad").is_some());
+
+    // Config-supplied flag combo is added.
+    assert!(denylist.check("Get-ChildItem -Quiet -Force").is_some());
+
+    // Safe commands are still allowed.
+    assert!(denylist.check("Get-ChildItem").is_none());
+    assert!(denylist.check("Write-Output 'hello'").is_none());
+}
+
+#[test]
+fn denylist_from_config_case_insensitive() {
+    use rho_core::{RhoConfig, ShellConfig};
+
+    let config = RhoConfig {
+        shell: ShellConfig {
+            denied_commands: vec!["STOP-PROCESS".to_owned()],
+            denied_flag_combos: vec![],
+        },
+        ..Default::default()
+    };
+
+    let denylist = CommandDenylist::from_config(&config);
+
+    // Config-supplied commands are case-insensitive.
+    assert!(denylist.check("stop-process notepad").is_some());
+    assert!(denylist.check("Stop-Process notepad").is_some());
+}

@@ -18,6 +18,7 @@
 //! | [`context`] | [`ContextManager`] trait, [`SlidingWindowContextManager`], [`TokenBudget`] |
 //! | [`conversation`] | [`Conversation`], [`AssistantResponse`] |
 //! | [`agent`] | [`AgentState`], [`AgentConfig`], [`run_loop`] |
+//! | [`config`] | [`RhoConfig`], [`ConfigLoader`], [`ApprovalAction`] |
 //! | [`prompts`] | [`base_prompt()`] |
 //!
 //! # Newtype Deref policy
@@ -60,6 +61,7 @@
 pub mod agent;
 pub mod approval;
 pub mod client;
+pub mod config;
 pub mod context;
 pub mod context_files;
 pub mod conversation;
@@ -77,8 +79,15 @@ pub mod tool;
 
 // Convenience re-exports for the most commonly used types
 pub use agent::{AgentConfig, AgentState, TransitionError, run_loop};
-pub use approval::{ApprovalGate, ApprovalPolicy, AutoApprovePolicy, DefaultApprovalPolicy};
+pub use approval::{
+    ApprovalGate, ApprovalPolicy, AutoApprovePolicy, ConfigApprovalPolicy, DefaultApprovalPolicy,
+};
 pub use client::{ChatClient, LocalChatClient};
+pub use config::{
+    AgentLoopConfig, ApprovalAction, ApprovalConfig, ConfigLoadError, ConfigLoader, ContextConfig,
+    EgressConfig, ProviderConfig, RedactionConfig, RhoConfig, SandboxConfig, ShellConfig,
+    SystemPromptConfig,
+};
 pub use context::{ContextManager, SlidingWindowContextManager, TokenBudget};
 pub use context_files::{ContextFile, ContextScanner, TrustStore, compose_system_prompt};
 pub use conversation::{AssistantResponse, Conversation};

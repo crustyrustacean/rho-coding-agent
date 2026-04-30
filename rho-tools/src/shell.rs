@@ -67,6 +67,30 @@ impl CommandDenylist {
         }
     }
 
+    /// Create the default PowerShell denylist with additional commands from
+    /// config.
+    ///
+    /// The built-in denylist is always applied. Config-supplied commands and
+    /// flag combos are appended.
+    pub fn from_config(config: &rho_core::RhoConfig) -> Self {
+        let mut base = Self::default_powershell();
+        base.denied_commands.extend(
+            config
+                .shell
+                .denied_commands
+                .iter()
+                .map(|c| c.to_lowercase()),
+        );
+        base.denied_flag_combos.extend(
+            config
+                .shell
+                .denied_flag_combos
+                .iter()
+                .map(|combo| combo.iter().map(|f| f.to_lowercase()).collect()),
+        );
+        base
+    }
+
     /// Check if a command is denied.
     ///
     /// Returns `Some(reason)` if the command should be blocked, `None` if it

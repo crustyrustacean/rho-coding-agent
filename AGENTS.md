@@ -22,6 +22,7 @@ rho-core/           # Core library
     agent.rs        # Agent loop state machine and `run_loop`
     approval.rs     # `ApprovalPolicy` and `ApprovalGate` traits
     client.rs       # `ChatClient` trait, `LocalChatClient`
+    config.rs       # `RhoConfig`, `ConfigLoader`, config sub-types — two-tier TOML loading
     context.rs      # `ContextManager` trait, `SlidingWindowContextManager`, `TokenBudget`
     context_files.rs# Project context file scanner, `TrustStore`, prompt composition
     conversation.rs # `Conversation`, `AssistantResponse`
@@ -111,6 +112,8 @@ The agent uses multiple defense-in-depth layers:
 | `EditFile` | Exact-match file editing tool (lives in `rho-tools`) |
 | `ApprovalPolicy` | Trait: decides whether a tool call needs human confirmation |
 | `ApprovalGate` | Trait: asks the user for confirmation at runtime |
+| `ConfigApprovalPolicy` | Config-driven approval: per-tool overrides (`Auto`/`Ask`/`Deny`) with risk-based fallback |
+| `ApprovalAction` | Per-tool approval action: `Auto`, `Ask`, `Deny` |
 | `ChatClient` | Trait: sends `ChatRequest` and returns `ModelResponse` |
 | `LocalChatClient` | Default `ChatClient` for localhost OpenAI-compatible endpoints |
 | `Conversation` | Message history + model ID + tool schemas + context manager |
@@ -122,6 +125,16 @@ The agent uses multiple defense-in-depth layers:
 | `TokenBudget` | Max tokens for context window |
 | `SandboxRoot` | Canonical root for file sandbox validation |
 | `Redactor` | Best-effort secret pattern scanner |
+| `RhoConfig` | Merged application-wide config from project-level + user-level TOML |
+| `ConfigLoader` | Loads and merges `~/.rho/config.toml` + `.rho/config.toml` |
+| `ProviderConfig` | Model provider selection and connection settings |
+| `ApprovalConfig` | Per-tool approval policy overrides |
+| `ShellConfig` | Command denylist extensions from config |
+| `SandboxConfig` | Sandbox on/off toggle |
+| `ContextConfig` | Project context file scan list override |
+| `EgressConfig` | Network egress allowlist |
+| `RedactionConfig` | Secret redaction on/off toggle |
+| `SystemPromptConfig` | System prompt extension fragments |
 | `FilePath` | Newtype for sandboxed file paths (`Deref<Target = Path>`) |
 | `ToolName` | Newtype for tool names (`Deref<Target = str>`) |
 | `ToolCallId` | Newtype for model-issued tool call IDs (`Deref<Target = str>`) |

@@ -4,7 +4,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 use clap::Parser;
 use rho_core::{
-    AgentConfig, Conversation, LocalChatClient, ModelToolCall, ToolRegistry, ToolRisk,
+    AgentConfig, ConfigLoader, Conversation, LocalChatClient, ModelToolCall, RhoConfig,
+    ToolRegistry, ToolRisk,
     approval::ApprovalGate,
     base_prompt,
     context_files::{ContextScanner, TrustStore, compose_system_prompt},
@@ -65,6 +66,12 @@ struct Cli {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    // --- Config ---
+    let rho_config = ConfigLoader::load(&cli.root).unwrap_or_else(|e| {
+        eprintln!("Warning: {e} — using defaults");
+        RhoConfig::default()
+    });
+
     // --- Sandbox root ---
     let sandbox = SandboxRoot::new(&cli.root).map_err(|e| {
         anyhow::anyhow!(
@@ -75,7 +82,7 @@ async fn main() -> Result<()> {
 
     // --- Tool registry ---
     let mut registry = ToolRegistry::new();
-    register_all(&mut registry, sandbox.clone());
+    register_all(&mut registry, sandbox.clone(), Some(&rho_config));
 
     // --- Project context files ---
     let system_prompt = if let Some(custom) = &cli.system {
@@ -94,9 +101,14 @@ async fn main() -> Result<()> {
 
     // --- Conversation ---
     let client = LocalChatClient::new();
-    let config = AgentConfig::default();
-    let mut conversation =
-        Conversation::new(cli.model, Some(&system_prompt), registry.tool_schemas());
+    let model = rho_config
+        .agent
+        .model
+        .as_deref()
+        .unwrap_or(&cli.model)
+        .to_owned();
+    let config = AgentConfig::from_config(&rho_config);
+    let mut conversation = Conversation::new(model, Some(&system_prompt), registry.tool_schemas());
 
     // --- REPL loop ---
     let gate = ReplApprovalGate;

@@ -4,8 +4,8 @@
 //! secret redaction, and project context file trust.
 
 use rho_core::{
-    AgentConfig, ChatMessage, Conversation, ToolCallId, ToolName, ToolOutcome, ToolRegistry,
-    ToolResult, ToolRisk,
+    AgentConfig, ChatMessage, Conversation, RhoConfig, ToolCallId, ToolName, ToolOutcome,
+    ToolRegistry, ToolResult, ToolRisk,
     agent::run_loop,
     approval::{ApprovalPolicy, DefaultApprovalPolicy},
     context_files::{ContextScanner, compose_system_prompt},
@@ -385,6 +385,143 @@ fn rejected_context_file_not_included_in_prompt() {
     let trusted = scanner.run(&mut store, &mut input, &mut out);
 
     assert!(trusted.is_empty(), "rejected file must not be trusted");
+}
+
+// ── Config-driven approval policy ────────────────────────────────────────────
+
+#[test]
+fn config_approval_auto_overrides_default() {
+    use rho_core::{ApprovalAction, ApprovalConfig, RhoConfig, approval::ConfigApprovalPolicy};
+
+    let config = RhoConfig {
+        approval: ApprovalConfig {
+            per_tool: vec![("run_command".to_owned(), ApprovalAction::Auto)]
+                .into_iter()
+                .collect(),
+        },
+        ..Default::default()
+    };
+
+    let policy = ConfigApprovalPolicy::new(&config);
+    // run_command is Destructive, but config says Auto.
+    assert!(!policy.requires_approval(&ToolName::from("run_command"), ToolRisk::Destructive));
+}
+
+#[test]
+fn config_approval_ask_overrides_default() {
+    use rho_core::{ApprovalAction, ApprovalConfig, RhoConfig, approval::ConfigApprovalPolicy};
+
+    let config = RhoConfig {
+        approval: ApprovalConfig {
+            per_tool: vec![("read_file".to_owned(), ApprovalAction::Ask)]
+                .into_iter()
+                .collect(),
+        },
+        ..Default::default()
+    };
+
+    let policy = ConfigApprovalPolicy::new(&config);
+    // read_file is Read (auto-approved by default), but config says Ask.
+    assert!(policy.requires_approval(&ToolName::from("read_file"), ToolRisk::Read));
+}
+
+#[test]
+fn config_approval_deny_requires_approval() {
+    use rho_core::{ApprovalAction, ApprovalConfig, RhoConfig, approval::ConfigApprovalPolicy};
+
+    let config = RhoConfig {
+        approval: ApprovalConfig {
+            per_tool: vec![("write_file".to_owned(), ApprovalAction::Deny)]
+                .into_iter()
+                .collect(),
+        },
+        ..Default::default()
+    };
+
+    let policy = ConfigApprovalPolicy::new(&config);
+    // Deny means the tool must go through the approval gate so the gate can
+    // issue a denial. It requires_approval() returns true.
+    assert!(policy.requires_approval(&ToolName::from("write_file"), ToolRisk::Write));
+    assert!(policy.is_denied(&ToolName::from("write_file")));
+}
+
+#[test]
+fn config_approval_falls_back_to_default() {
+    use rho_core::{ApprovalConfig, RhoConfig, approval::ConfigApprovalPolicy};
+
+    let config = RhoConfig {
+        approval: ApprovalConfig::default(),
+        ..Default::default()
+    };
+
+    let policy = ConfigApprovalPolicy::new(&config);
+    // No per-tool overrides — default policy applies.
+    assert!(!policy.requires_approval(&ToolName::from("read_file"), ToolRisk::Read));
+    assert!(policy.requires_approval(&ToolName::from("write_file"), ToolRisk::Write));
+    assert!(policy.requires_approval(&ToolName::from("run_command"), ToolRisk::Destructive));
+}
+
+// ── Config egress allowlist ───────────────────────────────────────────────────
+
+#[test]
+fn egress_localhost_always_allowed() {
+    let config = RhoConfig::default();
+    assert!(config.is_host_allowed("localhost"));
+    assert!(config.is_host_allowed("127.0.0.1"));
+}
+
+#[test]
+fn egress_unknown_host_blocked_by_default() {
+    let config = RhoConfig::default();
+    assert!(!config.is_host_allowed("api.openai.com"));
+}
+
+// ── Config sandbox opt-out ────────────────────────────────────────────────────
+
+#[test]
+fn config_sandbox_enabled_by_default() {
+    let config = RhoConfig::default();
+    assert!(config.sandbox.enabled);
+}
+
+#[test]
+fn config_sandbox_can_be_disabled() {
+    use rho_core::SandboxConfig;
+
+    let config = RhoConfig {
+        sandbox: SandboxConfig { enabled: false },
+        ..Default::default()
+    };
+    assert!(!config.sandbox.enabled);
+}
+
+// ── Config redaction toggle ───────────────────────────────────────────────────
+
+#[test]
+fn config_redaction_enabled_by_default() {
+    let config = RhoConfig::default();
+    assert!(config.redaction.enabled);
+}
+
+#[test]
+fn config_redaction_can_be_disabled() {
+    use rho_core::RedactionConfig;
+
+    let config = RhoConfig {
+        redaction: RedactionConfig { enabled: false },
+        ..Default::default()
+    };
+    assert!(!config.redaction.enabled);
+}
+
+// ── Config API key handling ───────────────────────────────────────────────────
+
+#[test]
+fn config_api_key_not_in_plaintext() {
+    // API keys are stored as env var references, never in the config struct.
+    let config = RhoConfig::default();
+    assert!(config.provider.api_key_env.is_none());
+    assert!(config.resolve_api_key().is_none());
 }
 
 #[test]

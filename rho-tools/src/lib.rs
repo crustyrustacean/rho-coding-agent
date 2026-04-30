@@ -18,14 +18,22 @@ use rho_core::{SandboxRoot, ToolRegistry};
 ///
 /// All file and shell tools are bound to `root` so they cannot operate outside
 /// the project sandbox. The default shell executor is [`PowerShellExecutor`]
-/// with the default [`CommandDenylist`].
-pub fn register_all(registry: &mut ToolRegistry, root: SandboxRoot) {
+/// with a [`CommandDenylist`] built from the default PowerShell list plus any
+/// config-supplied additions.
+pub fn register_all(
+    registry: &mut ToolRegistry,
+    root: SandboxRoot,
+    config: Option<&rho_core::RhoConfig>,
+) {
     registry.register(Box::new(ReadFile { root: root.clone() }));
     registry.register(Box::new(WriteFile { root: root.clone() }));
     registry.register(Box::new(ListDir { root: root.clone() }));
     registry.register(Box::new(EditFile { root: root.clone() }));
     let executor = Box::new(PowerShellExecutor::new());
-    let denylist = CommandDenylist::default_powershell();
+    let denylist = match config {
+        Some(cfg) => CommandDenylist::from_config(cfg),
+        None => CommandDenylist::default_powershell(),
+    };
     registry.register(Box::new(RunCommand {
         root,
         executor,

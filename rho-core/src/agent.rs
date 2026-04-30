@@ -99,6 +99,26 @@ impl Default for AgentConfig {
     }
 }
 
+impl AgentConfig {
+    /// Create an `AgentConfig` from a [`RhoConfig`], using the config-driven
+    /// approval policy.
+    ///
+    /// Uses [`ConfigApprovalPolicy`] for per-tool approval overrides, falling
+    /// back to [`DefaultApprovalPolicy`] for tools not listed in config.
+    ///
+    /// [`RhoConfig`]: crate::config::RhoConfig
+    /// [`ConfigApprovalPolicy`]: crate::approval::ConfigApprovalPolicy
+    pub fn from_config(config: &crate::config::RhoConfig) -> Self {
+        use crate::approval::ConfigApprovalPolicy;
+        Self {
+            max_iterations: config.agent.max_iterations,
+            retry_budget: config.agent.retry_budget,
+            initial_backoff_ms: config.agent.initial_backoff_ms,
+            approval_policy: Box::new(ConfigApprovalPolicy::new(config)),
+        }
+    }
+}
+
 // ── run_loop ──────────────────────────────────────────────────────────────────
 
 /// Run the agent loop until the model produces a final text reply.
