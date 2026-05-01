@@ -508,10 +508,74 @@ fn config_redaction_can_be_disabled() {
     use rho_core::RedactionConfig;
 
     let config = RhoConfig {
-        redaction: RedactionConfig { enabled: false },
+        redaction: RedactionConfig {
+            enabled: false,
+            custom_patterns: vec![],
+        },
         ..Default::default()
     };
     assert!(!config.redaction.enabled);
+}
+
+#[test]
+fn disabled_redactor_skips_builtin_patterns() {
+    use rho_core::tool::ToolResult;
+
+    // A disabled redactor should pass secrets through unchanged.
+    let redactor = rho_core::Redactor::from_config(false, &[]);
+    let mut conv = Conversation::new("mock", None, vec![]).with_redactor(redactor);
+
+    let secret_key = "sk-".to_owned() + &"x".repeat(32);
+    conv.push_tool_result(
+        ToolCallId::from("call_1"),
+        &ToolResult::success(&secret_key),
+    );
+
+    // The raw secret should be present in history (not redacted).
+    let messages = conv.messages();
+    let tool_msg = messages
+        .iter()
+        .find(|m| matches!(m, ChatMessage::Tool { .. }))
+        .unwrap();
+    let json = serde_json::to_string(tool_msg).unwrap();
+    assert!(
+        json.contains(&secret_key),
+        "disabled redactor should not redact: {json}"
+    );
+    assert!(
+        !json.contains("[REDACTED]"),
+        "disabled redactor should not add REDACTED: {json}"
+    );
+}
+
+#[test]
+fn enabled_redactor_with_custom_pattern_redacts_in_conversation() {
+    use rho_core::tool::ToolResult;
+
+    // A config-driven redactor with a custom pattern should redact
+    // matches of that pattern when tool results enter the conversation.
+    let redactor = rho_core::Redactor::from_config(true, &[r"COMPANY_KEY_\S+".to_owned()]);
+    let mut conv = Conversation::new("mock", None, vec![]).with_redactor(redactor);
+
+    conv.push_tool_result(
+        ToolCallId::from("call_1"),
+        &ToolResult::success("found COMPANY_KEY_abc123 here"),
+    );
+
+    let messages = conv.messages();
+    let tool_msg = messages
+        .iter()
+        .find(|m| matches!(m, ChatMessage::Tool { .. }))
+        .unwrap();
+    let json = serde_json::to_string(tool_msg).unwrap();
+    assert!(
+        json.contains("[REDACTED]"),
+        "custom pattern should redact: {json}"
+    );
+    assert!(
+        !json.contains("COMPANY_KEY_abc123"),
+        "custom pattern match should be redacted: {json}"
+    );
 }
 
 // ── Config API key handling ───────────────────────────────────────────────────

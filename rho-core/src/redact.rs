@@ -20,7 +20,19 @@
 //! generates. The approval gate is the primary defence; redaction reduces
 //! accidental exposure, it does not eliminate it.
 //!
-//! Users can extend the pattern set or disable redaction in config (Phase 2).
+//! # Custom patterns
+//!
+//! Users can extend the built-in pattern set with custom regex patterns via
+//! `.rho/config.toml` (the `[redaction] custom_patterns` field). Invalid regex
+//! patterns are silently ignored with a warning to stderr. Custom patterns are
+//! applied after built-in patterns.
+//!
+//! # Disable toggle
+//!
+//! Redaction can be disabled entirely via `[redaction] enabled = false` in
+//! config. This is **not recommended** — the approval gate remains the primary
+//! defence, but disabling redaction means secrets may appear in conversation
+//! history and be sent to the model API.
 
 /// Replacement text for any matched secret.
 const REDACTED: &str = "[REDACTED]";
@@ -87,26 +99,80 @@ fn built_in_patterns() -> [Pattern; 5] {
 
 /// Scans text for known secret patterns and replaces them with `[REDACTED]`.
 ///
-/// Constructed via [`Redactor::default`] for the standard built-in pattern set.
-/// Custom patterns are added in Phase 2 via config.
-#[derive(Default)]
-pub struct Redactor;
+/// Constructed via [`Redactor::new`] for the standard built-in pattern set, or
+/// [`Redactor::from_config`] to include custom regex patterns and respect the
+/// enabled toggle from configuration.
+///
+/// When `enabled` is `false`, [`redact()`] returns the input unchanged.
+pub struct Redactor {
+    /// Whether redaction is active. When `false`, `redact()` is a no-op.
+    enabled: bool,
+    /// Compiled custom regex patterns, applied after built-in patterns.
+    custom_regexes: Vec<regex::Regex>,
+}
+
+impl Default for Redactor {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            custom_regexes: Vec::new(),
+        }
+    }
+}
 
 impl Redactor {
-    /// Create a redactor with the built-in pattern set.
+    /// Create a redactor with the built-in pattern set (enabled, no custom patterns).
     pub fn new() -> Self {
-        Self
+        Self::default()
+    }
+
+    /// Create a redactor from config settings.
+    ///
+    /// Uses the `enabled` flag and compiles each string in `custom_patterns` as
+    /// a regex. Invalid regex patterns are silently skipped with a warning
+    /// printed to stderr.
+    pub fn from_config(enabled: bool, custom_patterns: &[String]) -> Self {
+        let custom_regexes = custom_patterns
+            .iter()
+            .filter_map(|pat| match regex::Regex::new(pat) {
+                Ok(re) => Some(re),
+                Err(e) => {
+                    eprintln!("Warning: invalid redaction pattern skipped: `{pat}`: {e}");
+                    None
+                }
+            })
+            .collect();
+
+        Self {
+            enabled,
+            custom_regexes,
+        }
+    }
+
+    /// Returns `true` if this redactor will actually redact text.
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
     }
 
     /// Apply all patterns to `text`, returning the redacted version.
     ///
-    /// Runs in a single left-to-right pass per pattern, with patterns applied
-    /// sequentially. A match by an earlier pattern is never re-scanned by a
-    /// later one (because `[REDACTED]` itself does not match any prefix).
+    /// If `enabled` is `false`, returns the input unchanged.
+    ///
+    /// Otherwise runs in a single left-to-right pass per built-in pattern,
+    /// then applies each custom regex pattern. A match by an earlier pattern
+    /// is never re-scanned by a later one (because `[REDACTED]` itself does
+    /// not match any built-in prefix or typical custom pattern).
     pub fn redact(&self, text: &str) -> String {
+        if !self.enabled {
+            return text.to_owned();
+        }
+
         let mut current = text.to_owned();
         for pattern in built_in_patterns() {
             current = redact_pattern(&current, &pattern);
+        }
+        for re in &self.custom_regexes {
+            current = re.replace_all(&current, REDACTED).into_owned();
         }
         current
     }
@@ -233,5 +299,93 @@ mod tests {
     fn empty_input_returns_empty() {
         let r = Redactor::new();
         assert_eq!(r.redact(""), "");
+    }
+
+    // ── Enabled toggle ────────────────────────────────────────────────────
+
+    #[test]
+    fn disabled_redactor_returns_input_unchanged() {
+        let r = Redactor::from_config(false, &[]);
+        let key = "sk-".to_owned() + &"x".repeat(32);
+        let text = format!("found key: {key}");
+        assert_eq!(r.redact(&text), text);
+    }
+
+    #[test]
+    fn enabled_redactor_redacts_normally() {
+        let r = Redactor::from_config(true, &[]);
+        let key = "sk-".to_owned() + &"x".repeat(32);
+        let text = format!("found key: {key}");
+        assert!(r.redact(&text).contains(REDACTED));
+    }
+
+    #[test]
+    fn is_enabled_reflects_state() {
+        assert!(Redactor::from_config(true, &[]).is_enabled());
+        assert!(!Redactor::from_config(false, &[]).is_enabled());
+        assert!(Redactor::new().is_enabled());
+    }
+
+    // ── Custom patterns ───────────────────────────────────────────────────
+
+    #[test]
+    fn custom_regex_pattern_redacts() {
+        let r = Redactor::from_config(true, &[r"my-key-[a-zA-Z0-9]{16}".to_owned()]);
+        let text = "key=my-key-abcdefghijklmnop";
+        let out = r.redact(text);
+        assert!(out.contains(REDACTED), "expected REDACTED in: {out}");
+        assert!(!out.contains("my-key-abcdefghijklmnop"));
+    }
+
+    #[test]
+    fn custom_pattern_applied_after_builtin() {
+        // Built-in patterns run first; custom patterns run after.
+        // A custom pattern can catch things the built-ins miss.
+        let r = Redactor::from_config(true, &[r"COMPANY_TOKEN_\S+".to_owned()]);
+        let text = "COMPANY_TOKEN_abc123 xyz";
+        let out = r.redact(text);
+        assert!(out.contains(REDACTED), "expected REDACTED in: {out}");
+        assert!(!out.contains("COMPANY_TOKEN_abc123"));
+    }
+
+    #[test]
+    fn custom_pattern_and_builtin_both_match() {
+        let r = Redactor::from_config(true, &[r"custom-\S+".to_owned()]);
+        let sk_key = "sk-".to_owned() + &"x".repeat(32);
+        let text = format!("{sk_key} and custom-secret");
+        let out = r.redact(&text);
+        assert_eq!(out.matches(REDACTED).count(), 2);
+    }
+
+    #[test]
+    fn invalid_custom_pattern_is_skipped() {
+        // An invalid regex should be silently skipped, not panic.
+        let r = Redactor::from_config(true, &[r"[invalid(".to_owned()]);
+        // The redactor should still work with built-in patterns.
+        let key = "sk-".to_owned() + &"x".repeat(32);
+        let text = format!("found key: {key}");
+        assert!(r.redact(&text).contains(REDACTED));
+    }
+
+    #[test]
+    fn no_custom_patterns_is_same_as_new() {
+        let r1 = Redactor::new();
+        let r2 = Redactor::from_config(true, &[]);
+        let text = "sk-".to_owned() + &"x".repeat(32);
+        assert_eq!(r1.redact(&text), r2.redact(&text));
+    }
+
+    #[test]
+    fn multiple_custom_patterns() {
+        let r = Redactor::from_config(
+            true,
+            &[
+                r"COMPANY_KEY_\S+".to_owned(),
+                r"secret-token-\d+".to_owned(),
+            ],
+        );
+        let text = "COMPANY_KEY_abc and secret-token-123";
+        let out = r.redact(text);
+        assert_eq!(out.matches(REDACTED).count(), 2);
     }
 }

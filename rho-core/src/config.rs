@@ -231,12 +231,22 @@ pub struct RedactionConfig {
     /// Whether secret redaction is enabled. Defaults to `true`.
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Custom regex patterns to redact, in addition to the built-in patterns.
+    ///
+    /// Each pattern is a regular expression string. Any text matching a
+    /// custom pattern is replaced with `[REDACTED]`. Invalid regex patterns
+    /// are silently ignored (a warning is printed to stderr at startup).
+    ///
+    /// The project-level list **replaces** the user-level list (no appending).
+    #[serde(default)]
+    pub custom_patterns: Vec<String>,
 }
 
 impl Default for RedactionConfig {
     fn default() -> Self {
         Self {
             enabled: default_true(),
+            custom_patterns: Vec::new(),
         }
     }
 }
@@ -285,10 +295,21 @@ struct WireConfig {
     egress: Option<EgressConfig>,
     /// Redaction settings.
     #[serde(default)]
-    redaction: Option<RedactionConfig>,
+    redaction: Option<WireRedactionConfig>,
     /// System prompt settings.
     #[serde(default)]
     system_prompt: Option<SystemPromptConfig>,
+}
+
+/// Wire format for `[redaction]` section.
+#[derive(Clone, Debug, Default, Deserialize)]
+struct WireRedactionConfig {
+    /// Whether redaction is enabled.
+    #[serde(default)]
+    enabled: Option<bool>,
+    /// Custom regex patterns.
+    #[serde(default)]
+    custom_patterns: Option<Vec<String>>,
 }
 
 /// Wire format for `[agent]` section.
@@ -405,7 +426,17 @@ impl ConfigLoader {
             sandbox: project.sandbox.or(user.sandbox).unwrap_or_default(),
             context: project.context.or(user.context).unwrap_or_default(),
             egress: project.egress.or(user.egress).unwrap_or_default(),
-            redaction: project.redaction.or(user.redaction).unwrap_or_default(),
+            redaction: {
+                let ur = user.redaction.unwrap_or_default();
+                let pr = project.redaction.unwrap_or_default();
+                RedactionConfig {
+                    enabled: pr.enabled.or(ur.enabled).unwrap_or(default_true()),
+                    custom_patterns: pr
+                        .custom_patterns
+                        .or(ur.custom_patterns)
+                        .unwrap_or_default(),
+                }
+            },
             system_prompt: project
                 .system_prompt
                 .or(user.system_prompt)
@@ -524,6 +555,7 @@ mod tests {
         assert!(config.context.scan_list.is_none());
         assert!(config.egress.allowed_hosts.is_empty());
         assert!(config.redaction.enabled);
+        assert!(config.redaction.custom_patterns.is_empty());
         assert!(config.system_prompt.extensions.is_empty());
     }
 
@@ -600,6 +632,7 @@ extensions = ["Always use PowerShell 7."]
         );
         assert_eq!(config.egress.allowed_hosts, vec!["api.openai.com"]);
         assert!(!config.redaction.enabled);
+        assert!(config.redaction.custom_patterns.is_empty());
         assert_eq!(
             config.system_prompt.extensions,
             vec!["Always use PowerShell 7."]
@@ -893,6 +926,97 @@ endpoint = "http://localhost:8080/v1/chat/completions"
         // Everything else is default.
         assert!(config.agent.model.is_none());
         assert!(config.sandbox.enabled);
+    }
+
+    // ── Redaction config ──────────────────────────────────────────────────
+
+    #[test]
+    fn redaction_custom_patterns_from_config() {
+        let dir = TempDir::new().unwrap();
+        let rho_dir = dir.path().join(".rho");
+        std::fs::create_dir_all(&rho_dir).unwrap();
+
+        std::fs::write(
+            rho_dir.join("config.toml"),
+            r#"
+[redaction]
+enabled = true
+custom_patterns = ["my-key-[a-zA-Z0-9]{32}", "token: \\S+"]
+"#,
+        )
+        .unwrap();
+
+        let config = ConfigLoader::load(dir.path()).unwrap();
+        assert!(config.redaction.enabled);
+        assert_eq!(
+            config.redaction.custom_patterns,
+            vec!["my-key-[a-zA-Z0-9]{32}", "token: \\S+"]
+        );
+    }
+
+    #[test]
+    fn redaction_project_custom_patterns_replace_user() {
+        // Project-level custom_patterns replaces user-level (no appending),
+        // same as other Vec fields.
+        let user_config: WireConfig = toml::from_str(
+            r#"
+[redaction]
+custom_patterns = ["user-pattern"]
+"#,
+        )
+        .unwrap();
+        let project_config: WireConfig = toml::from_str(
+            r#"
+[redaction]
+custom_patterns = ["project-pattern"]
+"#,
+        )
+        .unwrap();
+
+        let config = ConfigLoader::merge(Some(user_config), Some(project_config));
+        assert_eq!(config.redaction.custom_patterns, vec!["project-pattern"]);
+    }
+
+    #[test]
+    fn redaction_user_patterns_preserved_when_no_project() {
+        let user_config: WireConfig = toml::from_str(
+            r#"
+[redaction]
+custom_patterns = ["user-pattern"]
+"#,
+        )
+        .unwrap();
+
+        let config = ConfigLoader::merge(Some(user_config), None);
+        assert_eq!(config.redaction.custom_patterns, vec!["user-pattern"]);
+    }
+
+    #[test]
+    fn redaction_enabled_from_project_overrides_user() {
+        let user_config: WireConfig = toml::from_str(
+            r"
+[redaction]
+enabled = true
+",
+        )
+        .unwrap();
+        let project_config: WireConfig = toml::from_str(
+            r"
+[redaction]
+enabled = false
+",
+        )
+        .unwrap();
+
+        let config = ConfigLoader::merge(Some(user_config), Some(project_config));
+        assert!(!config.redaction.enabled);
+    }
+
+    #[test]
+    fn redaction_defaults_to_enabled_empty_patterns() {
+        let config = RedactionConfig::default();
+        assert!(config.enabled);
+        assert!(config.custom_patterns.is_empty());
     }
 
     // ── Shell denylist ─────────────────────────────────────────────────────

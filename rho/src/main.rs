@@ -108,7 +108,15 @@ async fn main() -> Result<()> {
         .unwrap_or(&cli.model)
         .to_owned();
     let config = AgentConfig::from_config(&rho_config);
-    let mut conversation = Conversation::new(model, Some(&system_prompt), registry.tool_schemas());
+
+    // --- Secret redaction ---
+    let redactor = rho_core::Redactor::from_config(
+        rho_config.redaction.enabled,
+        &rho_config.redaction.custom_patterns,
+    );
+
+    let mut conversation = Conversation::new(model, Some(&system_prompt), registry.tool_schemas())
+        .with_redactor(redactor);
 
     // --- REPL loop ---
     let gate = ReplApprovalGate;

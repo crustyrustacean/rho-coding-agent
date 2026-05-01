@@ -84,6 +84,16 @@ impl Conversation {
         self
     }
 
+    /// Override the secret redactor.
+    ///
+    /// Use this to pass a config-driven [`Redactor`] that includes custom
+    /// patterns and/or respects the enabled toggle from `.rho/config.toml`.
+    #[must_use]
+    pub fn with_redactor(mut self, redactor: Redactor) -> Self {
+        self.redactor = redactor;
+        self
+    }
+
     // ── Public history accessors ──────────────────────────────────────────
 
     /// All messages in conversation history (including the system message).
