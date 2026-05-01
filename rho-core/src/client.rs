@@ -1,11 +1,12 @@
 //! The [`ChatClient`] trait and [`LocalChatClient`] default implementation.
 
 use crate::config::EgressConfig;
-use crate::error::Result;
+use crate::error::{Result, RhoError};
 use crate::request::ChatRequest;
 use crate::response::ModelResponse;
 use async_trait::async_trait;
 use reqwest::Client;
+use serde::Deserialize;
 
 /// Interface all model providers must implement.
 ///
@@ -80,6 +81,32 @@ impl LocalChatClient {
         }
     }
 
+    /// List models available at the server's `/v1/models` endpoint.
+    ///
+    /// Derives the models URL from the configured completions endpoint by
+    /// replacing the `/v1/chat/completions` path with `/v1/models`. Uses
+    /// URL parsing so trailing slashes and non-standard paths are handled.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the endpoint URL cannot be parsed or the request
+    /// fails (e.g. the server is unreachable).
+    pub async fn list_models(&self) -> Result<ModelList> {
+        let models_url = reqwest::Url::parse(&self.endpoint)
+            .map(|mut u| {
+                u.set_path("/v1/models");
+                u
+            })
+            .map_err(|e| RhoError::Unexpected(anyhow::anyhow!("bad endpoint URL: {e}")))?;
+        Ok(self
+            .http_client
+            .get(models_url)
+            .send()
+            .await?
+            .json::<ModelList>()
+            .await?)
+    }
+
     /// Check whether the configured endpoint host is permitted by the egress
     /// allowlist.
     ///
@@ -114,18 +141,95 @@ impl Default for LocalChatClient {
     }
 }
 
+/// A model returned by the `/v1/models` endpoint.
+#[derive(Clone, Debug, Deserialize)]
+pub struct ModelInfo {
+    /// The model identifier (used in chat completion requests).
+    pub id: String,
+    /// The object type (always `"model"`).
+    pub object: String,
+    /// Unix timestamp of creation.
+    #[serde(default)]
+    pub created: u64,
+    /// Who owns/created this model.
+    #[serde(default)]
+    pub owned_by: String,
+}
+
+/// The response from the `/v1/models` endpoint.
+#[derive(Clone, Debug, Deserialize)]
+pub struct ModelList {
+    /// The list of available models.
+    pub data: Vec<ModelInfo>,
+}
+
+/// Truncate a response body for inclusion in error messages.
+fn truncate_error_body(body: &str) -> &str {
+    const MAX_LEN: usize = 512;
+    if body.len() <= MAX_LEN {
+        body
+    } else {
+        &body[..body.floor_char_boundary(MAX_LEN)]
+    }
+}
+
+/// Build a human-readable message for a non-2xx HTTP response body.
+///
+/// Includes actionable suggestions for known error patterns (e.g. context
+/// window exceeded from llama.cpp / LM Studio).
+fn enhance_http_body(status: u16, body: &str) -> String {
+    let snippet = truncate_error_body(body);
+
+    // Detect the common "context window exceeded" error from llama.cpp / LM Studio.
+    if status == 400 && body.contains("n_keep") && body.contains("n_ctx") {
+        return format!(
+            "context window exceeded.\
+             \n  The system prompt + tool schemas exceed the model's context length.\
+             \n  Try one of:\
+             \n    1. Load the model with a larger context length in LM Studio\
+             \n    2. Use --compact to send a shorter system prompt\
+             \n    3. Use a model with a larger context window\
+             \n  Server details: {snippet}"
+        );
+    }
+
+    snippet.to_string()
+}
+
 #[async_trait]
 impl ChatClient for LocalChatClient {
     async fn chat(&self, request: ChatRequest) -> Result<ModelResponse> {
         self.check_egress()?;
-        Ok(self
+        let response = self
             .http_client
             .post(&self.endpoint)
             .json(&request)
             .send()
-            .await?
-            .json::<ModelResponse>()
-            .await?)
+            .await?;
+
+        let status = response.status();
+
+        // Read the body as text so we can report it on parse failures and
+        // include it in HTTP error diagnostics. If the body read itself
+        // fails (e.g. connection dropped mid-response), propagate as
+        // RhoError::Http so it remains retryable.
+        let body = response.text().await?;
+
+        if !status.is_success() {
+            // Non-2xx HTTP response. Use HttpError which preserves the
+            // status code for retry classification.
+            return Err(RhoError::HttpError {
+                status: status.as_u16(),
+                message: enhance_http_body(status.as_u16(), &body),
+            });
+        }
+
+        serde_json::from_str::<ModelResponse>(&body).map_err(|e| {
+            RhoError::Unexpected(anyhow::anyhow!(
+                "failed to parse model response: {e}\n  raw response (first 512 chars): {}",
+                truncate_error_body(&body)
+            ))
+        })
     }
 }
 
@@ -206,5 +310,34 @@ mod tests {
         // Without egress config, any host is permitted.
         let client = LocalChatClient::with_endpoint("https://api.openai.com/v1/chat/completions");
         assert!(client.check_egress().is_ok());
+    }
+
+    // ── Endpoint derivation ──────────────────────────────────────────────
+
+    #[test]
+    fn default_endpoint_derives_models_url() {
+        let client = LocalChatClient::new();
+        let models_url = reqwest::Url::parse(&client.endpoint).unwrap();
+        let mut expected = models_url.clone();
+        expected.set_path("/v1/models");
+        assert_eq!(expected.as_str(), "http://localhost:1234/v1/models");
+    }
+
+    #[test]
+    fn custom_endpoint_derives_models_url() {
+        let client = LocalChatClient::with_endpoint("http://localhost:8080/v1/chat/completions");
+        let models_url = reqwest::Url::parse(&client.endpoint).unwrap();
+        let mut expected = models_url.clone();
+        expected.set_path("/v1/models");
+        assert_eq!(expected.as_str(), "http://localhost:8080/v1/models");
+    }
+
+    #[test]
+    fn trailing_slash_endpoint_still_derives_models_url() {
+        let client = LocalChatClient::with_endpoint("http://localhost:1234/v1/chat/completions/");
+        let models_url = reqwest::Url::parse(&client.endpoint).unwrap();
+        let mut expected = models_url.clone();
+        expected.set_path("/v1/models");
+        assert_eq!(expected.as_str(), "http://localhost:1234/v1/models");
     }
 }

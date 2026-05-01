@@ -984,10 +984,10 @@ model = "test-model"
 
         std::fs::write(
             rho_dir.join("config.toml"),
-            r#"
+            r"
 [agent]
 token_budget = 65536
-"#,
+",
         )
         .unwrap();
 
@@ -1000,17 +1000,17 @@ token_budget = 65536
     #[test]
     fn token_budget_project_overrides_user() {
         let user_config: WireConfig = toml::from_str(
-            r#"
+            r"
 [agent]
 token_budget = 16384
-"#,
+",
         )
         .unwrap();
         let project_config: WireConfig = toml::from_str(
-            r#"
+            r"
 [agent]
 token_budget = 131072
-"#,
+",
         )
         .unwrap();
 
@@ -1021,10 +1021,10 @@ token_budget = 131072
     #[test]
     fn token_budget_user_preserved_when_no_project() {
         let user_config: WireConfig = toml::from_str(
-            r#"
+            r"
 [agent]
 token_budget = 16384
-"#,
+",
         )
         .unwrap();
 

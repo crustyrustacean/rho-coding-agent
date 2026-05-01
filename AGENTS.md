@@ -29,7 +29,7 @@ rho-core/           # Core library
     error.rs        # `RhoError` and `Result`
     message.rs      # `ChatMessage`, `ContentBlock`, `ModelToolCall`
     newtypes.rs     # `FilePath`, `ToolName`, `ToolCallId`, `DiagnosticCode`
-    prompts.rs      # `base_prompt()` (embedded from `prompts/base.md`)
+    prompts.rs      # `base_prompt()`, `compact_prompt()` (embedded from `prompts/base.md`, `prompts/compact.md`)
     redact.rs       # `Redactor` — secret pattern matching
     request.rs      # `ChatRequest`
     response.rs     # `ModelResponse`, `FinishReason`, `ModelUsage`
@@ -124,6 +124,9 @@ The agent uses multiple defense-in-depth layers:
 | `SlidingWindowContextManager` | Default implementation — evicts by turn, pins system message |
 | `TokenBudget` | Max tokens for context window |
 | `SandboxRoot` | Canonical root for file sandbox validation |
+| `find_project_root` | Auto-detect project root by walking up from CWD looking for markers |
+| `ModelInfo` | A model returned by the `/v1/models` endpoint |
+| `ModelList` | Response from `/v1/models` — a list of [`ModelInfo`] |
 | `Redactor` | Best-effort secret pattern scanner |
 | `RhoConfig` | Merged application-wide config from project-level + user-level TOML |
 | `ConfigLoader` | Loads and merges `~/.rho/config.toml` + `.rho/config.toml` |
@@ -139,7 +142,7 @@ The agent uses multiple defense-in-depth layers:
 | `ToolName` | Newtype for tool names (`Deref<Target = str>`) |
 | `ToolCallId` | Newtype for model-issued tool call IDs (`Deref<Target = str>`) |
 | `DiagnosticCode` | Newtype for Rust compiler diagnostic codes (`Deref<Target = str>`) |
-| `RhoError` | Error enum: `Http`, `Json`, `ToolNotFound`, `MaxIterationsExceeded`, `RetryBudgetExhausted`, `Unexpected` |
+| `RhoError` | Error enum: `Http`, `HttpError`, `Json`, `ToolNotFound`, `MaxIterationsExceeded`, `RetryBudgetExhausted`, `Unexpected` |
 | `Result` | `std::result::Result<T, RhoError>` |
 
 ## Coding Conventions

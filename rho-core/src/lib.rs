@@ -82,7 +82,7 @@ pub use agent::{AgentConfig, AgentState, TransitionError, run_loop};
 pub use approval::{
     ApprovalGate, ApprovalPolicy, AutoApprovePolicy, ConfigApprovalPolicy, DefaultApprovalPolicy,
 };
-pub use client::{ChatClient, LocalChatClient};
+pub use client::{ChatClient, LocalChatClient, ModelInfo, ModelList};
 pub use config::{
     AgentLoopConfig, ApprovalAction, ApprovalConfig, ConfigLoadError, ConfigLoader, ContextConfig,
     EgressConfig, ProviderConfig, RedactionConfig, RhoConfig, SandboxConfig, ShellConfig,
@@ -94,11 +94,11 @@ pub use conversation::{AssistantResponse, Conversation};
 pub use error::{Result, RhoError};
 pub use message::{ChatMessage, ContentBlock, ModelToolCall, ToolCallFunction};
 pub use newtypes::{DiagnosticCode, FilePath, ToolCallId, ToolName};
-pub use prompts::base_prompt;
+pub use prompts::{base_prompt, compact_prompt};
 pub use redact::Redactor;
 pub use request::ChatRequest;
 pub use response::{FinishReason, ModelChoice, ModelResponse, ModelUsage};
-pub use sandbox::SandboxRoot;
+pub use sandbox::{SandboxRoot, find_project_root};
 pub use schema::ToolSchema;
 pub use shell::{ShellExecutor, ShellOutput};
 pub use tool::{CancellationToken, Tool, ToolOutcome, ToolRegistry, ToolResult, ToolRisk};

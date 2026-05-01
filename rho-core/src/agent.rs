@@ -264,19 +264,28 @@ async fn send_with_retry(
     config: &AgentConfig,
 ) -> Result<AssistantResponse> {
     let mut attempts = 0u32;
+    let mut last_error: Option<RhoError> = None;
     loop {
         match conversation.send_current(client).await {
             Ok(r) => return Ok(r),
             Err(e) => match TransitionError::from_error(e) {
-                TransitionError::Retryable(_) if attempts < config.retry_budget => {
+                TransitionError::Retryable(re) if attempts < config.retry_budget => {
                     attempts += 1;
+                    eprintln!(
+                        "warn: transient error (attempt {attempts}/{}): {re}",
+                        config.retry_budget
+                    );
+                    last_error = Some(re);
                     let backoff = config
                         .initial_backoff_ms
                         .saturating_mul(1u64 << attempts.min(6));
                     tokio::time::sleep(std::time::Duration::from_millis(backoff)).await;
                 }
-                TransitionError::Retryable(_) => {
-                    return Err(RhoError::RetryBudgetExhausted(config.retry_budget));
+                TransitionError::Retryable(re) => {
+                    return Err(RhoError::RetryBudgetExhausted(
+                        config.retry_budget,
+                        Box::new(last_error.unwrap_or(re)),
+                    ));
                 }
                 TransitionError::Fatal(e) => return Err(e),
             },

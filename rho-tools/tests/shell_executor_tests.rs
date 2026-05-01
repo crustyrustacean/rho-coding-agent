@@ -168,7 +168,7 @@ fn executor_reports_available_shell() {
 #[tokio::test]
 async fn normalizes_forward_slashes_in_paths() {
     let executor = PowerShellExecutor::new();
-    // Use a path with forward slashes — should be normalized to backslashes.
+    // Use a path with forward slashes.
     let output = executor
         .execute(
             "Write-Output 'src/main.rs'",
@@ -179,11 +179,17 @@ async fn normalizes_forward_slashes_in_paths() {
         .await
         .expect("execution should succeed");
 
-    // The output should show the path with backslashes.
+    // On Windows, slashes are normalized to backslashes.
+    // On macOS/Linux, forward slashes are preserved (native).
     assert_eq!(output.exit_code, 0);
+    let path_in_output = if cfg!(target_os = "windows") {
+        "src\\main.rs"
+    } else {
+        "src/main.rs"
+    };
     assert!(
-        output.stdout.contains("src\\main.rs"),
-        "expected normalized path in output: {}",
+        output.stdout.contains(path_in_output),
+        "expected path {path_in_output} in output: {}",
         output.stdout.trim()
     );
 }

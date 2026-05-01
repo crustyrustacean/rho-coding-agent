@@ -16,6 +16,7 @@
 
 use crate::error::{Result, RhoError};
 use crate::newtypes::FilePath;
+use std::io;
 use std::path::{Component, Path, PathBuf};
 
 // ── SandboxRoot ───────────────────────────────────────────────────────────────
@@ -104,6 +105,44 @@ impl SandboxRoot {
             )));
         }
         Ok(())
+    }
+}
+
+// ── find_project_root ─────────────────────────────────────────────────────────
+
+/// Well-known project root markers, searched in priority order.
+const PROJECT_MARKERS: &[&str] = &[
+    ".rho/config.toml",
+    ".git",
+    "Cargo.toml",
+    "package.json",
+    "pyproject.toml",
+    "go.mod",
+];
+
+/// Auto-detect the project root by walking up from the current directory.
+///
+/// Searches for well-known project markers (see [`PROJECT_MARKERS`]).
+/// Returns the first directory (from CWD upward) that contains any marker.
+/// If no marker is found, returns the current directory.
+///
+/// # Errors
+///
+/// Returns an I/O error if the current directory cannot be determined.
+pub fn find_project_root() -> io::Result<SandboxRoot> {
+    let cwd = std::env::current_dir()?;
+    let mut dir = cwd.as_path();
+
+    loop {
+        if PROJECT_MARKERS.iter().any(|m| dir.join(m).exists()) {
+            return SandboxRoot::new(dir);
+        }
+
+        match dir.parent() {
+            Some(parent) if parent != dir => dir = parent,
+            // Reached filesystem root without finding a marker.
+            _ => return SandboxRoot::new(&cwd),
+        }
     }
 }
 

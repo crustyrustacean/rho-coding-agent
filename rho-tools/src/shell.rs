@@ -380,15 +380,21 @@ impl Tool for RunCommand {
 
 // ── Path normalization ────────────────────────────────────────────────────────
 
-/// Normalize forward slashes to backslashes in path-like contexts.
+/// Normalize path separators for the current platform.
 ///
-/// Replaces `/` with `\` when the slash is adjacent to a path-like character
-/// (alphanumeric, dot, underscore, or dash). This converts `src/main.rs` to
-/// `src\main.rs` but leaves `10 / 2` (division with spaces) alone.
+/// On Windows, replaces `/` with `\` when the slash is adjacent to a path-like
+/// character (alphanumeric, dot, underscore, or dash). This converts
+/// `src/main.rs` to `src\main.rs` but leaves `10 / 2` (division with spaces)
+/// alone.
 ///
-/// This is a best-effort heuristic. It handles the common case of model-generated
-/// Unix-style paths and avoids breaking PowerShell arithmetic.
+/// On non-Windows (macOS, Linux), returns the command unchanged — forward
+/// slashes are the native path separator and PowerShell on these platforms
+/// handles them natively.
 fn normalize_path_separators(command: &str) -> String {
+    if !cfg!(target_os = "windows") {
+        return command.to_owned();
+    }
+
     let chars: Vec<char> = command.chars().collect();
     let mut result = String::with_capacity(command.len());
 
@@ -476,17 +482,24 @@ fn which_exists(name: &str) -> bool {
     which::which(name).is_ok()
 }
 
-/// Kill a process by PID using `taskkill /F /PID <pid>`.
+/// Kill a process by PID.
 ///
-/// Used on Windows to forcefully terminate a child process when
-/// cancellation or timeout fires. If `child_id` is `None` or the
-/// kill fails, the error is silently ignored — we did our best.
+/// Uses `taskkill /F /PID <pid>` on Windows and `kill -9 <pid>` on
+/// macOS/Linux. If `child_id` is `None` or the kill fails, the error
+/// is silently ignored — we did our best.
 async fn kill_process(child_id: Option<u32>) {
     if let Some(id) = child_id {
-        let _ = Command::new("taskkill")
-            .args(["/PID", &id.to_string(), "/F"])
-            .output()
-            .await;
+        if cfg!(target_os = "windows") {
+            let _ = Command::new("taskkill")
+                .args(["/PID", &id.to_string(), "/F"])
+                .output()
+                .await;
+        } else {
+            let _ = Command::new("kill")
+                .args(["-9", &id.to_string()])
+                .output()
+                .await;
+        }
     }
 }
 
@@ -531,40 +544,8 @@ mod tests {
     // ── Path normalization ─────────────────────────────────────────────────
 
     #[test]
-    fn normalize_converts_path_slashes() {
-        assert_eq!(
-            normalize_path_separators("Get-Content src/main.rs"),
-            "Get-Content src\\main.rs"
-        );
-    }
-
-    #[test]
-    fn normalize_converts_drive_colon_slash() {
-        assert_eq!(
-            normalize_path_separators("cd C:/Users/foo"),
-            "cd C:\\Users\\foo"
-        );
-    }
-
-    #[test]
     fn normalize_preserves_division_with_spaces() {
         assert_eq!(normalize_path_separators("10 / 2"), "10 / 2");
-    }
-
-    #[test]
-    fn normalize_preserves_already_backslash() {
-        assert_eq!(
-            normalize_path_separators("Get-Content src\\main.rs"),
-            "Get-Content src\\main.rs"
-        );
-    }
-
-    #[test]
-    fn normalize_mixed_slashes() {
-        assert_eq!(
-            normalize_path_separators("Get-Content src/lib/mod.rs"),
-            "Get-Content src\\lib\\mod.rs"
-        );
     }
 
     #[test]
@@ -573,15 +554,62 @@ mod tests {
     }
 
     #[test]
-    fn normalize_slash_at_end_of_path() {
-        // "dir/" → "dir\" (trailing slash after path char)
-        assert_eq!(normalize_path_separators("cd src/"), "cd src\\");
-    }
-
-    #[test]
     fn normalize_standalone_slash() {
         // A lone "/" with spaces on both sides is division.
         assert_eq!(normalize_path_separators("1 / 2"), "1 / 2");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn normalize_preserves_forward_slash_unix() {
+        // On non-Windows, forward slashes are the native path separator.
+        assert_eq!(
+            normalize_path_separators("Get-Content src/main.rs"),
+            "Get-Content src/main.rs"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn normalize_converts_path_slashes() {
+        assert_eq!(
+            normalize_path_separators("Get-Content src/main.rs"),
+            "Get-Content src\\main.rs"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn normalize_converts_drive_colon_slash() {
+        assert_eq!(
+            normalize_path_separators("cd C:/Users/foo"),
+            "cd C:\\Users\\foo"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn normalize_preserves_already_backslash() {
+        assert_eq!(
+            normalize_path_separators("Get-Content src\\main.rs"),
+            "Get-Content src\\main.rs"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn normalize_mixed_slashes() {
+        assert_eq!(
+            normalize_path_separators("Get-Content src/lib/mod.rs"),
+            "Get-Content src\\lib\\mod.rs"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn normalize_slash_at_end_of_path() {
+        // "dir/" → "dir\" (trailing slash after path char)
+        assert_eq!(normalize_path_separators("cd src/"), "cd src\\");
     }
 
     // ── Working directory escape detection ─────────────────────────────────

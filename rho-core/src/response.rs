@@ -17,6 +17,10 @@ pub struct ModelResponse {
     /// The list of completion choices.
     pub choices: Vec<ModelChoice>,
     /// Token usage statistics.
+    ///
+    /// Some providers (e.g. LM Studio with certain models) omit this field.
+    /// Defaults to zero counts when absent.
+    #[serde(default)]
     pub usage: ModelUsage,
     /// Server-side statistics (reserved).
     #[serde(default)]
@@ -44,7 +48,10 @@ pub struct ModelChoice {
 }
 
 /// Why the model stopped generating tokens.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Known variants map to the `OpenAI` spec. Unknown values from non-standard
+/// providers are captured as [`FinishReason::Other`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FinishReason {
     /// Standard stop — the response is complete.
@@ -55,6 +62,24 @@ pub enum FinishReason {
     Length,
     /// Generation was stopped by a content filter.
     ContentFilter,
+    /// The model returned an unrecognised finish reason.
+    Other(String),
+}
+
+impl<'de> Deserialize<'de> for FinishReason {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        match s.as_str() {
+            "stop" => Ok(Self::Stop),
+            "tool_calls" => Ok(Self::ToolCalls),
+            "length" => Ok(Self::Length),
+            "content_filter" => Ok(Self::ContentFilter),
+            other => Ok(Self::Other(other.to_owned())),
+        }
+    }
 }
 
 /// The assistant message within a [`ModelChoice`].
@@ -72,13 +97,16 @@ pub struct ModelMessage {
 }
 
 /// Token usage statistics.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct ModelUsage {
     /// Tokens in the prompt.
+    #[serde(default)]
     pub prompt_tokens: usize,
     /// Tokens in the completion.
+    #[serde(default)]
     pub completion_tokens: usize,
     /// Total tokens.
+    #[serde(default)]
     pub total_tokens: usize,
     /// Breakdown of completion tokens.
     #[serde(default)]

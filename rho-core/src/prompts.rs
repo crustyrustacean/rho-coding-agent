@@ -12,6 +12,16 @@ pub fn base_prompt() -> &'static str {
     include_str!("prompts/base.md")
 }
 
+/// A compact system prompt for models with small context windows.
+///
+/// Use this when the full [`base_prompt()`] (~2,000 tokens) plus tool schemas
+/// and context files would exceed the model's context length. The compact
+/// prompt omits PowerShell idioms, pipeline patterns, and Rust-specific
+/// guidance, retaining only the essential identity and safety instructions.
+pub fn compact_prompt() -> &'static str {
+    include_str!("prompts/compact.md")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -115,6 +125,8 @@ mod tests {
     #[test]
     fn base_prompt_warns_no_cmd_bypass() {
         let prompt = base_prompt();
+        // On Windows, warns against cmd.exe bypass; on other platforms,
+        // cmd.exe is not relevant but the warning is harmless.
         assert!(
             prompt.contains("cmd /c") || prompt.contains("cmd.exe"),
             "prompt must warn against using cmd.exe to bypass PowerShell"

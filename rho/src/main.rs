@@ -7,8 +7,9 @@ use rho_core::{
     AgentConfig, ConfigLoader, Conversation, LocalChatClient, ModelToolCall, RhoConfig,
     ToolRegistry, ToolRisk,
     approval::ApprovalGate,
-    base_prompt,
+    base_prompt, compact_prompt,
     context_files::{ContextScanner, TrustStore, compose_system_prompt},
+    find_project_root,
     sandbox::SandboxRoot,
     tool::CancellationToken,
 };
@@ -48,16 +49,31 @@ impl ApprovalGate for ReplApprovalGate {
 #[command(version, about)]
 struct Cli {
     /// Model identifier.
-    #[arg(short, long, default_value = "qwen3-8b")]
-    model: String,
+    ///
+    /// If omitted (and not set in config), rho queries the server's
+    /// `/v1/models` endpoint and uses the first loaded model.
+    #[arg(short, long)]
+    model: Option<String>,
 
     /// System prompt (overrides the bundled base prompt and context files).
     #[arg(short, long)]
     system: Option<String>,
 
-    /// Project root / sandbox root (defaults to the current directory).
-    #[arg(long, default_value = ".")]
-    root: std::path::PathBuf,
+    /// Use a compact system prompt suitable for models with small context
+    /// windows (e.g. 4K tokens). The full prompt (~2,000 tokens) plus tool
+    /// schemas and context files may exceed the context length of smaller
+    /// models. This flag swaps the full prompt for a minimal version (~100
+    /// tokens) that preserves core identity and safety rules.
+    #[arg(long)]
+    compact: bool,
+
+    /// Project root / sandbox root (defaults to auto-detected project root).
+    ///
+    /// When omitted, rho walks up from the current directory looking for
+    /// project markers (`.rho/config.toml`, `.git/`, `Cargo.toml`, etc.).
+    /// Falls back to the current directory if no marker is found.
+    #[arg(long)]
+    root: Option<std::path::PathBuf>,
 
     /// Skip the provider consent warning for external endpoints.
     ///
@@ -82,26 +98,27 @@ struct Cli {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    // --- Sandbox root ---
+    let sandbox = match cli.root {
+        Some(ref p) => SandboxRoot::new(p).map_err(|e| {
+            anyhow::anyhow!("cannot establish sandbox root at `{}`: {e}", p.display())
+        })?,
+        None => find_project_root()
+            .map_err(|e| anyhow::anyhow!("cannot auto-detect project root: {e}"))?,
+    };
+
     // --- Config ---
-    let rho_config = ConfigLoader::load(&cli.root).unwrap_or_else(|e| {
+    let rho_config = ConfigLoader::load(sandbox.path()).unwrap_or_else(|e| {
         eprintln!("Warning: {e} — using defaults");
         RhoConfig::default()
     });
-
-    // --- Sandbox root ---
-    let sandbox = SandboxRoot::new(&cli.root).map_err(|e| {
-        anyhow::anyhow!(
-            "cannot establish sandbox root at `{}`: {e}",
-            cli.root.display()
-        )
-    })?;
 
     // --- Tool registry ---
     let mut registry = ToolRegistry::new();
     register_all(&mut registry, sandbox.clone(), Some(&rho_config));
 
     // --- Project context files ---
-    let system_prompt = load_system_prompt(&cli);
+    let system_prompt = load_system_prompt(&sandbox, &cli);
 
     // --- Client (with provider consent check) ---
     let endpoint = rho_config
@@ -115,12 +132,7 @@ async fn main() -> Result<()> {
     let client = LocalChatClient::with_endpoint_and_egress(endpoint, rho_config.egress.clone());
 
     // --- Conversation ---
-    let model = rho_config
-        .agent
-        .model
-        .as_deref()
-        .unwrap_or(&cli.model)
-        .to_owned();
+    let model = resolve_model(&rho_config, cli.model.as_ref(), &client).await?;
     let config = AgentConfig::from_config(&rho_config);
 
     // --- Secret redaction ---
@@ -180,20 +192,58 @@ async fn main() -> Result<()> {
 
 // ── Startup helpers ────────────────────────────────────────────────────────────
 
+/// Resolve the model identifier.
+///
+/// Priority: config `agent.model` → CLI `--model` → auto-detect via `/v1/models`.
+///
+/// Returns an error if auto-detection is needed but the server is unreachable
+/// or has no models loaded.
+async fn resolve_model(
+    config: &RhoConfig,
+    cli_model: Option<&String>,
+    client: &LocalChatClient,
+) -> Result<String> {
+    // 1. Config takes highest priority.
+    if let Some(model) = config.agent.model.as_deref() {
+        eprintln!("using model from config: {model}");
+        return Ok(model.to_owned());
+    }
+    // 2. CLI flag.
+    if let Some(model) = cli_model {
+        eprintln!("using model from --model: {model}");
+        return Ok(model.to_owned());
+    }
+    // 3. Auto-detect from the server.
+    eprintln!("no model specified, querying server for loaded models...");
+    let list = client
+        .list_models()
+        .await
+        .map_err(|e| anyhow::anyhow!("cannot query /v1/models: {e}"))?;
+    if list.data.is_empty() {
+        anyhow::bail!("no models loaded on the server. Load a model in LM Studio and try again.");
+    }
+    let model = &list.data[0].id;
+    eprintln!("auto-detected model: {model}");
+    Ok(model.clone())
+}
+
 /// Load the system prompt from CLI override or project context files.
-fn load_system_prompt(cli: &Cli) -> String {
+fn load_system_prompt(sandbox: &SandboxRoot, cli: &Cli) -> String {
     if let Some(custom) = &cli.system {
         return custom.clone();
     }
-    let cwd_sandbox = SandboxRoot::new(&cli.root)
-        .unwrap_or_else(|_| SandboxRoot::new(".").expect("current dir must exist"));
+    let prompt_base = if cli.compact {
+        compact_prompt()
+    } else {
+        base_prompt()
+    };
     let mut trust_store = TrustStore::load_default();
-    let scanner = ContextScanner::new(&cwd_sandbox);
+    let scanner = ContextScanner::new(sandbox);
     let mut stdout = io::stdout();
     let stdin = io::stdin();
     let mut stdin_locked = stdin.lock();
     let context_files = scanner.run(&mut trust_store, &mut stdin_locked, &mut stdout);
-    compose_system_prompt(base_prompt(), &context_files)
+    compose_system_prompt(prompt_base, &context_files)
 }
 
 /// Display a consent warning and read confirmation for external providers.

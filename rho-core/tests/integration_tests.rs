@@ -795,6 +795,30 @@ async fn non_retryable_error_propagates_immediately() {
     );
 }
 
+#[test]
+fn http_error_retryable_for_server_errors() {
+    // Server errors (5xx) and rate limiting (429) are retryable.
+    for status in [429, 500, 502, 503, 504] {
+        let err = RhoError::HttpError {
+            status,
+            message: "server error".to_owned(),
+        };
+        assert!(err.is_retryable(), "HTTP {status} should be retryable");
+    }
+}
+
+#[test]
+fn http_error_not_retryable_for_client_errors() {
+    // Client errors (4xx, except 429) are permanent — not retryable.
+    for status in [400, 401, 403, 404, 405, 422] {
+        let err = RhoError::HttpError {
+            status,
+            message: "client error".to_owned(),
+        };
+        assert!(!err.is_retryable(), "HTTP {status} should not be retryable");
+    }
+}
+
 // ── Agent loop: retry budget ──────────────────────────────────────────────────
 
 /// Create a retryable HTTP error by connecting to an unreachable port.
@@ -848,8 +872,8 @@ async fn retry_budget_exhausted_on_transient_errors() {
     .unwrap_err();
 
     assert!(
-        matches!(err, RhoError::RetryBudgetExhausted(2)),
-        "expected RetryBudgetExhausted(2), got: {err}"
+        matches!(err, RhoError::RetryBudgetExhausted(2, _)),
+        "expected RetryBudgetExhausted(2, _), got: {err}"
     );
 }
 
@@ -1114,7 +1138,7 @@ fn conversation_default_token_budget_is_32k() {
 #[test]
 fn conversation_with_custom_token_budget() {
     use rho_core::context::TokenBudget;
-    let conv = Conversation::new("model", None, vec![]).with_token_budget(TokenBudget::new(1024));
+    let _conv = Conversation::new("model", None, vec![]).with_token_budget(TokenBudget::new(1024));
     // Verify the budget is applied by constructing a conversation that
     // would overflow 1024 tokens.
     let prompt = "a".repeat(5000); // ~1,250 tokens — exceeds 1024
@@ -1149,8 +1173,20 @@ fn base_prompt_sha256_is_pinned() {
     let normalized = rho_core::base_prompt().replace('\r', "");
     let hash = rho_core::context_files::sha256_hex(&normalized);
     assert_eq!(
-        hash, "4cfec4db000ddc74132d14c638841ec1c64327d72c56dc051032da424a5edf08",
+        hash, "20c3279771bfe3181067dcb2f7c802aa95898d5fd87bf8a4f474134c65c6e1df",
         "base_prompt() hash changed — update this test to match the new hash"
+    );
+}
+
+#[test]
+fn compact_prompt_sha256_is_pinned() {
+    // Same as base_prompt_sha256_is_pinned — pin the compact prompt hash
+    // so any edit to compact.md requires updating this test.
+    let normalized = rho_core::compact_prompt().replace('\r', "");
+    let hash = rho_core::context_files::sha256_hex(&normalized);
+    assert_eq!(
+        hash, "412d4122d4934dbf3c41586bea74acf8de6e9661ae4304b7e19b7b515bc9bbea",
+        "compact_prompt() hash changed — update this test to match the new hash"
     );
 }
 
