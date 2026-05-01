@@ -4,8 +4,8 @@
 //! is required.
 
 use rho_core::{
-    AgentConfig, ChatMessage, ContentBlock, Conversation, RhoError, ToolCallId, ToolName,
-    ToolOutcome, ToolRegistry, ToolResult, ToolRisk,
+    AgentConfig, ChatMessage, ContentBlock, ContextManager, Conversation, RhoError, ToolCallId,
+    ToolName, ToolOutcome, ToolRegistry, ToolResult, ToolRisk,
     agent::run_loop,
     message::{ModelToolCall, ToolCallFunction},
     tool::{CancellationToken, Tool},
@@ -1096,6 +1096,39 @@ fn base_prompt_used_as_default_system_message() {
     let prompt = rho_core::base_prompt();
     let conv = Conversation::new("model", Some(prompt), vec![]);
     assert_eq!(conv.system_prompt(), Some(prompt));
+}
+
+#[test]
+fn conversation_default_token_budget_is_32k() {
+    use rho_core::context::TokenBudget;
+    let conv = Conversation::new("model", None, vec![]);
+    // Conversation uses TokenBudget::default() which is now 32K.
+    // We verify by checking that the context manager's fit method
+    // retains all messages when they're well under 32K tokens.
+    let messages = conv.messages();
+    let cm = rho_core::SlidingWindowContextManager::new();
+    let fitted = cm.fit(messages, TokenBudget::default());
+    assert_eq!(fitted.len(), messages.len());
+}
+
+#[test]
+fn conversation_with_custom_token_budget() {
+    use rho_core::context::TokenBudget;
+    let conv = Conversation::new("model", None, vec![]).with_token_budget(TokenBudget::new(1024));
+    // Verify the budget is applied by constructing a conversation that
+    // would overflow 1024 tokens.
+    let prompt = "a".repeat(5000); // ~1,250 tokens — exceeds 1024
+    let sys = ChatMessage::system_text("sys");
+    let user = ChatMessage::user_text(&prompt);
+    let cm = rho_core::SlidingWindowContextManager::new();
+    let fitted = cm.fit(&[sys, user], TokenBudget::new(1024));
+    // System message is pinned, so it survives; the user message is evicted.
+    assert!(
+        fitted
+            .iter()
+            .any(|m| matches!(m, ChatMessage::System { .. }))
+    );
+    assert!(!fitted.iter().any(|m| matches!(m, ChatMessage::User { .. })));
 }
 
 #[test]

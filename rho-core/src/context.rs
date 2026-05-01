@@ -32,7 +32,7 @@ impl TokenBudget {
 
 impl Default for TokenBudget {
     fn default() -> Self {
-        Self { max_tokens: 8_192 }
+        Self { max_tokens: 32_768 }
     }
 }
 
@@ -259,5 +259,10 @@ mod tests {
         let cm = SlidingWindowContextManager::new();
         let result = cm.fit(&messages, TokenBudget::default());
         assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn token_budget_default_is_32k() {
+        assert_eq!(TokenBudget::default().max_tokens, 32_768);
     }
 }

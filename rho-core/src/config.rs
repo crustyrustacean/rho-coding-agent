@@ -81,6 +81,19 @@ pub struct AgentLoopConfig {
     /// Base backoff in milliseconds; doubles on each retry (capped at 64×).
     #[serde(default = "default_initial_backoff_ms")]
     pub initial_backoff_ms: u64,
+    /// Context window token budget.
+    ///
+    /// Controls how many tokens the [`SlidingWindowContextManager`] retains
+    /// before evicting older turns. Defaults to 32,768 (see
+    /// [`default_token_budget`]).
+    ///
+    /// The previous default of 8,192 was insufficient: after the system
+    /// prompt (~4,700 tokens for `base.md` + `AGENTS.md`), only ~3,500
+    /// tokens remained for conversation — barely 1–2 tool-call rounds.
+    ///
+    /// [`SlidingWindowContextManager`]: crate::context::SlidingWindowContextManager
+    #[serde(default = "default_token_budget")]
+    pub token_budget: u32,
 }
 
 impl Default for AgentLoopConfig {
@@ -90,6 +103,7 @@ impl Default for AgentLoopConfig {
             max_iterations: default_max_iterations(),
             retry_budget: default_retry_budget(),
             initial_backoff_ms: default_initial_backoff_ms(),
+            token_budget: default_token_budget(),
         }
     }
 }
@@ -105,6 +119,13 @@ fn default_retry_budget() -> u32 {
 /// Default value for `initial_backoff_ms`.
 fn default_initial_backoff_ms() -> u64 {
     500
+}
+/// Default value for `token_budget`.
+///
+/// 32,768 tokens leaves ~28,000 tokens for conversation after the system
+/// prompt (~4,700 tokens), compared to ~3,500 with the old 8K default.
+fn default_token_budget() -> u32 {
+    32_768
 }
 
 // ── ProviderConfig ────────────────────────────────────────────────────────────
@@ -340,6 +361,9 @@ struct WireAgentLoopConfig {
     /// Base backoff in milliseconds.
     #[serde(default)]
     initial_backoff_ms: Option<u64>,
+    /// Context window token budget.
+    #[serde(default)]
+    token_budget: Option<u32>,
 }
 
 // ── ConfigLoader ──────────────────────────────────────────────────────────────
@@ -411,6 +435,10 @@ impl ConfigLoader {
                     .initial_backoff_ms
                     .or(user_agent.initial_backoff_ms)
                     .unwrap_or(default_initial_backoff_ms()),
+                token_budget: project_agent
+                    .token_budget
+                    .or(user_agent.token_budget)
+                    .unwrap_or(default_token_budget()),
             },
             provider: {
                 let up = user.provider.unwrap_or_default();
@@ -555,6 +583,7 @@ mod tests {
         assert_eq!(config.agent.max_iterations, 32);
         assert_eq!(config.agent.retry_budget, 4);
         assert_eq!(config.agent.initial_backoff_ms, 500);
+        assert_eq!(config.agent.token_budget, 32_768);
         assert!(config.provider.r#type.is_none());
         assert!(config.provider.endpoint.is_none());
         assert!(config.provider.api_key_env.is_none());
@@ -944,6 +973,69 @@ model = "test-model"
         assert_eq!(config.agent.max_iterations, 32);
         assert_eq!(config.agent.retry_budget, 4);
         assert_eq!(config.agent.initial_backoff_ms, 500);
+        assert_eq!(config.agent.token_budget, 32_768);
+    }
+
+    #[test]
+    fn token_budget_from_config() {
+        let dir = TempDir::new().unwrap();
+        let rho_dir = dir.path().join(".rho");
+        std::fs::create_dir_all(&rho_dir).unwrap();
+
+        std::fs::write(
+            rho_dir.join("config.toml"),
+            r#"
+[agent]
+token_budget = 65536
+"#,
+        )
+        .unwrap();
+
+        let config = ConfigLoader::load(dir.path()).unwrap();
+        assert_eq!(config.agent.token_budget, 65_536);
+        // Other agent fields should still be defaults.
+        assert_eq!(config.agent.max_iterations, 32);
+    }
+
+    #[test]
+    fn token_budget_project_overrides_user() {
+        let user_config: WireConfig = toml::from_str(
+            r#"
+[agent]
+token_budget = 16384
+"#,
+        )
+        .unwrap();
+        let project_config: WireConfig = toml::from_str(
+            r#"
+[agent]
+token_budget = 131072
+"#,
+        )
+        .unwrap();
+
+        let config = ConfigLoader::merge(Some(user_config), Some(project_config));
+        assert_eq!(config.agent.token_budget, 131_072);
+    }
+
+    #[test]
+    fn token_budget_user_preserved_when_no_project() {
+        let user_config: WireConfig = toml::from_str(
+            r#"
+[agent]
+token_budget = 16384
+"#,
+        )
+        .unwrap();
+
+        let config = ConfigLoader::merge(Some(user_config), None);
+        assert_eq!(config.agent.token_budget, 16_384);
+    }
+
+    #[test]
+    fn token_budget_default_is_32k() {
+        let config = AgentLoopConfig::default();
+        assert_eq!(config.token_budget, 32_768);
     }
 
     #[test]

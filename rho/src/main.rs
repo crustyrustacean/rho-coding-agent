@@ -66,6 +66,14 @@ struct Cli {
     /// automated workflows where consent has been pre-authorized.
     #[arg(long)]
     accept_external_provider: bool,
+
+    /// Context window token budget.
+    ///
+    /// Controls how many tokens the sliding window retains before evicting
+    /// older turns. Overrides the `[agent] token_budget` config value.
+    /// Defaults to 32,768.
+    #[arg(long)]
+    token_budget: Option<u32>,
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -93,49 +101,16 @@ async fn main() -> Result<()> {
     register_all(&mut registry, sandbox.clone(), Some(&rho_config));
 
     // --- Project context files ---
-    let system_prompt = if let Some(custom) = &cli.system {
-        custom.clone()
-    } else {
-        let cwd_sandbox = SandboxRoot::new(&cli.root)
-            .unwrap_or_else(|_| SandboxRoot::new(".").expect("current dir must exist"));
-        let mut trust_store = TrustStore::load_default();
-        let scanner = ContextScanner::new(&cwd_sandbox);
-        let mut stdout = io::stdout();
-        let stdin = io::stdin();
-        let mut stdin_locked = stdin.lock();
-        let context_files = scanner.run(&mut trust_store, &mut stdin_locked, &mut stdout);
-        compose_system_prompt(base_prompt(), &context_files)
-    };
+    let system_prompt = load_system_prompt(&cli);
 
-    // --- Client ---
+    // --- Client (with provider consent check) ---
     let endpoint = rho_config
         .provider
         .endpoint
         .as_deref()
         .unwrap_or("http://localhost:1234/v1/chat/completions");
 
-    let is_local = is_local_endpoint(endpoint);
-
-    // --- Provider consent warning ---
-    if !is_local && !cli.accept_external_provider {
-        eprintln!();
-        eprintln!("  ⚠  External provider detected");
-        eprintln!("      Endpoint: {endpoint}");
-        eprintln!();
-        eprintln!("      Your prompts and code will be sent to an external server.");
-        eprintln!("      This may expose proprietary code, secrets, or other");
-        eprintln!("      sensitive data to the provider and any intermediaries.");
-        eprintln!();
-        eprint!("      Continue? [y/N] ");
-        io::stderr().flush().ok();
-
-        let mut line = String::new();
-        let ok = io::stdin().lock().read_line(&mut line).is_ok();
-        if !ok || !matches!(line.trim().to_lowercase().as_str(), "y" | "yes") {
-            eprintln!("  Aborting. Use --accept-external-provider to skip this prompt.");
-            return Ok(());
-        }
-    }
+    check_provider_consent(endpoint, &cli)?;
 
     let client = LocalChatClient::with_endpoint_and_egress(endpoint, rho_config.egress.clone());
 
@@ -154,7 +129,12 @@ async fn main() -> Result<()> {
         &rho_config.redaction.custom_patterns,
     );
 
+    let token_budget = rho_core::TokenBudget::new(
+        cli.token_budget.unwrap_or(rho_config.agent.token_budget) as usize,
+    );
+
     let mut conversation = Conversation::new(model, Some(&system_prompt), registry.tool_schemas())
+        .with_token_budget(token_budget)
         .with_redactor(redactor);
 
     // --- REPL loop ---
@@ -196,6 +176,54 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+// ── Startup helpers ────────────────────────────────────────────────────────────
+
+/// Load the system prompt from CLI override or project context files.
+fn load_system_prompt(cli: &Cli) -> String {
+    if let Some(custom) = &cli.system {
+        return custom.clone();
+    }
+    let cwd_sandbox = SandboxRoot::new(&cli.root)
+        .unwrap_or_else(|_| SandboxRoot::new(".").expect("current dir must exist"));
+    let mut trust_store = TrustStore::load_default();
+    let scanner = ContextScanner::new(&cwd_sandbox);
+    let mut stdout = io::stdout();
+    let stdin = io::stdin();
+    let mut stdin_locked = stdin.lock();
+    let context_files = scanner.run(&mut trust_store, &mut stdin_locked, &mut stdout);
+    compose_system_prompt(base_prompt(), &context_files)
+}
+
+/// Display a consent warning and read confirmation for external providers.
+///
+/// Returns `Ok(())` if the user consents or if the provider is local.
+/// Returns `Ok(())` without prompting if `--accept-external-provider` is set.
+/// Prints a message and returns `Err` if the user declines.
+fn check_provider_consent(endpoint: &str, cli: &Cli) -> Result<()> {
+    if is_local_endpoint(endpoint) || cli.accept_external_provider {
+        return Ok(());
+    }
+    eprintln!();
+    eprintln!("  ⚠  External provider detected");
+    eprintln!("      Endpoint: {endpoint}");
+    eprintln!();
+    eprintln!("      Your prompts and code will be sent to an external server.");
+    eprintln!("      This may expose proprietary code, secrets, or other");
+    eprintln!("      sensitive data to the provider and any intermediaries.");
+    eprintln!();
+    eprint!("      Continue? [y/N] ");
+    io::stderr().flush().ok();
+
+    let mut line = String::new();
+    let ok = io::stdin().lock().read_line(&mut line).is_ok();
+    if ok && matches!(line.trim().to_lowercase().as_str(), "y" | "yes") {
+        Ok(())
+    } else {
+        eprintln!("  Aborting. Use --accept-external-provider to skip this prompt.");
+        Err(anyhow::anyhow!("user declined external provider consent"))
+    }
 }
 
 // ── Provider detection ─────────────────────────────────────────────────────────
