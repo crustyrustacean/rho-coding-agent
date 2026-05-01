@@ -13,10 +13,12 @@ use tempfile::TempDir;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/// Create a sandboxed temp directory for tools that need a `SandboxRoot`.
+///
+/// For tools that also need to create/read files, use
+/// [`rho_test_helpers::FileTestEnv`] instead.
 fn setup() -> (TempDir, SandboxRoot) {
-    let dir = tempfile::tempdir().expect("create tempdir");
-    let root = SandboxRoot::new(dir.path()).expect("create sandbox root");
-    (dir, root)
+    rho_test_helpers::tempdir_with_sandbox()
 }
 
 fn immediate_output(outcome: &ToolOutcome) -> String {

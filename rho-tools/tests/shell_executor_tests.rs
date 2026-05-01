@@ -3,6 +3,9 @@
 //! These tests spawn real PowerShell processes, so they require `pwsh` or
 //! `powershell` to be available on the system. They are kept minimal and
 //! fast — no network, no file I/O beyond what PowerShell itself does.
+//!
+//! If no PowerShell is found on `PATH`, all tests in this file are skipped
+//! (returned as `ignored` by the `detect_shell()` check).
 
 use std::path::Path;
 use std::time::Duration;

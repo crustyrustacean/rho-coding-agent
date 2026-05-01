@@ -9,7 +9,7 @@ This directory contains the long-term development plan for rho-coding-agent.
 | [roadmap.md](roadmap.md) | Phased development plan with architecture, crate layout, and milestones |
 | [phases/phase-1a/](phases/phase-1a/) | The agent-loop machinery |
 | [phases/phase-1b/](phases/phase-1b/) | The security surface (approval, sandbox, trust, redaction) |
-| [phases/phase-2/](phases/phase-2/) | PowerShell-native tools and config |
+| [phases/phase-2/](phases/phase-2/) | PowerShell-native tools, config, cross-platform support, and security hardening |
 | [phases/phase-3/](phases/phase-3/) | Rust tooling and tree-sitter |
 | [phases/phase-4/](phases/phase-4/) | Terminal UI |
 | [phases/phase-5/](phases/phase-5/) | Extensions and polish |

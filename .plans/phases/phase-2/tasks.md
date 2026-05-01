@@ -72,7 +72,21 @@
     - Document the config field in the TOML schema: `[agent] token_budget = 32768`
     - **Why this wasn't in the original task list:** The 8K default was set in Phase 1a as a conservative placeholder. It was never revisited because the plan assumed context management strategy (summarisation, retrieval-augmented) was a far-future concern. Real-world testing with mid-size models (qwen3-14B) revealed the budget is the binding constraint *before* strategy matters — the model can't self-correct when it only has room for 1–2 turns. Making the budget configurable is the pragmatic fix; sophisticated strategies remain a Phase 5+ concern.
 
-14. **Test suite audit:**
+14. **Cross-platform support, auto-detection, and error resilience:**
+    - Make path normalization platform-aware (`/` → `\` on Windows only; identity on Unix)
+    - Make process killing platform-aware (`taskkill` on Windows; `kill -9` on Unix)
+    - Auto-detect project root via `find_project_root()` walking up from CWD looking for markers
+    - Auto-detect model from server `/v1/models` endpoint when not specified in config or CLI
+    - Add `--compact` flag and `compact.md` system prompt for small-context-window models
+    - Add `RhoError::HttpError` variant to preserve HTTP status for retry classification
+    - Add `FinishReason::Other(String)` for non-standard providers
+    - Add `serde(default)` on `ModelUsage` fields for providers that omit them
+    - Add `ModelInfo`/`ModelList` types for `/v1/models` endpoint
+    - Improve error messages: context-window-exceeded diagnostics, truncated body snippets
+    - Gate platform-specific tests with `#[cfg]`
+    - **Why this wasn't in the original task list:** The Phase 2 plan was Windows/PowerShell-first. Real-world testing revealed that developers run on macOS/Linux too, and PowerShell (`pwsh`) is available cross-platform. Making rho work on all three platforms was a natural extension that also improved the Windows experience (better error handling, auto-detection, compact prompt).
+
+15. **Test suite audit:**
     - Promote PowerShell command execution into `rho-test-helpers` (handle `pwsh` vs `powershell` detection once)
     - Extract file-system test fixtures into a tempdir helper in `rho-test-helpers` (create/verify/cleanup)
     - Ensure `EditFile` tests cover: exact match, ambiguous match, no match, overlapping edits

@@ -96,7 +96,7 @@ The agent uses multiple defense-in-depth layers:
 | `ChatRequest` | Request body sent to the model API (`model`, `messages`, `tools`) |
 | `ModelResponse` | Parsed API response |
 | `ModelChoice` | A single completion choice |
-| `FinishReason` | Why the model stopped (`Stop`, `ToolCalls`, `Length`, `ContentFilter`) |
+| `FinishReason` | Why the model stopped (`Stop`, `ToolCalls`, `Length`, `ContentFilter`, `Other(String)`) |
 | `ModelUsage` | Token usage statistics |
 | `Tool` | Trait all tools implement (`name`, `description`, `schema`, `risk`, `execute`) |
 | `ToolRegistry` | Maps tool names to `Box<dyn Tool>` implementations |
@@ -142,7 +142,7 @@ The agent uses multiple defense-in-depth layers:
 | `ToolName` | Newtype for tool names (`Deref<Target = str>`) |
 | `ToolCallId` | Newtype for model-issued tool call IDs (`Deref<Target = str>`) |
 | `DiagnosticCode` | Newtype for Rust compiler diagnostic codes (`Deref<Target = str>`) |
-| `RhoError` | Error enum: `Http`, `HttpError`, `Json`, `ToolNotFound`, `MaxIterationsExceeded`, `RetryBudgetExhausted`, `Unexpected` |
+| `RhoError` | Error enum: `Http`, `HttpError`, `Json`, `ToolNotFound`, `MaxIterationsExceeded`, `RetryBudgetExhausted(u32, Box<RhoError>)`, `Unexpected` |
 | `Result` | `std::result::Result<T, RhoError>` |
 
 ## Coding Conventions
@@ -163,7 +163,7 @@ cargo xtask test -- --nocapture # Run with stdout visible
 - Unit tests live in `#[cfg(test)] mod tests` blocks within each source file.
 - Integration tests live in `rho-core/tests/integration_tests.rs`.
 - Tool integration tests live in `rho-tools/tests/tool_tests.rs`.
-- `rho-test-helpers` provides `MockChatClient`, `MockShellExecutor`, response builders (`text_response`, `tool_call_response`, `multi_tool_call_response`), approval gates (`AutoApproveGate`, `AutoDenyGate`), sandbox helpers (`tempdir_with_sandbox`), and trust-store helpers (`empty_trust_store`).
+- `rho-test-helpers` provides `MockChatClient`, `MockShellExecutor`, response builders (`text_response`, `tool_call_response`, `multi_tool_call_response`), approval gates (`AutoApproveGate`, `AutoDenyGate`), file-system test environment (`FileTestEnv`), shell detection (`detect_shell`), sandbox helpers (`tempdir_with_sandbox`), and trust-store helpers (`empty_trust_store`).
 - When adding new deserialization logic, add a JSON fixture test.
 - For `Conversation` branching logic, prefer the trait-abstraction pattern over coupling to `LocalChatClient`.
 
