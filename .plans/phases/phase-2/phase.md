@@ -14,6 +14,6 @@
 
 ## Exit Criteria
 
-The agent reliably uses PowerShell commands, reads and edits files, and the model generates syntactically valid PowerShell. The agent loop handles multiple tool calls in a single model response. Shell execution is abstracted behind `ShellExecutor`. Minimal config loading works (model, system prompt, per-tool approval policies, command denylist, egress allowlist).
+The agent reliably uses PowerShell commands, reads and edits files, and the model generates syntactically valid PowerShell. The agent loop handles multiple tool calls in a single model response. Shell execution is abstracted behind `ShellExecutor`. Minimal config loading works (model, system prompt, per-tool approval policies, command denylist, egress allowlist). The token budget is configurable via config and CLI flag, with a default (32K) that leaves sufficient room for multi-turn conversation after the system prompt.
 
 **Security:** dangerous commands are blocked by default, secrets are redacted from tool results, API keys are read from env vars (never plaintext), and external provider use requires explicit consent.

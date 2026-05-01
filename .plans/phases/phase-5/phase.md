@@ -20,4 +20,4 @@ Config loading (`toml`) was already introduced in Phase 2. `rho-ext` builds on t
 
 ## Exit Criteria
 
-The agent is configurable and extensible. Users can define custom tools in `.rho/config.toml` and the model can use them. Prompt composition merges base, shell, Rust, and project-specific instructions. The agent is production-ready for daily Rust development on Windows.
+The agent is configurable and extensible. Users can define custom tools in `.rho/config.toml` and the model can use them. Prompt composition merges base, shell, Rust, and project-specific instructions with budget awareness — the system prompt's token cost is measured, logged, and warned when it exceeds a configurable fraction of the token budget. The agent is production-ready for daily Rust development on Windows.

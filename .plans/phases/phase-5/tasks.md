@@ -26,7 +26,7 @@
    - Theme preferences
    - Keybindings
 
-6. **Prompt composition** (the full composition chain, building on Phase 1's project context file scanning):
+6. **Prompt composition with budget awareness** (the full composition chain, building on Phase 1's project context file scanning):
    - Base identity prompt
    + Project context files (in scan-list order: `AGENTS.md`, `.agents.md`, `CLAUDE.md`, `.cursorrules`, `.rho/prompt.md`) — each as a clearly delimited section in the system prompt
    + PowerShell guidance
@@ -34,6 +34,8 @@
    + Extension tool descriptions (auto-generated from the registry)
    + Tool schemas (auto-generated from the registry)
    - Precedence: the base identity prompt is always first and cannot be overridden by a context file. Context files are instructions the user intentionally placed in the project; they extend but do not replace the agent's core identity.
+   - **Budget-aware composition:** measure the token cost of each layer (base prompt, each context file, shell guidance, Rust guidance, extensions) and log it at startup. If the composed system prompt exceeds a configurable fraction of the token budget (default: 50%), warn the user with a breakdown by layer — e.g., "System prompt uses 8,200 / 32,768 tokens (25%). Breakdown: base 2,230, AGENTS.md 2,465, shell guidance 1,500, Rust guidance 2,005." This makes prompt bloat visible and gives the user actionable information (which context file to remove, which guidance layer to trim). The threshold and logging are controlled by `[context] prompt_budget_warning` in config (default: `0.5`).
+   - The token measurement uses the same heuristic as `SlidingWindowContextManager` (~4 chars/token) for consistency. Phase 4's model-aware sizing means this fraction is relative to the *actual* model context window, not the static default.
 
 7. **Polish:**
    - Comprehensive error messages (no panics, all errors surfaced)
@@ -47,6 +49,8 @@
    - **Reordering** — a refactor of the composition function causes layers to come out in a different order. Agent behaviour shifts but no other test fails.
    - **Whitespace drift** — a stray newline or section delimiter changes the prompt's shape. Models can be sensitive to formatting; the snapshot makes this visible.
    - **Unintended inclusion** — an extension or context file that should have been filtered out makes it into the composed prompt. Surfaces immediately.
+
+   Additionally, the budget-awareness layer adds a **token cost assertion**: the test verifies that the composed prompt's measured token cost is within expected bounds (e.g., "system prompt must be < 12,000 tokens"). If a prompt layer grows beyond the asserted bound, the test fails — catching prompt bloat at the test level before it reaches real usage.
 
    The full composition chain (per task 6 above) is:
    1. Base identity prompt (from `rho-core/src/prompts/base.md`)

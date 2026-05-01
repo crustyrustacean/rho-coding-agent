@@ -63,7 +63,16 @@
     - Credential storage: verify config never writes API keys to plaintext, verify env var lookup works
     - Approval policy per-tool: verify custom policies from config are respected
 
-13. **Test suite audit:**
+13. **Make the token budget configurable:**
+    - Add `token_budget: Option<u32>` to `AgentLoopConfig` in `rho-core/src/config.rs` (default: `32768` when `None`)
+    - Raise `TokenBudget` default from `8_192` to `32_768` — the original 8K default was a Phase 1a placeholder that leaves only ~3.5K tokens for conversation after the system prompt, which is insufficient for even 1–2 tool-call rounds
+    - Wire the config field through to `Conversation::with_token_budget()` in the binary
+    - Add `--token-budget` CLI flag for quick override without editing config
+    - The `ContextManager` trait and `SlidingWindowContextManager` are unchanged — this task only changes the budget *value*, not the eviction strategy
+    - Document the config field in the TOML schema: `[agent] token_budget = 32768`
+    - **Why this wasn't in the original task list:** The 8K default was set in Phase 1a as a conservative placeholder. It was never revisited because the plan assumed context management strategy (summarisation, retrieval-augmented) was a far-future concern. Real-world testing with mid-size models (qwen3-14B) revealed the budget is the binding constraint *before* strategy matters — the model can't self-correct when it only has room for 1–2 turns. Making the budget configurable is the pragmatic fix; sophisticated strategies remain a Phase 5+ concern.
+
+14. **Test suite audit:**
     - Promote PowerShell command execution into `rho-test-helpers` (handle `pwsh` vs `powershell` detection once)
     - Extract file-system test fixtures into a tempdir helper in `rho-test-helpers` (create/verify/cleanup)
     - Ensure `EditFile` tests cover: exact match, ambiguous match, no match, overlapping edits

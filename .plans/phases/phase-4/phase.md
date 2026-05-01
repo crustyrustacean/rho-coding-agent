@@ -24,4 +24,4 @@
 
 ## Exit Criteria
 
-The agent is usable as a daily terminal tool. The REPL feels responsive, informative, and safe (approval on destructive actions).
+The agent is usable as a daily terminal tool. The REPL feels responsive, informative, and safe (approval on destructive actions). The token budget auto-sizes to the loaded model's context window.
