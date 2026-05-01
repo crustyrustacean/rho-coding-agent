@@ -1,0 +1,38 @@
+{
+  "id": "chatcmpl-edit-tool-call",
+  "object": "chat.completion",
+  "created": 1777002700,
+  "model": "qwen/qwen2.5-coder-14b",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "",
+        "reasoning_content": "",
+        "tool_calls": [
+          {
+            "id": "call_edit_1",
+            "type": "function",
+            "function": {
+              "name": "edit_file",
+              "arguments": "{\"path\": \"src/lib.rs\", \"edits\": [{\"old_text\": \"println!(\\\"Hello!\\\")\", \"new_text\": \"println!(\\\"Goodbye!\\\")\"}]}"
+            }
+          }
+        ]
+      },
+      "logprobs": null,
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 70,
+    "completion_tokens": 28,
+    "total_tokens": 98,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  },
+  "stats": {},
+  "system_fingerprint": "qwen/qwen2.5-coder-14b"
+}

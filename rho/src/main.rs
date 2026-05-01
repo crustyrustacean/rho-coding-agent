@@ -58,6 +58,14 @@ struct Cli {
     /// Project root / sandbox root (defaults to the current directory).
     #[arg(long, default_value = ".")]
     root: std::path::PathBuf,
+
+    /// Skip the provider consent warning for external endpoints.
+    ///
+    /// By default, rho displays a consent prompt before connecting to a
+    /// non-local model provider. Use this flag to skip the prompt in
+    /// automated workflows where consent has been pre-authorized.
+    #[arg(long)]
+    accept_external_provider: bool,
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -99,8 +107,39 @@ async fn main() -> Result<()> {
         compose_system_prompt(base_prompt(), &context_files)
     };
 
+    // --- Client ---
+    let endpoint = rho_config
+        .provider
+        .endpoint
+        .as_deref()
+        .unwrap_or("http://localhost:1234/v1/chat/completions");
+
+    let is_local = is_local_endpoint(endpoint);
+
+    // --- Provider consent warning ---
+    if !is_local && !cli.accept_external_provider {
+        eprintln!();
+        eprintln!("  ⚠  External provider detected");
+        eprintln!("      Endpoint: {endpoint}");
+        eprintln!();
+        eprintln!("      Your prompts and code will be sent to an external server.");
+        eprintln!("      This may expose proprietary code, secrets, or other");
+        eprintln!("      sensitive data to the provider and any intermediaries.");
+        eprintln!();
+        eprint!("      Continue? [y/N] ");
+        io::stderr().flush().ok();
+
+        let mut line = String::new();
+        let ok = io::stdin().lock().read_line(&mut line).is_ok();
+        if !ok || !matches!(line.trim().to_lowercase().as_str(), "y" | "yes") {
+            eprintln!("  Aborting. Use --accept-external-provider to skip this prompt.");
+            return Ok(());
+        }
+    }
+
+    let client = LocalChatClient::with_endpoint_and_egress(endpoint, rho_config.egress.clone());
+
     // --- Conversation ---
-    let client = LocalChatClient::new();
     let model = rho_config
         .agent
         .model
@@ -157,4 +196,62 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+// ── Provider detection ─────────────────────────────────────────────────────────
+
+/// Determine whether an endpoint URL points to a local address.
+///
+/// A local endpoint is one whose host is `localhost`, `127.0.0.1`, or `::1`.
+/// Any other host is considered external and triggers the consent warning.
+///
+/// Uses simple string matching rather than full URL parsing to avoid pulling
+/// in the `url` or `reqwest` crates at the binary level.
+fn is_local_endpoint(endpoint: &str) -> bool {
+    // Check for localhost, 127.0.0.1, or [::1] in the authority portion.
+    let lower = endpoint.to_lowercase();
+    lower.contains("localhost") || lower.contains("127.0.0.1") || lower.contains("[::1]")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_endpoint_localhost() {
+        assert!(is_local_endpoint(
+            "http://localhost:1234/v1/chat/completions"
+        ));
+    }
+
+    #[test]
+    fn local_endpoint_127_0_0_1() {
+        assert!(is_local_endpoint(
+            "http://127.0.0.1:1234/v1/chat/completions"
+        ));
+    }
+
+    #[test]
+    fn local_endpoint_ipv6_loopback() {
+        assert!(is_local_endpoint("http://[::1]:1234/v1/chat/completions"));
+    }
+
+    #[test]
+    fn external_endpoint_openai() {
+        assert!(!is_local_endpoint(
+            "https://api.openai.com/v1/chat/completions"
+        ));
+    }
+
+    #[test]
+    fn external_endpoint_anthropic() {
+        assert!(!is_local_endpoint("https://api.anthropic.com/v1/messages"));
+    }
+
+    #[test]
+    fn local_endpoint_case_insensitive() {
+        assert!(is_local_endpoint(
+            "http://LocalHost:1234/v1/chat/completions"
+        ));
+    }
 }

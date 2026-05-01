@@ -44,7 +44,7 @@ pub struct ModelChoice {
 }
 
 /// Why the model stopped generating tokens.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FinishReason {
     /// Standard stop — the response is complete.

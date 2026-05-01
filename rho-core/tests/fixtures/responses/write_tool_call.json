@@ -1,0 +1,38 @@
+{
+  "id": "chatcmpl-write-tool-call",
+  "object": "chat.completion",
+  "created": 1777002600,
+  "model": "qwen/qwen2.5-coder-14b",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "",
+        "reasoning_content": "",
+        "tool_calls": [
+          {
+            "id": "call_write_1",
+            "type": "function",
+            "function": {
+              "name": "write_file",
+              "arguments": "{\"path\": \"src/lib.rs\", \"content\": \"pub fn greet() {\\n    println!(\\\"Hello!\\\");\\n}\"}"
+            }
+          }
+        ]
+      },
+      "logprobs": null,
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 55,
+    "completion_tokens": 22,
+    "total_tokens": 77,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  },
+  "stats": {},
+  "system_fingerprint": "qwen/qwen2.5-coder-14b"
+}

@@ -1,0 +1,29 @@
+{
+  "id": "chatcmpl-finish-length",
+  "object": "chat.completion",
+  "created": 1777002400,
+  "model": "qwen/qwen2.5-coder-14b",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "The implementation involves several steps. First, you need to set up the module structure by creating",
+        "reasoning_content": "",
+        "tool_calls": []
+      },
+      "logprobs": null,
+      "finish_reason": "length"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 50,
+    "completion_tokens": 100,
+    "total_tokens": 150,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  },
+  "stats": {},
+  "system_fingerprint": "qwen/qwen2.5-coder-14b"
+}

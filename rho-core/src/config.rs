@@ -223,6 +223,19 @@ pub struct EgressConfig {
     pub allowed_hosts: Vec<String>,
 }
 
+impl EgressConfig {
+    /// Check whether a hostname is permitted by this egress allowlist.
+    ///
+    /// `localhost`, `127.0.0.1`, and `::1` are always allowed. Other hosts
+    /// must appear in `allowed_hosts`.
+    pub fn is_host_allowed(&self, host: &str) -> bool {
+        if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+            return true;
+        }
+        self.allowed_hosts.iter().any(|h| h == host)
+    }
+}
+
 // ── RedactionConfig ───────────────────────────────────────────────────────────
 
 /// Secret redaction settings.
@@ -519,13 +532,9 @@ impl RhoConfig {
 
     /// Check whether a hostname is permitted by the egress allowlist.
     ///
-    /// `localhost` is always allowed. Other hosts must appear in
-    /// `egress.allowed_hosts`.
+    /// Delegates to [`EgressConfig::is_host_allowed`].
     pub fn is_host_allowed(&self, host: &str) -> bool {
-        if host == "localhost" || host == "127.0.0.1" || host == "::1" {
-            return true;
-        }
-        self.egress.allowed_hosts.iter().any(|h| h == host)
+        self.egress.is_host_allowed(host)
     }
 }
 
@@ -789,6 +798,42 @@ future_unknown_field = "surprise"
         };
         assert!(config.is_host_allowed("api.openai.com"));
         assert!(!config.is_host_allowed("api.anthropic.com"));
+    }
+
+    // ── EgressConfig::is_host_allowed ───────────────────────────────────────
+
+    #[test]
+    fn egress_config_localhost_always_allowed() {
+        let egress = EgressConfig::default();
+        assert!(egress.is_host_allowed("localhost"));
+        assert!(egress.is_host_allowed("127.0.0.1"));
+        assert!(egress.is_host_allowed("::1"));
+    }
+
+    #[test]
+    fn egress_config_unknown_host_denied_by_default() {
+        let egress = EgressConfig::default();
+        assert!(!egress.is_host_allowed("api.openai.com"));
+        assert!(!egress.is_host_allowed("evil.example.com"));
+    }
+
+    #[test]
+    fn egress_config_allowed_hosts_permitted() {
+        let egress = EgressConfig {
+            allowed_hosts: vec!["api.openai.com".to_owned()],
+        };
+        assert!(egress.is_host_allowed("api.openai.com"));
+        assert!(!egress.is_host_allowed("api.anthropic.com"));
+    }
+
+    #[test]
+    fn egress_config_multiple_allowed_hosts() {
+        let egress = EgressConfig {
+            allowed_hosts: vec!["api.openai.com".to_owned(), "api.anthropic.com".to_owned()],
+        };
+        assert!(egress.is_host_allowed("api.openai.com"));
+        assert!(egress.is_host_allowed("api.anthropic.com"));
+        assert!(!egress.is_host_allowed("api.deepseek.com"));
     }
 
     // ── API key resolution ─────────────────────────────────────────────────

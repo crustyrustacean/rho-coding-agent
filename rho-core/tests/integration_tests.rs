@@ -73,6 +73,140 @@ fn fixture_tool_call_deserializes() {
     assert_eq!(&*call.function.name, "read_file");
 }
 
+// ── Task 11: expanded deserialization tests ─────────────────────────────────────
+
+#[test]
+fn fixture_multi_tool_call_deserializes() {
+    let json = load_fixture("tests/fixtures/responses/multi_tool_call.json");
+    let response: rho_core::ModelResponse = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(
+        response.choices[0].finish_reason,
+        rho_core::FinishReason::ToolCalls
+    );
+
+    let calls = &response.choices[0].message.tool_calls;
+    assert_eq!(calls.len(), 2, "expected two tool calls");
+
+    assert_eq!(&*calls[0].id, "call_read_1");
+    assert_eq!(&*calls[0].function.name, "read_file");
+    assert_eq!(&*calls[1].id, "call_list_1");
+    assert_eq!(&*calls[1].function.name, "list_dir");
+
+    // Arguments should be valid JSON.
+    let args0: serde_json::Value = serde_json::from_str(&calls[0].function.arguments).unwrap();
+    assert_eq!(args0["path"], "src/main.rs");
+
+    let args1: serde_json::Value = serde_json::from_str(&calls[1].function.arguments).unwrap();
+    assert_eq!(args1["recursive"], true);
+}
+
+#[test]
+fn fixture_tool_call_with_content_deserializes() {
+    // Some models return both content text and tool calls in the same message.
+    let json = load_fixture("tests/fixtures/responses/tool_call_with_content.json");
+    let response: rho_core::ModelResponse = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(
+        response.choices[0].finish_reason,
+        rho_core::FinishReason::ToolCalls
+    );
+
+    // Both content and tool_calls should be populated.
+    assert_eq!(
+        response.choices[0].message.content,
+        "I'll read that file for you."
+    );
+    assert_eq!(response.choices[0].message.tool_calls.len(), 1);
+    assert_eq!(
+        &*response.choices[0].message.tool_calls[0].id,
+        "call_mixed_1"
+    );
+}
+
+#[test]
+fn fixture_write_tool_call_deserializes() {
+    // Write tool calls have complex JSON arguments (nested strings, newlines).
+    let json = load_fixture("tests/fixtures/responses/write_tool_call.json");
+    let response: rho_core::ModelResponse = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(
+        response.choices[0].finish_reason,
+        rho_core::FinishReason::ToolCalls
+    );
+
+    let call = &response.choices[0].message.tool_calls[0];
+    assert_eq!(&*call.function.name, "write_file");
+
+    // Arguments string should be valid JSON containing the expected fields.
+    let args: serde_json::Value = serde_json::from_str(&call.function.arguments).unwrap();
+    assert_eq!(args["path"], "src/lib.rs");
+    assert!(args["content"].is_string());
+    assert!(args["content"].as_str().unwrap().contains("greet"));
+}
+
+#[test]
+fn fixture_edit_tool_call_deserializes() {
+    // Edit tool calls have an array of edits in their arguments.
+    let json = load_fixture("tests/fixtures/responses/edit_tool_call.json");
+    let response: rho_core::ModelResponse = serde_json::from_str(&json).unwrap();
+
+    let call = &response.choices[0].message.tool_calls[0];
+    assert_eq!(&*call.function.name, "edit_file");
+
+    let args: serde_json::Value = serde_json::from_str(&call.function.arguments).unwrap();
+    assert!(args["edits"].is_array());
+    let edits = args["edits"].as_array().unwrap();
+    assert_eq!(edits.len(), 1);
+    assert_eq!(edits[0]["old_text"], "println!(\"Hello!\")");
+    assert_eq!(edits[0]["new_text"], "println!(\"Goodbye!\")");
+}
+
+#[test]
+fn fixture_finish_reason_length_deserializes() {
+    let json = load_fixture("tests/fixtures/responses/finish_reason_length.json");
+    let response: rho_core::ModelResponse = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(
+        response.choices[0].finish_reason,
+        rho_core::FinishReason::Length
+    );
+    assert!(!response.choices[0].message.content.is_empty());
+    assert!(response.choices[0].message.tool_calls.is_empty());
+}
+
+#[test]
+fn fixture_finish_reason_content_filter_deserializes() {
+    let json = load_fixture("tests/fixtures/responses/finish_reason_content_filter.json");
+    let response: rho_core::ModelResponse = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(
+        response.choices[0].finish_reason,
+        rho_core::FinishReason::ContentFilter
+    );
+    assert!(!response.choices[0].message.content.is_empty());
+    assert!(response.choices[0].message.tool_calls.is_empty());
+}
+
+#[test]
+fn all_fixture_finish_reasons_round_trip() {
+    // Verify that all FinishReason variants survive JSON serialization + deserialization.
+    let reasons = vec![
+        rho_core::FinishReason::Stop,
+        rho_core::FinishReason::ToolCalls,
+        rho_core::FinishReason::Length,
+        rho_core::FinishReason::ContentFilter,
+    ];
+    for reason in reasons {
+        let json = serde_json::to_string(&reason).unwrap();
+        let back: rho_core::FinishReason = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            reason, back,
+            "FinishReason round-trip failed for {reason:?}"
+        );
+    }
+}
+
 // ── Task 7: tool-call message persistence ────────────────────────────────────
 
 #[tokio::test]
@@ -991,4 +1125,160 @@ fn base_prompt_sha256_is_pinned() {
 fn custom_system_overrides_base_prompt() {
     let conv = Conversation::new("model", Some("custom system"), vec![]);
     assert_eq!(conv.system_prompt(), Some("custom system"));
+}
+
+// ── Task 12: Egress enforcement in LocalChatClient ─────────────────────────────
+
+#[tokio::test]
+async fn egress_blocks_external_host_with_default_config() {
+    use rho_core::{ChatClient, ChatRequest, EgressConfig, LocalChatClient};
+
+    let client = LocalChatClient::with_endpoint_and_egress(
+        "https://api.openai.com/v1/chat/completions",
+        EgressConfig::default(),
+    );
+    let request = ChatRequest {
+        model: "test".to_owned(),
+        messages: vec![],
+        tools: vec![],
+    };
+
+    let err = client.chat(request).await.unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("egress blocked"),
+        "expected egress blocked error, got: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn egress_allows_localhost_with_default_config() {
+    use rho_core::{ChatClient, ChatRequest, EgressConfig, LocalChatClient};
+
+    // The request will fail because nothing is listening, but it should NOT
+    // fail with an egress error.
+    let client = LocalChatClient::with_endpoint_and_egress(
+        "http://localhost:1/v1/chat/completions",
+        EgressConfig::default(),
+    );
+    let request = ChatRequest {
+        model: "test".to_owned(),
+        messages: vec![],
+        tools: vec![],
+    };
+
+    let err = client.chat(request).await.unwrap_err();
+    // Should be an HTTP error (connection refused), NOT an egress error.
+    assert!(
+        matches!(err, RhoError::Http(_)),
+        "expected HTTP error for localhost, not egress error, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn egress_allows_listed_external_host() {
+    use rho_core::{ChatClient, ChatRequest, EgressConfig, LocalChatClient};
+
+    let egress = EgressConfig {
+        allowed_hosts: vec!["api.openai.com".to_owned()],
+    };
+    let client = LocalChatClient::with_endpoint_and_egress(
+        "https://api.openai.com/v1/chat/completions",
+        egress,
+    );
+    let request = ChatRequest {
+        model: "test".to_owned(),
+        messages: vec![],
+        tools: vec![],
+    };
+
+    // This will fail because we don't have a valid API key, but it should
+    // NOT fail with an egress error — the host is allowed.
+    // Use a timeout so the test doesn't hang on DNS resolution.
+    let result =
+        tokio::time::timeout(std::time::Duration::from_secs(5), client.chat(request)).await;
+
+    if let Ok(Err(err)) = result {
+        // Should be an HTTP error (TLS, DNS, 401, etc.), NOT egress.
+        assert!(
+            !err.to_string().contains("egress blocked"),
+            "expected non-egress error for allowed host, got: {err}"
+        );
+    }
+    // Otherwise acceptable — proxy responded or timeout, but not egress-blocked.
+}
+
+#[tokio::test]
+async fn egress_blocks_unlisted_external_host() {
+    use rho_core::{ChatClient, ChatRequest, EgressConfig, LocalChatClient};
+
+    let egress = EgressConfig {
+        allowed_hosts: vec!["api.openai.com".to_owned()],
+    };
+    let client =
+        LocalChatClient::with_endpoint_and_egress("https://api.anthropic.com/v1/messages", egress);
+    let request = ChatRequest {
+        model: "test".to_owned(),
+        messages: vec![],
+        tools: vec![],
+    };
+
+    let err = client.chat(request).await.unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("egress blocked"),
+        "expected egress blocked for unlisted host, got: {msg}"
+    );
+    assert!(
+        msg.contains("api.anthropic.com"),
+        "expected host name in error, got: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn egress_allows_127_0_0_1_with_default_config() {
+    use rho_core::{ChatClient, ChatRequest, EgressConfig, LocalChatClient};
+
+    let client = LocalChatClient::with_endpoint_and_egress(
+        "http://127.0.0.1:1/v1/chat/completions",
+        EgressConfig::default(),
+    );
+    let request = ChatRequest {
+        model: "test".to_owned(),
+        messages: vec![],
+        tools: vec![],
+    };
+
+    let err = client.chat(request).await.unwrap_err();
+    // Should be an HTTP error (connection refused), NOT an egress error.
+    assert!(
+        matches!(err, RhoError::Http(_)),
+        "expected HTTP error for 127.0.0.1, not egress error, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn egress_no_config_allows_any_host() {
+    // Without egress config (legacy constructor), any host is permitted.
+    use rho_core::{ChatClient, ChatRequest, LocalChatClient};
+
+    let client = LocalChatClient::with_endpoint("https://api.openai.com/v1/chat/completions");
+    let request = ChatRequest {
+        model: "test".to_owned(),
+        messages: vec![],
+        tools: vec![],
+    };
+
+    // Use a timeout to avoid hanging on DNS/network.
+    let result =
+        tokio::time::timeout(std::time::Duration::from_secs(5), client.chat(request)).await;
+
+    if let Ok(Err(err)) = result {
+        // Should NOT be an egress error.
+        assert!(
+            !err.to_string().contains("egress blocked"),
+            "legacy client should not enforce egress, got: {err}"
+        );
+    }
+    // Acceptable — the request went through or timed out.
 }
