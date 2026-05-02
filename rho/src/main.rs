@@ -15,6 +15,7 @@ use rho_core::{
 };
 use rho_tools::register_all;
 use std::io::{self, BufRead, Write};
+use tracing_subscriber::EnvFilter;
 
 // ── REPL approval gate ────────────────────────────────────────────────────────
 
@@ -96,6 +97,14 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // --- Tracing ---
+    let file_appender = tracing_appender::rolling::never("logs", "rho.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+    tracing_subscriber::fmt()
+        .with_writer(non_blocking)
+        .with_env_filter(EnvFilter::from_default_env())
+        .init();
+
     let cli = Cli::parse();
 
     // --- Sandbox root ---

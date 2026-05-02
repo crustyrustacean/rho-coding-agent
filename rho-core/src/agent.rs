@@ -10,6 +10,7 @@ use crate::conversation::{AssistantResponse, Conversation};
 use crate::error::{Result, RhoError};
 use crate::newtypes::ToolCallId;
 use crate::tool::{CancellationToken, Tool, ToolRegistry, ToolResult};
+use tracing::{debug, error, info, warn};
 
 // ── State and error types ─────────────────────────────────────────────────────
 
@@ -161,6 +162,12 @@ impl AgentConfig {
 /// channel here so the TUI can render live status. The lints are suppressed
 /// until that wiring lands — do not remove the assignments.
 ///
+/// # Instrumentation
+///
+/// The `iteration` span field is declared as `Empty` by `#[instrument]` and
+/// must be explicitly recorded via `Span::current().record(...)` inside the
+/// loop body. If this step is skipped the field will appear blank in logs.
+///
 /// # Phase 4 cleanup
 ///
 /// TODO(Phase 4): Refactor the loop body into `state = step(state, event)?`
@@ -171,6 +178,7 @@ impl AgentConfig {
 /// - Clean surface for the state-change channel (emit after each `step`)
 ///
 /// The current imperative structure is correct and sufficient for Phase 2.
+#[tracing::instrument(skip_all, fields(iteration = tracing::field::Empty, input_len = message.len()))]
 #[allow(unused_variables, unused_assignments)]
 pub async fn run_loop(
     conversation: &mut Conversation,
@@ -193,8 +201,10 @@ pub async fn run_loop(
     let mut iterations = 0u32;
 
     loop {
+        tracing::Span::current().record("iteration", iterations);
         // ── Thinking ──────────────────────────────────────────────────────────
         if cancel.is_cancelled() {
+            warn!("cancelled");
             return Err(RhoError::Cancelled);
         }
 
@@ -202,17 +212,20 @@ pub async fn run_loop(
 
         iterations += 1;
         if iterations > config.max_iterations {
+            error!(max = config.max_iterations);
             return Err(RhoError::MaxIterationsExceeded(config.max_iterations));
         }
 
         match response {
             // ── Idle (terminal) ───────────────────────────────────────────────
             AssistantResponse::Message(text) => {
+                info!(reply_len = text.len());
                 state = AgentState::Idle;
                 return Ok(text);
             }
 
             AssistantResponse::ToolCalls(calls) => {
+                info!(tool_count = calls.len());
                 if calls.is_empty() {
                     return Err(RhoError::ProtocolViolation("empty tool_calls".into()));
                 }
@@ -238,6 +251,7 @@ pub async fn run_loop(
                         state = AgentState::AwaitingApproval;
                         let approved = gate.request_approval(&call, risk).await;
                         if !approved {
+                            debug!(tool_name = %call.function.name, action = "denied");
                             conversation.push_tool_result(
                                 call_id,
                                 &ToolResult::error("Tool call denied by user."),
@@ -277,10 +291,7 @@ async fn send_with_retry(
             Err(e) => match TransitionError::from_error(e) {
                 TransitionError::Retryable(re) if attempts < config.retry_budget => {
                     attempts += 1;
-                    eprintln!(
-                        "warn: transient error (attempt {attempts}/{}): {re}",
-                        config.retry_budget
-                    );
+                    debug!(attempt = attempts, max = config.retry_budget, error = %re);
                     last_error = Some(re);
                     let backoff = config
                         .initial_backoff_ms
@@ -288,9 +299,11 @@ async fn send_with_retry(
                     tokio::time::sleep(std::time::Duration::from_millis(backoff)).await;
                 }
                 TransitionError::Retryable(re) => {
+                    let last = last_error.unwrap_or(re);
+                    warn!(attempts = config.retry_budget, error = %last);
                     return Err(RhoError::RetryBudgetExhausted(
                         config.retry_budget,
-                        Box::new(last_error.unwrap_or(re)),
+                        Box::new(last),
                     ));
                 }
                 TransitionError::Fatal(e) => return Err(e),

@@ -13,6 +13,7 @@
 //!    model API to return a 400 error.
 
 use crate::message::ChatMessage;
+use tracing::{debug, warn};
 
 /// A token budget for context window management.
 ///
@@ -79,6 +80,28 @@ fn approximate_tokens(msg: &ChatMessage) -> usize {
 pub trait ContextManager: Send + Sync {
     /// Return the subset of `messages` that fits within `budget`.
     fn fit(&self, messages: &[ChatMessage], budget: TokenBudget) -> Vec<ChatMessage>;
+}
+
+/// A role-tagged message for counting evicted messages by type.
+enum MessageRole {
+    /// A user message.
+    User,
+    /// An assistant message (with or without tool calls).
+    Assistant,
+    /// A tool result message.
+    Tool,
+}
+
+impl MessageRole {
+    /// Classify a message by its role variant.
+    fn classify(msg: &ChatMessage) -> Self {
+        match msg {
+            ChatMessage::User { .. } => Self::User,
+            ChatMessage::Assistant { .. } => Self::Assistant,
+            ChatMessage::Tool { .. } => Self::Tool,
+            ChatMessage::System { .. } => unreachable!("system messages are never in turns"),
+        }
+    }
 }
 
 /// Default [`ContextManager`]: sliding window that evicts by turn.
@@ -160,10 +183,25 @@ impl ContextManager for SlidingWindowContextManager {
         let mut excess = total.saturating_sub(available);
         let mut drop = 0;
 
+        // Count evicted messages by role for diagnostics.
+        let mut dropped_user = 0usize;
+        let mut dropped_assistant = 0usize;
+        let mut dropped_tool = 0usize;
+        let mut tokens_freed: usize = 0;
+
         for &t in &turn_tokens {
             if excess == 0 {
                 break;
             }
+            // Classify messages in the evicted turn by role.
+            for msg in &turns[drop] {
+                match MessageRole::classify(msg) {
+                    MessageRole::User => dropped_user += 1,
+                    MessageRole::Assistant => dropped_assistant += 1,
+                    MessageRole::Tool => dropped_tool += 1,
+                }
+            }
+            tokens_freed += t;
             drop += 1;
             excess = excess.saturating_sub(t);
         }
@@ -177,6 +215,31 @@ impl ContextManager for SlidingWindowContextManager {
         for turn in turns {
             result.extend(turn);
         }
+
+        debug!(
+            input_messages = messages.len(),
+            output_messages = result.len(),
+            total_tokens = total,
+            budget_tokens = budget.max_tokens,
+            available_tokens = available,
+            turns_dropped = drop,
+            dropped_user,
+            dropped_assistant,
+            dropped_tool,
+            "fit completed"
+        );
+
+        if drop > 0 {
+            warn!(
+                turns_dropped = drop,
+                tokens_freed,
+                dropped_user,
+                dropped_assistant,
+                dropped_tool,
+                "context window: turns evicted"
+            );
+        }
+
         result
     }
 }

@@ -7,6 +7,7 @@ use crate::response::ModelResponse;
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
+use tracing::{error, info, warn};
 
 /// Interface all model providers must implement.
 ///
@@ -32,6 +33,7 @@ pub trait ChatClient: Send + Sync {
 /// the resolved host of the endpoint URL against the egress allowlist before
 /// sending any request. Requests to non-allowed hosts are rejected immediately
 /// with an error.
+#[derive(Clone, Debug)]
 pub struct LocalChatClient {
     /// The underlying HTTP client.
     http_client: Client,
@@ -199,6 +201,7 @@ fn enhance_http_body(status: u16, body: &str) -> String {
 
 #[async_trait]
 impl ChatClient for LocalChatClient {
+    #[tracing::instrument(skip(request), fields(model = %request.model, message_count = request.messages.len(), tool_count = request.tools.len()))]
     async fn chat(&self, request: ChatRequest) -> Result<ModelResponse> {
         self.check_egress()?;
         let response = self
@@ -219,18 +222,39 @@ impl ChatClient for LocalChatClient {
         if !status.is_success() {
             // Non-2xx HTTP response. Use HttpError which preserves the
             // status code for retry classification.
+            warn!(status = status.as_u16(), body = %truncate_error_body(&body));
             return Err(RhoError::HttpError {
                 status: status.as_u16(),
                 message: enhance_http_body(status.as_u16(), &body),
             });
         }
 
-        serde_json::from_str::<ModelResponse>(&body).map_err(|e| {
+        let model_response = serde_json::from_str::<ModelResponse>(&body).map_err(|e| {
+            error!(error = %e);
             RhoError::Unexpected(anyhow::anyhow!(
                 "failed to parse model response: {e}\n  raw response (first 512 chars): {}",
                 truncate_error_body(&body)
             ))
-        })
+        })?;
+
+        // Log response telemetry for data model assessment.
+        if let Some(choice) = model_response.choices.first() {
+            let reasoning_tokens = model_response
+                .usage
+                .completion_tokens_details
+                .as_ref()
+                .map_or(0, |d| d.reasoning_tokens);
+            info!(
+                finish_reason = ?choice.finish_reason,
+                prompt_tokens = model_response.usage.prompt_tokens,
+                completion_tokens = model_response.usage.completion_tokens,
+                total_tokens = model_response.usage.total_tokens,
+                has_reasoning = !choice.message.reasoning_content.is_empty(),
+                reasoning_tokens
+            );
+        }
+
+        Ok(model_response)
     }
 }
 
