@@ -75,10 +75,14 @@ pub struct AgentLoopConfig {
     /// Maximum model-tool-model round trips before the loop fails.
     #[serde(default = "default_max_iterations")]
     pub max_iterations: u32,
-    /// Maximum retries on transient errors before giving up.
+    /// Maximum *retry attempts* on transient errors before giving up. This is
+    /// the number of retries, not the total number of attempts
+    /// (initial + retries = 1 + `retry_budget`).
     #[serde(default = "default_retry_budget")]
     pub retry_budget: u32,
-    /// Base backoff in milliseconds; doubles on each retry (capped at 64×).
+    /// Base backoff in milliseconds. Each retry waits
+    /// `initial_backoff_ms * 2^retry_number`, capped at 64× the base. So the
+    /// first retry waits 2× the base, the second 4×, the third 8×, etc.
     #[serde(default = "default_initial_backoff_ms")]
     pub initial_backoff_ms: u64,
     /// Context window token budget.

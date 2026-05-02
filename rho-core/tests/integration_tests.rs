@@ -875,6 +875,14 @@ async fn retry_budget_exhausted_on_transient_errors() {
         matches!(err, RhoError::RetryBudgetExhausted(2, _)),
         "expected RetryBudgetExhausted(2, _), got: {err}"
     );
+
+    // Verify call count: 1 initial + 2 retries = 3 total attempts.
+    assert_eq!(
+        client.requests().len(),
+        3,
+        "expected 3 total attempts (1 initial + 2 retries), got {}",
+        client.requests().len()
+    );
 }
 
 #[tokio::test]

@@ -92,6 +92,7 @@ impl LocalChatClient {
     /// Returns an error if the endpoint URL cannot be parsed or the request
     /// fails (e.g. the server is unreachable).
     pub async fn list_models(&self) -> Result<ModelList> {
+        self.check_egress()?;
         let models_url = reqwest::Url::parse(&self.endpoint)
             .map(|mut u| {
                 u.set_path("/v1/models");
@@ -164,6 +165,8 @@ pub struct ModelList {
 }
 
 /// Truncate a response body for inclusion in error messages.
+///
+/// Uses `floor_char_boundary` which requires Rust ≥ 1.82.
 fn truncate_error_body(body: &str) -> &str {
     const MAX_LEN: usize = 512;
     if body.len() <= MAX_LEN {
@@ -310,6 +313,22 @@ mod tests {
         // Without egress config, any host is permitted.
         let client = LocalChatClient::with_endpoint("https://api.openai.com/v1/chat/completions");
         assert!(client.check_egress().is_ok());
+    }
+
+    // ── list_models egress ───────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn list_models_blocks_external_host_by_default() {
+        let client = LocalChatClient::with_endpoint_and_egress(
+            "https://api.openai.com/v1/chat/completions",
+            EgressConfig::default(),
+        );
+        let err = client.list_models().await.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("egress blocked"),
+            "expected egress blocked message, got: {msg}"
+        );
     }
 
     // ── Endpoint derivation ──────────────────────────────────────────────

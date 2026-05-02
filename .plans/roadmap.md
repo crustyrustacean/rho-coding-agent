@@ -1,5 +1,25 @@
 # rho-coding-agent — Roadmap
 
+## Current Status
+
+| Phase | Status | Summary |
+|---|---|---|
+| 1a: The Agent Loop | ✅ Complete | Agent loop, tool registry, `ChatClient` trait, conversation management |
+| 1b: Security Surface | ✅ Complete | Approval gate, file sandbox, context-file trust, secret redaction, untrusted-data framing |
+| 2: PowerShell, File Tools & Cross-Platform | ✅ Complete | PowerShell-native shell, `ListDir`/`EditFile`/`WriteFile` tools, config loader (two-tier TOML), command denylist, egress allowlist, cross-platform support (Windows/macOS/Linux), auto-detection (project root, model), compact prompt, `RhoError::HttpError` for retry classification |
+| 3: Rust Tooling and Tree-Sitter | 🔜 Next | `rho-highlight`, structured diagnostics, Cargo integration |
+| 4: Terminal UI | Planned | Rich TUI replacing the bare REPL |
+| 5: Extensions and Polish | Planned | Custom tools, prompt composition with budget awareness |
+| 6: LSP | Deferred | rust-analyzer integration |
+
+**Workspace version:** 0.11.0
+
+**Platform support:** Windows, macOS, Linux. PowerShell 7+ (`pwsh`) is the primary shell on all platforms; Windows PowerShell 5.1 (`powershell`) is the fallback on Windows only.
+
+**Existing crates:** `rho` (binary), `rho-core`, `rho-tools`, `rho-test-helpers`, `xtask`
+
+**Not yet created:** `rho-highlight`, `rho-tui`, `rho-ext`, `rho-eval`
+
 ## Architecture Overview
 
 The project is organized as a layered workspace. Dependencies flow downward only:
@@ -26,7 +46,7 @@ The project is organized as a layered workspace. Dependencies flow downward only
 
 **Dependency rule:** a crate may only depend on crates below it in the stack. `rho-core` depends on nothing but external libraries. `rho-tools` depends on `rho-core`. And so on.
 
-**Platform scope:** rho is a Windows-first, PowerShell-native agent. The shell, paths, and tooling assumptions target Windows. Unix support is welcome but not a priority. Shell execution is abstracted behind a `ShellExecutor` trait so cross-platform support can be added later without rewriting the tool layer.
+**Platform scope:** rho is a cross-platform, PowerShell-native agent running on Windows, macOS, and Linux. PowerShell (`pwsh`) is available on all three platforms and is the primary shell. Shell execution is abstracted behind a `ShellExecutor` trait so platform-specific shells can be added without rewriting the tool layer. Path normalization, process management, and project-root detection are all platform-aware. The original Windows-only focus was softened after real-world testing showed developers commonly work across platforms.
 
 Two auxiliary crates sit outside the main stack:
 - **`rho-test-helpers`** — shared test utilities (mock `ChatClient`, fixture loaders, tempdir helpers). Available as a dev-dependency to every crate.
@@ -103,10 +123,10 @@ Concrete tools that ship with the agent. Split internally by domain:
 |---|---|
 | `RunCommand` | Execute a PowerShell command, capture stdout/stderr and exit code. Respects the cancellation token from `Tool::execute` so Ctrl-C kills long-running commands. |
 
-This tool is PowerShell-first. The system prompt instructs the model to generate PowerShell commands. On Windows, `pwsh` is the default; `powershell` is the fallback. The tool normalizes path separators and handles execution policies.
+This tool is PowerShell-first. The system prompt instructs the model to generate PowerShell commands. On Windows, `pwsh` is the default; `powershell` is the fallback. On macOS and Linux, `pwsh` is required (PowerShell 7+ cross-platform). The tool normalizes path separators on Windows only (`/` → `\` in path contexts); on Unix, forward slashes are the native separator and are preserved. Process killing is platform-aware (`taskkill` on Windows, `kill -9` on Unix).
 
 **Security controls:**
-- **Command denylist** — `RunCommand` refuses to execute a configurable list of dangerous commands by default: `Remove-Item`, `Invoke-WebRequest`, `Invoke-RestMethod`, `Start-Process`, `New-Service`, `Set-ExecutionPolicy`, and any command with `-Recurse -Force`. Users can extend the denylist in `.rho/config.toml`. (Phase 2.)
+- **Command denylist** — `RunCommand` refuses to execute a configurable list of dangerous commands by default: `Remove-Item`, `Invoke-WebRequest`, `Invoke-RestMethod`, `Start-Process`, `New-Service`, `Set-ExecutionPolicy`, `curl`, `wget`, `bitsadmin`, `certutil`, and any command with `-Recurse -Force`. Substring patterns block .NET direct network access (`[System.Net.WebClient]`, `[System.Net.Http.HttpClient]`, `[System.Net.Sockets.TcpClient]`). Users can extend the denylist in `.rho/config.toml` via `[shell] denied_commands` and `[shell] denied_flag_combos`. The denylist is best-effort — the approval gate is the primary defense.
 - **Working directory** — `RunCommand` executes within the sandbox root. Commands that attempt to `cd` outside the project directory are flagged.
 - **Structured output** — stdout/stderr are captured and returned as structured data, never shell-interpolated back into command strings.
 
@@ -175,7 +195,7 @@ A dev-only crate containing reusable test infrastructure shared across the works
 - **Fixture loaders** — Helpers for loading JSON fixtures from `tests/fixtures/` directories
 - **Tempdir helpers** — Create/verify/cleanup temporary directories for file-system tests
 - **Trust-store helpers** — Per-test override for `~/.rho/trusted_projects.toml` so trust-flow tests are deterministic and isolated
-- **PowerShell detection** — Shared helper for `pwsh` vs `powershell` availability (used by `rho-tools` tests)
+- **PowerShell detection** — Shared helper for `pwsh` vs `powershell` availability (used by `rho-tools` tests). Returns `None` when neither is available, allowing tests to skip gracefully on systems without PowerShell.
 
 `rho-test-helpers` depends on `rho-core` (for the `ChatClient` trait and domain types). It is only included as a `dev-dependency` and never published.
 
@@ -209,15 +229,15 @@ Each phase produces a runnable agent. No phase requires a rewrite of the previou
 
 | Phase | Directory | Goal |
 |---|---|---|
-| 1a: The Agent Loop | [`phases/phase-1a/`](phases/phase-1a/) | Model invokes tools, agent loop runs autonomously. **Not yet hardened.** |
-| 1b: Security Surface | [`phases/phase-1b/`](phases/phase-1b/) | Approval gate, sandbox, context-file trust, redaction, untrusted-data framing |
-| 2: PowerShell and File Tools | [`phases/phase-2/`](phases/phase-2/) | PowerShell-native assistant, file system navigation, config loader, denylist, egress allowlist |
-| 3: Rust Tooling and Tree-Sitter | [`phases/phase-3/`](phases/phase-3/) | `rho-highlight` scaffolding, structured compiler diagnostics, Cargo integration |
+| 1a: The Agent Loop | [`phases/phase-1a-COMPLETE/`](phases/phase-1a-COMPLETE/) | Model invokes tools, agent loop runs autonomously. ✅ **Complete** |
+| 1b: Security Surface | [`phases/phase-1b-COMPLETE/`](phases/phase-1b-COMPLETE/) | Approval gate, sandbox, context-file trust, redaction, untrusted-data framing. ✅ **Complete** |
+| 2: PowerShell, File Tools, and Cross-Platform Support | [`phases/phase-2/`](phases/phase-2/) | PowerShell-native assistant, file system navigation, config loader, denylist, egress allowlist, cross-platform (Windows/macOS/Linux). ✅ **Complete** |
+| 3: Rust Tooling and Tree-Sitter | [`phases/phase-3/`](phases/phase-3/) | `rho-highlight` scaffolding, structured compiler diagnostics, Cargo integration. 🔜 **Next** |
 | 4: Terminal UI | [`phases/phase-4/`](phases/phase-4/) | Rich TUI with approval prompts and streaming |
 | 5: Extensions and Polish | [`phases/phase-5/`](phases/phase-5/) | Custom tools, config, prompt composition |
 | 6: LSP (Future) | [`phases/phase-6/`](phases/phase-6/) | rust-analyzer LSP integration (deferred) |
 
-Phase 1 was originally a single phase. It has been split because the original scope packed the agent-loop machinery and the security surface (sandbox, approval, trust, redaction) into one milestone. Each deserves focused implementation and test coverage rather than being rushed alongside the other. The bare REPL produced at the end of Phase 1a is explicitly *not yet safe* for daily use; Phase 1b closes that gap before any meaningful exposure.
+Phase 1 was originally a single phase. It was split because the original scope packed the agent-loop machinery and the security surface (sandbox, approval, trust, redaction) into one milestone. Each deserved focused implementation and test coverage rather than being rushed alongside the other. Both Phase 1a and Phase 1b are now complete. Phase 2 is also complete, adding cross-platform support alongside the originally planned PowerShell and file tools.
 
 Each phase directory contains:
 - **`phase.md`** — goal, milestone, dependencies, decisions, and exit criteria
@@ -274,7 +294,7 @@ A coding agent takes untrusted input (LLM output), interprets it as instructions
 | Threat | Vector | Primary defense | Secondary defense |
 |---|---|---|---|
 | Destructive command execution | Model generates dangerous shell commands | Command denylist | Approval gate |
-| Data exfiltration via shell | Model runs `Invoke-WebRequest` with file contents | Command denylist (network cmdlets) | Egress allowlist |
+| Data exfiltration via shell | Model runs `Invoke-WebRequest` with file contents | Approval gate | Command denylist (PowerShell cmdlets + .NET types + LOLBINs) + Egress allowlist |
 | Data exfiltration via provider | Conversation (including file contents) sent to external API | Provider switch warning + consent | Egress allowlist |
 | Path traversal | Model reads/writes files outside project | File sandbox (canonicalised paths, including not-yet-existing) | Approval gate |
 | Secret exposure | Tool results contain API keys/tokens | Best-effort secret redaction | Approval gate |
@@ -344,7 +364,7 @@ These are choices that seem right now but may need adjustment as we build:
 
 15. **Context window management strategy** — The initial `SlidingWindowContextManager` (Phase 1a) is the baseline. The token budget default was raised from 8K to 32K in Phase 2 (Task 13) after real-world testing revealed 8K left insufficient room for conversation. The budget is configurable via `[agent] token_budget` in config and `--token-budget` on the CLI. More sophisticated strategies — summarisation, importance scoring, retrieval-augmented context — can be evaluated as conversation lengths grow (Phase 5+). The `ContextManager` trait boundary makes swapping strategies possible without changing the agent loop. The system-message-pinned and no-split-tool-pairs invariants must be preserved by any future strategy. **Model-aware sizing** (querying the API for `max_context_length` and auto-sizing the budget) is a Phase 4 concern — it requires the TUI to display the resolved budget and the provider abstraction to expose model metadata.
 
-16. **Cross-platform shell support** — Shell execution is abstracted behind `ShellExecutor` (Phase 2) with `PowerShellExecutor` as the first implementation. Unix support is a future addition.
+16. **Cross-platform shell support** — Resolved (Phase 2, Task 14): `PowerShellExecutor` works cross-platform. PowerShell 7+ (`pwsh`) is the default on all platforms; `powershell` (Windows PowerShell 5.1) is the fallback on Windows only. Path normalization is platform-aware (Windows-only slash conversion). Process killing uses `taskkill` on Windows and `kill -9` on Unix. The `ShellExecutor` trait remains the seam for adding platform-specific shells (e.g., `BashExecutor` for native Unix workflows) without rewriting the tool layer. The system prompt instructs the model to use PowerShell on all platforms.
 
 17. **Provider extensibility and crate boundary** — The `ChatClient` trait is the seam for plugging in model providers. Local models are the primary target and ship as the default `LocalChatClient`. External providers can be added by implementing the trait. **Open question:** providers may want to live in their own crates (e.g., `rho-providers-openai`) or behind feature flags so `rho-core` users (extension authors, embedders) don't pay for `reqwest` features they don't use. Revisit when the second provider is added — the current shape doesn't paint us into a corner either way.
 
@@ -354,7 +374,7 @@ These are choices that seem right now but may need adjustment as we build:
 
 20. **Prompt injection defense** — Untrusted-data framing (`<context>` wrapper inside `User` messages) is a defense-in-depth measure, not a guarantee. Models vary in their ability to distinguish instructions from data inside framing. The approval gate is the primary defense — even if the model is tricked into generating a destructive command, the user must approve it before execution.
 
-21. **Egress control granularity** — The egress allowlist controls which hosts the `ChatClient` can contact. `RunCommand` with PowerShell networking is a separate egress path. The command denylist blocks the most common networking cmdlets, but a determined model could construct network requests using .NET APIs directly. Full egress control would require OS-level network filtering, which is out of scope. The denylist + approval gate is the pragmatic balance.
+21. **Egress control granularity** — The egress allowlist controls which hosts the `ChatClient` can contact. `RunCommand` with PowerShell networking is a separate egress path. The command denylist blocks the most common networking cmdlets (`Invoke-WebRequest`, `Invoke-RestMethod`), external network tools (`curl`, `wget`, `bitsadmin`, `certutil`), and direct .NET HTTP/socket access (`[System.Net.WebClient]`, `[System.Net.Http.HttpClient]`, `[System.Net.Sockets.TcpClient]`). However, a determined model could still construct network requests using less common .NET APIs or creative escape paths. The approval gate is the **primary** defense for shell egress; the denylist is a best-effort safety net. Full egress control requires OS-level network filtering, which is out of scope.
 
 22. **Project context file scope** — The default scan list covers the most common ecosystem conventions, but the landscape evolves. Configurable in `.rho/config.toml`. Subdirectory scanning (e.g., `.claude/rules/`) is not done initially — each additional file is another supply-chain vector.
 

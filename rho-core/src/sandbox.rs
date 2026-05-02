@@ -84,6 +84,21 @@ impl SandboxRoot {
     /// - A `..` component appears in the not-yet-existing suffix.
     /// - The resolved path would be outside the sandbox root.
     /// - No existing ancestor can be found.
+    ///
+    /// # TOCTOU assumption
+    ///
+    /// This validation walks up to the nearest existing ancestor,
+    /// canonicalizes it, and verifies the would-be path stays within the
+    /// sandbox root. There is a theoretical TOCTOU race: between this check
+    /// and the subsequent `create_dir_all` + `write`, an attacker with
+    /// concurrent filesystem access could plant a symlink at an intermediate
+    /// component and redirect the write outside the sandbox.
+    ///
+    /// This is accepted because the threat model does not include concurrent
+    /// adversarial filesystem modification. If the model has shell access and
+    /// can plant symlinks, it can write directly via the shell — the sandbox
+    /// only constrains the *tool* interface. The approval gate is the primary
+    /// defense against model-initiated writes regardless of path.
     pub fn validate_for_write(&self, input: impl AsRef<Path>) -> Result<FilePath> {
         let canonical = canonicalize_for_write(input.as_ref())?;
         self.assert_within(&canonical)?;
