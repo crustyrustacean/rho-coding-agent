@@ -164,9 +164,12 @@ impl AgentConfig {
 ///
 /// # Instrumentation
 ///
-/// The `iteration` span field is declared as `Empty` by `#[instrument]` and
-/// must be explicitly recorded via `Span::current().record(...)` inside the
-/// loop body. If this step is skipped the field will appear blank in logs.
+/// The `run_loop` function carries a span with `input_len`. Each loop
+/// iteration creates a child span (`agent_iteration`) with a single
+/// `iteration` field. This per-iteration span is required because
+/// `tracing` span fields are append-only — using `record()` on a
+/// shared span would accumulate duplicate `iteration=N` values, making
+/// log filtering unreliable.
 ///
 /// # Phase 4 cleanup
 ///
@@ -178,7 +181,7 @@ impl AgentConfig {
 /// - Clean surface for the state-change channel (emit after each `step`)
 ///
 /// The current imperative structure is correct and sufficient for Phase 2.
-#[tracing::instrument(skip_all, fields(iteration = tracing::field::Empty, input_len = message.len()))]
+#[tracing::instrument(skip_all, fields(input_len = message.len()))]
 #[allow(unused_variables, unused_assignments)]
 pub async fn run_loop(
     conversation: &mut Conversation,
@@ -201,7 +204,11 @@ pub async fn run_loop(
     let mut iterations = 0u32;
 
     loop {
-        tracing::Span::current().record("iteration", iterations);
+        // Each iteration gets its own span so the `iteration` field is a
+        // single value (not accumulated). `tracing` span fields are
+        // append-only — `record()` adds rather than replaces — so a
+        // per-iteration span is required for reliable filtering.
+        let _iter_span = tracing::info_span!("agent_iteration", iteration = iterations).entered();
         // ── Thinking ──────────────────────────────────────────────────────────
         if cancel.is_cancelled() {
             warn!("cancelled");

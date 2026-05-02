@@ -201,7 +201,7 @@ fn enhance_http_body(status: u16, body: &str) -> String {
 
 #[async_trait]
 impl ChatClient for LocalChatClient {
-    #[tracing::instrument(skip(request), fields(model = %request.model, message_count = request.messages.len(), tool_count = request.tools.len()))]
+    #[tracing::instrument(skip_all, fields(model = %request.model, message_count = request.messages.len(), tool_count = request.tools.len()))]
     async fn chat(&self, request: ChatRequest) -> Result<ModelResponse> {
         self.check_egress()?;
         let response = self
@@ -239,18 +239,11 @@ impl ChatClient for LocalChatClient {
 
         // Log response telemetry for data model assessment.
         if let Some(choice) = model_response.choices.first() {
-            let reasoning_tokens = model_response
-                .usage
-                .completion_tokens_details
-                .as_ref()
-                .map_or(0, |d| d.reasoning_tokens);
             info!(
                 finish_reason = ?choice.finish_reason,
                 prompt_tokens = model_response.usage.prompt_tokens,
                 completion_tokens = model_response.usage.completion_tokens,
                 total_tokens = model_response.usage.total_tokens,
-                has_reasoning = !choice.message.reasoning_content.is_empty(),
-                reasoning_tokens
             );
         }
 
