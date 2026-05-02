@@ -195,7 +195,7 @@ pub async fn run_loop(
     loop {
         // ── Thinking ──────────────────────────────────────────────────────────
         if cancel.is_cancelled() {
-            return Err(RhoError::Unexpected(anyhow::anyhow!("cancelled")));
+            return Err(RhoError::Cancelled);
         }
 
         let response = send_with_retry(conversation, client, config).await?;
@@ -214,7 +214,7 @@ pub async fn run_loop(
 
             AssistantResponse::ToolCalls(calls) => {
                 if calls.is_empty() {
-                    return Err(RhoError::Unexpected(anyhow::anyhow!("empty tool_calls")));
+                    return Err(RhoError::ProtocolViolation("empty tool_calls".into()));
                 }
 
                 // Execute each tool call sequentially. All results are appended
@@ -222,7 +222,7 @@ pub async fn run_loop(
                 // loop iteration.
                 for call in calls {
                     if cancel.is_cancelled() {
-                        return Err(RhoError::Unexpected(anyhow::anyhow!("cancelled")));
+                        return Err(RhoError::Cancelled);
                     }
 
                     let call_id = ToolCallId::new(call.id.to_string());

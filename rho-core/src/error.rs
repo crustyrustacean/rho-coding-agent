@@ -44,6 +44,24 @@ pub enum RhoError {
     #[error("retry budget exhausted after {0} attempts: {1}")]
     RetryBudgetExhausted(u32, Box<RhoError>),
 
+    /// The agent loop was cancelled by the user or a cancellation token.
+    #[error("cancelled")]
+    Cancelled,
+
+    /// A network request was blocked by the egress policy.
+    #[error("egress blocked: {host}")]
+    EgressBlocked {
+        /// The hostname that was blocked.
+        host: String,
+    },
+
+    /// The model API returned a response that violates the expected protocol.
+    ///
+    /// For example, the model returned an empty `tool_calls` array or a
+    /// streaming outcome that is not yet supported.
+    #[error("protocol violation: {0}")]
+    ProtocolViolation(String),
+
     /// An unexpected error occurred.
     #[error(transparent)]
     Unexpected(#[from] anyhow::Error),

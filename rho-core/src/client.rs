@@ -129,9 +129,7 @@ impl LocalChatClient {
         if egress.is_host_allowed(&host) {
             Ok(())
         } else {
-            Err(crate::error::RhoError::Unexpected(anyhow::anyhow!(
-                "egress blocked: host '{host}' is not in the allowed list"
-            )))
+            Err(crate::error::RhoError::EgressBlocked { host: host.clone() })
         }
     }
 }

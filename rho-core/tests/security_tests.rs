@@ -45,7 +45,7 @@ impl Tool for DestructiveTool {
     fn name(&self) -> ToolName {
         ToolName::from("bang")
     }
-    fn description(&self) -> &'static str {
+    fn description(&self) -> &str {
         "destructive"
     }
     fn parameters_schema(&self) -> serde_json::Value {

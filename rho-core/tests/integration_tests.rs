@@ -28,7 +28,7 @@ impl Tool for EchoTool {
     fn name(&self) -> ToolName {
         ToolName::from(self.name)
     }
-    fn description(&self) -> &'static str {
+    fn description(&self) -> &str {
         "echo"
     }
     fn parameters_schema(&self) -> serde_json::Value {
@@ -520,7 +520,7 @@ impl Tool for WriteEchoTool {
     fn name(&self) -> ToolName {
         ToolName::from("write_tool")
     }
-    fn description(&self) -> &'static str {
+    fn description(&self) -> &str {
         "write echo"
     }
     fn parameters_schema(&self) -> serde_json::Value {
@@ -638,7 +638,7 @@ async fn cancellation_between_tool_calls_in_batch() {
     .unwrap_err();
 
     assert!(
-        matches!(err, RhoError::Unexpected(_)),
+        matches!(err, RhoError::Cancelled),
         "expected cancellation error, got: {err}"
     );
 
@@ -682,8 +682,8 @@ async fn empty_tool_calls_vec_returns_error() {
     .unwrap_err();
 
     assert!(
-        matches!(err, RhoError::Unexpected(_)),
-        "expected Unexpected error for empty tool_calls, got: {err}"
+        matches!(err, RhoError::ProtocolViolation(_)),
+        "expected ProtocolViolation error for empty tool_calls, got: {err}"
     );
 }
 
@@ -976,7 +976,7 @@ impl Tool for SlowTool {
     fn name(&self) -> ToolName {
         ToolName::from("slow_tool")
     }
-    fn description(&self) -> &'static str {
+    fn description(&self) -> &str {
         "slow"
     }
     fn parameters_schema(&self) -> serde_json::Value {
@@ -1027,8 +1027,8 @@ async fn cancellation_checked_at_top_of_loop() {
     .unwrap_err();
 
     assert!(
-        matches!(err, rho_core::RhoError::Unexpected(_)),
-        "expected Unexpected error from early cancellation check, got: {err}"
+        matches!(err, rho_core::RhoError::Cancelled),
+        "expected Cancelled error from early cancellation check, got: {err}"
     );
 }
 
@@ -1071,7 +1071,7 @@ async fn cancellation_propagates_into_running_tool() {
     .unwrap_err();
 
     assert!(
-        matches!(err, rho_core::RhoError::Unexpected(_)),
+        matches!(err, rho_core::RhoError::Cancelled),
         "expected cancellation error, got: {err}"
     );
 

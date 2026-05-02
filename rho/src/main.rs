@@ -126,7 +126,7 @@ async fn main() -> Result<()> {
 
     // --- Tool registry ---
     let mut registry = ToolRegistry::new();
-    register_all(&mut registry, sandbox.clone(), Some(&rho_config));
+    register_all(&mut registry, sandbox.clone(), &rho_config);
 
     // --- Project context files ---
     let system_prompt = load_system_prompt(&sandbox, &cli);
@@ -285,12 +285,13 @@ fn check_provider_consent(endpoint: &str, cli: &Cli) -> Result<()> {
 /// A local endpoint is one whose host is `localhost`, `127.0.0.1`, or `::1`.
 /// Any other host is considered external and triggers the consent warning.
 ///
-/// Uses simple string matching rather than full URL parsing to avoid pulling
-/// in the `url` or `reqwest` crates at the binary level.
+/// Uses `url::Url` parsing so that crafted hostnames like
+/// `api.localhost-fake.evil.com` are correctly classified as external.
 fn is_local_endpoint(endpoint: &str) -> bool {
-    // Check for localhost, 127.0.0.1, or [::1] in the authority portion.
-    let lower = endpoint.to_lowercase();
-    lower.contains("localhost") || lower.contains("127.0.0.1") || lower.contains("[::1]")
+    url::Url::parse(endpoint)
+        .ok()
+        .and_then(|u| u.host_str().map(String::from))
+        .is_some_and(|h| matches!(h.as_str(), "localhost" | "127.0.0.1" | "::1" | "[::1]"))
 }
 
 #[cfg(test)]
@@ -332,6 +333,15 @@ mod tests {
     fn local_endpoint_case_insensitive() {
         assert!(is_local_endpoint(
             "http://LocalHost:1234/v1/chat/completions"
+        ));
+    }
+
+    #[test]
+    fn local_endpoint_rejects_localhost_subdomain() {
+        // A crafted hostname containing "localhost" as a substring
+        // must NOT be classified as local.
+        assert!(!is_local_endpoint(
+            "https://api.localhost-fake.evil.com/v1/chat/completions"
         ));
     }
 }

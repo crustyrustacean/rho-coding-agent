@@ -353,7 +353,7 @@ impl Tool for RunCommand {
         ToolName::from("run_command")
     }
 
-    fn description(&self) -> &'static str {
+    fn description(&self) -> &str {
         "Execute a PowerShell command within the project directory \
          and return its stdout, stderr, and exit code."
     }

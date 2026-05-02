@@ -1135,7 +1135,7 @@ dependencies = [
 
 [[package]]
 name = "rho"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1143,11 +1143,12 @@ dependencies = [
  "rho-core",
  "rho-tools",
  "tokio",
+ "url",
 ]
 
 [[package]]
 name = "rho-core"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1166,7 +1167,7 @@ dependencies = [
 
 [[package]]
 name = "rho-test-helpers"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1179,7 +1180,7 @@ dependencies = [
 
 [[package]]
 name = "rho-tools"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2230,7 +2231,7 @@ checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 
 [[package]]
 name = "xtask"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "anyhow",
  "clap",

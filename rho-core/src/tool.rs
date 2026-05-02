@@ -99,9 +99,10 @@ pub trait Tool: Send + Sync {
 
     /// Human-readable description shown to the model.
     ///
-    /// Implementations should return a `&'static str` literal so the description
-    /// can be used without lifetime complications.
-    fn description(&self) -> &'static str;
+    /// Implementations typically return a `&'static str` literal, but the
+    /// return type is `&str` to allow heap-allocated descriptions from
+    /// dynamically loaded extensions in future phases.
+    fn description(&self) -> &str;
 
     /// JSON Schema object describing this tool's parameters.
     fn parameters_schema(&self) -> serde_json::Value;
@@ -205,9 +206,9 @@ impl ToolRegistry {
 
         match outcome {
             ToolOutcome::Immediate(result) => Ok(result),
-            ToolOutcome::Streamed(_) => Err(crate::error::RhoError::Unexpected(anyhow::anyhow!(
-                "streaming tool output is not yet supported"
-            ))),
+            ToolOutcome::Streamed(_) => Err(crate::error::RhoError::ProtocolViolation(
+                "streaming tool output is not yet supported".into(),
+            )),
         }
     }
 }
@@ -226,7 +227,7 @@ mod tests {
         fn name(&self) -> ToolName {
             ToolName::from(self.name)
         }
-        fn description(&self) -> &'static str {
+        fn description(&self) -> &str {
             "stub"
         }
         fn parameters_schema(&self) -> serde_json::Value {

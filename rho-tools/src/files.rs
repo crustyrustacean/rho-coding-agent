@@ -32,7 +32,7 @@ impl Tool for ReadFile {
         ToolName::from("read_file")
     }
 
-    fn description(&self) -> &'static str {
+    fn description(&self) -> &str {
         "Read the text contents of a file within the project. \
          Returns the file's content wrapped in <context> tags."
     }
@@ -106,7 +106,7 @@ impl Tool for WriteFile {
         ToolName::from("write_file")
     }
 
-    fn description(&self) -> &'static str {
+    fn description(&self) -> &str {
         "Write text content to a file within the project. \
          Creates the file and any necessary parent directories if they do not exist; \
          overwrites it if it does."
@@ -194,7 +194,7 @@ impl Tool for ListDir {
         ToolName::from("list_dir")
     }
 
-    fn description(&self) -> &'static str {
+    fn description(&self) -> &str {
         "List files and directories within the project. \
          Respects .gitignore rules by default. \
          Set recursive to true to walk subdirectories."
@@ -341,7 +341,7 @@ impl Tool for EditFile {
         ToolName::from("edit_file")
     }
 
-    fn description(&self) -> &'static str {
+    fn description(&self) -> &str {
         "Apply targeted exact-match replacements to a file within the project. \
          Each edit specifies old_text to find and new_text to replace it with. \
          All old_text occurrences must be unique (exactly one match each) and \
