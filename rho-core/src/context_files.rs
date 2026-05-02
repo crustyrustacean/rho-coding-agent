@@ -137,10 +137,20 @@ impl TrustStore {
         };
         if let Ok(text) = toml::to_string_pretty(&trust_file) {
             // Create parent directory if needed.
-            if let Some(parent) = self.path.parent() {
-                let _ = std::fs::create_dir_all(parent);
+            if let Some(parent) = self.path.parent()
+                && let Err(e) = std::fs::create_dir_all(parent)
+            {
+                eprintln!(
+                    "warn: cannot create trust store directory {}: {e}",
+                    parent.display()
+                );
             }
-            let _ = std::fs::write(&self.path, text);
+            if let Err(e) = std::fs::write(&self.path, &text) {
+                eprintln!(
+                    "warn: cannot write trust store {}: {e} — trusted files will need re-confirmation on next startup",
+                    self.path.display()
+                );
+            }
         }
     }
 }

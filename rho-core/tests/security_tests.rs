@@ -270,7 +270,7 @@ fn redaction_applied_before_tool_result_enters_history() {
     let output = format!("found key: {secret_key}");
 
     let mut conv = Conversation::new("mock", None, vec![]);
-    conv.push_tool_result(ToolCallId::from("call_1"), &ToolResult::success(&output));
+    conv.add_tool_result(ToolCallId::from("call_1"), &ToolResult::success(&output));
 
     // The message stored in history must not contain the raw secret.
     let messages = conv.messages();
@@ -292,7 +292,7 @@ fn redaction_applied_to_aws_key_in_tool_result() {
     use rho_core::tool::ToolResult;
 
     let mut conv = Conversation::new("mock", None, vec![]);
-    conv.push_tool_result(
+    conv.add_tool_result(
         ToolCallId::from("call_2"),
         &ToolResult::success("AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE"),
     );
@@ -526,7 +526,7 @@ fn disabled_redactor_skips_builtin_patterns() {
     let mut conv = Conversation::new("mock", None, vec![]).with_redactor(redactor);
 
     let secret_key = "sk-".to_owned() + &"x".repeat(32);
-    conv.push_tool_result(
+    conv.add_tool_result(
         ToolCallId::from("call_1"),
         &ToolResult::success(&secret_key),
     );
@@ -557,7 +557,7 @@ fn enabled_redactor_with_custom_pattern_redacts_in_conversation() {
     let redactor = rho_core::Redactor::from_config(true, &[r"COMPANY_KEY_\S+".to_owned()]);
     let mut conv = Conversation::new("mock", None, vec![]).with_redactor(redactor);
 
-    conv.push_tool_result(
+    conv.add_tool_result(
         ToolCallId::from("call_1"),
         &ToolResult::success("found COMPANY_KEY_abc123 here"),
     );

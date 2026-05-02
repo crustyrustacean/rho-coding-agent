@@ -16,7 +16,6 @@
 
 use crate::error::{Result, RhoError};
 use crate::newtypes::FilePath;
-use std::io;
 use std::path::{Component, Path, PathBuf};
 
 // ── SandboxRoot ───────────────────────────────────────────────────────────────
@@ -41,8 +40,13 @@ impl SandboxRoot {
     /// # Errors
     ///
     /// Returns an error if the path does not exist or cannot be canonicalised.
-    pub fn new(root: impl AsRef<Path>) -> std::io::Result<Self> {
-        Ok(Self(root.as_ref().canonicalize()?))
+    pub fn new(root: impl AsRef<Path>) -> Result<Self> {
+        Ok(Self(root.as_ref().canonicalize().map_err(|e| {
+            RhoError::Unexpected(anyhow::anyhow!(
+                "sandbox: cannot canonicalize root `{}`: {e}",
+                root.as_ref().display()
+            ))
+        })?))
     }
 
     /// The canonical root path.
@@ -143,9 +147,13 @@ const PROJECT_MARKERS: &[&str] = &[
 ///
 /// # Errors
 ///
-/// Returns an I/O error if the current directory cannot be determined.
-pub fn find_project_root() -> io::Result<SandboxRoot> {
-    let cwd = std::env::current_dir()?;
+/// Returns an error if the current directory cannot be determined.
+pub fn find_project_root() -> Result<SandboxRoot> {
+    let cwd = std::env::current_dir().map_err(|e| {
+        RhoError::Unexpected(anyhow::anyhow!(
+            "sandbox: cannot determine current directory: {e}"
+        ))
+    })?;
     let mut dir = cwd.as_path();
 
     loop {

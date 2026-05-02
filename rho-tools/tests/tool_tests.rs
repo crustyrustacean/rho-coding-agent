@@ -891,7 +891,9 @@ async fn edit_file_file_not_found_returns_error() {
         "edits": [{ "old_text": "x", "new_text": "y" }]
     });
     let result = tool.execute(args, CancellationToken::new()).await;
-    // validate_for_write allows non-existing paths, but read_to_string will fail.
+    // EditFile uses validate() (not validate_for_write), which requires the
+    // file to exist. A non-existent path fails at sandbox validation,
+    // returning Err — this is correct: EditFile can only edit existing files.
     assert!(result.is_err());
 }
 

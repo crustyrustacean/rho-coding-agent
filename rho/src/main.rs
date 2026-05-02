@@ -113,14 +113,9 @@ async fn main() -> Result<()> {
         RhoConfig::default()
     });
 
-    // --- Tool registry ---
-    let mut registry = ToolRegistry::new();
-    register_all(&mut registry, sandbox.clone(), Some(&rho_config));
-
-    // --- Project context files ---
-    let system_prompt = load_system_prompt(&sandbox, &cli);
-
     // --- Client (with provider consent check) ---
+    // Consent is checked BEFORE the trust workflow so the user can bail out
+    // before being prompted about context files.
     let endpoint = rho_config
         .provider
         .endpoint
@@ -128,6 +123,13 @@ async fn main() -> Result<()> {
         .unwrap_or("http://localhost:1234/v1/chat/completions");
 
     check_provider_consent(endpoint, &cli)?;
+
+    // --- Tool registry ---
+    let mut registry = ToolRegistry::new();
+    register_all(&mut registry, sandbox.clone(), Some(&rho_config));
+
+    // --- Project context files ---
+    let system_prompt = load_system_prompt(&sandbox, &cli);
 
     let client = LocalChatClient::with_endpoint_and_egress(endpoint, rho_config.egress.clone());
 

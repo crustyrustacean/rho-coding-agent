@@ -153,12 +153,22 @@ impl Conversation {
 
     /// Append a tool result message, applying secret redaction first.
     ///
-    /// Public so the agent loop (which lives in a sibling module) and integration
-    /// tests can feed tool results back into the conversation.
-    pub fn push_tool_result(&mut self, id: ToolCallId, result: &ToolResult) {
+    /// `pub(crate)` so the agent loop can feed tool results back without
+    /// external crates bypassing the redactor. Integration tests should use
+    /// [`Conversation::add_tool_result`] instead.
+    pub(crate) fn push_tool_result(&mut self, id: ToolCallId, result: &ToolResult) {
         // Redact secrets before the tool output enters conversation history.
         let redacted = self.redactor.redact(&result.output);
         self.messages.push(ChatMessage::tool_result(id, redacted));
+    }
+
+    /// Append a tool result message, applying secret redaction first.
+    ///
+    /// This is the public entry point for adding tool results to the
+    /// conversation (e.g. from integration tests). It always applies
+    /// redaction — there is no way to bypass the redactor through this API.
+    pub fn add_tool_result(&mut self, id: ToolCallId, result: &ToolResult) {
+        self.push_tool_result(id, result);
     }
 
     // ── Send primitives ───────────────────────────────────────────────────

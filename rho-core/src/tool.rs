@@ -138,7 +138,20 @@ impl ToolRegistry {
     }
 
     /// Register a tool.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a tool with the same name is already registered. Tool
+    /// registration happens at startup, so duplicate names are a
+    /// programming error that should fail fast rather than silently
+    /// shadowing the earlier registration.
     pub fn register(&mut self, tool: Box<dyn Tool>) {
+        let name = tool.name();
+        assert!(
+            self.get_by_name(&name).is_none(),
+            "duplicate tool name: '{}'",
+            &*name
+        );
         self.tools.push(tool);
     }
 
@@ -196,5 +209,59 @@ impl ToolRegistry {
                 "streaming tool output is not yet supported"
             ))),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A trivial tool for registry tests.
+    struct StubTool {
+        name: &'static str,
+    }
+
+    #[async_trait]
+    impl Tool for StubTool {
+        fn name(&self) -> ToolName {
+            ToolName::from(self.name)
+        }
+        fn description(&self) -> &'static str {
+            "stub"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object", "properties": {}})
+        }
+        fn risk(&self) -> ToolRisk {
+            ToolRisk::Read
+        }
+        async fn execute(
+            &self,
+            _arguments: serde_json::Value,
+            _cancel: CancellationToken,
+        ) -> Result<ToolOutcome> {
+            Ok(ToolOutcome::Immediate(ToolResult::success("stub")))
+        }
+    }
+
+    #[test]
+    fn register_duplicate_tool_name_panics() {
+        let result = std::panic::catch_unwind(|| {
+            let mut reg = ToolRegistry::new();
+            reg.register(Box::new(StubTool { name: "my_tool" }));
+            reg.register(Box::new(StubTool { name: "my_tool" }));
+        });
+        assert!(
+            result.is_err(),
+            "registering duplicate tool name should panic"
+        );
+    }
+
+    #[test]
+    fn register_distinct_tool_names_succeeds() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(StubTool { name: "tool_a" }));
+        registry.register(Box::new(StubTool { name: "tool_b" }));
+        assert_eq!(registry.list().len(), 2);
     }
 }

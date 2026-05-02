@@ -70,9 +70,16 @@ impl Tool for ReadFile {
             return Ok(ToolOutcome::Immediate(ToolResult::error("cancelled")));
         }
 
-        let content = tokio::fs::read_to_string(&*safe_path)
-            .await
-            .map_err(|e| anyhow::anyhow!("read_file: failed to read `{path_str}`: {e}"))?;
+        let content = match tokio::fs::read_to_string(&*safe_path).await {
+            Ok(c) => c,
+            Err(e) => {
+                // Return as a tool error so the model can self-correct
+                // (e.g. try a different path) instead of killing the loop.
+                return Ok(ToolOutcome::Immediate(ToolResult::error(format!(
+                    "read_file: failed to read `{path_str}`: {e}"
+                ))));
+            }
+        };
 
         // Wrap in <context> framing — signals to the model that this is data,
         // not instructions. The system prompt reinforces this contract.
@@ -146,15 +153,19 @@ impl Tool for WriteFile {
         }
 
         // Create parent directories if needed.
-        if let Some(parent) = safe_path.parent() {
-            tokio::fs::create_dir_all(parent).await.map_err(|e| {
-                anyhow::anyhow!("write_file: failed to create directories for `{path_str}`: {e}")
-            })?;
+        if let Some(parent) = safe_path.parent()
+            && let Err(e) = tokio::fs::create_dir_all(parent).await
+        {
+            return Ok(ToolOutcome::Immediate(ToolResult::error(format!(
+                "write_file: failed to create directories for `{path_str}`: {e}"
+            ))));
         }
 
-        tokio::fs::write(&*safe_path, content)
-            .await
-            .map_err(|e| anyhow::anyhow!("write_file: failed to write `{path_str}`: {e}"))?;
+        if let Err(e) = tokio::fs::write(&*safe_path, content).await {
+            return Ok(ToolOutcome::Immediate(ToolResult::error(format!(
+                "write_file: failed to write `{path_str}`: {e}"
+            ))));
+        }
 
         Ok(ToolOutcome::Immediate(ToolResult::success(format!(
             "wrote {} bytes to {path_str}",
@@ -412,9 +423,14 @@ impl Tool for EditFile {
         }
 
         // Read the current file content.
-        let content = tokio::fs::read_to_string(&*safe_path)
-            .await
-            .map_err(|e| anyhow::anyhow!("edit_file: failed to read `{path_str}`: {e}"))?;
+        let content = match tokio::fs::read_to_string(&*safe_path).await {
+            Ok(c) => c,
+            Err(e) => {
+                return Ok(ToolOutcome::Immediate(ToolResult::error(format!(
+                    "edit_file: failed to read `{path_str}`: {e}"
+                ))));
+            }
+        };
 
         // Validate all edits: each old_text must occur exactly once, and edits
         // must not overlap.
@@ -464,9 +480,11 @@ impl Tool for EditFile {
         }
 
         // Write the modified content.
-        tokio::fs::write(&*safe_path, &modified)
-            .await
-            .map_err(|e| anyhow::anyhow!("edit_file: failed to write `{path_str}`: {e}"))?;
+        if let Err(e) = tokio::fs::write(&*safe_path, &modified).await {
+            return Ok(ToolOutcome::Immediate(ToolResult::error(format!(
+                "edit_file: failed to write `{path_str}`: {e}"
+            ))));
+        }
 
         Ok(ToolOutcome::Immediate(ToolResult::success(format!(
             "applied {} edit(s) to {path_str}",
