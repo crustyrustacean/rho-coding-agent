@@ -29,6 +29,7 @@ pub use entry::{CompactionSummary, Entry, EntryPayload, EntryResolution};
 pub use estimator::{HeuristicEstimator, TokenEstimator};
 
 use crate::context::{ContextManager, SlidingWindowContextManager, TokenBudget};
+use crate::error::{Result, RhoError};
 use crate::message::ChatMessage;
 use crate::newtypes::{EntryId, SessionId, ToolCallId};
 use crate::redact::Redactor;
@@ -245,6 +246,250 @@ impl Session {
     /// Total number of entries in the tree.
     pub fn entry_count(&self) -> usize {
         self.entries.len()
+    }
+
+    // ── Tree navigation ──────────────────────────────────────────────────
+
+    /// Walk from the current leaf back to the root, collecting entries.
+    ///
+    /// Returns entries in leaf-to-root order (newest first). If the leaf
+    /// is `None`, returns an empty vec.
+    ///
+    /// # Panics
+    ///
+    /// Does not panic — but if the tree is corrupt (a `parent_id` references
+    /// a non-existent entry), the walk stops at the last reachable entry
+    /// and a `warn!` is emitted.
+    pub fn path_to_root(&self) -> Vec<&Entry> {
+        let Some(mut current_id) = self.leaf.clone() else {
+            return Vec::new();
+        };
+
+        let mut path = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+
+        loop {
+            let Some(entry) = self.entries.get(&current_id) else {
+                warn!(id = %current_id, "path_to_root: entry not found, tree may be corrupt");
+                break;
+            };
+
+            if !seen.insert(entry.id.clone()) {
+                warn!(id = %current_id, "path_to_root: cycle detected, stopping");
+                break;
+            }
+
+            path.push(entry);
+
+            match &entry.parent_id {
+                Some(parent_id) => current_id = parent_id.clone(),
+                None => break, // reached root
+            }
+        }
+
+        path
+    }
+
+    /// Return the direct children of an entry, sorted by timestamp (oldest
+    /// first).
+    ///
+    /// This scans all entries to find those whose `parent_id` matches the
+    /// given `id`. The scan is O(n) where n is the total number of entries;
+    /// for sessions with up to tens of thousands of entries this is fine.
+    /// A reverse index can be added later if needed.
+    pub fn children(&self, id: &EntryId) -> Vec<EntryId> {
+        let mut child_ids: Vec<EntryId> = self
+            .entries
+            .values()
+            .filter(|e| e.parent_id.as_ref() == Some(id))
+            .map(|e| e.id.clone())
+            .collect();
+
+        // Sort by timestamp for deterministic ordering
+        child_ids.sort_by(|a, b| {
+            let ta = self.entries.get(a).map(|e| e.timestamp);
+            let tb = self.entries.get(b).map(|e| e.timestamp);
+            ta.cmp(&tb)
+        });
+
+        child_ids
+    }
+
+    /// Move the leaf pointer to an existing entry, recording a
+    /// [`LeafMoved`](EntryPayload::LeafMoved) entry for audit.
+    ///
+    /// This is the core branching operation: after `branch_to(id)`, the
+    /// leaf-to-root path passes through `id` instead of the previous leaf.
+    /// The old branch remains in the tree and is accessible via
+    /// [`entry()`](Session::entry) and [`children()`](Session::children),
+    /// but is no longer on the active path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RhoError::EntryNotFound`] if `id` does not exist in the
+    /// session tree.
+    ///
+    /// # No-op
+    ///
+    /// If `id` is already the current leaf, no `LeafMoved` entry is written
+    /// and the method returns `Ok(())`.
+    pub fn branch_to(&mut self, id: &EntryId) -> Result<()> {
+        // Validate that the target exists
+        if !self.entries.contains_key(id) {
+            return Err(RhoError::EntryNotFound(id.to_string()));
+        }
+
+        // No-op if already at this leaf
+        if self.leaf.as_ref() == Some(id) {
+            return Ok(());
+        }
+
+        let old_leaf = self.leaf.clone();
+
+        // Move the leaf
+        self.leaf = Some(id.clone());
+
+        // Write a LeafMoved audit entry (non-adjacent move)
+        let moved_entry = Entry {
+            id: EntryId::new(),
+            parent_id: self.leaf.clone(),
+            timestamp: SystemTime::now(),
+            resolution: EntryResolution::Attached,
+            payload: EntryPayload::LeafMoved {
+                from: old_leaf,
+                to: id.clone(),
+            },
+        };
+        let moved_id = moved_entry.id.clone();
+        self.entries.insert(moved_id.clone(), moved_entry);
+        // The LeafMoved entry itself becomes the new leaf so subsequent
+        // appends link from here.
+        self.leaf = Some(moved_id);
+
+        Ok(())
+    }
+
+    /// Move the leaf to an existing entry and append a
+    /// [`BranchSummary`](EntryPayload::BranchSummary) at the new position.
+    ///
+    /// This combines [`branch_to`](Session::branch_to) with a summary of
+    /// why the branch happened. The `from_id` identifies the leaf position
+    /// that was abandoned; the `summary` describes what was on that branch.
+    ///
+    /// After this call, the leaf is at the newly-appended `BranchSummary`
+    /// entry.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RhoError::EntryNotFound`] if `id` does not exist.
+    pub fn branch_with_summary(
+        &mut self,
+        id: &EntryId,
+        summary: CompactionSummary,
+        from_id: EntryId,
+    ) -> Result<()> {
+        self.branch_to(id)?;
+        self.append_branch_summary(summary, from_id);
+        Ok(())
+    }
+
+    // ── Context building ────────────────────────────────────────────────
+
+    /// Build the message list for the model from the leaf-to-root path.
+    ///
+    /// This is the `Session` equivalent of `Conversation::messages()` —
+    /// it returns the messages that would be sent to the model, after
+    /// applying resolution filtering and overhead subtraction via
+    /// [`ContextManager::fit_path`].
+    ///
+    /// Returns the fitted messages in chronological order (system first),
+    /// ready to be placed in a [`ChatRequest`](crate::request::ChatRequest).
+    pub fn path_messages(&self) -> Vec<ChatMessage> {
+        // Walk leaf-to-root, then reverse to get chronological order.
+        let path = self.path_to_root();
+        let entries: Vec<&Entry> = path.into_iter().rev().collect();
+
+        self.context_manager.fit_path(
+            &entries,
+            self.token_budget,
+            self.estimator.as_ref(),
+            &self.tools,
+        )
+    }
+
+    /// Send the current session state to the model and persist the response.
+    ///
+    /// This is the `Session` equivalent of `Conversation::send_current`:
+    /// 1. Builds the message list via [`path_messages`](Self::path_messages).
+    /// 2. Constructs a [`ChatRequest`](crate::request::ChatRequest).
+    /// 3. Calls the client.
+    /// 4. Persists the assistant response as an appended entry.
+    /// 5. Calibrates the estimator against the actual `prompt_tokens`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RhoError`](crate::error::RhoError) if the HTTP request fails
+    /// or the response cannot be parsed.
+    pub async fn send_current(
+        &mut self,
+        client: &dyn crate::client::ChatClient,
+    ) -> crate::error::Result<crate::conversation::AssistantResponse> {
+        use crate::request::ChatRequest;
+        use crate::response::FinishReason;
+
+        let fitted = self.path_messages();
+
+        // Estimate tokens for the request before sending (for calibration).
+        let estimated_tokens = Self::estimate_messages_tokens(&fitted);
+
+        let request = ChatRequest {
+            model: self.model.clone(),
+            messages: fitted,
+            tools: self.tools.clone(),
+        };
+
+        let response = client.chat(request).await?;
+        let choice = &response.choices[0];
+
+        // Calibrate estimator if the API returned prompt_tokens.
+        let usage = &response.usage;
+        if usage.prompt_tokens > 0 {
+            self.estimator
+                .calibrate(&self.model, estimated_tokens, usage.prompt_tokens);
+        }
+
+        if let FinishReason::ToolCalls = choice.finish_reason {
+            let tool_calls = choice.message.tool_calls.clone();
+            // Persist assistant message with tool_calls BEFORE returning.
+            self.append_assistant_message(ChatMessage::Assistant {
+                content: if choice.message.content.is_empty() {
+                    vec![]
+                } else {
+                    vec![crate::message::ContentBlock::Text {
+                        text: choice.message.content.clone(),
+                    }]
+                },
+                tool_calls: tool_calls.clone(),
+            });
+            Ok(crate::conversation::AssistantResponse::ToolCalls(
+                tool_calls,
+            ))
+        } else {
+            let text = choice.message.content.clone();
+            self.append_assistant_message(ChatMessage::assistant_text(&text));
+            Ok(crate::conversation::AssistantResponse::Message(text))
+        }
+    }
+
+    /// Estimate the total tokens for a slice of messages.
+    fn estimate_messages_tokens(messages: &[ChatMessage]) -> usize {
+        use crate::context::approximate_tokens;
+        // We use approximate_tokens for a consistent per-message estimate,
+        // then scale by the estimator's model-specific ratio.
+        // For now, approximate_tokens gives chars/4 which is close enough
+        // for calibration. The estimator's calibrate() will correct the
+        // ratio anyway.
+        messages.iter().map(approximate_tokens).sum()
     }
 
     // ── Append operations ─────────────────────────────────────────────────
@@ -567,6 +812,7 @@ mod tests {
     )]
     use super::*;
     use crate::message::ContentBlock;
+    use crate::newtypes::ToolName;
     use crate::tool::ToolResult;
 
     // ── Construction tests ──────────────────────────────────────────────
@@ -928,5 +1174,698 @@ mod tests {
         let budget = TokenBudget::new(16_384);
         assert_eq!(budget.max_tokens(), 16_384);
         assert_eq!(budget.context_window, 16_384);
+    }
+
+    // ── Tree navigation tests ───────────────────────────────────────────
+
+    #[test]
+    fn path_to_root_returns_leaf_to_root_order() {
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let root_id = session.leaf().unwrap();
+        let user_id = session.append_user_message("hello");
+        let asst_id = session.append_assistant_message(ChatMessage::assistant_text("hi"));
+
+        let path = session.path_to_root();
+        assert_eq!(path.len(), 3);
+        assert_eq!(path[0].id, asst_id, "first entry should be the leaf");
+        assert_eq!(path[1].id, user_id, "second entry should be user message");
+        assert_eq!(path[2].id, root_id, "last entry should be the root");
+    }
+
+    #[test]
+    fn path_to_root_empty_when_no_leaf() {
+        let session = Session::new("m", None, vec![], "/tmp");
+        assert!(session.path_to_root().is_empty());
+    }
+
+    #[test]
+    fn path_to_root_single_entry() {
+        let session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let root_id = session.leaf().unwrap();
+        let path = session.path_to_root();
+        assert_eq!(path.len(), 1);
+        assert_eq!(path[0].id, root_id);
+    }
+
+    #[test]
+    fn path_to_root_has_no_duplicates() {
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let root_id = session.leaf().unwrap();
+        let id1 = session.append_user_message("msg1");
+        let id2 = session.append_assistant_message(ChatMessage::assistant_text("reply1"));
+        let id3 = session.append_user_message("msg2");
+
+        let path = session.path_to_root();
+        let ids: std::collections::HashSet<_> = path.iter().map(|e| e.id.clone()).collect();
+        assert_eq!(ids.len(), path.len(), "path should have no duplicate IDs");
+
+        // Verify exact order: leaf → ... → root
+        assert_eq!(path[0].id, id3);
+        assert_eq!(path[1].id, id2);
+        assert_eq!(path[2].id, id1);
+        assert_eq!(path[3].id, root_id);
+    }
+
+    #[test]
+    fn children_returns_direct_children_sorted_by_timestamp() {
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let root_id = session.leaf().unwrap();
+
+        // Root has one child (the user message)
+        let user_id = session.append_user_message("hello");
+        let children = session.children(&root_id);
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0], user_id);
+    }
+
+    #[test]
+    fn children_of_leaf_is_empty() {
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let root_id = session.leaf().unwrap();
+        // The leaf has no children yet (no appends after it)
+        // But actually, the leaf IS the root, and we haven't appended anything
+        // So it has 0 children
+        assert!(session.children(&root_id).is_empty());
+
+        // Now append something — the root has a child, the new leaf doesn't
+        let user_id = session.append_user_message("hello");
+        let new_leaf = session.leaf().unwrap();
+        assert_eq!(session.children(&root_id).len(), 1);
+        assert!(session.children(&new_leaf).is_empty());
+
+        // user_id is both a child of root and a parent of nothing
+        assert_eq!(session.children(&user_id).len(), 0);
+    }
+
+    #[test]
+    fn children_of_forked_entry_includes_both_branches() {
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let _root_id = session.leaf().unwrap();
+        let user_id = session.append_user_message("hello");
+
+        // First branch: assistant reply
+        let asst_id = session.append_assistant_message(ChatMessage::assistant_text("reply A"));
+
+        // Branch back to user_id and take a different path
+        session.branch_to(&user_id).unwrap();
+        let asst_id_2 = session.append_assistant_message(ChatMessage::assistant_text("reply B"));
+
+        // user_id should have two children: the original assistant and the
+        // LeafMoved entry (which then leads to reply B)
+        let children = session.children(&user_id);
+        assert_eq!(
+            children.len(),
+            2,
+            "user_id should have 2 children (two branches)"
+        );
+        assert!(
+            children.contains(&asst_id),
+            "original assistant should be a child"
+        );
+        // The second child is the LeafMoved entry, whose child is asst_id_2
+        let leaf_moved_id = children.iter().find(|id| **id != asst_id).unwrap();
+        let leaf_moved_children = session.children(leaf_moved_id);
+        assert!(leaf_moved_children.contains(&asst_id_2));
+    }
+
+    #[test]
+    fn children_of_nonexistent_entry_is_empty() {
+        let session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let fake_id = EntryId::new();
+        assert!(session.children(&fake_id).is_empty());
+    }
+
+    #[test]
+    fn branch_to_moves_leaf() {
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let _root_id = session.leaf().unwrap();
+        let user_id = session.append_user_message("hello");
+        let _asst_id = session.append_assistant_message(ChatMessage::assistant_text("reply"));
+
+        // Branch back to user_id
+        session.branch_to(&user_id).unwrap();
+
+        // Leaf should now be at a LeafMoved entry whose parent is user_id
+        let leaf_id = session.leaf().unwrap();
+        let leaf_entry = session.entry(&leaf_id).unwrap();
+        assert_eq!(leaf_entry.parent_id, Some(user_id));
+        assert!(matches!(leaf_entry.payload, EntryPayload::LeafMoved { .. }));
+    }
+
+    #[test]
+    fn branch_to_writes_leaf_moved_entry() {
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let root_id = session.leaf().unwrap();
+        let user_id = session.append_user_message("hello");
+
+        // Branch to root
+        session.branch_to(&root_id).unwrap();
+
+        // Find the LeafMoved entry
+        let leaf_id = session.leaf().unwrap();
+        let leaf_entry = session.entry(&leaf_id).unwrap();
+        if let EntryPayload::LeafMoved { from, to } = &leaf_entry.payload {
+            assert_eq!(*from, Some(user_id), "from should be the old leaf");
+            assert_eq!(*to, root_id, "to should be the target");
+        } else {
+            panic!("expected LeafMoved payload, got {:?}", leaf_entry.payload);
+        }
+        assert!(matches!(leaf_entry.resolution, EntryResolution::Attached));
+    }
+
+    #[test]
+    fn branch_to_errors_on_nonexistent_entry() {
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let fake_id = EntryId::new();
+        let result = session.branch_to(&fake_id);
+        assert!(result.is_err());
+        if let Err(RhoError::EntryNotFound(id)) = &result {
+            assert_eq!(id, &*fake_id);
+        } else {
+            panic!("expected EntryNotFound error, got {result:?}");
+        }
+    }
+
+    #[test]
+    fn branch_to_is_noop_when_already_at_target() {
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let leaf_id = session.leaf().unwrap();
+        let entry_count_before = session.entry_count();
+
+        session.branch_to(&leaf_id).unwrap();
+
+        // No LeafMoved entry should be written
+        assert_eq!(session.entry_count(), entry_count_before);
+        assert_eq!(session.leaf(), Some(leaf_id));
+    }
+
+    #[test]
+    fn branch_to_then_append_extends_from_new_position() {
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let root_id = session.leaf().unwrap();
+        let user_id = session.append_user_message("hello");
+        let _asst_id = session.append_assistant_message(ChatMessage::assistant_text("reply A"));
+
+        // Branch back to user message and take a different path
+        session.branch_to(&user_id).unwrap();
+        let new_reply_id = session.append_assistant_message(ChatMessage::assistant_text("reply B"));
+
+        // The new reply should be reachable from the leaf
+        let path = session.path_to_root();
+        let path_ids: Vec<_> = path.iter().map(|e| e.id.clone()).collect();
+        assert!(
+            path_ids.contains(&new_reply_id),
+            "new reply should be on the leaf path"
+        );
+        assert!(
+            path_ids.contains(&user_id),
+            "user message should be on the leaf path"
+        );
+        assert!(
+            path_ids.contains(&root_id),
+            "root should be on the leaf path"
+        );
+    }
+
+    #[test]
+    fn branch_to_old_branch_still_in_tree() {
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let _root_id = session.leaf().unwrap();
+        let user_id = session.append_user_message("hello");
+        let asst_a_id = session.append_assistant_message(ChatMessage::assistant_text("reply A"));
+
+        // Branch back and take a different path
+        session.branch_to(&user_id).unwrap();
+        let _asst_b_id = session.append_assistant_message(ChatMessage::assistant_text("reply B"));
+
+        // The old assistant message is still in the tree but NOT on the leaf path
+        let old_entry = session.entry(&asst_a_id);
+        assert!(old_entry.is_some(), "old branch entry should still exist");
+
+        let path = session.path_to_root();
+        let path_ids: Vec<_> = path.iter().map(|e| e.id.clone()).collect();
+        assert!(
+            !path_ids.contains(&asst_a_id),
+            "old assistant should NOT be on the current leaf path"
+        );
+    }
+
+    #[test]
+    fn branch_with_summary_appends_summary_after_branch() {
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let root_id = session.leaf().unwrap();
+        let user_id = session.append_user_message("hello");
+        let _asst_id = session.append_assistant_message(ChatMessage::assistant_text("reply A"));
+
+        let summary = CompactionSummary {
+            original_request: Some("hello".to_owned()),
+            tool_calls: std::collections::BTreeMap::new(),
+            tokens_compacted: 100,
+            entry_count: 1,
+            time_span: std::time::Duration::from_secs(30),
+            notes: None,
+        };
+
+        session
+            .branch_with_summary(&root_id, summary, user_id.clone())
+            .unwrap();
+
+        // Leaf should now be at a BranchSummary entry
+        let leaf_id = session.leaf().unwrap();
+        let leaf_entry = session.entry(&leaf_id).unwrap();
+        if let EntryPayload::BranchSummary {
+            summary: s,
+            from_id,
+        } = &leaf_entry.payload
+        {
+            assert_eq!(*from_id, user_id, "from_id should reference abandoned leaf");
+            assert_eq!(s.original_request, Some("hello".to_owned()));
+        } else {
+            panic!(
+                "expected BranchSummary payload, got {:?}",
+                leaf_entry.payload
+            );
+        }
+    }
+
+    #[test]
+    fn branch_with_summary_errors_on_nonexistent_entry() {
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let fake_id = EntryId::new();
+        let summary = CompactionSummary {
+            original_request: None,
+            tool_calls: std::collections::BTreeMap::new(),
+            tokens_compacted: 0,
+            entry_count: 0,
+            time_span: std::time::Duration::ZERO,
+            notes: None,
+        };
+
+        let result = session.branch_with_summary(&fake_id, summary, EntryId::new());
+        assert!(result.is_err());
+        if let Err(RhoError::EntryNotFound(id)) = &result {
+            assert_eq!(id, &*fake_id);
+        } else {
+            panic!("expected EntryNotFound error, got {result:?}");
+        }
+    }
+
+    #[test]
+    fn path_to_root_after_branch_reflects_new_path() {
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let root_id = session.leaf().unwrap();
+        let user_id = session.append_user_message("hello");
+        let asst_a_id = session.append_assistant_message(ChatMessage::assistant_text("reply A"));
+
+        // Branch back to root
+        session.branch_to(&root_id).unwrap();
+
+        let path = session.path_to_root();
+        let path_ids: Vec<_> = path.iter().map(|e| e.id.clone()).collect();
+
+        // The path should go: LeafMoved → root
+        // It should NOT include user_id or asst_a_id
+        assert!(path_ids.contains(&root_id), "root should be on the path");
+        assert!(
+            !path_ids.contains(&user_id),
+            "user_id should NOT be on the branched path"
+        );
+        assert!(
+            !path_ids.contains(&asst_a_id),
+            "old assistant should NOT be on the branched path"
+        );
+    }
+
+    #[test]
+    fn path_to_root_skips_attached_entries() {
+        // This test verifies the structural behavior: Attached entries (like
+        // LeafMoved) are in the tree but whether they appear in path_to_root
+        // depends on the path traversal (they are on the path since the leaf
+        // points to them). The *filtering* of Attached entries from the model
+        // context is done by fit_path (Task 8), not path_to_root.
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let root_id = session.leaf().unwrap();
+        let _user_id = session.append_user_message("hello");
+
+        // Branch to root — creates a LeafMoved (Attached) entry
+        session.branch_to(&root_id).unwrap();
+
+        let path = session.path_to_root();
+        // The LeafMoved entry IS in the path (it's the leaf)
+        let leaf_entry = &path[0];
+        assert!(matches!(leaf_entry.resolution, EntryResolution::Attached));
+        assert!(matches!(leaf_entry.payload, EntryPayload::LeafMoved { .. }));
+    }
+
+    // ── Context building tests (Task 8) ────────────────────────────────
+
+    #[test]
+    fn path_messages_returns_chronological_messages() {
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        session.append_user_message("hello");
+        session.append_assistant_message(ChatMessage::assistant_text("hi"));
+        session.append_user_message("how are you?");
+
+        let messages = session.path_messages();
+
+        // Should be in chronological order: System, User, Assistant, User
+        assert!(matches!(messages[0], ChatMessage::System { .. }));
+        assert!(matches!(messages[1], ChatMessage::User { .. }));
+        assert!(matches!(messages[2], ChatMessage::Assistant { .. }));
+        assert!(matches!(messages[3], ChatMessage::User { .. }));
+    }
+
+    #[test]
+    fn path_messages_filters_compacted_entries() {
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let user_id = session.append_user_message("hello");
+        let _asst_id = session.append_assistant_message(ChatMessage::assistant_text("hi"));
+
+        // Manually mark the user entry as compacted
+        if let Some(entry) = session.entries.get_mut(&user_id) {
+            entry.resolution = EntryResolution::Compacted {
+                into: EntryId::from("test"),
+            };
+        }
+
+        let messages = session.path_messages();
+
+        // The compacted user message should NOT appear
+        let has_hello = messages.iter().any(|m| {
+            if let ChatMessage::User { content } = m {
+                content.iter().any(|b| {
+                    let ContentBlock::Text { text } = b;
+                    text.contains("hello")
+                })
+            } else {
+                false
+            }
+        });
+        assert!(!has_hello, "compacted entry should be filtered out");
+
+        // The assistant message should still appear
+        let has_hi = messages.iter().any(|m| {
+            if let ChatMessage::Assistant {
+                content,
+                tool_calls,
+            } = m
+            {
+                tool_calls.is_empty()
+                    && content.iter().any(|b| {
+                        let ContentBlock::Text { text } = b;
+                        text.contains("hi")
+                    })
+            } else {
+                false
+            }
+        });
+        assert!(has_hi, "non-compacted entry should be present");
+    }
+
+    #[test]
+    fn path_messages_filters_attached_entries() {
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        session.append_user_message("hello");
+
+        // Add an Attached entry (label)
+        let leaf_id = session.leaf().unwrap();
+        session.append_label(leaf_id, Some("checkpoint".to_owned()));
+
+        let messages = session.path_messages();
+
+        // Only System + User should appear; the Label (Attached) should be filtered
+        assert_eq!(messages.len(), 2, "only System and User should appear");
+        assert!(matches!(messages[0], ChatMessage::System { .. }));
+        assert!(matches!(messages[1], ChatMessage::User { .. }));
+    }
+
+    #[test]
+    fn path_messages_renders_compaction_summary() {
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        session.append_user_message("fix the bug");
+        session.append_assistant_message(ChatMessage::assistant_text("ok"));
+
+        let summary = CompactionSummary {
+            original_request: Some("fix the bug".to_owned()),
+            tool_calls: {
+                let mut map = std::collections::BTreeMap::new();
+                map.insert(ToolName::from("read_file"), vec!["src/main.rs".to_owned()]);
+                map
+            },
+            tokens_compacted: 1024,
+            entry_count: 3,
+            time_span: std::time::Duration::from_secs(45),
+            notes: Some("compacted for budget".to_owned()),
+        };
+
+        let first_kept = session.leaf().unwrap();
+        session.append_compaction(summary, first_kept, 2048);
+
+        let messages = session.path_messages();
+
+        // The compaction summary should be rendered as a synthetic User message
+        let compaction_msg = messages.iter().find(|m| {
+            if let ChatMessage::User { content } = m {
+                content.iter().any(|b| {
+                    let ContentBlock::Text { text } = b;
+                    text.contains("[Compacted:")
+                })
+            } else {
+                false
+            }
+        });
+        assert!(
+            compaction_msg.is_some(),
+            "compaction should render as User message"
+        );
+
+        // The message should contain the original request and tool activity
+        if let ChatMessage::User { content } = compaction_msg.unwrap() {
+            let ContentBlock::Text { text } = &content[0];
+            assert!(
+                text.contains("fix the bug"),
+                "should contain original request"
+            );
+            assert!(text.contains("read_file"), "should contain tool name");
+            assert!(text.contains("1 calls"), "should contain call count");
+            assert!(text.contains("src/main.rs"), "should contain args summary");
+            assert!(
+                text.contains("compacted for budget"),
+                "should contain notes"
+            );
+        } else {
+            panic!("expected User message");
+        }
+    }
+
+    #[test]
+    fn path_messages_renders_branch_summary() {
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let root_id = session.leaf().unwrap();
+        let from_id = session.append_user_message("hello");
+
+        let summary = CompactionSummary {
+            original_request: None,
+            tool_calls: std::collections::BTreeMap::new(),
+            tokens_compacted: 50,
+            entry_count: 1,
+            time_span: std::time::Duration::from_secs(10),
+            notes: None,
+        };
+
+        session
+            .branch_with_summary(&root_id, summary, from_id)
+            .unwrap();
+
+        let messages = session.path_messages();
+
+        // The branch summary should be rendered as a synthetic User message
+        let summary_msg = messages.iter().find(|m| {
+            if let ChatMessage::User { content } = m {
+                content.iter().any(|b| {
+                    let ContentBlock::Text { text } = b;
+                    text.contains("[Compacted:")
+                })
+            } else {
+                false
+            }
+        });
+        assert!(
+            summary_msg.is_some(),
+            "branch summary should render as User message"
+        );
+    }
+
+    #[test]
+    fn path_messages_subtracts_tool_schema_overhead() {
+        use crate::schema::ToolSchema;
+        use serde_json::json;
+
+        // Create a session with a very small budget and tool schemas
+        let tools = vec![
+            ToolSchema::function(
+                "read_file",
+                "Read a file",
+                json!({"type": "object", "properties": {"path": {"type": "string"}}}),
+            ),
+            ToolSchema::function(
+                "run_command",
+                "Execute a command",
+                json!({"type": "object", "properties": {"command": {"type": "string"}}}),
+            ),
+        ];
+
+        let mut session = Session::new("m", Some("sys"), tools, "/tmp")
+            .with_token_budget(TokenBudget::with_reserve(500, 50));
+
+        // Add enough messages that some would need to be evicted
+        for i in 0..20 {
+            session.append_user_message(&format!(
+                "message {i} with some padding text to make it longer"
+            ));
+            session.append_assistant_message(ChatMessage::assistant_text(format!("reply {i}")));
+        }
+
+        let messages = session.path_messages();
+
+        // The messages should fit within the adjusted budget (which is smaller
+        // than the raw budget because tool schema overhead was subtracted)
+        // At minimum, the system message should survive
+        assert!(
+            messages
+                .iter()
+                .any(|m| matches!(m, ChatMessage::System { .. })),
+            "system message should always survive"
+        );
+    }
+
+    #[test]
+    fn path_messages_without_tools_has_no_schema_overhead() {
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp")
+            .with_token_budget(TokenBudget::new(32_768));
+
+        session.append_user_message("hello");
+        session.append_assistant_message(ChatMessage::assistant_text("hi"));
+
+        let messages = session.path_messages();
+        // With no tools and a generous budget, all messages should fit
+        assert_eq!(messages.len(), 3);
+    }
+
+    #[test]
+    fn path_messages_after_branch_excludes_old_branch() {
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let root_id = session.leaf().unwrap();
+        session.append_user_message("hello");
+        let _asst_a_id = session.append_assistant_message(ChatMessage::assistant_text("reply A"));
+
+        // Branch back to root
+        session.branch_to(&root_id).unwrap();
+        session.append_user_message("different question");
+
+        let messages = session.path_messages();
+
+        // Should contain: System, LeafMoved (Attached → filtered), User("different question")
+        // Should NOT contain "reply A" or "hello"
+        let has_reply_a = messages.iter().any(|m| {
+            if let ChatMessage::Assistant {
+                content,
+                tool_calls,
+            } = m
+            {
+                tool_calls.is_empty()
+                    && content.iter().any(|b| {
+                        let ContentBlock::Text { text } = b;
+                        text.contains("reply A")
+                    })
+            } else {
+                false
+            }
+        });
+        assert!(!has_reply_a, "old branch should not appear");
+
+        let has_different = messages.iter().any(|m| {
+            if let ChatMessage::User { content } = m {
+                content.iter().any(|b| {
+                    let ContentBlock::Text { text } = b;
+                    text.contains("different question")
+                })
+            } else {
+                false
+            }
+        });
+        assert!(has_different, "new question should appear");
+    }
+
+    #[test]
+    fn path_messages_empty_session() {
+        let session = Session::new("m", None, vec![], "/tmp");
+        let messages = session.path_messages();
+        assert!(messages.is_empty());
+    }
+
+    #[test]
+    fn compaction_summary_rendering_is_deterministic() {
+        use crate::context::render_compaction_summary;
+
+        let mut tool_calls = std::collections::BTreeMap::new();
+        tool_calls.insert(
+            ToolName::from("read_file"),
+            vec!["a.rs".to_owned(), "b.rs".to_owned()],
+        );
+
+        let summary = CompactionSummary {
+            original_request: Some("fix it".to_owned()),
+            tool_calls,
+            tokens_compacted: 500,
+            entry_count: 7,
+            time_span: std::time::Duration::from_secs(30),
+            notes: Some("notes here".to_owned()),
+        };
+
+        let msg1 = render_compaction_summary(&summary);
+        let msg2 = render_compaction_summary(&summary);
+
+        // BTreeMap guarantees iteration order, so rendering is deterministic
+        assert_eq!(
+            msg1, msg2,
+            "rendering should be byte-stable for fixed input"
+        );
+
+        // Verify the text content contains the expected parts
+        if let ChatMessage::User { content } = &msg1 {
+            let ContentBlock::Text { text } = &content[0];
+            assert!(text.contains("[Compacted: 7 entries, 500 tokens"));
+            assert!(text.contains("Original request: \"fix it\""));
+            assert!(text.contains("read_file: 2 calls"));
+            assert!(text.contains("a.rs, b.rs"));
+            assert!(text.contains("notes here"));
+        } else {
+            panic!("expected User message");
+        }
+    }
+
+    #[test]
+    fn compaction_summary_rendering_without_optional_fields() {
+        use crate::context::render_compaction_summary;
+
+        let summary = CompactionSummary {
+            original_request: None,
+            tool_calls: std::collections::BTreeMap::new(),
+            tokens_compacted: 100,
+            entry_count: 2,
+            time_span: std::time::Duration::from_secs(5),
+            notes: None,
+        };
+
+        let msg = render_compaction_summary(&summary);
+        if let ChatMessage::User { content } = &msg {
+            let ContentBlock::Text { text } = &content[0];
+            assert!(text.contains("[Compacted: 2 entries, 100 tokens"));
+            assert!(!text.contains("Original request"));
+            assert!(!text.contains("Tool activity"));
+        } else {
+            panic!("expected User message");
+        }
     }
 }

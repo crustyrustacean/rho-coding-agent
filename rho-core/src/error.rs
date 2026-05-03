@@ -62,6 +62,13 @@ pub enum RhoError {
     #[error("protocol violation: {0}")]
     ProtocolViolation(String),
 
+    /// An entry was not found in the session tree.
+    ///
+    /// Returned by tree navigation methods (e.g., `branch_to`) when the
+    /// target entry ID does not exist in the session.
+    #[error("entry not found: {0}")]
+    EntryNotFound(String),
+
     /// An unexpected error occurred.
     #[error(transparent)]
     Unexpected(#[from] anyhow::Error),

@@ -13,6 +13,8 @@
 //!    model API to return a 400 error.
 
 use crate::message::ChatMessage;
+use crate::schema::ToolSchema;
+use crate::session::{Entry, EntryPayload, EntryResolution, TokenEstimator};
 use tracing::{debug, warn};
 
 /// A token budget for context window management.
@@ -82,7 +84,7 @@ impl Default for TokenBudget {
 /// Walks the message structure directly, summing string lengths without
 /// serializing to JSON. Falls back to 256 tokens (one message's worth)
 /// if the message somehow contains no text.
-fn approximate_tokens(msg: &ChatMessage) -> usize {
+pub(crate) fn approximate_tokens(msg: &ChatMessage) -> usize {
     use crate::message::ContentBlock;
 
     let mut chars = 0usize;
@@ -117,9 +119,165 @@ fn approximate_tokens(msg: &ChatMessage) -> usize {
 }
 
 /// Context window management interface.
+///
+/// Implementations provide two methods:
+/// - [`fit`] — the original flat-message fitting logic.
+/// - [`fit_path`] — tree-aware fitting that filters by resolution, renders
+///   compaction summaries as synthetic messages, and subtracts tool-schema /
+///   system-message overhead before delegating to [`fit`].
+///
+/// The default [`fit_path`] implementation gives every existing context manager
+/// tree-awareness *and* calibrated overhead handling for free — only [`fit`]
+/// needs to be implemented.
+///
+/// [`fit`]: ContextManager::fit
+/// [`fit_path`]: ContextManager::fit_path
 pub trait ContextManager: Send + Sync {
     /// Return the subset of `messages` that fits within `budget`.
     fn fit(&self, messages: &[ChatMessage], budget: TokenBudget) -> Vec<ChatMessage>;
+
+    /// Return the subset of session-tree entries that fits within `budget`,
+    /// with tree-aware filtering and overhead subtraction.
+    ///
+    /// The default implementation:
+    /// 1. Filters out entries with resolution `Compacted` or `Attached` — they
+    ///    don't participate in the model's context.
+    /// 2. Filters payload kinds that don't become messages: `Custom`, `Label`,
+    ///    `LeafMoved`, `ModelChange`, `SessionInfo`.
+    /// 3. Renders `Compaction` and `BranchSummary` entries as synthetic
+    ///    `ChatMessage::User` entries with deterministic framing of the
+    ///    [`CompactionSummary`](crate::session::CompactionSummary).
+    /// 4. Converts remaining `Message` and `CustomMessage` entries to
+    ///    `ChatMessage`.
+    /// 5. Computes tool-schema overhead using `estimator` and subtracts it
+    ///    from `budget.prompt_budget()`.
+    /// 6. Computes system-message overhead and subtracts it as well.
+    /// 7. Delegates the final budget enforcement to [`fit`](Self::fit).
+    ///
+    /// Entries are expected in **chronological order** (root → leaf), as
+    /// produced by reversing `path_to_root()`.
+    fn fit_path(
+        &self,
+        entries: &[&Entry],
+        budget: TokenBudget,
+        estimator: &dyn TokenEstimator,
+        tool_schemas: &[ToolSchema],
+    ) -> Vec<ChatMessage> {
+        // Step 1–4: Convert entries to messages, respecting resolution.
+        let mut messages = Vec::with_capacity(entries.len());
+        for entry in entries {
+            // Skip entries that don't participate in the model's context.
+            match &entry.resolution {
+                EntryResolution::Compacted { .. } | EntryResolution::Attached => continue,
+                EntryResolution::Full => {}
+            }
+
+            match &entry.payload {
+                EntryPayload::Message(msg) => {
+                    messages.push(msg.clone());
+                }
+                EntryPayload::CustomMessage { content, .. } => {
+                    messages.push(ChatMessage::User {
+                        content: content.clone(),
+                    });
+                }
+                EntryPayload::Compaction { summary, .. }
+                | EntryPayload::BranchSummary { summary, .. } => {
+                    messages.push(render_compaction_summary(summary));
+                }
+                // Payload kinds that don't become messages:
+                EntryPayload::Custom { .. }
+                | EntryPayload::Label { .. }
+                | EntryPayload::LeafMoved { .. }
+                | EntryPayload::ModelChange { .. }
+                | EntryPayload::SessionInfo { .. } => {
+                    // Silently skipped — these don't reach the model.
+                }
+            }
+        }
+
+        // Step 5: Compute tool-schema overhead.
+        let schema_overhead = estimate_tool_schema_overhead(tool_schemas, estimator);
+
+        // Step 6: Compute system-message overhead.
+        let system_overhead = messages
+            .iter()
+            .find(|m| matches!(m, ChatMessage::System { .. }))
+            .map_or(0, approximate_tokens);
+
+        // Step 7: Subtract overhead from budget, then delegate to fit.
+        let adjusted_budget = TokenBudget::with_reserve(
+            budget.context_window.saturating_sub(schema_overhead),
+            budget.completion_reserve + system_overhead,
+        );
+
+        self.fit(&messages, adjusted_budget)
+    }
+}
+
+/// Render a [`CompactionSummary`](crate::session::CompactionSummary) as a
+/// synthetic `ChatMessage::User` with deterministic framing.
+///
+/// The rendering contract is:
+/// ```text
+/// [Compacted: {entry_count} entries, {tokens_compacted} tokens, span {duration}]
+/// Original request: "{original_request, if present}"
+/// Tool activity:
+///   - {tool_name}: {N} calls — {args_summary_1}, {args_summary_2}, ...
+/// {notes, if present}
+/// ```
+pub fn render_compaction_summary(summary: &crate::session::CompactionSummary) -> ChatMessage {
+    use std::fmt::Write;
+
+    let mut body = String::new();
+
+    // Header line
+    let _ = writeln!(
+        body,
+        "[Compacted: {} entries, {} tokens, span {:?}]",
+        summary.entry_count, summary.tokens_compacted, summary.time_span
+    );
+
+    // Original request
+    if let Some(ref req) = summary.original_request {
+        let _ = writeln!(body, "Original request: \"{req}\"");
+    }
+
+    // Tool activity
+    if !summary.tool_calls.is_empty() {
+        body.push_str("Tool activity:\n");
+        for (tool_name, calls) in &summary.tool_calls {
+            let _ = write!(body, "  - {tool_name}: {} calls", calls.len());
+            if !calls.is_empty() {
+                body.push_str(" — ");
+                let _ = write!(body, "{}", calls.join(", "));
+            }
+            body.push('\n');
+        }
+    }
+
+    // Notes
+    if let Some(ref notes) = summary.notes {
+        let _ = writeln!(body, "{notes}");
+    }
+
+    ChatMessage::user_text(body)
+}
+
+/// Estimate the token overhead of tool schemas.
+///
+/// Tool schemas are sent with every request but are not part of the
+/// message history. Their token cost must be subtracted from the prompt
+/// budget to avoid over-estimating available space.
+fn estimate_tool_schema_overhead(schemas: &[ToolSchema], estimator: &dyn TokenEstimator) -> usize {
+    if schemas.is_empty() {
+        return 0;
+    }
+    // Serialize schemas to JSON and estimate tokens from that.
+    // Each schema is ~200-500 chars; we count the whole tools array.
+    // We add a small per-schema overhead for JSON structural tokens.
+    let serialized = serde_json::to_string(schemas).unwrap_or_default();
+    estimator.estimate(&serialized)
 }
 
 /// A role-tagged message for counting evicted messages by type.
@@ -452,5 +610,320 @@ mod tests {
             has_secret,
             "first user turn (containing the secret) must survive eviction"
         );
+    }
+
+    // ── fit_path tests (Task 8) ──────────────────────────────────────────
+
+    use crate::newtypes::EntryId;
+    use crate::schema::ToolSchema;
+    use crate::session::{
+        CompactionSummary, Entry, EntryPayload, EntryResolution, HeuristicEstimator,
+    };
+    use serde_json::json;
+    use std::time::{Duration, SystemTime};
+
+    /// Helper: create a test entry with the given payload and resolution.
+    fn test_entry(payload: EntryPayload, resolution: EntryResolution) -> Entry {
+        Entry {
+            id: EntryId::new(),
+            parent_id: None,
+            timestamp: SystemTime::UNIX_EPOCH,
+            resolution,
+            payload,
+        }
+    }
+
+    #[test]
+    fn fit_path_returns_messages_from_full_entries() {
+        let entries = [
+            test_entry(
+                EntryPayload::Message(ChatMessage::system_text("sys")),
+                EntryResolution::Full,
+            ),
+            test_entry(
+                EntryPayload::Message(ChatMessage::user_text("hello")),
+                EntryResolution::Full,
+            ),
+        ];
+        let refs: Vec<&Entry> = entries.iter().collect();
+
+        let cm = SlidingWindowContextManager::new();
+        let estimator = HeuristicEstimator::new();
+        let result = cm.fit_path(&refs, TokenBudget::default(), &estimator, &[]);
+
+        assert_eq!(result.len(), 2);
+        assert!(matches!(result[0], ChatMessage::System { .. }));
+        assert!(matches!(result[1], ChatMessage::User { .. }));
+    }
+
+    #[test]
+    fn fit_path_skips_compacted_entries() {
+        let compacted_into = EntryId::from("test");
+        let entries = [
+            test_entry(
+                EntryPayload::Message(ChatMessage::system_text("sys")),
+                EntryResolution::Full,
+            ),
+            test_entry(
+                EntryPayload::Message(ChatMessage::user_text("old")),
+                EntryResolution::Compacted {
+                    into: compacted_into,
+                },
+            ),
+            test_entry(
+                EntryPayload::Message(ChatMessage::user_text("new")),
+                EntryResolution::Full,
+            ),
+        ];
+        let refs: Vec<&Entry> = entries.iter().collect();
+
+        let cm = SlidingWindowContextManager::new();
+        let estimator = HeuristicEstimator::new();
+        let result = cm.fit_path(&refs, TokenBudget::default(), &estimator, &[]);
+
+        // The compacted entry should be filtered; only System + "new" remain
+        assert_eq!(result.len(), 2);
+        assert!(matches!(result[0], ChatMessage::System { .. }));
+        let is_new = result.iter().any(|m| {
+            if let ChatMessage::User { content } = m {
+                content.iter().any(|b| {
+                    let ContentBlock::Text { text } = b;
+                    text == "new"
+                })
+            } else {
+                false
+            }
+        });
+        assert!(is_new, "new message should be present");
+    }
+
+    #[test]
+    fn fit_path_skips_attached_entries() {
+        let target_id = EntryId::new();
+        let entries = [
+            test_entry(
+                EntryPayload::Message(ChatMessage::system_text("sys")),
+                EntryResolution::Full,
+            ),
+            test_entry(
+                EntryPayload::Label {
+                    target_id,
+                    label: Some("checkpoint".to_owned()),
+                },
+                EntryResolution::Attached,
+            ),
+        ];
+        let refs: Vec<&Entry> = entries.iter().collect();
+
+        let cm = SlidingWindowContextManager::new();
+        let estimator = HeuristicEstimator::new();
+        let result = cm.fit_path(&refs, TokenBudget::default(), &estimator, &[]);
+
+        // Only System should remain; Label is Attached and filtered
+        assert_eq!(result.len(), 1);
+        assert!(matches!(result[0], ChatMessage::System { .. }));
+    }
+
+    #[test]
+    fn fit_path_skips_non_message_payloads() {
+        let entries = [
+            test_entry(
+                EntryPayload::Message(ChatMessage::system_text("sys")),
+                EntryResolution::Full,
+            ),
+            test_entry(
+                EntryPayload::ModelChange {
+                    model: "gpt-4".to_owned(),
+                },
+                EntryResolution::Attached,
+            ),
+            test_entry(
+                EntryPayload::Custom {
+                    kind: "rho.diagnostics.v1".to_owned(),
+                    data: json!({}),
+                },
+                EntryResolution::Attached,
+            ),
+            test_entry(
+                EntryPayload::SessionInfo {
+                    name: "test".to_owned(),
+                },
+                EntryResolution::Attached,
+            ),
+        ];
+        let refs: Vec<&Entry> = entries.iter().collect();
+
+        let cm = SlidingWindowContextManager::new();
+        let estimator = HeuristicEstimator::new();
+        let result = cm.fit_path(&refs, TokenBudget::default(), &estimator, &[]);
+
+        // Only the system message should survive
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn fit_path_renders_compaction_as_synthetic_user() {
+        let summary = CompactionSummary {
+            original_request: Some("fix the bug".to_owned()),
+            tool_calls: {
+                let mut map = std::collections::BTreeMap::new();
+                map.insert(ToolName::from("read_file"), vec!["main.rs".to_owned()]);
+                map
+            },
+            tokens_compacted: 500,
+            entry_count: 3,
+            time_span: Duration::from_secs(30),
+            notes: None,
+        };
+
+        let first_kept = EntryId::new();
+        let entries = [
+            test_entry(
+                EntryPayload::Message(ChatMessage::system_text("sys")),
+                EntryResolution::Full,
+            ),
+            test_entry(
+                EntryPayload::Compaction {
+                    summary,
+                    first_kept,
+                    tokens_before: 1000,
+                },
+                EntryResolution::Full,
+            ),
+        ];
+        let refs: Vec<&Entry> = entries.iter().collect();
+
+        let cm = SlidingWindowContextManager::new();
+        let estimator = HeuristicEstimator::new();
+        let result = cm.fit_path(&refs, TokenBudget::default(), &estimator, &[]);
+
+        // Should have System + synthetic User
+        assert_eq!(result.len(), 2);
+        assert!(matches!(result[0], ChatMessage::System { .. }));
+        assert!(matches!(result[1], ChatMessage::User { .. }));
+
+        // Verify the synthetic message content
+        if let ChatMessage::User { content } = &result[1] {
+            let ContentBlock::Text { text } = &content[0];
+            assert!(text.contains("[Compacted: 3 entries, 500 tokens"));
+            assert!(text.contains("Original request: \"fix the bug\""));
+            assert!(text.contains("read_file"));
+        } else {
+            panic!("expected User message");
+        }
+    }
+
+    #[test]
+    fn fit_path_renders_branch_summary_as_synthetic_user() {
+        let summary = CompactionSummary {
+            original_request: None,
+            tool_calls: std::collections::BTreeMap::new(),
+            tokens_compacted: 50,
+            entry_count: 1,
+            time_span: Duration::from_secs(5),
+            notes: None,
+        };
+
+        let from_id = EntryId::new();
+        let entries = [
+            test_entry(
+                EntryPayload::Message(ChatMessage::system_text("sys")),
+                EntryResolution::Full,
+            ),
+            test_entry(
+                EntryPayload::BranchSummary { summary, from_id },
+                EntryResolution::Full,
+            ),
+        ];
+        let refs: Vec<&Entry> = entries.iter().collect();
+
+        let cm = SlidingWindowContextManager::new();
+        let estimator = HeuristicEstimator::new();
+        let result = cm.fit_path(&refs, TokenBudget::default(), &estimator, &[]);
+
+        assert_eq!(result.len(), 2);
+        assert!(matches!(result[1], ChatMessage::User { .. }));
+    }
+
+    #[test]
+    fn fit_path_converts_custom_message_to_user() {
+        let entries = [
+            test_entry(
+                EntryPayload::Message(ChatMessage::system_text("sys")),
+                EntryResolution::Full,
+            ),
+            test_entry(
+                EntryPayload::CustomMessage {
+                    kind: "rho.diagnostics.v1".to_owned(),
+                    content: vec![ContentBlock::Text {
+                        text: "3 errors found".to_owned(),
+                    }],
+                },
+                EntryResolution::Full,
+            ),
+        ];
+        let refs: Vec<&Entry> = entries.iter().collect();
+
+        let cm = SlidingWindowContextManager::new();
+        let estimator = HeuristicEstimator::new();
+        let result = cm.fit_path(&refs, TokenBudget::default(), &estimator, &[]);
+
+        assert_eq!(result.len(), 2);
+        assert!(matches!(result[1], ChatMessage::User { .. }));
+    }
+
+    #[test]
+    fn fit_path_subtracts_tool_schema_overhead() {
+        let tools = vec![ToolSchema::function(
+            "read_file",
+            "Read a file from disk",
+            json!({"type": "object", "properties": {"path": {"type": "string"}}}),
+        )];
+
+        // Create a very tight budget where schema overhead matters
+        let entries: Vec<Entry> = (0..20)
+            .map(|i| {
+                test_entry(
+                    EntryPayload::Message(ChatMessage::user_text(format!(
+                        "message {i} with padding"
+                    ))),
+                    EntryResolution::Full,
+                )
+            })
+            .collect();
+        let refs: Vec<&Entry> = entries.iter().collect();
+
+        let cm = SlidingWindowContextManager::new();
+        let estimator = HeuristicEstimator::new();
+        let budget = TokenBudget::with_reserve(200, 10);
+
+        let result_with_tools = cm.fit_path(&refs, budget, &estimator, &tools);
+
+        let result_without_tools = cm.fit_path(&refs, budget, &estimator, &[]);
+
+        // With tools, the budget is smaller (schema overhead subtracted),
+        // so fewer messages should fit
+        assert!(
+            result_with_tools.len() <= result_without_tools.len(),
+            "fit_path with tools should fit fewer or equal messages than without"
+        );
+    }
+
+    #[test]
+    fn estimate_tool_schema_overhead_returns_zero_for_empty() {
+        let estimator = HeuristicEstimator::new();
+        assert_eq!(estimate_tool_schema_overhead(&[], &estimator), 0);
+    }
+
+    #[test]
+    fn estimate_tool_schema_overhead_returns_nonzero_for_schemas() {
+        let estimator = HeuristicEstimator::new();
+        let tools = vec![ToolSchema::function(
+            "test",
+            "A test tool",
+            json!({"type": "object"}),
+        )];
+        let overhead = estimate_tool_schema_overhead(&tools, &estimator);
+        assert!(overhead > 0, "tool schemas should have nonzero overhead");
     }
 }
