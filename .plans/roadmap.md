@@ -7,12 +7,13 @@
 | 1a: The Agent Loop | ✅ Complete | Agent loop, tool registry, `ChatClient` trait, conversation management |
 | 1b: Security Surface | ✅ Complete | Approval gate, file sandbox, context-file trust, secret redaction, untrusted-data framing |
 | 2: PowerShell, File Tools & Cross-Platform | ✅ Complete | PowerShell-native shell, `ListDir`/`EditFile`/`WriteFile` tools, config loader (two-tier TOML), command denylist, egress allowlist, cross-platform support (Windows/macOS/Linux), auto-detection (project root, model), compact prompt, `RhoError::HttpError` for retry classification |
-| 3: Rust Tooling and Tree-Sitter | 🔜 Next | `rho-highlight`, structured diagnostics, Cargo integration |
+| 2.5: Adaptive-Resolution Context | 🔜 Next | Session tree, resolution levels, calibrated budget, tool-result bounding, amnesia fix |
+| 3: Rust Tooling and Tree-Sitter | Planned | `rho-highlight`, structured diagnostics, Cargo integration |
 | 4: Terminal UI | Planned | Rich TUI replacing the bare REPL |
 | 5: Extensions and Polish | Planned | Custom tools, prompt composition with budget awareness |
 | 6: LSP | Deferred | rust-analyzer integration |
 
-**Workspace version:** 0.11.0
+**Workspace version:** 0.17.0
 
 **Platform support:** Windows, macOS, Linux. PowerShell 7+ (`pwsh`) is the primary shell on all platforms; Windows PowerShell 5.1 (`powershell`) is the fallback on Windows only.
 
@@ -231,8 +232,9 @@ Each phase produces a runnable agent. No phase requires a rewrite of the previou
 |---|---|---|
 | 1a: The Agent Loop | [`phases/phase-1a-COMPLETE/`](phases/phase-1a-COMPLETE/) | Model invokes tools, agent loop runs autonomously. ✅ **Complete** |
 | 1b: Security Surface | [`phases/phase-1b-COMPLETE/`](phases/phase-1b-COMPLETE/) | Approval gate, sandbox, context-file trust, redaction, untrusted-data framing. ✅ **Complete** |
-| 2: PowerShell, File Tools, and Cross-Platform Support | [`phases/phase-2/`](phases/phase-2/) | PowerShell-native assistant, file system navigation, config loader, denylist, egress allowlist, cross-platform (Windows/macOS/Linux). ✅ **Complete** |
-| 3: Rust Tooling and Tree-Sitter | [`phases/phase-3/`](phases/phase-3/) | `rho-highlight` scaffolding, structured compiler diagnostics, Cargo integration. 🔜 **Next** |
+| 2: PowerShell, File Tools, and Cross-Platform Support | [`phases/phase-2-COMPLETE/`](phases/phase-2-COMPLETE/) | PowerShell-native assistant, file system navigation, config loader, denylist, egress allowlist, cross-platform (Windows/macOS/Linux). ✅ **Complete** |
+| 2.5: Adaptive-Resolution Context | [`phases/phase-2.5/`](phases/phase-2.5/) | Session tree, resolution levels, calibrated budget, tool-result bounding, amnesia fix. 🔜 **Next** |
+| 3: Rust Tooling and Tree-Sitter | [`phases/phase-3/`](phases/phase-3/) | `rho-highlight` scaffolding, structured compiler diagnostics, Cargo integration. Planned |
 | 4: Terminal UI | [`phases/phase-4/`](phases/phase-4/) | Rich TUI with approval prompts and streaming |
 | 5: Extensions and Polish | [`phases/phase-5/`](phases/phase-5/) | Custom tools, config, prompt composition |
 | 6: LSP (Future) | [`phases/phase-6/`](phases/phase-6/) | rust-analyzer LSP integration (deferred) |
