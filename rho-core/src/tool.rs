@@ -36,6 +36,31 @@ pub enum ToolRisk {
 
 // ── ToolResult / ToolOutcome ──────────────────────────────────────────────────
 
+/// Structured detail attached to a tool result.
+///
+/// This enum carries tool-specific payloads that travel alongside the
+/// text `output` but are **not** sent to the model. Tools and extensions
+/// can read `details` to access richer information than what the LLM sees.
+///
+/// Phase 2.5 ships [`None`](ToolResultDetails::None) and
+/// [`FullOutput`](ToolResultDetails::FullOutput); Phase 3 will grow the
+/// enum with variants like `Diagnostics(Vec<Diagnostic>)` and
+/// `FileSnapshot { … }`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum ToolResultDetails {
+    /// No structured detail attached (the default).
+    #[default]
+    None,
+    /// The tool result was truncated before entering the LLM context;
+    /// this variant preserves the full, un-truncated output.
+    FullOutput {
+        /// Original size of the output in bytes, before truncation.
+        original_size: usize,
+        /// The complete, un-truncated content.
+        content: String,
+    },
+}
+
 /// The immediate result of a tool execution.
 #[derive(Clone, Debug)]
 pub struct ToolResult {
@@ -43,22 +68,27 @@ pub struct ToolResult {
     pub output: String,
     /// `true` if the tool reported an error (e.g. non-zero exit code).
     pub is_error: bool,
+    /// Structured detail not sent to the model but available to tools
+    /// and extensions. Defaults to [`ToolResultDetails::None`].
+    pub details: ToolResultDetails,
 }
 
 impl ToolResult {
-    /// Create a successful result.
+    /// Create a successful result with no structured detail.
     pub fn success(output: impl Into<String>) -> Self {
         Self {
             output: output.into(),
             is_error: false,
+            details: ToolResultDetails::None,
         }
     }
 
-    /// Create an error result.
+    /// Create an error result with no structured detail.
     pub fn error(output: impl Into<String>) -> Self {
         Self {
             output: output.into(),
             is_error: true,
+            details: ToolResultDetails::None,
         }
     }
 }
@@ -243,6 +273,40 @@ mod tests {
         ) -> Result<ToolOutcome> {
             Ok(ToolOutcome::Immediate(ToolResult::success("stub")))
         }
+    }
+
+    #[test]
+    fn tool_result_success_has_no_details() {
+        let result = ToolResult::success("hello");
+        assert!(!result.is_error);
+        assert_eq!(result.output, "hello");
+        assert_eq!(result.details, ToolResultDetails::None);
+    }
+
+    #[test]
+    fn tool_result_error_has_no_details() {
+        let result = ToolResult::error("boom");
+        assert!(result.is_error);
+        assert_eq!(result.output, "boom");
+        assert_eq!(result.details, ToolResultDetails::None);
+    }
+
+    #[test]
+    fn tool_result_details_default_is_none() {
+        assert_eq!(ToolResultDetails::default(), ToolResultDetails::None);
+    }
+
+    #[test]
+    fn tool_result_details_full_output_equality() {
+        let a = ToolResultDetails::FullOutput {
+            original_size: 100,
+            content: "x".repeat(100),
+        };
+        let b = ToolResultDetails::FullOutput {
+            original_size: 100,
+            content: "x".repeat(100),
+        };
+        assert_eq!(a, b);
     }
 
     #[test]

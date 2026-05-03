@@ -57,7 +57,7 @@ The tasks below implement the Phase 2.5 plan. They are roughly ordered so that e
    - Builder methods preserved from `Conversation`: `with_context_manager`, `with_token_budget`, `with_redactor`. New: `with_estimator`.
    - Document the leaf-pointer contract in the type-level doc.
 
-5. **Implement append operations on `Session`, including bounded tool-result handling [early-priority]:**
+5. **Implement append operations on `Session`, including bounded tool-result handling [early-priority]:** [Completed 2026-05-03]
 
    This task contains the fix for the shipping amnesia bug (P2.5-9). The bounded tool-result behaviour is the _most important_ sub-item; everything else is plumbing.
    - `append_user_message(text: &str) -> EntryId`
@@ -80,7 +80,7 @@ The tasks below implement the Phase 2.5 plan. They are roughly ordered so that e
      - Append a tool result that fits comfortably; verify no truncation, `details: None`.
      - Verify the truncation point is a UTF-8 character boundary (use a multi-byte test fixture).
 
-6. **Implement the `TokenEstimator` and calibrator in `rho-core/src/session/estimator.rs` [early-priority]:**
+6. **Implement the `TokenEstimator` and calibrator in `rho-core/src/session/estimator.rs` [early-priority]:** [Completed 2026-05-03]
 
    This task contains the second half of the shipping amnesia fix (P2.5-1). It can land independently of, and before, the rest of Phase 2.5 — the existing `fit` can switch to using a `TokenEstimator` instance even before the tree refactor.
 
@@ -206,7 +206,7 @@ The tasks below implement the Phase 2.5 plan. They are roughly ordered so that e
     - Verify the persistence-invariant fix from Phase 1a still holds: assistant `tool_calls` messages are appended as entries before their matching tool result entries.
     - All multi-tool-call iteration logic from Phase 2 Task 5 stays as-is — just `append_tool_result` instead of `push_tool_result`.
 
-13. **Add `ToolResultDetails` as an extensible enum:**
+13. **Add `ToolResultDetails` as an extensible enum:** [Completed 2026-05-03]
 
     ```rust
     pub enum ToolResultDetails {

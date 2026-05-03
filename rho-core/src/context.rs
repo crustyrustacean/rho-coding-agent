@@ -17,23 +17,63 @@ use tracing::{debug, warn};
 
 /// A token budget for context window management.
 ///
-/// Phase 1a uses a character-count heuristic (≈ 4 chars per token).
+/// Separates the model's context window into a *prompt* budget (what the
+/// conversation can use) and a *completion reserve* (room left for the
+/// model's reply). This prevents the pathological case where a fully-budgeted
+/// prompt leaves no room for the model to respond.
+///
+/// # Prompt budget
+///
+/// `prompt_budget()` returns `context_window - completion_reserve`. All
+/// context-fitting logic should use this, not `context_window` directly.
 #[derive(Clone, Copy, Debug)]
 pub struct TokenBudget {
-    /// Maximum number of tokens to include in a request.
-    pub max_tokens: usize,
+    /// The model's total context window size.
+    pub context_window: usize,
+    /// Tokens reserved for the model's completion. Default: 4096.
+    pub completion_reserve: usize,
 }
 
 impl TokenBudget {
-    /// Create a token budget.
-    pub fn new(max_tokens: usize) -> Self {
-        Self { max_tokens }
+    /// Create a token budget with the given context window and default
+    /// completion reserve (4096).
+    pub fn new(context_window: usize) -> Self {
+        Self {
+            context_window,
+            completion_reserve: 4096,
+        }
+    }
+
+    /// Create a token budget with explicit context window and completion reserve.
+    pub fn with_reserve(context_window: usize, completion_reserve: usize) -> Self {
+        Self {
+            context_window,
+            completion_reserve,
+        }
+    }
+
+    /// The maximum number of tokens available for the prompt.
+    ///
+    /// This is `context_window - completion_reserve`. All context-fitting
+    /// logic should use this value.
+    pub fn prompt_budget(&self) -> usize {
+        self.context_window.saturating_sub(self.completion_reserve)
+    }
+
+    /// Backwards-compatible accessor: the context window size.
+    ///
+    /// Prefer [`prompt_budget()`](Self::prompt_budget) for fitting logic.
+    pub fn max_tokens(&self) -> usize {
+        self.context_window
     }
 }
 
 impl Default for TokenBudget {
     fn default() -> Self {
-        Self { max_tokens: 32_768 }
+        Self {
+            context_window: 32_768,
+            completion_reserve: 4096,
+        }
     }
 }
 
@@ -172,7 +212,7 @@ impl ContextManager for SlidingWindowContextManager {
         let (system, mut turns) = Self::group(messages);
 
         let system_tokens = system.as_ref().map_or(0, approximate_tokens);
-        let available = budget.max_tokens.saturating_sub(system_tokens);
+        let available = budget.prompt_budget().saturating_sub(system_tokens);
 
         let turn_tokens: Vec<usize> = turns
             .iter()
@@ -183,14 +223,41 @@ impl ContextManager for SlidingWindowContextManager {
         let mut excess = total.saturating_sub(available);
         let mut drop = 0;
 
+        // Invariant 1: never evict the most recent turn. The last turn is the
+        // one the model is currently operating on — evicting it causes
+        // amnesia (the user's request disappears from context). If the last
+        // turn alone exceeds the budget, the bounded-tool-result handling
+        // will have already truncated it; dropping it entirely is always wrong.
+        //
+        // Invariant 2: never evict the first user turn. The first user message
+        // contains the user's original request; losing it means the model
+        // forgets what it was asked to do. (This is the amnesia bug that
+        // Phase 2.5's CompactionSummary::original_request solves structurally;
+        // in the linear Conversation model, pinning is the fix.)
+        let first_user_turn = turns.iter().position(|t| {
+            t.first()
+                .is_some_and(|m| matches!(m, ChatMessage::User { .. }))
+        });
+        let max_droppable = turns.len().saturating_sub(1);
+
         // Count evicted messages by role for diagnostics.
         let mut dropped_user = 0usize;
         let mut dropped_assistant = 0usize;
         let mut dropped_tool = 0usize;
         let mut tokens_freed: usize = 0;
 
-        for &t in &turn_tokens {
+        for (idx, &t) in turn_tokens.iter().enumerate() {
             if excess == 0 {
+                break;
+            }
+            if idx >= max_droppable {
+                // Don't evict the last turn — it contains the active
+                // user request or in-flight tool call.
+                break;
+            }
+            if first_user_turn == Some(idx) {
+                // Don't evict the first user turn — it contains the
+                // original request; losing it causes amnesia.
                 break;
             }
             // Classify messages in the evicted turn by role.
@@ -220,7 +287,7 @@ impl ContextManager for SlidingWindowContextManager {
             input_messages = messages.len(),
             output_messages = result.len(),
             total_tokens = total,
-            budget_tokens = budget.max_tokens,
+            budget_tokens = budget.prompt_budget(),
             available_tokens = available,
             turns_dropped = drop,
             dropped_user,
@@ -247,6 +314,7 @@ impl ContextManager for SlidingWindowContextManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ContentBlock;
     use crate::message::{ModelToolCall, ToolCallFunction};
     use crate::newtypes::{ToolCallId, ToolName};
 
@@ -326,6 +394,63 @@ mod tests {
 
     #[test]
     fn token_budget_default_is_32k() {
-        assert_eq!(TokenBudget::default().max_tokens, 32_768);
+        assert_eq!(TokenBudget::default().context_window, 32_768);
+    }
+
+    #[test]
+    fn last_turn_is_never_evicted() {
+        // Even under severe budget pressure, the most recent turn
+        // must survive — evicting it causes amnesia.
+        let messages = vec![
+            ChatMessage::system_text("sys"),
+            ChatMessage::user_text("important question"),
+            ChatMessage::assistant_text("answer"),
+            ChatMessage::user_text("follow-up question"),
+        ];
+        let cm = SlidingWindowContextManager::new();
+        // Tiny budget — forces eviction
+        let fitted = cm.fit(&messages, TokenBudget::new(1));
+        // The system message is always pinned
+        assert!(
+            fitted
+                .iter()
+                .any(|m| matches!(m, ChatMessage::System { .. }))
+        );
+        // The last user message must survive even under extreme pressure
+        assert!(
+            fitted.iter().any(|m| matches!(m, ChatMessage::User { .. })),
+            "last user turn must survive even under extreme budget pressure"
+        );
+    }
+
+    #[test]
+    fn first_user_turn_is_never_evicted() {
+        // The first user message contains the original request — losing it
+        // is the amnesia bug. It must survive even under severe budget pressure.
+        let messages = vec![
+            ChatMessage::system_text("sys"),
+            ChatMessage::user_text("remember the secret code: APPLE-42"),
+            ChatMessage::assistant_text("got it"),
+            ChatMessage::user_text("read file A"),
+            ChatMessage::assistant_text("ok"),
+            ChatMessage::user_text("read file B"),
+        ];
+        let cm = SlidingWindowContextManager::new();
+        let fitted = cm.fit(&messages, TokenBudget::new(1));
+        // The first user message must survive
+        let has_secret = fitted.iter().any(|m| {
+            if let ChatMessage::User { content } = m {
+                content.iter().any(|b| {
+                    let ContentBlock::Text { text } = b;
+                    text.contains("APPLE-42")
+                })
+            } else {
+                false
+            }
+        });
+        assert!(
+            has_secret,
+            "first user turn (containing the secret) must survive eviction"
+        );
     }
 }

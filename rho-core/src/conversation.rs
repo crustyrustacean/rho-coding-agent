@@ -9,7 +9,9 @@ use crate::redact::Redactor;
 use crate::request::ChatRequest;
 use crate::response::FinishReason;
 use crate::schema::ToolSchema;
-use crate::tool::ToolResult;
+use crate::session::TokenEstimator;
+use crate::tool::{ToolResult, ToolResultDetails};
+use tracing::warn;
 
 /// The result of sending messages to the model.
 #[derive(Debug)]
@@ -47,6 +49,8 @@ pub struct Conversation {
     token_budget: TokenBudget,
     /// Secret redactor applied to tool results before they enter history.
     redactor: Redactor,
+    /// Token estimator for budget-aware decisions (bounded tool results).
+    estimator: Box<dyn TokenEstimator>,
 }
 
 impl Conversation {
@@ -67,6 +71,7 @@ impl Conversation {
             context_manager: Box::new(SlidingWindowContextManager::new()),
             token_budget: TokenBudget::default(),
             redactor: Redactor::new(),
+            estimator: Box::new(crate::session::HeuristicEstimator::new()),
         }
     }
 
@@ -151,7 +156,14 @@ impl Conversation {
         self.messages.push(ChatMessage::user_text(text));
     }
 
-    /// Append a tool result message, applying secret redaction first.
+    /// Append a tool result message, applying secret redaction and
+    /// bounded resolution first.
+    ///
+    /// If the redacted content would consume more than half the prompt budget
+    /// (per the calibrated estimator), it is truncated at a UTF-8-safe
+    /// character boundary. The truncated content goes into the message
+    /// history; the *full* content is preserved out-of-band as
+    /// [`ToolResultDetails::FullOutput`] on the returned struct.
     ///
     /// `pub(crate)` so the agent loop can feed tool results back without
     /// external crates bypassing the redactor. Integration tests should use
@@ -159,16 +171,57 @@ impl Conversation {
     pub(crate) fn push_tool_result(&mut self, id: ToolCallId, result: &ToolResult) {
         // Redact secrets before the tool output enters conversation history.
         let redacted = self.redactor.redact(&result.output);
-        self.messages.push(ChatMessage::tool_result(id, redacted));
+
+        // Bounded resolution: truncate if the result exceeds half the prompt budget.
+        let content = self.truncate_tool_result(&redacted);
+        self.messages.push(ChatMessage::tool_result(id, content));
     }
 
-    /// Append a tool result message, applying secret redaction first.
+    /// Append a tool result message, applying secret redaction and
+    /// bounded resolution first.
     ///
     /// This is the public entry point for adding tool results to the
     /// conversation (e.g. from integration tests). It always applies
     /// redaction — there is no way to bypass the redactor through this API.
-    pub fn add_tool_result(&mut self, id: ToolCallId, result: &ToolResult) {
-        self.push_tool_result(id, result);
+    ///
+    /// Returns the [`ToolResultDetails`] if truncation occurred (the full
+    /// output is preserved there), or [`ToolResultDetails::None`] if no
+    /// truncation was needed.
+    pub fn add_tool_result(&mut self, id: ToolCallId, result: &ToolResult) -> ToolResultDetails {
+        let redacted = self.redactor.redact(&result.output);
+        let max_tokens = self.max_tool_result_tokens();
+        let estimated_tokens = self.estimator.estimate(&redacted);
+
+        let (content, details) = if estimated_tokens > max_tokens {
+            let max_chars = chars_to_fit_tokens(&redacted, max_tokens, self.estimator.as_ref());
+            let original_size = redacted.len();
+            let truncated = format!(
+                "{}\n\n{}",
+                &redacted[..floor_char_boundary(&redacted, max_chars)],
+                truncation_footer(original_size),
+            );
+
+            warn!(
+                original_size,
+                truncated_size = truncated.len(),
+                estimated_tokens,
+                max_tokens,
+                "tool result truncated to fit budget"
+            );
+
+            (
+                truncated,
+                ToolResultDetails::FullOutput {
+                    original_size,
+                    content: redacted,
+                },
+            )
+        } else {
+            (redacted, ToolResultDetails::None)
+        };
+
+        self.messages.push(ChatMessage::tool_result(id, content));
+        details
     }
 
     // ── Send primitives ───────────────────────────────────────────────────
@@ -257,4 +310,90 @@ impl Conversation {
             Ok(AssistantResponse::Message(text))
         }
     }
+
+    // ── Bounded tool-result helpers ────────────────────────────────────────
+
+    /// Maximum tokens a single tool result may consume (half the prompt budget).
+    fn max_tool_result_tokens(&self) -> usize {
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            clippy::cast_precision_loss
+        )]
+        let max = (self.token_budget.prompt_budget() as f32 * MAX_TOOL_RESULT_FRACTION) as usize;
+        max
+    }
+
+    /// Truncate a tool result if it exceeds the per-result budget.
+    fn truncate_tool_result(&self, redacted: &str) -> String {
+        let max_tokens = self.max_tool_result_tokens();
+        let estimated_tokens = self.estimator.estimate(redacted);
+
+        if estimated_tokens > max_tokens {
+            let max_chars = chars_to_fit_tokens(redacted, max_tokens, self.estimator.as_ref());
+            let original_size = redacted.len();
+            let truncated = format!(
+                "{}\n\n{}",
+                &redacted[..floor_char_boundary(redacted, max_chars)],
+                truncation_footer(original_size),
+            );
+
+            warn!(
+                original_size,
+                truncated_size = truncated.len(),
+                estimated_tokens,
+                max_tokens,
+                "tool result truncated to fit budget"
+            );
+
+            truncated
+        } else {
+            redacted.to_owned()
+        }
+    }
+}
+
+// ── Bounded tool-result helpers (shared with Session) ─────────────────────────
+
+/// Maximum fraction of the prompt budget that a single tool result may consume.
+const MAX_TOOL_RESULT_FRACTION: f32 = 0.5;
+
+/// Truncation footer appended to truncated tool results.
+fn truncation_footer(original_size: usize) -> String {
+    format!(
+        "... [truncated; original size: {original_size} bytes — re-read the source with offset to access more]."
+    )
+}
+
+/// Find the largest character boundary index ≤ `max_chars` in `s`.
+fn floor_char_boundary(s: &str, max_chars: usize) -> usize {
+    if max_chars >= s.len() {
+        return s.len();
+    }
+    let mut i = max_chars;
+    while !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+/// Estimate how many characters correspond to `target_tokens` tokens.
+fn chars_to_fit_tokens(s: &str, target_tokens: usize, estimator: &dyn TokenEstimator) -> usize {
+    let total_tokens = estimator.estimate(s);
+    if total_tokens == 0 {
+        return s.len();
+    }
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_truncation
+    )]
+    let ratio = s.len() as f32 / total_tokens as f32;
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_truncation
+    )]
+    let estimated_chars = (target_tokens as f32 * ratio) as usize;
+    estimated_chars.min(s.len())
 }

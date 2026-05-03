@@ -112,4 +112,6 @@ pub use session::{
     SessionHeader, TokenEstimator,
 };
 pub use shell::{ShellExecutor, ShellOutput};
-pub use tool::{CancellationToken, Tool, ToolOutcome, ToolRegistry, ToolResult, ToolRisk};
+pub use tool::{
+    CancellationToken, Tool, ToolOutcome, ToolRegistry, ToolResult, ToolResultDetails, ToolRisk,
+};

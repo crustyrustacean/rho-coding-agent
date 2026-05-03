@@ -1154,13 +1154,19 @@ fn conversation_with_custom_token_budget() {
     let user = ChatMessage::user_text(&prompt);
     let cm = rho_core::SlidingWindowContextManager::new();
     let fitted = cm.fit(&[sys, user], TokenBudget::new(1024));
-    // System message is pinned, so it survives; the user message is evicted.
+    // System message is pinned, so it survives.
     assert!(
         fitted
             .iter()
             .any(|m| matches!(m, ChatMessage::System { .. }))
     );
-    assert!(!fitted.iter().any(|m| matches!(m, ChatMessage::User { .. })));
+    // The last turn (user message) must never be evicted — evicting the
+    // only user request causes amnesia. With a tiny budget, the fitter
+    // keeps it even though it overflows, because dropping it would be worse.
+    assert!(
+        fitted.iter().any(|m| matches!(m, ChatMessage::User { .. })),
+        "last user turn must never be evicted, even under budget pressure"
+    );
 }
 
 #[test]
