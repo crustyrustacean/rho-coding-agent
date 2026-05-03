@@ -11,6 +11,7 @@
 use serde::{Deserialize, Serialize};
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
+use uuid::Uuid;
 
 /// A file path within the project sandbox.
 ///
@@ -176,6 +177,61 @@ impl std::fmt::Display for ToolCallId {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+pub struct EntryId(String);
+
+impl EntryId {
+    /// Generates a brand new `EntryId` using the first 8 chars of a UUID v4
+    pub fn new() -> Self {
+        // Instead of duplicating logic, we generate a Uuid and convert it
+        Self::from(Uuid::new_v4())
+    }
+}
+
+impl Default for EntryId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The idiomatic way to allow: let id: `EntryId` = `some_uuid.into()`;
+impl From<Uuid> for EntryId {
+    fn from(uuid: Uuid) -> Self {
+        let bytes = uuid.as_bytes();
+        // Efficiently extract the first 4 bytes as an 8-char hex string
+        let prefix = format!(
+            "{:08x}",
+            u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+        );
+        Self(prefix)
+    }
+}
+
+impl Deref for EntryId {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for EntryId {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl From<&str> for EntryId {
+    fn from(s: &str) -> Self {
+        Self(s.to_owned())
+    }
+}
+
+impl std::fmt::Display for EntryId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 /// A Rust compiler diagnostic code (e.g. `E0308`).
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DiagnosticCode(String);
@@ -215,6 +271,7 @@ impl std::fmt::Display for DiagnosticCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     #[test]
     fn file_path_deref_to_path() {
@@ -234,6 +291,31 @@ mod tests {
         let id = ToolCallId::from("call_abc123");
         let json = serde_json::to_string(&id).unwrap();
         let back: ToolCallId = serde_json::from_str(&json).unwrap();
+        assert_eq!(id, back);
+    }
+
+    #[test]
+    fn test_collision_sanity_check() {
+        let mut seen_ids = HashSet::new();
+        let iterations = 10_000;
+
+        for _ in 0..iterations {
+            let id = EntryId::new();
+            
+            assert!(
+                seen_ids.insert(id), 
+                "Collision detected! This suggests the random generator or slicing logic is flawed."
+            );
+        }
+
+        assert_eq!(seen_ids.len(), iterations);
+    }
+
+    #[test]
+    fn entry_id_round_trips_serde() {
+        let id = EntryId::from(Uuid::new_v4());
+        let json = serde_json::to_string(&id).unwrap();
+        let back = serde_json::from_str(&json).unwrap();
         assert_eq!(id, back);
     }
 

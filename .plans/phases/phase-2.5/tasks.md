@@ -4,11 +4,11 @@ The tasks below implement the Phase 2.5 plan. They are roughly ordered so that e
 
 ---
 
-1. **Add the `uuid` dependency to `rho-core`.**
+1. **Add the `uuid` dependency to `rho-core`.** [Completed 2026-05-02]
    - Single addition: `uuid = { version = "1", features = ["v4"] }`.
    - Document in `phase.md` and the workspace dependency philosophy section.
 
-2. **Define `EntryId` as a newtype in `rho-core`:**
+2. **Define `EntryId` as a newtype in `rho-core`:** [Completed 2026-05-02]
    - `EntryId(String)` holding an 8-char hex prefix of a UUID v4 (matches pi's format).
    - Implements `Display`, `Deref<Target = str>`, `From<&str>`, `Serialize`, `Deserialize`, `Hash`, `Eq`.
    - `EntryId::new()` generates a fresh ID. `EntryId::from_uuid(Uuid)` for explicit construction.
@@ -16,6 +16,7 @@ The tasks below implement the Phase 2.5 plan. They are roughly ordered so that e
    - Lives in the existing `newtypes.rs` alongside `FilePath`, `ToolName`, `ToolCallId`.
 
 3. **Define the `Entry`, `EntryPayload`, and `EntryResolution` types in a new `rho-core/src/session/entry.rs`:**
+
    ```rust
    pub struct Entry {
        pub id: EntryId,
@@ -43,6 +44,7 @@ The tasks below implement the Phase 2.5 plan. They are roughly ordered so that e
        CustomMessage { kind: String, content: Vec<ContentBlock> },
    }
    ```
+
    - `CompactionSummary` is defined in Task 9; this task can stub it out with the struct definition only.
    - All variants `Serialize`/`Deserialize`-able; pi's wire format is informative, not binding; we use snake_case throughout.
    - Document each variant with its purpose, its default `EntryResolution`, and whether it participates in LLM context.
@@ -57,22 +59,21 @@ The tasks below implement the Phase 2.5 plan. They are roughly ordered so that e
 
 5. **Implement append operations on `Session`, including bounded tool-result handling [early-priority]:**
 
-   This task contains the fix for the shipping amnesia bug (P2.5-9). The bounded tool-result behaviour is the *most important* sub-item; everything else is plumbing.
-
+   This task contains the fix for the shipping amnesia bug (P2.5-9). The bounded tool-result behaviour is the _most important_ sub-item; everything else is plumbing.
    - `append_user_message(text: &str) -> EntryId`
    - `append_assistant_message(msg: ChatMessage) -> EntryId` — used by `send_current` to persist model responses
    - `append_tool_result(call_id: ToolCallId, result: &ToolResult) -> EntryId` —
-       - runs the redactor first, same as today
-       - **bounded resolution:** if the redacted content would consume more than `budget.prompt_budget() / 2` tokens (per the calibrated estimator), truncate it at a UTF-8-safe character boundary; the truncated content goes into the entry's `Message` payload, the *full* content goes into `details: ToolResultDetails::FullOutput { original_size, content }` on the `ToolResult`, and the entry's resolution remains `Full` (the truncated text is what the model sees).
-       - the truncation footer reads: `\n\n... [truncated; original size: {N} bytes — re-read the source with offset to access more].`
-       - emit a `warn!` log line with the original and truncated sizes.
+     - runs the redactor first, same as today
+     - **bounded resolution:** if the redacted content would consume more than `budget.prompt_budget() / 2` tokens (per the calibrated estimator), truncate it at a UTF-8-safe character boundary; the truncated content goes into the entry's `Message` payload, the _full_ content goes into `details: ToolResultDetails::FullOutput { original_size, content }` on the `ToolResult`, and the entry's resolution remains `Full` (the truncated text is what the model sees).
+     - the truncation footer reads: `\n\n... [truncated; original size: {N} bytes — re-read the source with offset to access more].`
+     - emit a `warn!` log line with the original and truncated sizes.
    - `append_compaction(summary: CompactionSummary, first_kept: EntryId, tokens_before: usize) -> EntryId`
    - `append_branch_summary(summary: CompactionSummary, from_id: EntryId) -> EntryId`
    - `append_label(target_id, label: Option<String>) -> EntryId`
    - `append_custom_state<E: ExtensionEntry>(data: &E) -> EntryId` — resolution defaults to `Attached`
    - `append_custom_message<E: ExtensionEntry>(data: &E) -> EntryId` — resolution defaults to `Full`
    - All operations: assign a fresh `EntryId`, set `parent_id = self.leaf`, set timestamp, insert into `entries`, update `self.leaf`. Return the new ID.
-   - Each operation that changes the leaf writes a `LeafMoved` entry *only* when the leaf moves to a non-adjacent position (i.e., during branch operations, not during normal append). Document this clearly.
+   - Each operation that changes the leaf writes a `LeafMoved` entry _only_ when the leaf moves to a non-adjacent position (i.e., during branch operations, not during normal append). Document this clearly.
    - Make the equivalents of `Conversation::push_*` `pub(crate)` per the M3 fix from the review; only the high-level `send`/`submit_tool_results` and the typed `append_custom*` are `pub`.
    - **Tests for this task** (directly mirror the amnesia reproducer):
      - Append a tool result whose redacted content exceeds the threshold; verify the entry's `Message` payload contains the truncated content + footer, and the original is in `ToolResultDetails::FullOutput`.
@@ -94,8 +95,9 @@ The tasks below implement the Phase 2.5 plan. They are roughly ordered so that e
        ratios: HashMap<String, f32>,
    }
    ```
+
    - Bootstrap defaults: Gemma 3.5, Qwen 2.5, Claude 3.7, GPT-4 4.0, Llama 3.5, unknown 2.5 (conservative).
-   - `estimate(content)` uses the *current* model's ratio. The current model comes from the most recent `Session` request; for an estimator without context, fall back to the unknown ratio.
+   - `estimate(content)` uses the _current_ model's ratio. The current model comes from the most recent `Session` request; for an estimator without context, fall back to the unknown ratio.
    - `calibrate(model, estimated, actual)` updates the per-model ratio using exponential moving average: `ratios[model] = α * (chars_in_request / actual) + (1 - α) * ratios[model]`. Use α = 0.3 — fast enough to converge in a few requests, slow enough to not whiplash on outliers.
    - Optional: `tiktoken-rs` integration behind a `tiktoken` feature flag. When enabled, `HeuristicEstimator` is replaced by `TiktokenEstimator` for known model families (OpenAI, Claude). Local models fall back to the heuristic.
    - **Wire-up:** `Session::send_current` records the response's `prompt_tokens` and calls `estimator.calibrate(model, estimated_for_request, actual_prompt_tokens)`. The instrumentation log gains an `estimator_error` field showing percent error per request.
@@ -138,9 +140,10 @@ The tasks below implement the Phase 2.5 plan. They are roughly ordered so that e
      - **Computes tool-schema overhead** using `estimator` and subtracts it from `budget.prompt_budget()` before delegating to `fit`.
      - **Computes system-message overhead** and subtracts it as well (P2.5-3).
      - Delegates the final budget enforcement to the existing `fit(&[ChatMessage], budget)`.
-   - The existing `SlidingWindowContextManager::fit` is unchanged. The default `fit_path` implementation gives every existing context manager tree-awareness *and* calibrated overhead handling for free.
+   - The existing `SlidingWindowContextManager::fit` is unchanged. The default `fit_path` implementation gives every existing context manager tree-awareness _and_ calibrated overhead handling for free.
 
 9. **Define `CompactionStrategy`, `CompactionSummary`, and `MechanicalCompactionStrategy`:**
+
    ```rust
    pub struct CompactionSummary {
        pub original_request: Option<String>,
@@ -156,6 +159,7 @@ The tasks below implement the Phase 2.5 plan. They are roughly ordered so that e
        async fn compact(&self, entries: &[&Entry]) -> Result<CompactionSummary>;
    }
    ```
+
    - `MechanicalCompactionStrategy` walks the entries, extracts:
      - `original_request`: the first `ChatMessage::User` text encountered in the range (P2.5-6).
      - `tool_calls`: groups `ChatMessage::Assistant { tool_calls }` entries by tool name; for each call, formats a one-line argument summary.
@@ -174,11 +178,13 @@ The tasks below implement the Phase 2.5 plan. They are roughly ordered so that e
    - `Session::compact_older_than(threshold: usize, strategy: &dyn CompactionStrategy) -> Result<EntryId>` selects the oldest entries whose total tokens exceed `threshold`, generates a summary, appends a `Compaction` entry, and **transitions the compacted entries' resolution to `Compacted { into }`**. Does not modify or delete the original entries — they stay in the tree at lower resolution, just bypassed by `fit_path`.
 
 10. **Define the `ExtensionEntry` trait:**
+
     ```rust
     pub trait ExtensionEntry: Serialize + DeserializeOwned + 'static {
         const KIND: &'static str;
     }
     ```
+
     - `Session::append_custom_state<E: ExtensionEntry>(data: &E) -> EntryId` serializes `data`, tags with `E::KIND`, stores as `Custom { kind, data }` with resolution `Attached`.
     - `Session::read_custom_state<E: ExtensionEntry>(id: EntryId) -> Option<E>` looks up the entry, verifies the `kind` field matches `E::KIND`, deserializes. Returns `None` on kind mismatch (schema version skew).
     - Same pair for `CustomMessage` (resolution `Full`).
@@ -201,6 +207,7 @@ The tasks below implement the Phase 2.5 plan. They are roughly ordered so that e
     - All multi-tool-call iteration logic from Phase 2 Task 5 stays as-is — just `append_tool_result` instead of `push_tool_result`.
 
 13. **Add `ToolResultDetails` as an extensible enum:**
+
     ```rust
     pub enum ToolResultDetails {
         None,
@@ -208,8 +215,9 @@ The tasks below implement the Phase 2.5 plan. They are roughly ordered so that e
         // Phase 3 will add: Diagnostics(Vec<Diagnostic>), FileSnapshot { ... }, etc.
     }
     ```
+
     - Add a `details: ToolResultDetails` field to `ToolResult` (default `None`).
-    - This field is *not* sent to the model and *not* part of the `ChatMessage` content. It travels alongside the result for tools and extensions to consume.
+    - This field is _not_ sent to the model and _not_ part of the `ChatMessage` content. It travels alongside the result for tools and extensions to consume.
     - `FullOutput` is the variant used by Task 5's bounded-tool-result handling.
     - Phase 2.5 ships `None` and `FullOutput`; Phase 3 grows the enum.
     - Update `RunCommand`, `ReadFile`, `WriteFile`, `EditFile`, `ListDir` to construct `ToolResult` with `details: ToolResultDetails::None`. No behaviour change in those tools.
