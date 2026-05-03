@@ -100,13 +100,16 @@ pub use context_files::{ContextFile, ContextScanner, TrustStore, compose_system_
 pub use conversation::{AssistantResponse, Conversation};
 pub use error::{Result, RhoError};
 pub use message::{ChatMessage, ContentBlock, ModelToolCall, ToolCallFunction};
-pub use newtypes::{DiagnosticCode, EntryId, FilePath, ToolCallId, ToolName};
+pub use newtypes::{DiagnosticCode, EntryId, FilePath, SessionId, ToolCallId, ToolName};
 pub use prompts::{base_prompt, compact_prompt};
 pub use redact::Redactor;
 pub use request::ChatRequest;
 pub use response::{FinishReason, ModelChoice, ModelResponse, ModelUsage};
 pub use sandbox::{SandboxRoot, find_project_root};
 pub use schema::ToolSchema;
-pub use session::{CompactionSummary, Entry, EntryPayload, EntryResolution};
+pub use session::{
+    CompactionSummary, Entry, EntryPayload, EntryResolution, HeuristicEstimator, Session,
+    SessionHeader, TokenEstimator,
+};
 pub use shell::{ShellExecutor, ShellOutput};
 pub use tool::{CancellationToken, Tool, ToolOutcome, ToolRegistry, ToolResult, ToolRisk};

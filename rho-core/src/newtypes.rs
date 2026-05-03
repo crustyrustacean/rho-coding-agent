@@ -232,6 +232,62 @@ impl std::fmt::Display for EntryId {
     }
 }
 
+/// A unique identifier for a session.
+///
+/// Like [`EntryId`], this is an 8-char hex prefix of a UUID v4, matching
+/// pi's format. Stable across sessions and unique across processes.
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+pub struct SessionId(String);
+
+impl SessionId {
+    /// Generates a brand new `SessionId` using the first 8 chars of a UUID v4.
+    pub fn new() -> Self {
+        Self::from(Uuid::new_v4())
+    }
+}
+
+impl Default for SessionId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl From<Uuid> for SessionId {
+    fn from(uuid: Uuid) -> Self {
+        let bytes = uuid.as_bytes();
+        let prefix = format!(
+            "{:08x}",
+            u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+        );
+        Self(prefix)
+    }
+}
+
+impl Deref for SessionId {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for SessionId {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl From<&str> for SessionId {
+    fn from(s: &str) -> Self {
+        Self(s.to_owned())
+    }
+}
+
+impl std::fmt::Display for SessionId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 /// A Rust compiler diagnostic code (e.g. `E0308`).
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DiagnosticCode(String);
@@ -316,6 +372,14 @@ mod tests {
         let id = EntryId::from(Uuid::new_v4());
         let json = serde_json::to_string(&id).unwrap();
         let back = serde_json::from_str(&json).unwrap();
+        assert_eq!(id, back);
+    }
+
+    #[test]
+    fn session_id_round_trips_serde() {
+        let id = SessionId::from(Uuid::new_v4());
+        let json = serde_json::to_string(&id).unwrap();
+        let back: SessionId = serde_json::from_str(&json).unwrap();
         assert_eq!(id, back);
     }
 

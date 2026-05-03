@@ -50,7 +50,7 @@ The tasks below implement the Phase 2.5 plan. They are roughly ordered so that e
    - Document each variant with its purpose, its default `EntryResolution`, and whether it participates in LLM context.
    - Round-trip serde tests for each variant including each `EntryResolution` arm.
 
-4. **Define `Session` in `rho-core/src/session/mod.rs`:**
+4. **Define `Session` in `rho-core/src/session/mod.rs`:** [Completed 2026-05-03]
    - `Session` owns: `header: SessionHeader`, `entries: HashMap<EntryId, Entry>`, `leaf: Option<EntryId>`, `estimator: Box<dyn TokenEstimator>`, plus the existing `tools: Vec<ToolSchema>`, `model: String`, `context_manager: Box<dyn ContextManager>`, `token_budget: TokenBudget`, `redactor: Redactor`.
    - `SessionHeader` holds: `id: SessionId`, `version: u32` (start at 1), `created_at: SystemTime`, `cwd: PathBuf`, `parent_session: Option<PathBuf>`.
    - Constructor: `Session::new(model, system_prompt, tools, cwd) -> Self`. The system prompt becomes the first `Message` entry with `parent_id = None`, `resolution: Full`.
