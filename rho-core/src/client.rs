@@ -7,7 +7,7 @@ use crate::response::ModelResponse;
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Interface all model providers must implement.
 ///
@@ -204,6 +204,12 @@ impl ChatClient for LocalChatClient {
     #[tracing::instrument(skip_all, fields(model = %request.model, message_count = request.messages.len(), tool_count = request.tools.len()))]
     async fn chat(&self, request: ChatRequest) -> Result<ModelResponse> {
         self.check_egress()?;
+        debug!(
+            model = %request.model,
+            num_messages = request.messages.len(),
+            num_tools = request.tools.len(),
+            "sending chat request"
+        );
         let response = self
             .http_client
             .post(&self.endpoint)

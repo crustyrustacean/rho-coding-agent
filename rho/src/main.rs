@@ -14,7 +14,11 @@ use rho_core::{
     tool::CancellationToken,
 };
 use rho_tools::register_all;
-use std::io::{self, BufRead, Write};
+use std::path::PathBuf;
+use std::{
+    fs,
+    io::{self, BufRead, Write},
+};
 use tracing_subscriber::EnvFilter;
 
 // ── REPL approval gate ────────────────────────────────────────────────────────
@@ -91,6 +95,13 @@ struct Cli {
     /// Defaults to 32,768.
     #[arg(long)]
     token_budget: Option<u32>,
+
+    /// Prompt file.
+    ///
+    /// Reads the file contents and passes them to the agent loop,
+    /// then exits (no REPL). Useful for automation and testing.
+    #[arg(long)]
+    prompt_file: Option<PathBuf>,
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -163,8 +174,33 @@ async fn main() -> Result<()> {
         .with_token_budget(token_budget)
         .with_redactor(redactor);
 
-    // --- REPL loop ---
     let gate = ReplApprovalGate;
+    let cancel = CancellationToken::new();
+
+    // pass prompt file directly to the agent loop
+    if let Some(path) = &cli.prompt_file {
+        let input = fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("cannot read prompt file `{}`: {e}", path.display()))?;
+        eprintln!("using prompt file: {}", path.display());
+        match rho_core::run_loop(
+            &mut conversation,
+            &input,
+            &client,
+            &registry,
+            &config,
+            cancel.clone(),
+            &gate,
+        )
+        .await
+        {
+            Ok(reply) => println!("Assistant: {reply}"),
+            Err(e) => eprintln!("Error: {e}"),
+        }
+
+        return Ok(());
+    }
+
+    // --- REPL loop ---
 
     loop {
         print!("User: ");
@@ -184,14 +220,13 @@ async fn main() -> Result<()> {
             _ => {}
         }
 
-        let cancel = CancellationToken::new();
         match rho_core::run_loop(
             &mut conversation,
             input,
             &client,
             &registry,
             &config,
-            cancel,
+            cancel.clone(),
             &gate,
         )
         .await
