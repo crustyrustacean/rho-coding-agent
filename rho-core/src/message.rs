@@ -22,7 +22,7 @@ use serde_json::Value;
 ///
 /// Only `Text` is implemented in Phase 1a. The enum exists now so that adding
 /// `Image` or `File` variants in a later phase does not touch every downstream type.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub enum ContentBlock {
     /// Plain text content.
     Text {

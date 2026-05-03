@@ -15,7 +15,7 @@ The tasks below implement the Phase 2.5 plan. They are roughly ordered so that e
    - Round-trip serde test, hash-collision sanity test (generate 10,000 IDs, assert no collisions).
    - Lives in the existing `newtypes.rs` alongside `FilePath`, `ToolName`, `ToolCallId`.
 
-3. **Define the `Entry`, `EntryPayload`, and `EntryResolution` types in a new `rho-core/src/session/entry.rs`:**
+3. **Define the `Entry`, `EntryPayload`, and `EntryResolution` types in a new `rho-core/src/session/entry.rs`:** [Completed 2026-05-03]
 
    ```rust
    pub struct Entry {

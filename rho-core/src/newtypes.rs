@@ -106,7 +106,7 @@ impl std::fmt::Display for FilePath {
 }
 
 /// A tool's registered name.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub struct ToolName(String);
 
 impl ToolName {
@@ -301,9 +301,9 @@ mod tests {
 
         for _ in 0..iterations {
             let id = EntryId::new();
-            
+
             assert!(
-                seen_ids.insert(id), 
+                seen_ids.insert(id),
                 "Collision detected! This suggests the random generator or slicing logic is flawed."
             );
         }

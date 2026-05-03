@@ -7,7 +7,7 @@
 //! | Module | Contents |
 //! |---|---|
 //! | [`error`] | [`RhoError`] and [`Result`] |
-//! | [`newtypes`] | [`FilePath`], [`ToolName`], [`ToolCallId`], [`DiagnosticCode`] |
+//! | [`newtypes`] | [`FilePath`], [`ToolName`], [`ToolCallId`], [`EntryId`], [`DiagnosticCode`] |
 //! | [`message`] | [`ChatMessage`], [`ContentBlock`], [`ModelToolCall`] |
 //! | [`schema`] | [`ToolSchema`] — wire-format tool definitions for API requests |
 //! | [`shell`] | [`ShellExecutor`] trait, [`ShellOutput`] — shell execution abstraction |
@@ -17,6 +17,7 @@
 //! | [`client`] | [`ChatClient`] trait, [`LocalChatClient`] |
 //! | [`context`] | [`ContextManager`] trait, [`SlidingWindowContextManager`], [`TokenBudget`] |
 //! | [`conversation`] | [`Conversation`], [`AssistantResponse`] |
+//! | [`session`] | [`Entry`], [`EntryPayload`], [`EntryResolution`], [`CompactionSummary`] |
 //! | [`agent`] | [`AgentState`], [`AgentConfig`], [`run_loop`] |
 //! | [`config`] | [`RhoConfig`], [`ConfigLoader`], [`ApprovalAction`] |
 //! | [`prompts`] | [`base_prompt()`] |
@@ -26,12 +27,13 @@
 //! Domain newtypes implement `Deref` to their inner type so call sites don't need
 //! `.0` access:
 //! - [`FilePath`] → `Deref<Target = Path>`
-//! - [`ToolName`], [`ToolCallId`], [`DiagnosticCode`] → `Deref<Target = str>`
+//! - [`ToolName`], [`ToolCallId`], [`EntryId`], [`DiagnosticCode`] → `Deref<Target = str>`
 //!
 //! [`base_prompt()`]: prompts::base_prompt
 //! [`FilePath`]: newtypes::FilePath
 //! [`ToolName`]: newtypes::ToolName
 //! [`ToolCallId`]: newtypes::ToolCallId
+//! [`EntryId`]: newtypes::EntryId
 //! [`DiagnosticCode`]: newtypes::DiagnosticCode
 //! [`RhoError`]: error::RhoError
 //! [`Result`]: error::Result
@@ -54,6 +56,10 @@
 //! [`TokenBudget`]: context::TokenBudget
 //! [`Conversation`]: conversation::Conversation
 //! [`AssistantResponse`]: conversation::AssistantResponse
+//! [`Entry`]: session::Entry
+//! [`EntryPayload`]: session::EntryPayload
+//! [`EntryResolution`]: session::EntryResolution
+//! [`CompactionSummary`]: session::CompactionSummary
 //! [`AgentState`]: agent::AgentState
 //! [`AgentConfig`]: agent::AgentConfig
 //! [`run_loop`]: agent::run_loop
@@ -74,6 +80,7 @@ pub mod request;
 pub mod response;
 pub mod sandbox;
 pub mod schema;
+pub mod session;
 pub mod shell;
 pub mod tool;
 
@@ -93,12 +100,13 @@ pub use context_files::{ContextFile, ContextScanner, TrustStore, compose_system_
 pub use conversation::{AssistantResponse, Conversation};
 pub use error::{Result, RhoError};
 pub use message::{ChatMessage, ContentBlock, ModelToolCall, ToolCallFunction};
-pub use newtypes::{DiagnosticCode, FilePath, ToolCallId, ToolName};
+pub use newtypes::{DiagnosticCode, EntryId, FilePath, ToolCallId, ToolName};
 pub use prompts::{base_prompt, compact_prompt};
 pub use redact::Redactor;
 pub use request::ChatRequest;
 pub use response::{FinishReason, ModelChoice, ModelResponse, ModelUsage};
 pub use sandbox::{SandboxRoot, find_project_root};
 pub use schema::ToolSchema;
+pub use session::{CompactionSummary, Entry, EntryPayload, EntryResolution};
 pub use shell::{ShellExecutor, ShellOutput};
 pub use tool::{CancellationToken, Tool, ToolOutcome, ToolRegistry, ToolResult, ToolRisk};
