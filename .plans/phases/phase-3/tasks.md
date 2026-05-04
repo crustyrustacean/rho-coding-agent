@@ -36,6 +36,7 @@
    - `DiagnosticSuggestion` — suggested replacement text for a span.
    - `TestResult` — pass/fail with output.
    - All types round-trip through serde, use newtypes where appropriate.
+   - Add a `ToolResultDetails::Diagnostics(Vec<Diagnostic>)` variant (Phase 2.5 already declared `ToolResultDetails` as an extensible enum with `None` and `FullOutput`; this grows it).
 
 8. **Use `rho-highlight` to map diagnostic spans to AST nodes:**
    - When a diagnostic points to a span, query the tree-sitter tree for the enclosing syntax node.
@@ -58,6 +59,7 @@
     - Define 10–20 canonical coding tasks (fix this compile error, refactor this function, add this test) with known correct outcomes.
     - Implement automated scoring: run each task, compare the agent's result against the expected outcome, produce a pass/fail report.
     - This provides a quantitative measure of agent quality that persists across phases.
+    - **Session-based eval:** `rho-eval` uses `Session` (not the legacy `Conversation`) to construct per-task agent runs. Each task gets an isolated in-memory session with a fresh `SessionId`.
     - **Prompt-version tracking:** each eval run records the SHA-256 hash of the base prompt and the full assembled system prompt that produced the results. The eval report includes these hashes:
       ```toml
       [run]
@@ -66,7 +68,7 @@
       pass_rate = 14
       total = 20
       ```
-    - **Regression gate:** CI fails when `pass_rate / total` drops by more than a configurable threshold (default: 2 tasks) versus the previous run on the same eval set. The failure output includes a diff of the two prompt hashes — and, if the base prompt changed, a diff of the prompt content — so the reviewer can see exactly what changed and why performance dropped. This makes prompt edits accountable: a "cleaner" rewording that quietly regresses agent behaviour is caught before it merges.
+    - **Regression gate:** CI fails when `pass_rate / total` drops by more than a configurable threshold (default: 2 tasks) versus the previous run on the same eval set.
 
 13. **Test suite audit:**
     - Promote `cargo * --message-format=json` output parsing into shared test helpers in `rho-test-helpers`.

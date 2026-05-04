@@ -1,9 +1,9 @@
 # Phase 2.5 Context-Management Follow-ups
 
 **Companion to:** `rho-coding-agent-phase2-review.md`
-**Plan it folds into:** `phase-2.5/phase.md` and `phase-2.5/tasks.md`
-**Date:** 2026-05-01 (originally), updated 2026-05-02
-**Codebase version:** 0.11.0 (Phase 2 complete)
+**Plan it folds into:** `phase-2.5/phase.md` and `phase-2.5/tasks.md` (all items resolved)
+**Date:** 2026-05-01 (originally), updated 2026-05-03
+**Codebase version:** 0.22.0 (Phase 2.5 complete)
 
 ---
 
@@ -25,9 +25,9 @@ The naming collision is unfortunate but accurate: the Phase 2 review identified 
 
 | Status | Meaning |
 |---|---|
-| **Absorbed** | The Phase 2.5 refactor makes this stop being a bug. No action needed. |
-| **Folded** | Survives the refactor but becomes a sub-task within a specific Phase 2.5 task. |
-| **Independent** | Unaffected by the refactor; needs its own fix. |
+| **Absorbed** | The Phase 2.5 refactor made this stop being a bug. Resolved. |
+| **Folded** | Survived the refactor, became a sub-task within a specific Phase 2.5 task. Resolved. |
+| **Independent** | Unaffected by the refactor; addressed separately. |
 
 ---
 

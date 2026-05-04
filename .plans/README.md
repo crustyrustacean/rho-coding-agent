@@ -7,19 +7,20 @@ This directory contains the long-term development plan for rho-coding-agent.
 | File | Purpose |
 |---|---|
 | [roadmap.md](roadmap.md) | Phased development plan with architecture, crate layout, and milestones |
-| [phases/phase-1a/](phases/phase-1a/) | The agent-loop machinery |
-| [phases/phase-1b/](phases/phase-1b/) | The security surface (approval, sandbox, trust, redaction) |
-| [phases/phase-2/](phases/phase-2/) | PowerShell-native tools, config, cross-platform support, and security hardening |
-| [phases/phase-3/](phases/phase-3/) | Rust tooling and tree-sitter |
+| [phases/phase-1a-COMPLETE/](phases/phase-1a-COMPLETE/) | The agent-loop machinery ✅ |
+| [phases/phase-1b-COMPLETE/](phases/phase-1b-COMPLETE/) | The security surface (approval, sandbox, trust, redaction) ✅ |
+| [phases/phase-2-COMPLETE/](phases/phase-2-COMPLETE/) | PowerShell-native tools, config, cross-platform support, and security hardening ✅ |
+| [phases/phase-2.5/](phases/phase-2.5/) | Adaptive-resolution context (session tree, calibrated budget, amnesia fix) ✅ |
+| [phases/phase-3/](phases/phase-3/) | Rust tooling and tree-sitter 🔜 Next |
 | [phases/phase-4/](phases/phase-4/) | Terminal UI |
 | [phases/phase-5/](phases/phase-5/) | Extensions and polish |
 | [phases/phase-6/](phases/phase-6/) | LSP integration (deferred) |
 
-Phase 1 was originally a single phase. It has been split into 1a (agent-loop machinery) and 1b (security surface) so each gets focused implementation and test coverage.
+Phase 1 was originally a single phase. It has been split into 1a (agent-loop machinery) and 1b (security surface) so each gets focused implementation and test coverage. Phase 2.5 (adaptive-resolution context) was added between Phase 2 and Phase 3 to address a shipping amnesia bug and replace the flat conversation model with a tree-shaped session.
 
 ## Guiding Principles
 
-1. **Windows and PowerShell are first-class.** The agent assumes PowerShell as its shell, Windows paths as its native format, and Windows tooling as its baseline. Unix support is welcome but not the priority.
+1. **Cross-platform with PowerShell as the primary shell.** The agent runs on Windows, macOS, and Linux. PowerShell 7+ (`pwsh`) is the primary shell on all platforms; Windows PowerShell 5.1 (`powershell`) is the fallback on Windows only. The original Windows-only focus was softened after real-world testing showed developers commonly work across platforms.
 2. **Rust tooling is a first-class capability.** The agent doesn't just run shell commands — it speaks to `cargo`, `rustc`, and `rust-analyzer` in their native structured formats (JSON messages, LSP).
 3. **A clean data model comes first.** Types are the API of the system. If the domain types are easy to construct, compose, and extend, everything built on top of them will be too. If they're awkward, everything will be awkward.
 4. **Layered architecture.** Each workspace crate is a layer with a clear dependency direction. No upward dependencies. The kernel (`rho-core`) knows nothing about TUIs or specific tools.

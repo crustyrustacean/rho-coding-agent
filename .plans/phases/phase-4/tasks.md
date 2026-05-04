@@ -7,7 +7,8 @@
    - Command history (up/down arrows)
    - Autocomplete for tool names and file paths
    - Slash-command parsing and dispatch (invokes `rho-core` APIs from the command surface table: `/clear`, `/history`, `/system`, `/model`, `/provider`, `/tools`, `/context`, `/config`, `/help`, `/quit`)
-   - Autocomplete for slash commands
+   - Slash-command parsing uses `Session` APIs: `/clear` branches to root, `/history` shows `path_messages()`
+   - Session navigation commands (new): `/tree` shows the session tree, `/fork` branches, `/resume` lists saved sessions
 
 3. **Implement the output pane:**
    - Markdown rendering (headers, bold, code blocks)
@@ -37,11 +38,12 @@
    - Query the OpenAI-compatible `/v1/models` endpoint (or equivalent) for the loaded model's `max_context_length`
    - Auto-size the `TokenBudget` to match the model's actual context window, unless the user has explicitly overridden it via config or CLI
    - Display the resolved budget in the status bar
-   - Warn if the system prompt alone exceeds 50% of the budget (the user should consider trimming context files or using a larger model)
-   - This replaces the static 32K default with a dynamic value that adapts to the model in use (8B models may have 8K windows; 14B+ models may have 32K–128K)
+   - The `HeuristicEstimator` (Phase 2.5) already calibrates per-model ratios; this task adds the *initial* auto-sizing of the `context_window` component.
+   - Warn if the system prompt alone exceeds 50% of the budget
 
 8. **Status bar:**
    - Current model, conversation turn count, agent state (idle / thinking / executing), resolved token budget
+   - Session info: session ID, save path, branch depth
 
 9. **Test suite audit:**
    - TUI rendering tests are inherently fragile — prefer snapshot tests for rendered output over pixel-level assertions

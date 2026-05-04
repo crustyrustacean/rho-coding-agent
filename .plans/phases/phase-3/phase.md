@@ -4,6 +4,8 @@
 
 **Milestone:** The agent runs `cargo check`, parses the JSON diagnostics, applies the machine-applicable fix, and verifies the fix compiles. `EditFile` warns when an exact-match replacement would split a syntax node.
 
+**Current state (pre-Phase 3):** The `Session` tree model (Phase 2.5) provides typed extension entries via `ToolResultDetails`. Phase 3 will grow this enum with `Diagnostics(Vec<Diagnostic>)` and other Rust-tooling variants. The agent loop operates on `Session`, not the legacy `Conversation`. The token estimator calibrates per-model, and tool results are bounded at append time.
+
 ## New Dependencies
 
 | Crate | For | Decision |

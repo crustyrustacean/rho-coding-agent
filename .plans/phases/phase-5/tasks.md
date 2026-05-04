@@ -9,13 +9,9 @@
    - **Extension argument safety** — command templates use structured argument substitution. Each argument is passed as a separate parameter to `Command::arg()`, never shell-interpolated into a single string. This prevents the most common injection vector where model-provided arguments escape the intended command structure.
    - Custom slash commands — extensions can register commands that appear in the TUI's slash-command autocomplete and invoke extension-provided logic
 
-3. **Implement project prompt trust:**
-   - `.rho/prompt.md` and other project context files (`AGENTS.md`, `.cursorrules`, etc.) require user confirmation on first load per project
-   - The TUI displays the prompt contents and asks "Trust this project prompt? [y/n]"
-   - The file's hash is stored in `~/.rho/trusted_projects.toml`
-   - If any context file changes (hash differs), re-confirmation is required on next startup
-   - This prevents a supply-chain attack where a cloned repository contains a malicious prompt that instructs the model to exfiltrate data or execute destructive commands
-   - Tool descriptions from extensions are also auditable — the TUI shows what each registered tool's description says
+3. **Extend project prompt trust:** (Phase 1b already implements core trust model; this task extends it)
+   - Review trust model coverage: are there new context-file patterns (e.g., `.claude/rules/`, `.github/copilot-instructions.md`) that should be added to the scan list?
+   - Tool descriptions from extensions are auditable — the TUI shows what each registered tool's description says
 
 4. **Extend project-level configuration** (`.rho/config.toml` — config loading already exists from Phase 2):
    - Custom tool definitions
@@ -35,7 +31,7 @@
    + Tool schemas (auto-generated from the registry)
    - Precedence: the base identity prompt is always first and cannot be overridden by a context file. Context files are instructions the user intentionally placed in the project; they extend but do not replace the agent's core identity.
    - **Budget-aware composition:** measure the token cost of each layer (base prompt, each context file, shell guidance, Rust guidance, extensions) and log it at startup. If the composed system prompt exceeds a configurable fraction of the token budget (default: 50%), warn the user with a breakdown by layer — e.g., "System prompt uses 8,200 / 32,768 tokens (25%). Breakdown: base 2,230, AGENTS.md 2,465, shell guidance 1,500, Rust guidance 2,005." This makes prompt bloat visible and gives the user actionable information (which context file to remove, which guidance layer to trim). The threshold and logging are controlled by `[context] prompt_budget_warning` in config (default: `0.5`).
-   - The token measurement uses the same heuristic as `SlidingWindowContextManager` (~4 chars/token) for consistency. Phase 4's model-aware sizing means this fraction is relative to the *actual* model context window, not the static default.
+   - The token measurement uses the calibrated `HeuristicEstimator` (Phase 2.5), which self-corrects per-model against API ground truth. Phase 4's model-aware sizing means this fraction is relative to the *actual* model context window.
 
 7. **Polish:**
    - Comprehensive error messages (no panics, all errors surfaced)

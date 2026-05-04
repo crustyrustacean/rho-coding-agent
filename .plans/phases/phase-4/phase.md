@@ -4,6 +4,8 @@
 
 **Milestone:** The agent displays in a split-pane TUI with syntax-highlighted output, tool call previews, and approval prompts.
 
+**Current state (pre-Phase 4):** The agent loop operates on `Session` (tree-shaped, JSONL-persisted). `--session` and `--ephemeral` CLI flags exist for session management. The token budget is calibrated per-model via `HeuristicEstimator`. Tool results are bounded at append time. The `AgentState` state machine exposes `Thinking`, `AwaitingApproval`, `ExecutingTool`, `Idle` for UI rendering. Streaming is not yet implemented (`ChatClient::chat` is non-streaming).
+
 ## New Dependencies
 
 | Crate | For | Decision |

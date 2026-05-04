@@ -4,6 +4,8 @@
 
 **Milestone:** A user can add a custom tool via config, restart the agent, and the model can use it.
 
+**Current state (pre-Phase 5):** Project context file trust (hash verification, user confirmation, re-confirmation on change) is implemented in Phase 1b. The `ExtensionEntry` and `ExtensionMessageEntry` traits (Phase 2.5) provide typed, versioned extension state. The `Session` tree supports branching, custom entries, and compaction. The token estimator (`HeuristicEstimator`) calibrates per-model.
+
 ## New Dependencies
 
 | Crate | For | Decision |
