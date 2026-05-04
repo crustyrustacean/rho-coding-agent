@@ -17,7 +17,7 @@
 //! | [`client`] | [`ChatClient`] trait, [`LocalChatClient`] |
 //! | [`context`] | [`ContextManager`] trait, [`SlidingWindowContextManager`], [`TokenBudget`] |
 //! | [`conversation`] | [`Conversation`], [`AssistantResponse`] |
-//! | [`session`] | [`Entry`], [`EntryPayload`], [`EntryResolution`], [`CompactionSummary`] |
+//! | [`session`] | [`Entry`], [`EntryPayload`], [`EntryResolution`], [`CompactionSummary`], [`ExtensionEntry`], [`ExtensionMessageEntry`] |
 //! | [`agent`] | [`AgentState`], [`AgentConfig`], [`run_loop`] |
 //! | [`config`] | [`RhoConfig`], [`ConfigLoader`], [`ApprovalAction`] |
 //! | [`prompts`] | [`base_prompt()`] |
@@ -108,8 +108,9 @@ pub use response::{FinishReason, ModelChoice, ModelResponse, ModelUsage};
 pub use sandbox::{SandboxRoot, find_project_root};
 pub use schema::ToolSchema;
 pub use session::{
-    CompactionStrategy, CompactionSummary, Entry, EntryPayload, EntryResolution,
-    HeuristicEstimator, MechanicalCompactionStrategy, Session, SessionHeader, TokenEstimator,
+    CompactionStrategy, CompactionSummary, Entry, EntryPayload, EntryResolution, ExtensionEntry,
+    ExtensionMessageEntry, HeuristicEstimator, MechanicalCompactionStrategy, Session,
+    SessionHeader, TokenEstimator,
 };
 pub use shell::{ShellExecutor, ShellOutput};
 pub use tool::{

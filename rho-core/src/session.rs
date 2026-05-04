@@ -15,6 +15,49 @@
 //! The leaf is never `None` after construction — `Session::new` creates a root
 //! entry (the system message) and sets the leaf to its ID.
 //!
+//! # Extension entries
+//!
+//! Extensions can attach typed state to the session tree by implementing the
+//! [`ExtensionEntry`] trait. This provides type-safe read/write access to
+//! structured data that either participates in the LLM context
+//! ([`CustomMessage`](EntryPayload::CustomMessage)) or stays out-of-band
+//! ([`Custom`](EntryPayload::Custom)).
+//!
+//! ## Versioning convention
+//!
+//! The [`ExtensionEntry::KIND`] constant follows the pattern
+//! `"<author>.<feature>.v<n>"` (e.g., `"rho.diagnostics.v1"`). When the
+//! schema changes, bump the version number. Consumers that expect an older
+//! version will receive `None` from [`Session::read_custom_state`] or
+//! [`Session::read_custom_message`], providing a clean break on schema skew
+//! without panics or data corruption.
+//!
+//! ## Example
+//!
+//! ```
+//! use rho_core::session::ExtensionEntry;
+//! use serde::{Serialize, Deserialize};
+//!
+//! #[derive(Serialize, Deserialize)]
+//! struct DiagnosticsState {
+//!     error_count: usize,
+//!     last_error: Option<String>,
+//! }
+//!
+//! impl ExtensionEntry for DiagnosticsState {
+//!     const KIND: &'static str = "rho.diagnostics.v1";
+//! }
+//!
+//! // Write:
+//! // let id = session.write_custom_state(&DiagnosticsState {
+//! //     error_count: 3,
+//! //     last_error: Some("mismatched types".into()),
+//! // });
+//!
+//! // Read:
+//! // let state: Option<DiagnosticsState> = session.read_custom_state(id);
+//! ```
+//!
 //! # Module layout
 //!
 //! | Submodule | Contents |
@@ -30,9 +73,12 @@ pub use compaction::{CompactionStrategy, MechanicalCompactionStrategy};
 pub use entry::{CompactionSummary, Entry, EntryPayload, EntryResolution};
 pub use estimator::{HeuristicEstimator, TokenEstimator};
 
+use serde::Serialize;
+use serde::de::DeserializeOwned;
+
 use crate::context::{ContextManager, SlidingWindowContextManager, TokenBudget};
 use crate::error::{Result, RhoError};
-use crate::message::ChatMessage;
+use crate::message::{ChatMessage, ContentBlock};
 use crate::newtypes::{EntryId, SessionId, ToolCallId};
 use crate::redact::Redactor;
 use crate::schema::ToolSchema;
@@ -843,6 +889,120 @@ impl Session {
         )
     }
 
+    // ── Typed extension entry methods ─────────────────────────────────────
+
+    /// Write a typed extension state entry using the [`ExtensionEntry`] trait.
+    ///
+    /// The entry is stored as [`Custom`](EntryPayload::Custom) with
+    /// `kind = E::KIND` and `data` serialized from `entry`. The resolution
+    /// is [`Attached`](EntryResolution::Attached) — the content does not
+    /// participate in the LLM context.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use rho_core::session::ExtensionEntry;
+    /// use serde::{Serialize, Deserialize};
+    ///
+    /// #[derive(Serialize, Deserialize)]
+    /// struct MyState { count: usize }
+    ///
+    /// impl ExtensionEntry for MyState {
+    ///     const KIND: &'static str = "acme.counter.v1";
+    /// }
+    ///
+    /// // session.write_custom_state(&MyState { count: 42 });
+    /// ```
+    ///
+    /// See also [`read_custom_state`](Session::read_custom_state) for the
+    /// typed read counterpart.
+    pub fn write_custom_state<E: ExtensionEntry>(&mut self, entry: &E) -> EntryId {
+        let data = serde_json::to_value(entry).unwrap_or_else(|e| {
+            warn!(
+                kind = E::KIND,
+                error = %e,
+                "failed to serialize ExtensionEntry, storing null"
+            );
+            serde_json::Value::Null
+        });
+        self.append_entry(
+            EntryPayload::Custom {
+                kind: E::KIND.to_owned(),
+                data,
+            },
+            EntryResolution::Attached,
+        )
+    }
+
+    /// Read a typed extension state entry back from the session tree.
+    ///
+    /// Looks up the entry at `id`, verifies that its `kind` matches
+    /// `E::KIND`, and deserializes the `data` field into `E`.
+    ///
+    /// Returns `None` if:
+    /// - The entry does not exist.
+    /// - The entry's payload is not [`Custom`](EntryPayload::Custom).
+    /// - The entry's `kind` does not match `E::KIND` (schema version skew).
+    /// - Deserialization fails (corrupt or incompatible data).
+    ///
+    /// # Schema versioning
+    ///
+    /// Because `KIND` includes the version number, a consumer expecting
+    /// `"acme.counter.v1"` will get `None` when reading an entry written
+    /// as `"acme.counter.v2"`. This provides a clean break on schema
+    /// changes without panics or silent data corruption.
+    pub fn read_custom_state<E: ExtensionEntry>(&self, id: &EntryId) -> Option<E> {
+        let entry = self.entries.get(id)?;
+        match &entry.payload {
+            EntryPayload::Custom { kind, data } if kind == E::KIND => {
+                serde_json::from_value(data.clone()).ok()
+            }
+            _ => None,
+        }
+    }
+
+    /// Write a typed extension message entry using the [`ExtensionEntry`] trait.
+    ///
+    /// The entry is stored as [`CustomMessage`](EntryPayload::CustomMessage)
+    /// with `kind = E::KIND` and `content` derived from `entry`. The resolution
+    /// is [`Full`](EntryResolution::Full) — the content participates in the
+    /// LLM context.
+    ///
+    /// The content blocks are produced by calling `E::content_blocks()`. By
+    /// default this serializes the entry to a JSON string and wraps it in a
+    /// single `ContentBlock::Text`. Extensions that need richer formatting
+    /// can override `content_blocks()` in their trait implementation.
+    pub fn write_custom_message<E: ExtensionMessageEntry>(&mut self, entry: &E) -> EntryId {
+        let content = entry.content_blocks();
+        self.append_entry(
+            EntryPayload::CustomMessage {
+                kind: E::KIND.to_owned(),
+                content,
+            },
+            EntryResolution::Full,
+        )
+    }
+
+    /// Read a typed extension message entry back from the session tree.
+    ///
+    /// Looks up the entry at `id`, verifies that its `kind` matches
+    /// `E::KIND`, and reconstructs the typed value from the content blocks.
+    ///
+    /// Returns `None` if:
+    /// - The entry does not exist.
+    /// - The entry's payload is not [`CustomMessage`](EntryPayload::CustomMessage).
+    /// - The entry's `kind` does not match `E::KIND` (schema version skew).
+    /// - Reconstruction via `E::from_content_blocks()` fails.
+    pub fn read_custom_message<E: ExtensionMessageEntry>(&self, id: &EntryId) -> Option<E> {
+        let entry = self.entries.get(id)?;
+        match &entry.payload {
+            EntryPayload::CustomMessage { kind, content } if kind == E::KIND => {
+                E::from_content_blocks(content)
+            }
+            _ => None,
+        }
+    }
+
     // ── Internal helpers ──────────────────────────────────────────────────
 
     /// Core append: creates an entry, links it to the current leaf, updates
@@ -859,6 +1019,101 @@ impl Session {
         self.entries.insert(id.clone(), entry);
         self.leaf = Some(id.clone());
         id
+    }
+}
+
+// ── ExtensionEntry trait ─────────────────────────────────────────────────────
+
+/// A trait for typed extension entries stored in the session tree.
+///
+/// Extensions implement this trait for their state types to get type-safe
+/// read/write access to [`Custom`](EntryPayload::Custom) entries. The `KIND`
+/// constant is stored alongside the serialized data and checked on read, so
+/// schema version skew produces a clean `None` rather than a deserialization
+/// error or silent corruption.
+///
+/// # Versioning convention
+///
+/// `KIND` should follow the pattern `"<author>.<feature>.v<n>"`, e.g.:
+/// - `"rho.diagnostics.v1"`
+/// - `"acme.linter.v2"`
+///
+/// When the schema changes incompatibly, bump the version number. Consumers
+/// expecting the old version get `None` from [`Session::read_custom_state`].
+///
+/// # Example
+///
+/// ```
+/// use rho_core::session::ExtensionEntry;
+/// use serde::{Serialize, Deserialize};
+///
+/// #[derive(Serialize, Deserialize)]
+/// struct DiagnosticsState {
+///     error_count: usize,
+/// }
+///
+/// impl ExtensionEntry for DiagnosticsState {
+///     const KIND: &'static str = "rho.diagnostics.v1";
+/// }
+/// ```
+pub trait ExtensionEntry: Serialize + DeserializeOwned + 'static {
+    /// Namespaced kind identifier, including version.
+    ///
+    /// Follow the convention `"<author>.<feature>.v<n>"` to enable
+    /// forward-compatible schema evolution.
+    const KIND: &'static str;
+}
+
+/// A trait for typed extension *message* entries that participate in the LLM context.
+///
+/// This is the `CustomMessage` counterpart to [`ExtensionEntry`]. Extensions
+/// implement this trait for content types that should be visible to the
+/// model (resolution = Full), as opposed to [`ExtensionEntry`] which stores
+/// state out-of-band (resolution = Attached).
+///
+/// The trait provides `content_blocks()` for writing and `from_content_blocks()`
+/// for reading. The default `content_blocks()` serializes to a JSON string;
+/// the default `from_content_blocks()` deserializes from the first text block.
+/// Override both when you need richer formatting.
+///
+/// # Example
+///
+/// ```
+/// use rho_core::session::ExtensionMessageEntry;
+/// use rho_core::message::ContentBlock;
+/// use serde::{Serialize, Deserialize};
+///
+/// #[derive(Serialize, Deserialize)]
+/// struct LintSummary {
+///     warnings: usize,
+/// }
+///
+/// impl ExtensionMessageEntry for LintSummary {
+///     const KIND: &'static str = "rho.lint-summary.v1";
+/// }
+/// ```
+pub trait ExtensionMessageEntry: Serialize + DeserializeOwned + 'static {
+    /// Namespaced kind identifier, including version.
+    const KIND: &'static str;
+
+    /// Serialize this entry into content blocks for storage.
+    ///
+    /// The default implementation serializes to a JSON string and wraps it
+    /// in a single `ContentBlock::Text`. Override for richer formatting.
+    fn content_blocks(&self) -> Vec<ContentBlock> {
+        let json = serde_json::to_string(self).unwrap_or_default();
+        vec![ContentBlock::Text { text: json }]
+    }
+
+    /// Reconstruct a typed value from content blocks.
+    ///
+    /// The default implementation reads the first `ContentBlock::Text` and
+    /// deserializes it from JSON. Returns `None` if there are no text blocks
+    /// or deserialization fails.
+    fn from_content_blocks(blocks: &[ContentBlock]) -> Option<Self> {
+        blocks.iter().find_map(|b| match b {
+            ContentBlock::Text { text } => serde_json::from_str(text).ok(),
+        })
     }
 }
 
@@ -1033,6 +1288,7 @@ mod tests {
     use crate::message::ContentBlock;
     use crate::newtypes::ToolName;
     use crate::tool::ToolResult;
+    use serde::{Deserialize, Serialize};
 
     // ── Construction tests ──────────────────────────────────────────────
 
@@ -2348,5 +2604,315 @@ mod tests {
             matches!(last_user.resolution, EntryResolution::Full),
             "last entry before compaction should not be compacted"
         );
+    }
+
+    // ── ExtensionEntry tests (Task 10) ────────────────────────────────────
+
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    struct DiagnosticsState {
+        error_count: usize,
+        last_error: Option<String>,
+    }
+
+    impl ExtensionEntry for DiagnosticsState {
+        const KIND: &'static str = "rho.diagnostics.v1";
+    }
+
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    struct DiagnosticsStateV2 {
+        error_count: usize,
+        last_error: Option<String>,
+        severity: String,
+    }
+
+    impl ExtensionEntry for DiagnosticsStateV2 {
+        const KIND: &'static str = "rho.diagnostics.v2";
+    }
+
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    struct LintSummary {
+        warnings: usize,
+        files_checked: usize,
+    }
+
+    impl ExtensionMessageEntry for LintSummary {
+        const KIND: &'static str = "rho.lint-summary.v1";
+    }
+
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    struct LintSummaryV2 {
+        warnings: usize,
+        files_checked: usize,
+        errors: usize,
+    }
+
+    impl ExtensionMessageEntry for LintSummaryV2 {
+        const KIND: &'static str = "rho.lint-summary.v2";
+    }
+
+    #[test]
+    fn write_and_read_custom_state_round_trips() {
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+
+        let state = DiagnosticsState {
+            error_count: 3,
+            last_error: Some("mismatched types".to_owned()),
+        };
+        let id = session.write_custom_state(&state);
+
+        // The entry should have Custom payload with the correct kind
+        let entry = session.entry(&id).unwrap();
+        assert!(matches!(entry.resolution, EntryResolution::Attached));
+        if let EntryPayload::Custom { kind, data } = &entry.payload {
+            assert_eq!(kind, "rho.diagnostics.v1");
+            assert_eq!(data["error_count"], 3);
+            assert_eq!(data["last_error"], "mismatched types");
+        } else {
+            panic!("expected Custom payload");
+        }
+
+        // Read back with the correct type
+        let read_back: Option<DiagnosticsState> = session.read_custom_state(&id);
+        assert_eq!(read_back, Some(state));
+    }
+
+    #[test]
+    fn read_custom_state_returns_none_on_kind_mismatch() {
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+
+        // Write as v1
+        let state = DiagnosticsState {
+            error_count: 1,
+            last_error: None,
+        };
+        let id = session.write_custom_state(&state);
+
+        // Try to read as v2 — different KIND, should get None
+        let result: Option<DiagnosticsStateV2> = session.read_custom_state(&id);
+        assert_eq!(result, None, "kind mismatch should return None");
+    }
+
+    #[test]
+    fn read_custom_state_returns_none_on_nonexistent_entry() {
+        let session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let fake_id = EntryId::new();
+        let result: Option<DiagnosticsState> = session.read_custom_state(&fake_id);
+        assert_eq!(result, None, "nonexistent entry should return None");
+    }
+
+    #[test]
+    fn read_custom_state_returns_none_on_wrong_payload_type() {
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+
+        // Write a CustomMessage (Full resolution), not a Custom (Attached)
+        let id = session.append_custom_message(
+            "rho.diagnostics.v1".to_owned(),
+            vec![ContentBlock::Text {
+                text: "hello".to_owned(),
+            }],
+        );
+
+        // Try to read as Custom state — wrong payload type, should get None
+        let result: Option<DiagnosticsState> = session.read_custom_state(&id);
+        assert_eq!(result, None, "wrong payload type should return None");
+    }
+
+    #[test]
+    fn write_custom_state_multiple_entries_independent() {
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+
+        let state1 = DiagnosticsState {
+            error_count: 1,
+            last_error: Some("e1".to_owned()),
+        };
+        let state2 = DiagnosticsState {
+            error_count: 2,
+            last_error: Some("e2".to_owned()),
+        };
+
+        let id1 = session.write_custom_state(&state1);
+        let id2 = session.write_custom_state(&state2);
+
+        let read1: Option<DiagnosticsState> = session.read_custom_state(&id1);
+        let read2: Option<DiagnosticsState> = session.read_custom_state(&id2);
+
+        assert_eq!(read1, Some(state1));
+        assert_eq!(read2, Some(state2));
+    }
+
+    #[test]
+    fn write_and_read_custom_message_round_trips() {
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+
+        let summary = LintSummary {
+            warnings: 5,
+            files_checked: 12,
+        };
+        let id = session.write_custom_message(&summary);
+
+        // The entry should have CustomMessage payload with the correct kind
+        let entry = session.entry(&id).unwrap();
+        assert!(matches!(entry.resolution, EntryResolution::Full));
+        if let EntryPayload::CustomMessage { kind, content } = &entry.payload {
+            assert_eq!(kind, "rho.lint-summary.v1");
+            assert!(!content.is_empty());
+        } else {
+            panic!("expected CustomMessage payload");
+        }
+
+        // Read back with the correct type
+        let read_back: Option<LintSummary> = session.read_custom_message(&id);
+        assert_eq!(read_back, Some(summary));
+    }
+
+    #[test]
+    fn read_custom_message_returns_none_on_kind_mismatch() {
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+
+        // Write as v1
+        let summary = LintSummary {
+            warnings: 5,
+            files_checked: 12,
+        };
+        let id = session.write_custom_message(&summary);
+
+        // Try to read as v2 — different KIND, should get None
+        let result: Option<LintSummaryV2> = session.read_custom_message(&id);
+        assert_eq!(result, None, "kind mismatch should return None");
+    }
+
+    #[test]
+    fn read_custom_message_returns_none_on_nonexistent_entry() {
+        let session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let fake_id = EntryId::new();
+        let result: Option<LintSummary> = session.read_custom_message(&fake_id);
+        assert_eq!(result, None, "nonexistent entry should return None");
+    }
+
+    #[test]
+    fn read_custom_message_returns_none_on_wrong_payload_type() {
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+
+        // Write a Custom (Attached), not a CustomMessage (Full)
+        let id = session.append_custom_state(
+            "rho.lint-summary.v1".to_owned(),
+            serde_json::json!({"warnings": 5}),
+        );
+
+        // Try to read as CustomMessage — wrong payload type, should get None
+        let result: Option<LintSummary> = session.read_custom_message(&id);
+        assert_eq!(result, None, "wrong payload type should return None");
+    }
+
+    #[test]
+    fn extension_entry_kind_versioning_produces_clean_break() {
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+
+        // Write v1
+        let v1 = DiagnosticsState {
+            error_count: 3,
+            last_error: Some("type error".to_owned()),
+        };
+        let id = session.write_custom_state(&v1);
+
+        // v1 reads back fine
+        let v1_read: Option<DiagnosticsState> = session.read_custom_state(&id);
+        assert_eq!(v1_read, Some(v1.clone()));
+
+        // v2 reads None (clean break)
+        let v2_read: Option<DiagnosticsStateV2> = session.read_custom_state(&id);
+        assert_eq!(v2_read, None);
+
+        // Now write v2 and verify v2 reads fine
+        let v2 = DiagnosticsStateV2 {
+            error_count: 3,
+            last_error: Some("type error".to_owned()),
+            severity: "high".to_owned(),
+        };
+        let id2 = session.write_custom_state(&v2);
+        let v2_read2: Option<DiagnosticsStateV2> = session.read_custom_state(&id2);
+        assert_eq!(v2_read2, Some(v2));
+
+        // v1 cannot read the v2 entry
+        let v1_read2: Option<DiagnosticsState> = session.read_custom_state(&id2);
+        assert_eq!(v1_read2, None);
+    }
+
+    #[test]
+    fn custom_state_is_filtered_from_path_messages() {
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        session.append_user_message("hello");
+
+        // Write a custom state entry (Attached resolution)
+        let state = DiagnosticsState {
+            error_count: 3,
+            last_error: None,
+        };
+        session.write_custom_state(&state);
+
+        let messages = session.path_messages();
+
+        // Only System + User should appear; the Custom state is Attached
+        assert_eq!(messages.len(), 2, "only System and User should appear");
+        assert!(matches!(messages[0], ChatMessage::System { .. }));
+        assert!(matches!(messages[1], ChatMessage::User { .. }));
+    }
+
+    #[test]
+    fn custom_message_appears_in_path_messages() {
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        session.append_user_message("hello");
+
+        // Write a custom message entry (Full resolution)
+        let summary = LintSummary {
+            warnings: 5,
+            files_checked: 12,
+        };
+        session.write_custom_message(&summary);
+
+        let messages = session.path_messages();
+
+        // System + User + CustomMessage (rendered as User)
+        assert!(messages.len() >= 3, "custom message should appear in path");
+
+        // The custom message should be rendered as a User message (by fit_path)
+        let has_custom = messages.iter().any(|m| {
+            if let ChatMessage::User { content } = m {
+                content.iter().any(|b| {
+                    let ContentBlock::Text { text } = b;
+                    text.contains("warnings")
+                })
+            } else {
+                false
+            }
+        });
+        assert!(
+            has_custom,
+            "custom message content should be visible to the model"
+        );
+    }
+
+    #[test]
+    fn extension_message_entry_default_content_blocks_round_trips() {
+        let summary = LintSummary {
+            warnings: 5,
+            files_checked: 12,
+        };
+        let blocks = summary.content_blocks();
+        assert!(!blocks.is_empty());
+
+        // Default implementation serializes to JSON
+        let ContentBlock::Text { text } = &blocks[0];
+        assert!(text.contains("warnings"), "should contain field names");
+
+        // from_content_blocks should reconstruct the value
+        let reconstructed: Option<LintSummary> = LintSummary::from_content_blocks(&blocks);
+        assert_eq!(reconstructed, Some(summary));
+    }
+
+    #[test]
+    fn extension_message_entry_from_empty_blocks_returns_none() {
+        let result: Option<LintSummary> = LintSummary::from_content_blocks(&[]);
+        assert_eq!(result, None, "empty blocks should return None");
     }
 }
