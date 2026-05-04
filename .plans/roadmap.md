@@ -241,7 +241,7 @@ Each phase produces a runnable agent. No phase requires a rewrite of the previou
 | 1a: The Agent Loop | [`phases/phase-1a-COMPLETE/`](phases/phase-1a-COMPLETE/) | Model invokes tools, agent loop runs autonomously. ✅ **Complete** |
 | 1b: Security Surface | [`phases/phase-1b-COMPLETE/`](phases/phase-1b-COMPLETE/) | Approval gate, sandbox, context-file trust, redaction, untrusted-data framing. ✅ **Complete** |
 | 2: PowerShell, File Tools, and Cross-Platform Support | [`phases/phase-2-COMPLETE/`](phases/phase-2-COMPLETE/) | PowerShell-native assistant, file system navigation, config loader, denylist, egress allowlist, cross-platform (Windows/macOS/Linux). ✅ **Complete** |
-| 2.5: Adaptive-Resolution Context | [`phases/phase-2.5/`](phases/phase-2.5/) | Session tree, resolution levels, calibrated budget, tool-result bounding, amnesia fix, JSONL persistence, extension entries, compaction strategy. ✅ **Complete** |
+| 2.5: Adaptive-Resolution Context | [`phases/phase-2.5-COMPLETE/`](phases/phase-2.5-COMPLETE/) | Session tree, resolution levels, calibrated budget, tool-result bounding, amnesia fix, JSONL persistence, extension entries, compaction strategy. ✅ **Complete** |
 | 3: Rust Tooling and Tree-Sitter | [`phases/phase-3/`](phases/phase-3/) | `rho-highlight` scaffolding, structured compiler diagnostics, Cargo integration. 🔜 **Next** |
 | 4: Terminal UI | [`phases/phase-4/`](phases/phase-4/) | Rich TUI with approval prompts, streaming, session navigation |
 | 5: Extensions and Polish | [`phases/phase-5/`](phases/phase-5/) | Custom tools, config, prompt composition |
