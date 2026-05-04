@@ -22,9 +22,11 @@
 //! | [`entry`] | [`Entry`], [`EntryPayload`], [`EntryResolution`], [`CompactionSummary`] |
 //! | [`estimator`] | [`TokenEstimator`] trait, [`HeuristicEstimator`] |
 
+pub mod compaction;
 pub mod entry;
 pub mod estimator;
 
+pub use compaction::{CompactionStrategy, MechanicalCompactionStrategy};
 pub use entry::{CompactionSummary, Entry, EntryPayload, EntryResolution};
 pub use estimator::{HeuristicEstimator, TokenEstimator};
 
@@ -391,6 +393,121 @@ impl Session {
         self.branch_to(id)?;
         self.append_branch_summary(summary, from_id);
         Ok(())
+    }
+
+    // ── Compaction ────────────────────────────────────────────────────
+
+    /// Compact the oldest entries whose total estimated tokens exceed
+    /// `threshold`, using the given [`CompactionStrategy`].
+    ///
+    /// This is the core compaction operation. It:
+    /// 1. Walks the leaf-to-root path and selects the oldest contiguous
+    ///    entries whose cumulative estimated tokens exceed `threshold`.
+    /// 2. Calls `strategy.compact()` on the selected entries to produce a
+    ///    [`CompactionSummary`].
+    /// 3. Appends a [`Compaction`](EntryPayload::Compaction) entry to the
+    ///    tree.
+    /// 4. Transitions the compacted entries' resolution from `Full` to
+    ///    `Compacted { into }`, where `into` is the new Compaction entry's
+    ///    ID.
+    ///
+    /// The compacted entries are **not deleted** — they remain in the tree
+    /// at lower resolution, accessible via [`entry()`](Session::entry), but
+    /// bypassed by [`path_messages()`](Session::path_messages) and
+    /// [`fit_path`](ContextManager::fit_path).
+    ///
+    /// # Invariants
+    ///
+    /// - The system message (root entry) is never compacted.
+    /// - The most recent entry (the leaf) is never compacted.
+    /// - At least one entry remains un-compacted after this operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RhoError`] if the compaction strategy fails.
+    ///
+    /// # Returns
+    ///
+    /// The [`EntryId`] of the new Compaction entry.
+    pub async fn compact_older_than(
+        &mut self,
+        threshold: usize,
+        strategy: &dyn compaction::CompactionStrategy,
+    ) -> Result<EntryId> {
+        // Walk the leaf-to-root path and reverse to get chronological order.
+        let path = self.path_to_root();
+        let chronological: Vec<&Entry> = path.into_iter().rev().collect();
+
+        if chronological.len() <= 1 {
+            // Nothing to compact (only the root, or empty)
+            return Err(RhoError::Unexpected(anyhow::anyhow!(
+                "cannot compact: session has too few entries"
+            )));
+        }
+
+        // Find the contiguous range of oldest entries whose tokens exceed
+        // the threshold. We never compact the root (index 0) or the leaf
+        // (last entry).
+        let mut cumulative_tokens: usize = 0;
+        let mut compact_end: usize = 0; // exclusive upper bound; 0 means not reached
+
+        // Start from index 1 (skip the root system message)
+        for (i, entry) in chronological.iter().enumerate().skip(1) {
+            // Don't compact the last entry (the leaf)
+            if i == chronological.len() - 1 {
+                break;
+            }
+
+            // Only compact Full-resolution entries
+            if !matches!(entry.resolution, EntryResolution::Full) {
+                continue;
+            }
+
+            cumulative_tokens +=
+                estimate_entry_tokens_for_compaction(entry, self.estimator.as_ref());
+            compact_end = i + 1;
+
+            if cumulative_tokens >= threshold {
+                break;
+            }
+        }
+
+        // If we didn't accumulate enough tokens, there's nothing to compact.
+        if cumulative_tokens < threshold || compact_end <= 1 {
+            return Err(RhoError::Unexpected(anyhow::anyhow!(
+                "cannot compact: not enough full-resolution entries exceeding threshold"
+            )));
+        }
+
+        // Collect the entries to compact (indices 1..compact_end)
+        let to_compact: Vec<&Entry> = chronological[1..compact_end].to_vec();
+        if to_compact.is_empty() {
+            return Err(RhoError::Unexpected(anyhow::anyhow!(
+                "cannot compact: no entries selected"
+            )));
+        }
+
+        // Collect the IDs of entries to compact BEFORE any mutation
+        let compacted_ids: Vec<EntryId> = to_compact.iter().map(|e| e.id.clone()).collect();
+        let first_kept_id = chronological[compact_end].id.clone();
+        let tokens_before = cumulative_tokens;
+
+        // Generate the summary
+        let summary = strategy.compact(&to_compact).await?;
+
+        // Append the Compaction entry
+        let compaction_id = self.append_compaction(summary, first_kept_id, tokens_before);
+
+        // Transition the compacted entries' resolution to Compacted
+        for entry_id in &compacted_ids {
+            if let Some(entry) = self.entries.get_mut(entry_id) {
+                entry.resolution = EntryResolution::Compacted {
+                    into: compaction_id.clone(),
+                };
+            }
+        }
+
+        Ok(compaction_id)
     }
 
     // ── Context building ────────────────────────────────────────────────
@@ -800,6 +917,108 @@ fn chars_to_fit_tokens(s: &str, target_tokens: usize, estimator: &dyn TokenEstim
     )]
     let estimated_chars = (target_tokens as f32 * ratio) as usize;
     estimated_chars.min(s.len())
+}
+
+/// Estimate the token count for an entry, using the calibrated estimator
+/// for message content.
+///
+/// This is used by [`Session::compact_older_than`] to decide which entries
+/// to compact. It differs from the compaction module's `estimate_entry_tokens`
+/// by using the calibrated estimator rather than a fixed chars/4 heuristic,
+/// giving more accurate budget decisions.
+fn estimate_entry_tokens_for_compaction(entry: &Entry, estimator: &dyn TokenEstimator) -> usize {
+    match &entry.payload {
+        EntryPayload::Message(msg) => {
+            let text = format_message_text(msg);
+            estimator.estimate(&text).max(1)
+        }
+        EntryPayload::Compaction {
+            summary,
+            tokens_before,
+            ..
+        } => {
+            // For existing compaction entries, use the recorded tokens_before
+            // plus the summary's own token cost
+            let summary_text = format_compaction_summary_text(summary);
+            *tokens_before + estimator.estimate(&summary_text)
+        }
+        EntryPayload::BranchSummary { summary, .. } => {
+            let text = format_compaction_summary_text(summary);
+            estimator.estimate(&text).max(1)
+        }
+        EntryPayload::Custom { data, .. } => estimator.estimate(&data.to_string()).max(1),
+        EntryPayload::CustomMessage { content, .. } => {
+            let text: String = content
+                .iter()
+                .map(|b| match b {
+                    crate::message::ContentBlock::Text { text } => text.as_str(),
+                })
+                .collect();
+            estimator.estimate(&text).max(1)
+        }
+        EntryPayload::ModelChange { model } => estimator.estimate(model).max(1),
+        EntryPayload::Label { label, .. } => {
+            let text = label.as_deref().unwrap_or("");
+            estimator.estimate(text).max(1)
+        }
+        EntryPayload::SessionInfo { name } => estimator.estimate(name).max(1),
+        EntryPayload::LeafMoved { .. } => 1,
+    }
+}
+
+/// Format a `ChatMessage` into a single string for token estimation.
+///
+/// This is a rough approximation — we just concatenate all text content.
+/// The estimator's calibration corrects for structural overhead over time.
+fn format_message_text(msg: &ChatMessage) -> String {
+    use crate::message::ContentBlock;
+
+    let mut text = String::new();
+    match msg {
+        ChatMessage::System { content }
+        | ChatMessage::User { content }
+        | ChatMessage::Assistant { content, .. } => {
+            for block in content {
+                let ContentBlock::Text { text: t } = block;
+                text.push_str(t);
+                text.push(' ');
+            }
+        }
+        ChatMessage::Tool {
+            tool_call_id,
+            content,
+        } => {
+            text.push_str(tool_call_id);
+            text.push(' ');
+            for block in content {
+                let ContentBlock::Text { text: t } = block;
+                text.push_str(t);
+                text.push(' ');
+            }
+        }
+    }
+    text
+}
+
+/// Format a `CompactionSummary` into a single string for token estimation.
+fn format_compaction_summary_text(summary: &CompactionSummary) -> String {
+    let mut text = String::new();
+    if let Some(ref req) = summary.original_request {
+        text.push_str(req);
+        text.push(' ');
+    }
+    for (name, calls) in &summary.tool_calls {
+        text.push_str(name);
+        for call in calls {
+            text.push(' ');
+            text.push_str(call);
+        }
+    }
+    if let Some(ref notes) = summary.notes {
+        text.push(' ');
+        text.push_str(notes);
+    }
+    text
 }
 
 #[cfg(test)]
@@ -1867,5 +2086,267 @@ mod tests {
         } else {
             panic!("expected User message");
         }
+    }
+
+    // ── compact_older_than tests (Task 9) ───────────────────────────────
+
+    #[tokio::test]
+    async fn compact_older_than_transitions_resolution() {
+        use crate::session::compaction::MechanicalCompactionStrategy;
+
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let _root_id = session.leaf().unwrap();
+        let user_id = session.append_user_message("fix the bug");
+        let _asst_id = session.append_assistant_message(ChatMessage::assistant_text("ok"));
+        let _user2_id = session.append_user_message("read another file");
+
+        // Compact with a very low threshold (1 token) to force compaction
+        let strategy = MechanicalCompactionStrategy::new();
+        let compaction_id = session.compact_older_than(1, &strategy).await.unwrap();
+
+        // The compacted entries should now have Compacted resolution
+        let user_entry = session.entry(&user_id).unwrap();
+        assert!(
+            matches!(
+                &user_entry.resolution,
+                EntryResolution::Compacted { into } if *into == compaction_id
+            ),
+            "compacted entry should have Compacted resolution pointing to the compaction entry"
+        );
+
+        // The compaction entry itself should be Full resolution
+        let compaction_entry = session.entry(&compaction_id).unwrap();
+        assert!(matches!(compaction_entry.resolution, EntryResolution::Full));
+    }
+
+    #[tokio::test]
+    async fn compact_older_than_preserves_original_request() {
+        use crate::session::compaction::MechanicalCompactionStrategy;
+
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        session.append_user_message("find the secret: TIGER-7742");
+        session.append_assistant_message(ChatMessage::assistant_text("ok"));
+        session.append_user_message("now read another file");
+
+        let strategy = MechanicalCompactionStrategy::new();
+        let compaction_id = session.compact_older_than(1, &strategy).await.unwrap();
+
+        // The compaction summary should contain the original request
+        let compaction_entry = session.entry(&compaction_id).unwrap();
+        if let EntryPayload::Compaction { summary, .. } = &compaction_entry.payload {
+            assert_eq!(
+                summary.original_request,
+                Some("find the secret: TIGER-7742".to_owned())
+            );
+        } else {
+            panic!("expected Compaction payload");
+        }
+    }
+
+    #[tokio::test]
+    async fn compact_older_than_compacted_entries_filtered_from_path() {
+        use crate::session::compaction::MechanicalCompactionStrategy;
+
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let user_id = session.append_user_message("fix the bug");
+        session.append_assistant_message(ChatMessage::assistant_text("ok"));
+        session.append_user_message("read another file");
+
+        let strategy = MechanicalCompactionStrategy::new();
+        session.compact_older_than(1, &strategy).await.unwrap();
+
+        let messages = session.path_messages();
+
+        // The compacted user message should NOT appear as a raw User message
+        // in path_messages (it may appear inside the compaction summary text)
+        let has_raw_user_msg = messages.iter().any(|m| {
+            // We look for a User message that is NOT the compaction summary
+            if let ChatMessage::User { content } = m {
+                content.iter().any(|b| {
+                    let ContentBlock::Text { text } = b;
+                    // A raw user message would just be "fix the bug", not the
+                    // formatted compaction summary
+                    text.trim() == "fix the bug"
+                })
+            } else {
+                false
+            }
+        });
+        assert!(
+            !has_raw_user_msg,
+            "compacted entry should not appear as a raw User message in path_messages"
+        );
+
+        // The compaction summary SHOULD appear as a synthetic User message
+        let has_compacted = messages.iter().any(|m| {
+            if let ChatMessage::User { content } = m {
+                content.iter().any(|b| {
+                    let ContentBlock::Text { text } = b;
+                    text.contains("[Compacted:")
+                })
+            } else {
+                false
+            }
+        });
+        assert!(
+            has_compacted,
+            "compaction summary should appear in path_messages"
+        );
+
+        // The non-compacted entries should still be present
+        let has_another = messages.iter().any(|m| {
+            if let ChatMessage::User { content } = m {
+                content.iter().any(|b| {
+                    let ContentBlock::Text { text } = b;
+                    text.contains("read another file")
+                })
+            } else {
+                false
+            }
+        });
+        assert!(
+            has_another,
+            "non-compacted entry should appear in path_messages"
+        );
+
+        // Verify the entry is indeed Compacted
+        let compacted_entry = session.entry(&user_id).unwrap();
+        assert!(
+            matches!(
+                compacted_entry.resolution,
+                EntryResolution::Compacted { .. }
+            ),
+            "compacted entry should have Compacted resolution"
+        );
+    }
+
+    #[tokio::test]
+    async fn compact_older_than_does_not_compact_root() {
+        use crate::session::compaction::MechanicalCompactionStrategy;
+
+        let mut session = Session::new("m", Some("system prompt"), vec![], "/tmp");
+        let root_id = session.leaf().unwrap();
+        session.append_user_message("hello");
+        session.append_assistant_message(ChatMessage::assistant_text("hi"));
+
+        let strategy = MechanicalCompactionStrategy::new();
+        session.compact_older_than(1, &strategy).await.unwrap();
+
+        // The root (system message) should never be compacted
+        let root_entry = session.entry(&root_id).unwrap();
+        assert!(
+            matches!(root_entry.resolution, EntryResolution::Full),
+            "root (system message) should never be compacted"
+        );
+    }
+
+    #[tokio::test]
+    async fn compact_older_than_does_not_compact_leaf() {
+        use crate::session::compaction::MechanicalCompactionStrategy;
+
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        session.append_user_message("hello");
+        session.append_assistant_message(ChatMessage::assistant_text("hi"));
+
+        let leaf_before = session.leaf().unwrap();
+
+        let strategy = MechanicalCompactionStrategy::new();
+        session.compact_older_than(1, &strategy).await.unwrap();
+
+        // The leaf should have moved (to the compaction entry),
+        // but the previous leaf entry itself should not be compacted
+        // (it was the last entry before compaction was appended)
+        let former_leaf = session.entry(&leaf_before).unwrap();
+        // The former leaf was the assistant message, which should remain Full
+        // since we don't compact the last entry
+        assert!(
+            matches!(former_leaf.resolution, EntryResolution::Full),
+            "the last entry before compaction should not be compacted"
+        );
+    }
+
+    #[tokio::test]
+    async fn compact_older_than_errors_on_too_few_entries() {
+        use crate::session::compaction::MechanicalCompactionStrategy;
+
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        // Only root entry — not enough to compact
+        let strategy = MechanicalCompactionStrategy::new();
+        let result = session.compact_older_than(1, &strategy).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn compact_older_than_errors_when_threshold_not_exceeded() {
+        use crate::session::compaction::MechanicalCompactionStrategy;
+
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        session.append_user_message("hi");
+        session.append_assistant_message(ChatMessage::assistant_text("hello"));
+
+        // Set an enormous threshold that the entries won't reach
+        let strategy = MechanicalCompactionStrategy::new();
+        let result = session.compact_older_than(1_000_000, &strategy).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn compact_older_than_compacted_entries_still_in_tree() {
+        use crate::session::compaction::MechanicalCompactionStrategy;
+
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let user_id = session.append_user_message("fix the bug");
+        let asst_id = session.append_assistant_message(ChatMessage::assistant_text("ok"));
+        session.append_user_message("read another file");
+
+        let strategy = MechanicalCompactionStrategy::new();
+        session.compact_older_than(1, &strategy).await.unwrap();
+
+        // The compacted entries should still be accessible via entry()
+        assert!(
+            session.entry(&user_id).is_some(),
+            "compacted user entry should still exist"
+        );
+        assert!(
+            session.entry(&asst_id).is_some(),
+            "compacted assistant entry should still exist"
+        );
+    }
+
+    #[tokio::test]
+    async fn compact_older_than_first_kept_references_valid_entry() {
+        use crate::session::compaction::MechanicalCompactionStrategy;
+
+        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        session.append_user_message("msg1");
+        let asst_id = session.append_assistant_message(ChatMessage::assistant_text("reply1"));
+        let last_user_id = session.append_user_message("msg2");
+
+        let strategy = MechanicalCompactionStrategy::new();
+        let compaction_id = session.compact_older_than(1, &strategy).await.unwrap();
+
+        // The Compaction entry's first_kept should reference a valid entry
+        let compaction_entry = session.entry(&compaction_id).unwrap();
+        if let EntryPayload::Compaction { first_kept, .. } = &compaction_entry.payload {
+            assert!(
+                session.entry(first_kept).is_some(),
+                "first_kept should reference a valid entry"
+            );
+            // With threshold=1, only the first entry after root gets compacted
+            // (it exceeds threshold immediately), so first_kept is the assistant entry
+            assert_eq!(
+                *first_kept, asst_id,
+                "first_kept should be the first entry after the compacted range"
+            );
+        } else {
+            panic!("expected Compaction payload");
+        }
+
+        // The last user message should NOT be compacted
+        let last_user = session.entry(&last_user_id).unwrap();
+        assert!(
+            matches!(last_user.resolution, EntryResolution::Full),
+            "last entry before compaction should not be compacted"
+        );
     }
 }

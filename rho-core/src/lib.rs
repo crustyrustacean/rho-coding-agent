@@ -108,8 +108,8 @@ pub use response::{FinishReason, ModelChoice, ModelResponse, ModelUsage};
 pub use sandbox::{SandboxRoot, find_project_root};
 pub use schema::ToolSchema;
 pub use session::{
-    CompactionSummary, Entry, EntryPayload, EntryResolution, HeuristicEstimator, Session,
-    SessionHeader, TokenEstimator,
+    CompactionStrategy, CompactionSummary, Entry, EntryPayload, EntryResolution,
+    HeuristicEstimator, MechanicalCompactionStrategy, Session, SessionHeader, TokenEstimator,
 };
 pub use shell::{ShellExecutor, ShellOutput};
 pub use tool::{
