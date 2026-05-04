@@ -1,0 +1,552 @@
+<!DOCTYPE HTML>
+<html lang="en" class="navy" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>rho</title>
+        <meta name="robots" content="noindex">
+
+
+        <!-- Custom HTML head -->
+        
+        <meta name="description" content="A Rust coding agent for local LLMs on Windows">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="highlight.css">
+        <link rel="stylesheet" href="tomorrow-night.css">
+        <link rel="stylesheet" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+    </head>
+    <body class="sidebar-visible no-js">
+    <div id="body-container">
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "navy";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('navy')
+            html.classList.add(theme);
+            var body = document.querySelector('body');
+            body.classList.remove('no-js')
+            body.classList.add('js');
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var body = document.querySelector('body');
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            body.classList.remove('sidebar-visible');
+            body.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item expanded "><a href="introduction.html"><strong aria-hidden="true">1.</strong> Introduction</a></li><li class="chapter-item expanded "><a href="getting-started.html"><strong aria-hidden="true">2.</strong> Getting Started</a></li><li class="chapter-item expanded "><a href="architecture.html"><strong aria-hidden="true">3.</strong> Architecture</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="architecture/workspace-layout.html"><strong aria-hidden="true">3.1.</strong> Workspace Layout</a></li><li class="chapter-item expanded "><a href="architecture/crate-responsibilities.html"><strong aria-hidden="true">3.2.</strong> Crate Responsibilities</a></li><li class="chapter-item expanded "><a href="architecture/dependency-flow.html"><strong aria-hidden="true">3.3.</strong> Dependency Flow</a></li></ol></li><li class="chapter-item expanded "><a href="core-concepts.html"><strong aria-hidden="true">4.</strong> Core Concepts</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="core-concepts/agent-loop.html"><strong aria-hidden="true">4.1.</strong> Agent Loop</a></li><li class="chapter-item expanded "><a href="core-concepts/tool-trait.html"><strong aria-hidden="true">4.2.</strong> Tool Trait</a></li><li class="chapter-item expanded "><a href="core-concepts/chatclient-provider-trait.html"><strong aria-hidden="true">4.3.</strong> ChatClient Provider Trait</a></li><li class="chapter-item expanded "><a href="core-concepts/approval-policy.html"><strong aria-hidden="true">4.4.</strong> Approval Policy</a></li><li class="chapter-item expanded "><a href="core-concepts/context-management.html"><strong aria-hidden="true">4.5.</strong> Context Management</a></li><li class="chapter-item expanded "><a href="core-concepts/sessions.html"><strong aria-hidden="true">4.6.</strong> Sessions</a></li><li class="chapter-item expanded "><a href="core-concepts/project-context-files.html"><strong aria-hidden="true">4.7.</strong> Project Context Files</a></li></ol></li><li class="chapter-item expanded "><a href="security.html"><strong aria-hidden="true">5.</strong> Security</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="security/threat-model.html"><strong aria-hidden="true">5.1.</strong> Threat Model</a></li><li class="chapter-item expanded "><a href="security/file-sandbox.html"><strong aria-hidden="true">5.2.</strong> File Sandbox</a></li><li class="chapter-item expanded "><a href="security/secret-redaction.html"><strong aria-hidden="true">5.3.</strong> Secret Redaction</a></li><li class="chapter-item expanded "><a href="security/egress-control.html"><strong aria-hidden="true">5.4.</strong> Egress Control</a></li><li class="chapter-item expanded "><a href="security/prompt-injection-defense.html"><strong aria-hidden="true">5.5.</strong> Prompt Injection Defense</a></li></ol></li><li class="chapter-item expanded "><a href="configuration.html"><strong aria-hidden="true">6.</strong> Configuration</a></li><li class="chapter-item expanded "><a href="extensions.html"><strong aria-hidden="true">7.</strong> Extensions</a></li><li class="chapter-item expanded "><a href="development.html"><strong aria-hidden="true">8.</strong> Development</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="development/testing.html"><strong aria-hidden="true">8.1.</strong> Testing</a></li><li class="chapter-item expanded "><a href="development/dependency-philosophy.html"><strong aria-hidden="true">8.2.</strong> Dependency Philosophy</a></li><li class="chapter-item expanded "><a href="development/roadmap.html"><strong aria-hidden="true">8.3.</strong> Roadmap</a></li></ol></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <!-- Track and set sidebar scroll position -->
+        <script>
+            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
+            sidebarScrollbox.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A') {
+                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
+                }
+            }, { passive: true });
+            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
+            sessionStorage.removeItem('sidebar-scroll');
+            if (sidebarScrollTop) {
+                // preserve sidebar scroll position when navigating via links within sidebar
+                sidebarScrollbox.scrollTop = sidebarScrollTop;
+            } else {
+                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
+                var activeSection = document.querySelector('#sidebar .active');
+                if (activeSection) {
+                    activeSection.scrollIntoView({ block: 'center' });
+                }
+            }
+        </script>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">rho</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/crustyrustacean/rho-coding-agent" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="introduction"><a class="header" href="#introduction">Introduction</a></h1>
+<p><strong>rho</strong> is a Rust coding agent that runs against local LLMs on Windows.</p>
+<p>It connects to OpenAI-compatible endpoints (LM Studio, Ollama) on <code>localhost</code>, gives the model access to tools for reading and writing files and executing PowerShell commands, and runs an autonomous agent loop that the user supervises through an approval gate.</p>
+<p>Design priorities:</p>
+<ul>
+<li><strong>Local first</strong> — your code stays on your machine by default</li>
+<li><strong>Safe by default</strong> — destructive actions require your approval</li>
+<li><strong>Rust-native</strong> — structured compiler diagnostics, not text scraping</li>
+<li><strong>Extensible</strong> — custom tools via config, provider-agnostic core</li>
+</ul>
+<p>This book documents the architecture, security model, configuration, and development of rho.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="getting-started"><a class="header" href="#getting-started">Getting Started</a></h1>
+<h2 id="prerequisites"><a class="header" href="#prerequisites">Prerequisites</a></h2>
+<ul>
+<li>Rust toolchain (edition 2024)</li>
+<li>A local LLM server (LM Studio, Ollama) running on <code>localhost:1234</code></li>
+</ul>
+<h2 id="build"><a class="header" href="#build">Build</a></h2>
+<pre><code class="language-sh">cargo build --release -p rho
+</code></pre>
+<h2 id="run"><a class="header" href="#run">Run</a></h2>
+<pre><code class="language-sh">rho                    # auto-detect model, persist session to disk
+rho -m my-model       # specify a model
+rho --ephemeral       # in-memory mode, no session file
+</code></pre>
+<p>On startup, rho:</p>
+<ol>
+<li>Connects to the model server and auto-detects the loaded model (unless <code>--model</code> is specified).</li>
+<li>Creates a session (persisted to <code>~/.rho/sessions/</code> by default, or in-memory with <code>--ephemeral</code>).</li>
+<li>Enters the REPL. Type your request, and the agent loop runs until the model produces a final text reply.</li>
+</ol>
+<h2 id="cli-flags"><a class="header" href="#cli-flags">CLI flags</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Flag</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>-m, --model &lt;MODEL&gt;</code></td><td>Model identifier (auto-detected if omitted)</td></tr>
+<tr><td><code>-s, --system &lt;SYSTEM&gt;</code></td><td>Override the system prompt</td></tr>
+<tr><td><code>--compact</code></td><td>Use a minimal system prompt for small-context models</td></tr>
+<tr><td><code>--root &lt;ROOT&gt;</code></td><td>Project root / sandbox root</td></tr>
+<tr><td><code>--token-budget &lt;N&gt;</code></td><td>Context window token budget (default: 32768)</td></tr>
+<tr><td><code>--prompt-file &lt;FILE&gt;</code></td><td>Read a prompt from a file, then exit</td></tr>
+<tr><td><code>--session &lt;PATH&gt;</code></td><td>Resume a previous session from a JSONL file</td></tr>
+<tr><td><code>--ephemeral</code></td><td>Run without disk persistence</td></tr>
+<tr><td><code>--accept-external-provider</code></td><td>Skip consent prompt for non-local providers</td></tr>
+</tbody></table>
+</div>
+<h2 id="session-persistence"><a class="header" href="#session-persistence">Session persistence</a></h2>
+<p>By default, every rho invocation creates a new JSONL session file under <code>~/.rho/sessions/&lt;project-hash&gt;/</code>. Sessions survive process restarts — use <code>--session &lt;path&gt;</code> to resume one.</p>
+<p>See <a href="./core-concepts/sessions.html">Sessions</a> for details.</p>
+<h2 id="repl-commands"><a class="header" href="#repl-commands">REPL commands</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Command</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>/clear</code></td><td>Branch back to the system message (preserves old tree on disk)</td></tr>
+<tr><td><code>/quit</code></td><td>Exit rho</td></tr>
+</tbody></table>
+</div>
+<h2 id="next-steps"><a class="header" href="#next-steps">Next Steps</a></h2>
+<ul>
+<li><a href="./architecture.html">Architecture</a> — how the crates fit together</li>
+<li><a href="./core-concepts.html">Core Concepts</a> — sessions, agent loop, context management</li>
+<li><a href="./security.html">Security</a> — the threat model and defenses</li>
+<li><a href="./configuration.html">Configuration</a> — customizing behavior</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="architecture"><a class="header" href="#architecture">Architecture</a></h1>
+<p>rho is organized as a layered workspace where dependencies flow downward only.</p>
+<pre><code class="language-text">┌─────────────────────────────────────────────────┐
+│                   rho (binary)                   │
+├─────────────────────────────────────────────────┤
+│                   rho-ext                        │
+├─────────────────────────────────────────────────┤
+│                   rho-tui                        │
+├─────────────────────────────────────────────────┤
+│                   rho-tools                      │
+├─────────────────────────────────────────────────┤
+│                   rho-highlight                  │
+├─────────────────────────────────────────────────┤
+│                   rho-core                       │
+└─────────────────────────────────────────────────┘
+</code></pre>
+<p>The rule is simple: a crate may only depend on crates below it in the stack. <code>rho-core</code> depends on nothing but external libraries.</p>
+<p>See also:</p>
+<ul>
+<li><a href="./architecture/workspace-layout.html">Workspace Layout</a></li>
+<li><a href="./architecture/crate-responsibilities.html">Crate Responsibilities</a></li>
+<li><a href="./architecture/dependency-flow.html">Dependency Flow</a></li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="workspace-layout"><a class="header" href="#workspace-layout">Workspace Layout</a></h1>
+<!-- TODO: Fill in with directory tree and descriptions -->
+<div style="break-before: page; page-break-before: always;"></div><h1 id="crate-responsibilities"><a class="header" href="#crate-responsibilities">Crate Responsibilities</a></h1>
+<h2 id="rho-binary"><a class="header" href="#rho-binary"><code>rho</code> (binary)</a></h2>
+<p>The REPL loop, CLI argument parsing, and tool wiring. Constructs a <code>Session</code>, connects to the model via <code>LocalChatClient</code>, and drives the agent loop.</p>
+<h2 id="rho-core"><a class="header" href="#rho-core"><code>rho-core</code></a></h2>
+<p>The kernel: agent loop, session management, context building, tool registry, approval gates, secret redaction, file sandbox, and model client trait. Every other crate depends on this.</p>
+<p>Key types: <code>Session</code>, <code>AgentConfig</code>, <code>ToolRegistry</code>, <code>ChatClient</code>, <code>ContextManager</code>, <code>SandboxRoot</code>, <code>Redactor</code>.</p>
+<h2 id="rho-tools"><a class="header" href="#rho-tools"><code>rho-tools</code></a></h2>
+<p>Built-in tool implementations: <code>ReadFile</code>, <code>WriteFile</code>, <code>ListDir</code>, <code>EditFile</code>, <code>RunCommand</code>. Each implements the <code>Tool</code> trait from <code>rho-core</code>.</p>
+<h2 id="rho-test-helpers"><a class="header" href="#rho-test-helpers"><code>rho-test-helpers</code></a></h2>
+<p>Shared test infrastructure (dev-only): <code>MockChatClient</code>, <code>MockShellExecutor</code>, <code>AutoApproveGate</code>, <code>FileTestEnv</code>, <code>in_memory_session</code>. Never published.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="dependency-flow"><a class="header" href="#dependency-flow">Dependency Flow</a></h1>
+<!-- TODO: Fill in with dependency graph and rules -->
+<div style="break-before: page; page-break-before: always;"></div><h1 id="core-concepts"><a class="header" href="#core-concepts">Core Concepts</a></h1>
+<p>The agent kernel in <code>rho-core</code> is built on a small set of interlocking concepts.</p>
+<ul>
+<li><a href="./core-concepts/agent-loop.html">Agent Loop</a> — the state machine that drives the conversation</li>
+<li><a href="./core-concepts/tool-trait.html">Tool Trait</a> — the interface all tools implement</li>
+<li><a href="./core-concepts/chatclient-provider-trait.html">ChatClient Provider Trait</a> — provider-agnostic model access</li>
+<li><a href="./core-concepts/approval-policy.html">Approval Policy</a> — the gate between tool calls and execution</li>
+<li><a href="./core-concepts/context-management.html">Context Management</a> — keeping the conversation within the context window</li>
+<li><a href="./core-concepts/sessions.html">Sessions</a> — persistent, tree-structured conversation state</li>
+<li><a href="./core-concepts/project-context-files.html">Project Context Files</a> — loading and trusting project-level instructions</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="agent-loop"><a class="header" href="#agent-loop">Agent Loop</a></h1>
+<p>The agent loop is the state machine at the heart of rho. It drives the conversation forward by sending messages to the model, executing tool calls, and feeding results back.</p>
+<h2 id="state-machine"><a class="header" href="#state-machine">State machine</a></h2>
+<pre><code class="language-text">  ┌──────────────────────────────────────────────┐
+  │                                              │
+  ▼                                              │
+Thinking ──► AwaitingApproval ──► ExecutingTool ──┘
+  │
+  ▼
+Idle (done)
+</code></pre>
+<ul>
+<li><strong>Thinking</strong>: send the session to the model and wait for a response.</li>
+<li><strong>AwaitingApproval</strong>: if a tool call requires human confirmation, ask the user. On denial, feed a synthetic "denied" result and return to Thinking.</li>
+<li><strong>ExecutingTool</strong>: run the tool and append the result to the session.</li>
+<li><strong>Idle</strong>: the model returned a text reply — the loop is done.</li>
+</ul>
+<h2 id="the-run_loop-function"><a class="header" href="#the-run_loop-function">The <code>run_loop</code> function</a></h2>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub async fn run_loop(
+    session: &amp;mut Session,
+    message: &amp;str,
+    client: &amp;dyn ChatClient,
+    registry: &amp;ToolRegistry,
+    config: &amp;AgentConfig,
+    cancel: CancellationToken,
+    gate: &amp;dyn ApprovalGate,
+) -&gt; Result&lt;String&gt;
+<span class="boring">}</span></code></pre></pre>
+<p><code>run_loop</code> takes a <code>Session</code> (not a <code>Conversation</code> — the session type was introduced in Phase 2.5). It:</p>
+<ol>
+<li>Appends <code>message</code> as a user turn via <code>session.append_user_message()</code>.</li>
+<li>Enters the Thinking state and sends the session to the model via <code>session.send_current(client)</code>.</li>
+<li>Processes the model's response:
+<ul>
+<li><strong>Text reply</strong> → return it (Idle).</li>
+<li><strong>Tool calls</strong> → for each call, check approval, execute, append the result, then loop back to Thinking.</li>
+</ul>
+</li>
+</ol>
+<p>All tool calls in a single model response are executed <strong>sequentially</strong>. Each result is appended before the session is re-sent to the model. Parallel execution is a future optimisation.</p>
+<h2 id="retry-with-backoff"><a class="header" href="#retry-with-backoff">Retry with backoff</a></h2>
+<p>Transient HTTP errors (503, 429, connection refused) are retried with exponential backoff. The retry budget is configurable via <code>AgentConfig</code>. If the budget is exhausted, <code>run_loop</code> returns <code>RhoError::RetryBudgetExhausted</code>.</p>
+<h2 id="cancellation"><a class="header" href="#cancellation">Cancellation</a></h2>
+<p>A <code>CancellationToken</code> is checked at the top of each loop iteration and between tool calls in a batch. When cancelled, <code>run_loop</code> returns <code>RhoError::Cancelled</code> immediately — no pending tool execution is aborted mid-flight, but no new ones are started.</p>
+<h2 id="iteration-guard"><a class="header" href="#iteration-guard">Iteration guard</a></h2>
+<p>The loop terminates after <code>config.max_iterations</code> tool-call rounds (default: 100). This prevents infinite loops from misbehaving models. Returns <code>RhoError::MaxIterationsExceeded</code>.</p>
+<h2 id="session-persistence-1"><a class="header" href="#session-persistence-1">Session persistence</a></h2>
+<p>Since <code>run_loop</code> operates on a <code>Session</code>, all appends (user messages, tool results) are automatically flushed to the JSONL session file if persistence is enabled. If the process crashes mid-loop, the session file contains everything up to the last successful append — at most one entry is lost.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="tool-trait"><a class="header" href="#tool-trait">Tool Trait</a></h1>
+<!-- TODO: Fill in with Tool trait definition, ToolResult, ToolRegistry, risk levels -->
+<div style="break-before: page; page-break-before: always;"></div><h1 id="chatclient-provider-trait"><a class="header" href="#chatclient-provider-trait">ChatClient Provider Trait</a></h1>
+<!-- TODO: Fill in with ChatClient trait, LocalChatClient, provider selection -->
+<div style="break-before: page; page-break-before: always;"></div><h1 id="approval-policy"><a class="header" href="#approval-policy">Approval Policy</a></h1>
+<!-- TODO: Fill in with ApprovalPolicy trait, default policy, per-tool config, UX -->
+<div style="break-before: page; page-break-before: always;"></div><h1 id="context-management"><a class="header" href="#context-management">Context Management</a></h1>
+<p>The context manager is responsible for fitting the conversation within the model's context window. It decides which messages to keep, which to evict, and how to render compacted entries.</p>
+<h2 id="the-problem"><a class="header" href="#the-problem">The problem</a></h2>
+<p>Language models have finite context windows. A long coding session — especially one involving tool calls with large outputs — can easily exceed the window. When that happens, something has to give. The naive approach (drop the oldest message) silently discards the user's original request, causing the <em>amnesia bug</em> where the model forgets what it was asked to do.</p>
+<h2 id="token-budget"><a class="header" href="#token-budget">Token budget</a></h2>
+<p><code>TokenBudget</code> controls how much of the context window the agent is allowed to use for the conversation history:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>TokenBudget {
+    context_window: 32768,     // total window size
+    completion_reserve: 4096,  // reserved for the model's reply
+}
+// prompt_budget() = context_window - completion_reserve = 28672
+<span class="boring">}</span></code></pre></pre>
+<p>The <code>completion_reserve</code> ensures the model always has room to generate a reply. The <code>prompt_budget()</code> is the hard limit on how many tokens of conversation history are sent.</p>
+<h2 id="sliding-window"><a class="header" href="#sliding-window">Sliding window</a></h2>
+<p><code>SlidingWindowContextManager</code> is the default implementation. It:</p>
+<ol>
+<li>Takes the message chain from the session's current branch (<code>path_messages()</code>).</li>
+<li>Estimates token counts using the configured <code>TokenEstimator</code>.</li>
+<li>Evicts the oldest <em>middle</em> messages to fit within <code>prompt_budget()</code>.</li>
+<li><strong>Pins</strong> the system message, the first user turn, and the last turn — these are never evicted.</li>
+</ol>
+<p>The pinning of the first user turn is the fix for the amnesia bug: no matter how long the conversation, the model always sees what the user originally asked.</p>
+<h2 id="adaptive-resolution"><a class="header" href="#adaptive-resolution">Adaptive resolution</a></h2>
+<p>When the session has compacted entries (see <a href="core-concepts/./sessions.html">Sessions</a>), the context manager uses the resolution level to decide how to render each entry:</p>
+<div class="table-wrapper"><table><thead><tr><th>Resolution</th><th>Rendering</th></tr></thead><tbody>
+<tr><td><code>Full</code></td><td>Verbatim message content</td></tr>
+<tr><td><code>Compacted</code></td><td>Compaction summary (a synthetic user message)</td></tr>
+<tr><td><code>Attached</code></td><td>Brief mention (e.g., "Tool call X was executed")</td></tr>
+</tbody></table>
+</div>
+<p>This is the <em>adaptive mesh refinement</em> metaphor: full fidelity where the model needs it, coarsened where it doesn't.</p>
+<h2 id="tool-schema-overhead"><a class="header" href="#tool-schema-overhead">Tool schema overhead</a></h2>
+<p>Tool schemas (the JSON descriptions sent to the model so it knows what tools are available) consume tokens. The context manager subtracts an estimate of this overhead from the available budget before fitting messages, preventing the combined total from exceeding the window.</p>
+<h2 id="token-estimation"><a class="header" href="#token-estimation">Token estimation</a></h2>
+<p><code>TokenEstimator</code> is a trait for estimating token counts without calling the model's tokenizer. The default implementation (<code>HeuristicEstimator</code>) uses:</p>
+<ul>
+<li><strong>Per-model calibration</strong>: an exponential moving average (α=0.3) that learns the real tokens-per-character ratio from model responses.</li>
+<li><strong>Bootstrap ratios</strong>: built-in starting ratios for common model families (Gemma, Qwen, Claude, GPT-4, Llama).</li>
+<li><strong>Substring matching</strong>: falls back to character-level estimation for non-ASCII text.</li>
+</ul>
+<p>The estimator converges to within 10% accuracy by the third model call in most cases.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="sessions"><a class="header" href="#sessions">Sessions</a></h1>
+<p>A <strong>session</strong> is rho's unit of persistent conversation state. It replaces the older flat <code>Conversation</code> type with a tree-structured model where every turn, tool call, and compaction is an entry in an append-only log.</p>
+<h2 id="why-sessions"><a class="header" href="#why-sessions">Why sessions?</a></h2>
+<p>The original <code>Conversation</code> type stored messages in a <code>Vec&lt;ChatMessage&gt;</code>. When the context window filled up, the sliding window evicted old messages — including, in some cases, the user's original request. The session model fixes this by:</p>
+<ol>
+<li><strong>Tree structure</strong> — branching, not deletion. <code>/clear</code> and compaction create new branches; the old tree is preserved.</li>
+<li><strong>Typed entries</strong> — user messages, assistant messages, tool calls, tool results, compaction summaries, and extension entries are all first-class nodes.</li>
+<li><strong>Resolution levels</strong> — each entry carries a resolution (<code>Full</code>, <code>Compacted</code>, or <code>Attached</code>) that tells the context builder how to render it.</li>
+<li><strong>Persistence</strong> — sessions auto-flush to JSONL files, surviving process restarts and crashes.</li>
+</ol>
+<h2 id="tree-structure"><a class="header" href="#tree-structure">Tree structure</a></h2>
+<p>A session is a tree of <code>Entry</code> nodes, each identified by an <code>EntryId</code> (a UUID). Every entry has a <code>parent_id</code> pointing to its predecessor, forming a single chain (the <em>trunk</em>) with possible branches.</p>
+<pre><code class="language-text">[System] ──→ [User: "fix the bug"] ──→ [Assistant: "ok"] ──→ [User: "read another file"]
+                                         │
+                                         └──→ [Compaction: "user asked to fix the bug"]
+</code></pre>
+<p>The <strong>leaf</strong> is the entry the agent loop is currently building from. <code>branch_to(id)</code> moves the leaf to any existing entry, creating a divergence point. The old branch stays in the tree for later inspection or resumption.</p>
+<h2 id="persistence"><a class="header" href="#persistence">Persistence</a></h2>
+<p>Sessions are stored as append-only JSONL files under <code>~/.rho/sessions/</code>:</p>
+<pre><code class="language-text">~/.rho/sessions/
+  └── &lt;project-hash&gt;/
+        └── &lt;unix-timestamp&gt;_&lt;session-id&gt;.jsonl
+</code></pre>
+<ul>
+<li><strong>Project hash</strong>: first 16 hex characters of SHA-256 of the canonical project root path. This groups sessions by project.</li>
+<li><strong>Auto-flush</strong>: every append writes to disk immediately. A crash loses at most the last entry.</li>
+<li><strong>Format</strong>: each line is a JSON object with a <code>type</code> discriminator (<code>Header</code> or <code>Entry</code>). The first line is always a <code>Header</code> with session metadata.</li>
+</ul>
+<p>Example JSONL file:</p>
+<pre><code class="language-json">{"type":"Header","id":"4b021d5d","version":1,"created_at_secs":1777859536,"cwd":"/home/user/project","parent_session":null}
+{"type":"Entry","id":"a1b2c3d4","parent_id":null,"timestamp":{...},"resolution":"Full","payload":{"Message":{"content":"you are a coding assistant","role":"system"}}}
+{"type":"Entry","id":"e5f6a7b8","parent_id":"a1b2c3d4","timestamp":{...},"resolution":"Full","payload":{"Message":{"content":"fix the bug","role":"user"}}}
+</code></pre>
+<h3 id="resuming-a-session"><a class="header" href="#resuming-a-session">Resuming a session</a></h3>
+<p>Use <code>--session &lt;path&gt;</code> to load a previously saved session:</p>
+<pre><code class="language-sh">rho --session ~/.rho/sessions/abcdef1234567890/1777859536_4b021d5d.jsonl
+</code></pre>
+<p>The resumed session picks up where it left off. The model, token budget, redactor, and tool set are updated from the current configuration so a session started with one model can be continued with another.</p>
+<h3 id="ephemeral-mode"><a class="header" href="#ephemeral-mode">Ephemeral mode</a></h3>
+<p>Use <code>--ephemeral</code> to run without any disk persistence:</p>
+<pre><code class="language-sh">rho --ephemeral
+</code></pre>
+<p>All conversation state lives only in memory and is lost when rho exits. Useful for one-shot commands, CI pipelines, or when you don't want session files accumulating.</p>
+<h2 id="entry-types"><a class="header" href="#entry-types">Entry types</a></h2>
+<p>Each entry in the tree has a <code>payload</code> that describes what it represents:</p>
+<div class="table-wrapper"><table><thead><tr><th>Payload</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>Message</code></td><td>A chat message (system, user, or assistant)</td></tr>
+<tr><td><code>ToolCall</code></td><td>A tool invocation requested by the model</td></tr>
+<tr><td><code>ToolResult</code></td><td>The output of a tool execution</td></tr>
+<tr><td><code>Compaction</code></td><td>A summary replacing older entries</td></tr>
+<tr><td><code>Custom</code></td><td>Extension data (see <a href="core-concepts/../extensions.html">Extensions</a>)</td></tr>
+</tbody></table>
+</div>
+<h2 id="resolution-levels"><a class="header" href="#resolution-levels">Resolution levels</a></h2>
+<p>Every entry carries a <code>resolution</code> field:</p>
+<ul>
+<li><strong><code>Full</code></strong> — complete, verbatim content. Used for recent entries that fit within the context window.</li>
+<li><strong><code>Compacted</code></strong> — replaced by a <code>Compaction</code> summary. The original content is still in the tree but the context builder renders the summary instead.</li>
+<li><strong><code>Attached</code></strong> — lightweight reference (e.g., a tool call whose result has been compacted). Rendered as a brief mention rather than full content.</li>
+</ul>
+<p>The context builder (<a href="core-concepts/./context-management.html">Context Management</a>) uses resolution levels to decide what to send to the model — full detail where it matters, summaries where it doesn't.</p>
+<h2 id="bounded-tool-results"><a class="header" href="#bounded-tool-results">Bounded tool results</a></h2>
+<p>Tool results can be very large (entire file contents, command output). Sessions enforce a bounded output size:</p>
+<ul>
+<li>Tool output exceeding 50% of the prompt budget is truncated.</li>
+<li>The full output is preserved in <code>ToolResultDetails::FullOutput</code> for later retrieval.</li>
+<li>Truncation splits on the last newline boundary to avoid breaking UTF-8 sequences.</li>
+</ul>
+<p>This prevents a single verbose tool call from consuming the entire context window.</p>
+<h2 id="the-clear-command"><a class="header" href="#the-clear-command">The <code>/clear</code> command</a></h2>
+<p>In the REPL, <code>/clear</code> branches back to the system message entry. This has the same practical effect as clearing the conversation, but the old tree is preserved on disk. You can resume the old branch later with <code>--session</code>.</p>
+<h2 id="session-api"><a class="header" href="#session-api">Session API</a></h2>
+<p>The <code>Session</code> type in <code>rho-core</code> exposes:</p>
+<ul>
+<li><strong>Constructors</strong>: <code>Session::new()</code> (persisted), <code>Session::in_memory()</code> (no disk I/O), <code>Session::open(path)</code> (resume from JSONL)</li>
+<li><strong>Appenders</strong>: <code>append_user_message()</code>, <code>append_assistant_message()</code>, <code>append_tool_result()</code>, <code>append_tool_call()</code></li>
+<li><strong>Navigation</strong>: <code>path_to_root()</code>, <code>children()</code>, <code>leaf()</code>, <code>branch_to()</code>, <code>branch_with_summary()</code></li>
+<li><strong>Context</strong>: <code>path_messages()</code> (messages along the current branch), <code>send_current(client)</code> (send to model with context fitting)</li>
+<li><strong>Compaction</strong>: <code>compact_older_than()</code> (compact entries older than a threshold)</li>
+<li><strong>Extensions</strong>: <code>write_custom_state()</code>, <code>read_custom_state()</code>, <code>write_custom_message()</code>, <code>read_custom_message()</code></li>
+<li><strong>Persistence</strong>: <code>save_path()</code>, <code>flush()</code></li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="project-context-files"><a class="header" href="#project-context-files">Project Context Files</a></h1>
+<!-- TODO: Fill in with scan list, trust model, prompt composition, precedence -->
+<div style="break-before: page; page-break-before: always;"></div><h1 id="security"><a class="header" href="#security">Security</a></h1>
+<p>rho takes untrusted input (LLM output), interprets it as instructions, and executes those instructions with the full privileges of the user. The security model is defense-in-depth — no single layer is sufficient, but each layer raises the bar.</p>
+<p>See also:</p>
+<ul>
+<li><a href="./security/threat-model.html">Threat Model</a></li>
+<li><a href="./security/file-sandbox.html">File Sandbox</a></li>
+<li><a href="./security/secret-redaction.html">Secret Redaction</a></li>
+<li><a href="./security/egress-control.html">Egress Control</a></li>
+<li><a href="./security/prompt-injection-defense.html">Prompt Injection Defense</a></li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="threat-model"><a class="header" href="#threat-model">Threat Model</a></h1>
+<!-- TODO: Fill in with the 10-threat table from roadmap -->
+<div style="break-before: page; page-break-before: always;"></div><h1 id="file-sandbox"><a class="header" href="#file-sandbox">File Sandbox</a></h1>
+<!-- TODO: Fill in with FilePath, canonicalisation, sandbox root, opt-out -->
+<div style="break-before: page; page-break-before: always;"></div><h1 id="secret-redaction"><a class="header" href="#secret-redaction">Secret Redaction</a></h1>
+<!-- TODO: Fill in with redaction patterns, tool result filtering, custom patterns -->
+<div style="break-before: page; page-break-before: always;"></div><h1 id="egress-control"><a class="header" href="#egress-control">Egress Control</a></h1>
+<!-- TODO: Fill in with allowlist, LocalChatClient default, provider switch warning -->
+<div style="break-before: page; page-break-before: always;"></div><h1 id="prompt-injection-defense"><a class="header" href="#prompt-injection-defense">Prompt Injection Defense</a></h1>
+<!-- TODO: Fill in with Role::Context, trust model, system prompt primacy -->
+<div style="break-before: page; page-break-before: always;"></div><h1 id="configuration"><a class="header" href="#configuration">Configuration</a></h1>
+<!-- TODO: Fill in with .rho/config.toml, ~/.rho/config.toml, env var credentials -->
+<div style="break-before: page; page-break-before: always;"></div><h1 id="extensions"><a class="header" href="#extensions">Extensions</a></h1>
+<!-- TODO: Fill in with ExtTool, TOML tool definitions, custom slash commands -->
+<div style="break-before: page; page-break-before: always;"></div><h1 id="development"><a class="header" href="#development">Development</a></h1>
+<p>How to build, test, and extend rho.</p>
+<ul>
+<li><a href="./development/testing.html">Testing</a> — test-driven approach, fixtures, naming conventions</li>
+<li><a href="./development/dependency-philosophy.html">Dependency Philosophy</a> — when to write it vs. depend on it</li>
+<li><a href="./development/roadmap.html">Roadmap</a> — phase-by-phase development plan</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="testing"><a class="header" href="#testing">Testing</a></h1>
+<!-- TODO: Fill in with TDD approach, fixture conventions, test naming, rho-test-helpers -->
+<div style="break-before: page; page-break-before: always;"></div><h1 id="dependency-philosophy"><a class="header" href="#dependency-philosophy">Dependency Philosophy</a></h1>
+<!-- TODO: Fill in with the 4-question decision framework from roadmap -->
+<div style="break-before: page; page-break-before: always;"></div><h1 id="roadmap"><a class="header" href="#roadmap">Roadmap</a></h1>
+<!-- TODO: Fill in with phase summary table and links to .plans/phases/ -->
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+        <script>
+        window.addEventListener('load', function() {
+            window.setTimeout(window.print, 100);
+        });
+        </script>
+
+    </div>
+    </body>
+</html>
