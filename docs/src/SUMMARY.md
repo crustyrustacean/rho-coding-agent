@@ -12,6 +12,7 @@
   - [ChatClient Provider Trait](./core-concepts/chatclient-provider-trait.md)
   - [Approval Policy](./core-concepts/approval-policy.md)
   - [Context Management](./core-concepts/context-management.md)
+  - [Sessions](./core-concepts/sessions.md)
   - [Project Context Files](./core-concepts/project-context-files.md)
 - [Security](./security.md)
   - [Threat Model](./security/threat-model.md)

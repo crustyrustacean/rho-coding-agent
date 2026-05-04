@@ -109,7 +109,7 @@ pub use sandbox::{SandboxRoot, find_project_root};
 pub use schema::ToolSchema;
 pub use session::{
     CompactionStrategy, CompactionSummary, Entry, EntryPayload, EntryResolution, ExtensionEntry,
-    ExtensionMessageEntry, HeuristicEstimator, MechanicalCompactionStrategy, Session,
+    ExtensionMessageEntry, HeuristicEstimator, MechanicalCompactionStrategy, PersistState, Session,
     SessionHeader, TokenEstimator,
 };
 pub use shell::{ShellExecutor, ShellOutput};

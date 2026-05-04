@@ -4,8 +4,8 @@
 //! secret redaction, and project context file trust.
 
 use rho_core::{
-    AgentConfig, ChatMessage, Conversation, RhoConfig, ToolCallId, ToolName, ToolOutcome,
-    ToolRegistry, ToolResult, ToolRisk,
+    AgentConfig, ChatMessage, RhoConfig, Session, ToolCallId, ToolName, ToolOutcome, ToolRegistry,
+    ToolResult, ToolRisk,
     agent::run_loop,
     approval::{ApprovalPolicy, DefaultApprovalPolicy},
     context_files::{ContextScanner, compose_system_prompt},
@@ -75,11 +75,11 @@ async fn denied_tool_gets_denial_message_fed_back() {
     registry.register(Box::new(DestructiveTool));
 
     let config = AgentConfig::default(); // DefaultApprovalPolicy → requires approval
-    let mut conv = Conversation::new("mock", None, registry.tool_schemas());
+    let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
 
     // AutoDenyGate always says no.
     let result = run_loop(
-        &mut conv,
+        &mut session,
         "do the destructive thing",
         &client,
         &registry,
@@ -125,11 +125,11 @@ async fn approved_tool_executes() {
     registry.register(Box::new(DestructiveTool));
 
     let config = AgentConfig::default();
-    let mut conv = Conversation::new("mock", None, registry.tool_schemas());
+    let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
 
     // AutoApproveGate always says yes.
     let result = run_loop(
-        &mut conv,
+        &mut session,
         "do it",
         &client,
         &registry,
@@ -269,11 +269,11 @@ fn redaction_applied_before_tool_result_enters_history() {
     let secret_key = "sk-".to_owned() + &"z".repeat(32);
     let output = format!("found key: {secret_key}");
 
-    let mut conv = Conversation::new("mock", None, vec![]);
-    conv.add_tool_result(ToolCallId::from("call_1"), &ToolResult::success(&output));
+    let mut session = Session::in_memory("mock", None, vec![], "/tmp");
+    session.add_tool_result(ToolCallId::from("call_1"), &ToolResult::success(&output));
 
     // The message stored in history must not contain the raw secret.
-    let messages = conv.messages();
+    let messages = session.path_messages();
     let tool_msg = messages
         .iter()
         .find(|m| matches!(m, ChatMessage::Tool { .. }))
@@ -291,13 +291,13 @@ fn redaction_applied_before_tool_result_enters_history() {
 fn redaction_applied_to_aws_key_in_tool_result() {
     use rho_core::tool::ToolResult;
 
-    let mut conv = Conversation::new("mock", None, vec![]);
-    conv.add_tool_result(
+    let mut session = Session::in_memory("mock", None, vec![], "/tmp");
+    session.add_tool_result(
         ToolCallId::from("call_2"),
         &ToolResult::success("AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE"),
     );
 
-    let messages = conv.messages();
+    let messages = session.path_messages();
     let json = serde_json::to_string(messages.last().unwrap()).unwrap();
     assert!(!json.contains("AKIAIOSFODNN7EXAMPLE"));
     assert!(json.contains("[REDACTED]"));
@@ -523,16 +523,16 @@ fn disabled_redactor_skips_builtin_patterns() {
 
     // A disabled redactor should pass secrets through unchanged.
     let redactor = rho_core::Redactor::from_config(false, &[]);
-    let mut conv = Conversation::new("mock", None, vec![]).with_redactor(redactor);
+    let mut session = Session::in_memory("mock", None, vec![], "/tmp").with_redactor(redactor);
 
     let secret_key = "sk-".to_owned() + &"x".repeat(32);
-    conv.add_tool_result(
+    session.add_tool_result(
         ToolCallId::from("call_1"),
         &ToolResult::success(&secret_key),
     );
 
     // The raw secret should be present in history (not redacted).
-    let messages = conv.messages();
+    let messages = session.path_messages();
     let tool_msg = messages
         .iter()
         .find(|m| matches!(m, ChatMessage::Tool { .. }))
@@ -555,14 +555,14 @@ fn enabled_redactor_with_custom_pattern_redacts_in_conversation() {
     // A config-driven redactor with a custom pattern should redact
     // matches of that pattern when tool results enter the conversation.
     let redactor = rho_core::Redactor::from_config(true, &[r"COMPANY_KEY_\S+".to_owned()]);
-    let mut conv = Conversation::new("mock", None, vec![]).with_redactor(redactor);
+    let mut session = Session::in_memory("mock", None, vec![], "/tmp").with_redactor(redactor);
 
-    conv.add_tool_result(
+    session.add_tool_result(
         ToolCallId::from("call_1"),
         &ToolResult::success("found COMPANY_KEY_abc123 here"),
     );
 
-    let messages = conv.messages();
+    let messages = session.path_messages();
     let tool_msg = messages
         .iter()
         .find(|m| matches!(m, ChatMessage::Tool { .. }))

@@ -7,4 +7,5 @@ The agent kernel in `rho-core` is built on a small set of interlocking concepts.
 - [ChatClient Provider Trait](./core-concepts/chatclient-provider-trait.md) — provider-agnostic model access
 - [Approval Policy](./core-concepts/approval-policy.md) — the gate between tool calls and execution
 - [Context Management](./core-concepts/context-management.md) — keeping the conversation within the context window
+- [Sessions](./core-concepts/sessions.md) — persistent, tree-structured conversation state
 - [Project Context Files](./core-concepts/project-context-files.md) — loading and trusting project-level instructions

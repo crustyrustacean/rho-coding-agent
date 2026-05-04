@@ -4,8 +4,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 use clap::Parser;
 use rho_core::{
-    AgentConfig, ConfigLoader, Conversation, LocalChatClient, ModelToolCall, RhoConfig,
-    ToolRegistry, ToolRisk,
+    AgentConfig, ConfigLoader, LocalChatClient, ModelToolCall, RhoConfig, Session, ToolRegistry,
+    ToolRisk,
     approval::ApprovalGate,
     base_prompt, compact_prompt,
     context_files::{ContextScanner, TrustStore, compose_system_prompt},
@@ -102,11 +102,28 @@ struct Cli {
     /// then exits (no REPL). Useful for automation and testing.
     #[arg(long)]
     prompt_file: Option<PathBuf>,
+
+    /// Resume a previous session from a JSONL file.
+    ///
+    /// When specified, rho loads the session from the given path instead of
+    /// creating a new one. Use this to continue a conversation that was
+    /// interrupted or to inspect a session's history.
+    #[arg(long)]
+    session: Option<PathBuf>,
+
+    /// Run in ephemeral mode — no session file is written to disk.
+    ///
+    /// All conversation state lives only in memory and is lost when rho
+    /// exits. Useful for one-shot commands, CI pipelines, or when you
+    /// don't want `.rho/sessions/` clutter.
+    #[arg(long)]
+    ephemeral: bool,
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 #[tokio::main]
+#[allow(clippy::too_many_lines)]
 async fn main() -> Result<()> {
     // --- Tracing ---
     let file_appender = tracing_appender::rolling::never("logs", "rho.log");
@@ -170,9 +187,43 @@ async fn main() -> Result<()> {
         cli.token_budget.unwrap_or(rho_config.agent.token_budget) as usize,
     );
 
-    let mut conversation = Conversation::new(model, Some(&system_prompt), registry.tool_schemas())
+    // --- Session ---
+    let mut session = if let Some(path) = &cli.session {
+        // Resume an existing session from JSONL
+        eprintln!("resuming session from: {}", path.display());
+        let mut s =
+            Session::open(path).map_err(|e| anyhow::anyhow!("failed to open session: {e}"))?;
+        // Apply the resolved model, budget, redactor, and tools
+        s.set_model(&model);
+        s.set_token_budget(token_budget);
+        s.set_redactor(redactor);
+        s.set_tools(registry.tool_schemas());
+        s
+    } else if cli.ephemeral {
+        // In-memory mode: no disk persistence
+        Session::in_memory(
+            model,
+            Some(&system_prompt),
+            registry.tool_schemas(),
+            sandbox.path(),
+        )
         .with_token_budget(token_budget)
-        .with_redactor(redactor);
+        .with_redactor(redactor)
+    } else {
+        // Default: persisted session with auto-flush
+        Session::new(
+            model,
+            Some(&system_prompt),
+            registry.tool_schemas(),
+            sandbox.path(),
+        )
+        .with_token_budget(token_budget)
+        .with_redactor(redactor)
+    };
+
+    if let Some(path) = session.save_path() {
+        eprintln!("session: {}", path.display());
+    }
 
     let gate = ReplApprovalGate;
     let cancel = CancellationToken::new();
@@ -183,7 +234,7 @@ async fn main() -> Result<()> {
             .map_err(|e| anyhow::anyhow!("cannot read prompt file `{}`: {e}", path.display()))?;
         eprintln!("using prompt file: {}", path.display());
         match rho_core::run_loop(
-            &mut conversation,
+            &mut session,
             &input,
             &client,
             &registry,
@@ -212,7 +263,14 @@ async fn main() -> Result<()> {
         match input {
             "/quit" | "quit" => break,
             "/clear" => {
-                conversation.clear();
+                // Branch back to the system message — same effect as
+                // clearing the conversation, but the old tree is preserved
+                // on disk so it can be inspected or resumed later.
+                let path = session.path_to_root();
+                if let Some(root_entry) = path.last() {
+                    let root_id = root_entry.id.clone();
+                    let _ = session.branch_to(&root_id);
+                }
                 println!("[conversation cleared]");
                 continue;
             }
@@ -221,7 +279,7 @@ async fn main() -> Result<()> {
         }
 
         match rho_core::run_loop(
-            &mut conversation,
+            &mut session,
             input,
             &client,
             &registry,

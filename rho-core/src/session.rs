@@ -64,14 +64,31 @@
 //! |---|---|
 //! | [`entry`] | [`Entry`], [`EntryPayload`], [`EntryResolution`], [`CompactionSummary`] |
 //! | [`estimator`] | [`TokenEstimator`] trait, [`HeuristicEstimator`] |
+//! | [`compaction`] | [`CompactionStrategy`] trait, [`MechanicalCompactionStrategy`] |
+//! | [`persist`] | [`PersistState`], JSONL session persistence |
+//!
+//! # Persistence
+//!
+//! Sessions persist to append-only JSONL files. Each line is a JSON object
+//! (a header line followed by entry lines). The path layout is:
+//! `~/.rho/sessions/<project-hash>/<timestamp>_<session-id>.jsonl`.
+//!
+//! - `Session::new` creates a persisted session that auto-flushes on every
+//!   append operation.
+//! - `Session::in_memory` creates a session with no disk I/O (for tests).
+//! - `Session::open` reloads a session from a JSONL file.
+//! - `Session::flush` writes any unwritten entries to disk.
 
 pub mod compaction;
 pub mod entry;
 pub mod estimator;
+pub mod persist;
 
 pub use compaction::{CompactionStrategy, MechanicalCompactionStrategy};
 pub use entry::{CompactionSummary, Entry, EntryPayload, EntryResolution};
 pub use estimator::{HeuristicEstimator, TokenEstimator};
+pub use persist::PersistState;
+pub use persist::{default_save_path, open_session, project_hash};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -84,7 +101,7 @@ use crate::redact::Redactor;
 use crate::schema::ToolSchema;
 use crate::tool::{ToolResult, ToolResultDetails};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use tracing::warn;
 
@@ -122,6 +139,9 @@ pub struct SessionHeader {
 /// `Session::new` creates a root entry containing the system prompt and sets
 /// the leaf to that entry. The leaf is never `None` after construction.
 ///
+/// `Session::in_memory` creates a session that skips all disk I/O, used by
+/// tests and ephemeral sessions.
+///
 /// # Builder methods
 ///
 /// Follow the same pattern as [`Conversation`](crate::Conversation):
@@ -130,13 +150,19 @@ pub struct SessionHeader {
 ///
 /// # Persistence
 ///
-/// Sessions persist to JSONL (Task 11). The in-memory representation is the
-/// authoritative state; the on-disk log is an append-only record of every entry.
+/// Sessions persist to JSONL via [`flush`](Session::flush). Each append
+/// operation auto-flushes to disk, so a crashed process loses at most one
+/// in-flight entry. The in-memory representation is the authoritative state;
+/// the on-disk log is an append-only record of every entry.
+///
+/// Use [`open`](Session::open) to reload a previously persisted session.
 pub struct Session {
     /// Session identity and origin metadata.
     header: SessionHeader,
     /// All entries in the session tree, indexed by ID.
     entries: HashMap<EntryId, Entry>,
+    /// Append-ordered entry IDs (in the order they were added to the session).
+    append_order: Vec<EntryId>,
     /// The current leaf position. Always `Some` after construction.
     leaf: Option<EntryId>,
     /// Token estimator for budget-aware decisions.
@@ -152,6 +178,8 @@ pub struct Session {
     token_budget: TokenBudget,
     /// Secret redactor applied to tool results before they enter history.
     redactor: Redactor,
+    /// Persistence state (save path, flushed count).
+    persist: PersistState,
 }
 
 impl std::fmt::Debug for Session {
@@ -162,16 +190,20 @@ impl std::fmt::Debug for Session {
             .field("leaf", &self.leaf)
             .field("model", &self.model)
             .field("token_budget", &self.token_budget)
+            .field("persist", &self.persist)
             .finish_non_exhaustive()
     }
 }
 
 impl Session {
-    /// Create a new session.
+    /// Create a new session with JSONL persistence enabled.
     ///
     /// The system prompt (if provided) becomes the first [`Entry`] with
     /// `parent_id = None` and `resolution: Full`. The leaf pointer is set to
     /// this root entry.
+    ///
+    /// The session will auto-flush to `~/.rho/sessions/<project-hash>/` on
+    /// each append operation. Use [`Session::in_memory`] to skip persistence.
     pub fn new(
         model: impl Into<String>,
         system_prompt: Option<&str>,
@@ -179,6 +211,7 @@ impl Session {
         cwd: impl Into<PathBuf>,
     ) -> Self {
         let mut entries = HashMap::new();
+        let mut append_order = Vec::new();
         let leaf = if let Some(prompt) = system_prompt {
             let root = Entry {
                 id: EntryId::new(),
@@ -189,6 +222,62 @@ impl Session {
             };
             let id = root.id.clone();
             entries.insert(id.clone(), root);
+            append_order.push(id.clone());
+            Some(id)
+        } else {
+            None
+        };
+
+        let header = SessionHeader {
+            id: SessionId::new(),
+            version: 1,
+            created_at: SystemTime::now(),
+            cwd: cwd.into(),
+            parent_session: None,
+        };
+
+        let save_path = persist::compute_save_path(&header);
+        let initial_count = append_order.len();
+
+        Self {
+            header,
+            entries,
+            append_order,
+            leaf,
+            estimator: Box::new(HeuristicEstimator::new()),
+            model: model.into(),
+            tools,
+            context_manager: Box::new(SlidingWindowContextManager::new()),
+            token_budget: TokenBudget::default(),
+            redactor: Redactor::new(),
+            persist: PersistState::with_path(save_path, initial_count),
+        }
+    }
+
+    /// Create a new in-memory session that performs no disk I/O.
+    ///
+    /// This is the same as [`Session::new`] except no JSONL file is created
+    /// and [`flush`](Session::flush) is a no-op. Used by tests and ephemeral
+    /// sessions.
+    pub fn in_memory(
+        model: impl Into<String>,
+        system_prompt: Option<&str>,
+        tools: Vec<ToolSchema>,
+        cwd: impl Into<PathBuf>,
+    ) -> Self {
+        let mut entries = HashMap::new();
+        let mut append_order = Vec::new();
+        let leaf = if let Some(prompt) = system_prompt {
+            let root = Entry {
+                id: EntryId::new(),
+                parent_id: None,
+                timestamp: SystemTime::now(),
+                resolution: EntryResolution::Full,
+                payload: EntryPayload::Message(ChatMessage::system_text(prompt)),
+            };
+            let id = root.id.clone();
+            entries.insert(id.clone(), root);
+            append_order.push(id.clone());
             Some(id)
         } else {
             None
@@ -203,6 +292,7 @@ impl Session {
                 parent_session: None,
             },
             entries,
+            append_order,
             leaf,
             estimator: Box::new(HeuristicEstimator::new()),
             model: model.into(),
@@ -210,6 +300,56 @@ impl Session {
             context_manager: Box::new(SlidingWindowContextManager::new()),
             token_budget: TokenBudget::default(),
             redactor: Redactor::new(),
+            persist: PersistState::in_memory(),
+        }
+    }
+
+    /// Open a session from a JSONL file.
+    ///
+    /// Reads all entries from the file, reconstructs the entry tree, and
+    /// determines the leaf position. See [`persist::open_session`] for
+    /// the full reconstruction logic.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RhoError`] if the file cannot be read, is malformed, or
+    /// contains no entries.
+    pub fn open(path: &Path) -> Result<Self> {
+        persist::open_session(path)
+    }
+
+    /// Construct a `Session` from pre-built components.
+    ///
+    /// Used by [`open_session`](persist::open_session) to reconstruct a
+    /// session from a JSONL file. This bypasses the normal constructor
+    /// because the header, entries, and leaf are already known.
+    fn new_internal(
+        header: SessionHeader,
+        entries: HashMap<EntryId, Entry>,
+        leaf: Option<EntryId>,
+        persist_state: PersistState,
+    ) -> Self {
+        // Reconstruct append_order from the entries: sort by timestamp
+        // as a stable approximation of append order.
+        let mut append_order: Vec<(std::time::SystemTime, EntryId)> = entries
+            .values()
+            .map(|e| (e.timestamp, e.id.clone()))
+            .collect();
+        append_order.sort_by_key(|a| a.0);
+        let append_order: Vec<EntryId> = append_order.into_iter().map(|(_, id)| id).collect();
+
+        Self {
+            header,
+            entries,
+            append_order,
+            leaf,
+            estimator: Box::new(HeuristicEstimator::new()),
+            model: String::new(), // Model is not persisted yet (Phase 2.6)
+            tools: vec![],        // Tools are not persisted yet (Phase 2.6)
+            context_manager: Box::new(SlidingWindowContextManager::new()),
+            token_budget: TokenBudget::default(),
+            redactor: Redactor::new(),
+            persist: persist_state,
         }
     }
 
@@ -271,6 +411,58 @@ impl Session {
         self.model = model.into();
     }
 
+    /// Override the token budget (useful when resuming a session with
+    /// different budget settings).
+    pub fn set_token_budget(&mut self, budget: TokenBudget) {
+        self.token_budget = budget;
+    }
+
+    /// Override the tool schemas (useful when resuming a session with
+    /// a different set of tools).
+    pub fn set_tools(&mut self, tools: Vec<ToolSchema>) {
+        self.tools = tools;
+    }
+
+    /// Override the secret redactor (useful when resuming a session with
+    /// different redaction settings).
+    pub fn set_redactor(&mut self, redactor: Redactor) {
+        self.redactor = redactor;
+    }
+
+    /// The system prompt text, if one was set.
+    ///
+    /// Searches the entry tree for a `Message(System)` entry at the root
+    /// and returns its text content.
+    pub fn system_prompt(&self) -> Option<&str> {
+        self.entries.values().find_map(|entry| {
+            if let EntryPayload::Message(ChatMessage::System { content }) = &entry.payload {
+                content.first().map(|b| {
+                    let ContentBlock::Text { text } = b;
+                    text.as_str()
+                })
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Append a tool result message, applying secret redaction and
+    /// bounded resolution first.
+    ///
+    /// This is the public entry point for adding tool results to the
+    /// session (e.g., from integration tests). It always applies
+    /// redaction — there is no way to bypass the redactor through this API.
+    ///
+    /// Returns the [`EntryId`] of the new entry and the
+    /// [`ToolResultDetails`] if truncation occurred.
+    pub fn add_tool_result(
+        &mut self,
+        id: ToolCallId,
+        result: &ToolResult,
+    ) -> (EntryId, ToolResultDetails) {
+        self.append_tool_result_with_details(id, result)
+    }
+
     /// The token budget.
     pub fn token_budget(&self) -> TokenBudget {
         self.token_budget
@@ -294,6 +486,49 @@ impl Session {
     /// Total number of entries in the tree.
     pub fn entry_count(&self) -> usize {
         self.entries.len()
+    }
+
+    /// The path where this session would persist, or `None` for in-memory mode.
+    ///
+    /// This is `Some(path)` for sessions created with [`Session::new`] and
+    /// `None` for sessions created with [`Session::in_memory`].
+    pub fn save_path(&self) -> Option<&Path> {
+        self.persist.save_path.as_deref()
+    }
+
+    /// Flush unwritten entries to the JSONL file.
+    ///
+    /// Appends all entries that haven't been written yet. Creates the file
+    /// and its parent directories if they don't exist.
+    ///
+    /// For in-memory sessions, this is a no-op.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RhoError`] if the file cannot be opened or a write fails.
+    pub fn flush(&mut self) -> Result<()> {
+        persist::flush_session(self)
+    }
+
+    /// Read-only access to the persist state.
+    pub(crate) fn persist_state(&self) -> &PersistState {
+        &self.persist
+    }
+
+    /// Update the flushed count after a successful flush.
+    pub(crate) fn set_flushed_count(&mut self, count: usize) {
+        self.persist.flushed_count = count;
+    }
+
+    /// Return all entries in append order (root → leaf).
+    ///
+    /// This is used by [`flush_session`](persist::flush_session) to write
+    /// entries in the correct order.
+    pub(crate) fn entries_in_order(&self) -> Vec<Entry> {
+        self.append_order
+            .iter()
+            .filter_map(|id| self.entries.get(id).cloned())
+            .collect()
     }
 
     // ── Tree navigation ──────────────────────────────────────────────────
@@ -410,9 +645,18 @@ impl Session {
         };
         let moved_id = moved_entry.id.clone();
         self.entries.insert(moved_id.clone(), moved_entry);
+        self.append_order.push(moved_id.clone());
         // The LeafMoved entry itself becomes the new leaf so subsequent
         // appends link from here.
         self.leaf = Some(moved_id);
+
+        // Auto-flush the new entry.
+        if let Err(e) = self.flush() {
+            warn!(
+                error = %e,
+                "auto-flush of LeafMoved entry failed"
+            );
+        }
 
         Ok(())
     }
@@ -1006,7 +1250,12 @@ impl Session {
     // ── Internal helpers ──────────────────────────────────────────────────
 
     /// Core append: creates an entry, links it to the current leaf, updates
-    /// the leaf pointer, and returns the new entry's ID.
+    /// the leaf pointer, records the ID in append order, and auto-flushes.
+    ///
+    /// Auto-flush writes the new entry to the JSONL file immediately. If the
+    /// flush fails, a `warn!` is logged but the in-memory session is unaffected
+    /// — the entry is still in the tree. The file will be caught up on the next
+    /// successful flush or when the session is opened again.
     fn append_entry(&mut self, payload: EntryPayload, resolution: EntryResolution) -> EntryId {
         let id = EntryId::new();
         let entry = Entry {
@@ -1017,7 +1266,19 @@ impl Session {
             payload,
         };
         self.entries.insert(id.clone(), entry);
+        self.append_order.push(id.clone());
         self.leaf = Some(id.clone());
+
+        // Auto-flush: write the new entry to disk immediately.
+        // A crashed process loses at most one in-flight entry.
+        if let Err(e) = self.flush() {
+            warn!(
+                error = %e,
+                entry_id = %id,
+                "auto-flush failed, entry is in memory but not on disk"
+            );
+        }
+
         id
     }
 }
@@ -1294,7 +1555,7 @@ mod tests {
 
     #[test]
     fn new_session_with_system_prompt_has_root_entry() {
-        let session = Session::new("test-model", Some("you are helpful"), vec![], "/tmp");
+        let session = Session::in_memory("test-model", Some("you are helpful"), vec![], "/tmp");
         let leaf = session
             .leaf()
             .expect("leaf should be set after construction");
@@ -1309,54 +1570,54 @@ mod tests {
 
     #[test]
     fn new_session_without_system_prompt_has_no_entries() {
-        let session = Session::new("test-model", None, vec![], "/tmp");
+        let session = Session::in_memory("test-model", None, vec![], "/tmp");
         assert!(session.leaf().is_none());
         assert_eq!(session.entry_count(), 0);
     }
 
     #[test]
     fn builder_methods_override_defaults() {
-        let session = Session::new("m", Some("sys"), vec![], "/tmp")
+        let session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
             .with_token_budget(TokenBudget::new(4096));
         assert_eq!(session.token_budget().context_window, 4096);
     }
 
     #[test]
     fn header_has_correct_version() {
-        let session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         assert_eq!(session.header().version, 1);
     }
 
     #[test]
     fn header_cwd_matches_constructor() {
-        let session = Session::new("m", Some("sys"), vec![], "/project");
+        let session = Session::in_memory("m", Some("sys"), vec![], "/project");
         assert_eq!(session.header().cwd, PathBuf::from("/project"));
     }
 
     #[test]
     fn header_session_id_is_unique() {
-        let s1 = Session::new("m", Some("sys"), vec![], "/tmp");
-        let s2 = Session::new("m", Some("sys"), vec![], "/tmp");
+        let s1 = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let s2 = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         assert_ne!(s1.header().id, s2.header().id);
     }
 
     #[test]
     fn set_model_updates_model() {
-        let mut session = Session::new("old-model", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("old-model", Some("sys"), vec![], "/tmp");
         session.set_model("new-model");
         assert_eq!(session.model(), "new-model");
     }
 
     #[test]
     fn estimator_default_is_heuristic() {
-        let session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let tokens = session.estimator().estimate("hello");
         assert!(tokens > 0);
     }
 
     #[test]
     fn estimator_mut_allows_calibration() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         session.estimator_mut().calibrate("test-model", 10, 12);
     }
 
@@ -1364,7 +1625,7 @@ mod tests {
 
     #[test]
     fn append_user_message_creates_entry_linked_to_leaf() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let root_id = session.leaf().unwrap();
         let user_id = session.append_user_message("hello");
 
@@ -1380,7 +1641,7 @@ mod tests {
 
     #[test]
     fn append_user_message_without_system_prompt() {
-        let mut session = Session::new("m", None, vec![], "/tmp");
+        let mut session = Session::in_memory("m", None, vec![], "/tmp");
         assert!(session.leaf().is_none());
 
         let user_id = session.append_user_message("hello");
@@ -1391,7 +1652,7 @@ mod tests {
 
     #[test]
     fn append_assistant_message_links_to_previous() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let user_id = session.append_user_message("hello");
         let asst_id = session.append_assistant_message(ChatMessage::assistant_text("hi there"));
 
@@ -1402,7 +1663,7 @@ mod tests {
 
     #[test]
     fn multiple_appends_form_chain() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let root = session.leaf().unwrap();
 
         let id1 = session.append_user_message("msg1");
@@ -1419,7 +1680,7 @@ mod tests {
 
     #[test]
     fn tool_result_that_fits_is_not_truncated() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp")
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
             .with_token_budget(TokenBudget::new(32_768));
 
         let result = ToolResult::success("small output");
@@ -1444,7 +1705,7 @@ mod tests {
     #[test]
     fn oversized_tool_result_is_truncated_with_full_output_preserved() {
         // Use a tiny budget so even moderate output triggers truncation
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp")
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
             .with_token_budget(TokenBudget::with_reserve(100, 10)); // prompt_budget = 90, half = 45 tokens
 
         // 2000 chars at 2.5 chars/token ≈ 800 tokens — well over the 45 token limit
@@ -1489,7 +1750,7 @@ mod tests {
 
     #[test]
     fn truncation_point_is_utf8_safe() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp")
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
             .with_token_budget(TokenBudget::with_reserve(100, 10));
 
         // Build a string with multi-byte characters
@@ -1540,7 +1801,7 @@ mod tests {
 
     #[test]
     fn append_compaction_creates_entry() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let user_id = session.append_user_message("hello");
 
         let summary = CompactionSummary {
@@ -1561,7 +1822,7 @@ mod tests {
 
     #[test]
     fn append_branch_summary_creates_entry() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let from_id = session.append_user_message("hello");
 
         let summary = CompactionSummary {
@@ -1581,7 +1842,7 @@ mod tests {
 
     #[test]
     fn append_label_creates_attached_entry() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let target = session.append_user_message("hello");
 
         let id = session.append_label(target, Some("checkpoint".to_owned()));
@@ -1592,7 +1853,7 @@ mod tests {
 
     #[test]
     fn append_custom_state_creates_attached_entry() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
 
         let id = session.append_custom_state(
             "rho.diagnostics.v1".to_owned(),
@@ -1610,7 +1871,7 @@ mod tests {
 
     #[test]
     fn append_custom_message_creates_full_entry() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
 
         let id = session.append_custom_message(
             "rho.diagnostics.v1".to_owned(),
@@ -1655,7 +1916,7 @@ mod tests {
 
     #[test]
     fn path_to_root_returns_leaf_to_root_order() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let root_id = session.leaf().unwrap();
         let user_id = session.append_user_message("hello");
         let asst_id = session.append_assistant_message(ChatMessage::assistant_text("hi"));
@@ -1669,13 +1930,13 @@ mod tests {
 
     #[test]
     fn path_to_root_empty_when_no_leaf() {
-        let session = Session::new("m", None, vec![], "/tmp");
+        let session = Session::in_memory("m", None, vec![], "/tmp");
         assert!(session.path_to_root().is_empty());
     }
 
     #[test]
     fn path_to_root_single_entry() {
-        let session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let root_id = session.leaf().unwrap();
         let path = session.path_to_root();
         assert_eq!(path.len(), 1);
@@ -1684,7 +1945,7 @@ mod tests {
 
     #[test]
     fn path_to_root_has_no_duplicates() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let root_id = session.leaf().unwrap();
         let id1 = session.append_user_message("msg1");
         let id2 = session.append_assistant_message(ChatMessage::assistant_text("reply1"));
@@ -1703,7 +1964,7 @@ mod tests {
 
     #[test]
     fn children_returns_direct_children_sorted_by_timestamp() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let root_id = session.leaf().unwrap();
 
         // Root has one child (the user message)
@@ -1715,7 +1976,7 @@ mod tests {
 
     #[test]
     fn children_of_leaf_is_empty() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let root_id = session.leaf().unwrap();
         // The leaf has no children yet (no appends after it)
         // But actually, the leaf IS the root, and we haven't appended anything
@@ -1734,7 +1995,7 @@ mod tests {
 
     #[test]
     fn children_of_forked_entry_includes_both_branches() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let _root_id = session.leaf().unwrap();
         let user_id = session.append_user_message("hello");
 
@@ -1765,14 +2026,14 @@ mod tests {
 
     #[test]
     fn children_of_nonexistent_entry_is_empty() {
-        let session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let fake_id = EntryId::new();
         assert!(session.children(&fake_id).is_empty());
     }
 
     #[test]
     fn branch_to_moves_leaf() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let _root_id = session.leaf().unwrap();
         let user_id = session.append_user_message("hello");
         let _asst_id = session.append_assistant_message(ChatMessage::assistant_text("reply"));
@@ -1789,7 +2050,7 @@ mod tests {
 
     #[test]
     fn branch_to_writes_leaf_moved_entry() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let root_id = session.leaf().unwrap();
         let user_id = session.append_user_message("hello");
 
@@ -1810,7 +2071,7 @@ mod tests {
 
     #[test]
     fn branch_to_errors_on_nonexistent_entry() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let fake_id = EntryId::new();
         let result = session.branch_to(&fake_id);
         assert!(result.is_err());
@@ -1823,7 +2084,7 @@ mod tests {
 
     #[test]
     fn branch_to_is_noop_when_already_at_target() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let leaf_id = session.leaf().unwrap();
         let entry_count_before = session.entry_count();
 
@@ -1836,7 +2097,7 @@ mod tests {
 
     #[test]
     fn branch_to_then_append_extends_from_new_position() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let root_id = session.leaf().unwrap();
         let user_id = session.append_user_message("hello");
         let _asst_id = session.append_assistant_message(ChatMessage::assistant_text("reply A"));
@@ -1864,7 +2125,7 @@ mod tests {
 
     #[test]
     fn branch_to_old_branch_still_in_tree() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let _root_id = session.leaf().unwrap();
         let user_id = session.append_user_message("hello");
         let asst_a_id = session.append_assistant_message(ChatMessage::assistant_text("reply A"));
@@ -1887,7 +2148,7 @@ mod tests {
 
     #[test]
     fn branch_with_summary_appends_summary_after_branch() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let root_id = session.leaf().unwrap();
         let user_id = session.append_user_message("hello");
         let _asst_id = session.append_assistant_message(ChatMessage::assistant_text("reply A"));
@@ -1925,7 +2186,7 @@ mod tests {
 
     #[test]
     fn branch_with_summary_errors_on_nonexistent_entry() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let fake_id = EntryId::new();
         let summary = CompactionSummary {
             original_request: None,
@@ -1947,7 +2208,7 @@ mod tests {
 
     #[test]
     fn path_to_root_after_branch_reflects_new_path() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let root_id = session.leaf().unwrap();
         let user_id = session.append_user_message("hello");
         let asst_a_id = session.append_assistant_message(ChatMessage::assistant_text("reply A"));
@@ -1978,7 +2239,7 @@ mod tests {
         // depends on the path traversal (they are on the path since the leaf
         // points to them). The *filtering* of Attached entries from the model
         // context is done by fit_path (Task 8), not path_to_root.
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let root_id = session.leaf().unwrap();
         let _user_id = session.append_user_message("hello");
 
@@ -1996,7 +2257,7 @@ mod tests {
 
     #[test]
     fn path_messages_returns_chronological_messages() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         session.append_user_message("hello");
         session.append_assistant_message(ChatMessage::assistant_text("hi"));
         session.append_user_message("how are you?");
@@ -2012,7 +2273,7 @@ mod tests {
 
     #[test]
     fn path_messages_filters_compacted_entries() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let user_id = session.append_user_message("hello");
         let _asst_id = session.append_assistant_message(ChatMessage::assistant_text("hi"));
 
@@ -2059,7 +2320,7 @@ mod tests {
 
     #[test]
     fn path_messages_filters_attached_entries() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         session.append_user_message("hello");
 
         // Add an Attached entry (label)
@@ -2076,7 +2337,7 @@ mod tests {
 
     #[test]
     fn path_messages_renders_compaction_summary() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         session.append_user_message("fix the bug");
         session.append_assistant_message(ChatMessage::assistant_text("ok"));
 
@@ -2135,7 +2396,7 @@ mod tests {
 
     #[test]
     fn path_messages_renders_branch_summary() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let root_id = session.leaf().unwrap();
         let from_id = session.append_user_message("hello");
 
@@ -2190,7 +2451,7 @@ mod tests {
             ),
         ];
 
-        let mut session = Session::new("m", Some("sys"), tools, "/tmp")
+        let mut session = Session::in_memory("m", Some("sys"), tools, "/tmp")
             .with_token_budget(TokenBudget::with_reserve(500, 50));
 
         // Add enough messages that some would need to be evicted
@@ -2216,7 +2477,7 @@ mod tests {
 
     #[test]
     fn path_messages_without_tools_has_no_schema_overhead() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp")
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
             .with_token_budget(TokenBudget::new(32_768));
 
         session.append_user_message("hello");
@@ -2229,7 +2490,7 @@ mod tests {
 
     #[test]
     fn path_messages_after_branch_excludes_old_branch() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let root_id = session.leaf().unwrap();
         session.append_user_message("hello");
         let _asst_a_id = session.append_assistant_message(ChatMessage::assistant_text("reply A"));
@@ -2274,7 +2535,7 @@ mod tests {
 
     #[test]
     fn path_messages_empty_session() {
-        let session = Session::new("m", None, vec![], "/tmp");
+        let session = Session::in_memory("m", None, vec![], "/tmp");
         let messages = session.path_messages();
         assert!(messages.is_empty());
     }
@@ -2350,7 +2611,7 @@ mod tests {
     async fn compact_older_than_transitions_resolution() {
         use crate::session::compaction::MechanicalCompactionStrategy;
 
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let _root_id = session.leaf().unwrap();
         let user_id = session.append_user_message("fix the bug");
         let _asst_id = session.append_assistant_message(ChatMessage::assistant_text("ok"));
@@ -2379,7 +2640,7 @@ mod tests {
     async fn compact_older_than_preserves_original_request() {
         use crate::session::compaction::MechanicalCompactionStrategy;
 
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         session.append_user_message("find the secret: TIGER-7742");
         session.append_assistant_message(ChatMessage::assistant_text("ok"));
         session.append_user_message("now read another file");
@@ -2403,7 +2664,7 @@ mod tests {
     async fn compact_older_than_compacted_entries_filtered_from_path() {
         use crate::session::compaction::MechanicalCompactionStrategy;
 
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let user_id = session.append_user_message("fix the bug");
         session.append_assistant_message(ChatMessage::assistant_text("ok"));
         session.append_user_message("read another file");
@@ -2480,7 +2741,7 @@ mod tests {
     async fn compact_older_than_does_not_compact_root() {
         use crate::session::compaction::MechanicalCompactionStrategy;
 
-        let mut session = Session::new("m", Some("system prompt"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("system prompt"), vec![], "/tmp");
         let root_id = session.leaf().unwrap();
         session.append_user_message("hello");
         session.append_assistant_message(ChatMessage::assistant_text("hi"));
@@ -2500,7 +2761,7 @@ mod tests {
     async fn compact_older_than_does_not_compact_leaf() {
         use crate::session::compaction::MechanicalCompactionStrategy;
 
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         session.append_user_message("hello");
         session.append_assistant_message(ChatMessage::assistant_text("hi"));
 
@@ -2525,7 +2786,7 @@ mod tests {
     async fn compact_older_than_errors_on_too_few_entries() {
         use crate::session::compaction::MechanicalCompactionStrategy;
 
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         // Only root entry — not enough to compact
         let strategy = MechanicalCompactionStrategy::new();
         let result = session.compact_older_than(1, &strategy).await;
@@ -2536,7 +2797,7 @@ mod tests {
     async fn compact_older_than_errors_when_threshold_not_exceeded() {
         use crate::session::compaction::MechanicalCompactionStrategy;
 
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         session.append_user_message("hi");
         session.append_assistant_message(ChatMessage::assistant_text("hello"));
 
@@ -2550,7 +2811,7 @@ mod tests {
     async fn compact_older_than_compacted_entries_still_in_tree() {
         use crate::session::compaction::MechanicalCompactionStrategy;
 
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let user_id = session.append_user_message("fix the bug");
         let asst_id = session.append_assistant_message(ChatMessage::assistant_text("ok"));
         session.append_user_message("read another file");
@@ -2573,7 +2834,7 @@ mod tests {
     async fn compact_older_than_first_kept_references_valid_entry() {
         use crate::session::compaction::MechanicalCompactionStrategy;
 
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         session.append_user_message("msg1");
         let asst_id = session.append_assistant_message(ChatMessage::assistant_text("reply1"));
         let last_user_id = session.append_user_message("msg2");
@@ -2652,7 +2913,7 @@ mod tests {
 
     #[test]
     fn write_and_read_custom_state_round_trips() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
 
         let state = DiagnosticsState {
             error_count: 3,
@@ -2678,7 +2939,7 @@ mod tests {
 
     #[test]
     fn read_custom_state_returns_none_on_kind_mismatch() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
 
         // Write as v1
         let state = DiagnosticsState {
@@ -2694,7 +2955,7 @@ mod tests {
 
     #[test]
     fn read_custom_state_returns_none_on_nonexistent_entry() {
-        let session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let fake_id = EntryId::new();
         let result: Option<DiagnosticsState> = session.read_custom_state(&fake_id);
         assert_eq!(result, None, "nonexistent entry should return None");
@@ -2702,7 +2963,7 @@ mod tests {
 
     #[test]
     fn read_custom_state_returns_none_on_wrong_payload_type() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
 
         // Write a CustomMessage (Full resolution), not a Custom (Attached)
         let id = session.append_custom_message(
@@ -2719,7 +2980,7 @@ mod tests {
 
     #[test]
     fn write_custom_state_multiple_entries_independent() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
 
         let state1 = DiagnosticsState {
             error_count: 1,
@@ -2742,7 +3003,7 @@ mod tests {
 
     #[test]
     fn write_and_read_custom_message_round_trips() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
 
         let summary = LintSummary {
             warnings: 5,
@@ -2767,7 +3028,7 @@ mod tests {
 
     #[test]
     fn read_custom_message_returns_none_on_kind_mismatch() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
 
         // Write as v1
         let summary = LintSummary {
@@ -2783,7 +3044,7 @@ mod tests {
 
     #[test]
     fn read_custom_message_returns_none_on_nonexistent_entry() {
-        let session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let fake_id = EntryId::new();
         let result: Option<LintSummary> = session.read_custom_message(&fake_id);
         assert_eq!(result, None, "nonexistent entry should return None");
@@ -2791,7 +3052,7 @@ mod tests {
 
     #[test]
     fn read_custom_message_returns_none_on_wrong_payload_type() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
 
         // Write a Custom (Attached), not a CustomMessage (Full)
         let id = session.append_custom_state(
@@ -2806,7 +3067,7 @@ mod tests {
 
     #[test]
     fn extension_entry_kind_versioning_produces_clean_break() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
 
         // Write v1
         let v1 = DiagnosticsState {
@@ -2840,7 +3101,7 @@ mod tests {
 
     #[test]
     fn custom_state_is_filtered_from_path_messages() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         session.append_user_message("hello");
 
         // Write a custom state entry (Attached resolution)
@@ -2860,7 +3121,7 @@ mod tests {
 
     #[test]
     fn custom_message_appears_in_path_messages() {
-        let mut session = Session::new("m", Some("sys"), vec![], "/tmp");
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         session.append_user_message("hello");
 
         // Write a custom message entry (Full resolution)
@@ -2914,5 +3175,453 @@ mod tests {
     fn extension_message_entry_from_empty_blocks_returns_none() {
         let result: Option<LintSummary> = LintSummary::from_content_blocks(&[]);
         assert_eq!(result, None, "empty blocks should return None");
+    }
+
+    // ── JSONL Persistence tests (Task 11) ────────────────────────────────────
+
+    use crate::session::persist::{JsonlLine, default_save_path, project_hash};
+    use std::path::Path;
+
+    #[test]
+    fn in_memory_session_has_no_save_path() {
+        let session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        assert!(
+            session.save_path().is_none(),
+            "in-memory session should have no save path"
+        );
+    }
+
+    #[test]
+    fn persisted_session_has_save_path() {
+        let session = Session::new("m", Some("sys"), vec![], "/tmp");
+        assert!(
+            session.save_path().is_some(),
+            "persisted session should have a save path"
+        );
+        let path = session.save_path().unwrap();
+        assert!(
+            path.to_string_lossy().contains("sessions"),
+            "save path should contain 'sessions' directory"
+        );
+        assert!(
+            path.extension().is_some_and(|e| e == "jsonl"),
+            "save path should have .jsonl extension"
+        );
+    }
+
+    #[test]
+    fn in_memory_flush_is_noop() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        // Should succeed even though there's no file
+        assert!(session.flush().is_ok());
+    }
+
+    #[test]
+    fn project_hash_is_stable() {
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path();
+        let hash1 = project_hash(cwd);
+        let hash2 = project_hash(cwd);
+        assert_eq!(hash1, hash2, "project hash should be stable");
+        assert_eq!(hash1.len(), 16, "project hash should be 16 chars");
+    }
+
+    #[test]
+    fn project_hash_differs_for_different_cwds() {
+        let dir1 = tempfile::tempdir().unwrap();
+        let dir2 = tempfile::tempdir().unwrap();
+        let hash1 = project_hash(dir1.path());
+        let hash2 = project_hash(dir2.path());
+        assert_ne!(
+            hash1, hash2,
+            "different CWDs should produce different hashes"
+        );
+    }
+
+    #[test]
+    fn project_hash_is_hex() {
+        let dir = tempfile::tempdir().unwrap();
+        let hash = project_hash(dir.path());
+        assert!(
+            hash.chars().all(|c| c.is_ascii_hexdigit()),
+            "project hash should be hex: {hash}"
+        );
+    }
+
+    #[test]
+    fn default_save_path_layout() {
+        let path = default_save_path(Path::new("/my/project"), "abc12345", 1_700_000_000);
+        let path_str = path.to_string_lossy();
+        // Should contain ~/.rho/sessions/<hash>/<timestamp>_<session-id>.jsonl
+        assert!(path_str.contains("sessions"));
+        assert!(path_str.contains("1700000000_abc12345.jsonl"));
+    }
+
+    #[test]
+    fn jsonl_line_header_round_trips() {
+        let header = JsonlLine::Header {
+            id: "abc12345".to_owned(),
+            version: 1,
+            created_at_secs: 1_700_000_000,
+            cwd: "/my/project".to_owned(),
+            parent_session: None,
+        };
+        let json = serde_json::to_string(&header).unwrap();
+        let back: JsonlLine = serde_json::from_str(&json).unwrap();
+        assert_eq!(header, back);
+    }
+
+    #[test]
+    fn jsonl_line_entry_round_trips() {
+        let entry = Entry {
+            id: EntryId::from("test1234"),
+            parent_id: None,
+            timestamp: std::time::SystemTime::UNIX_EPOCH,
+            resolution: EntryResolution::Full,
+            payload: EntryPayload::Message(ChatMessage::system_text("hello")),
+        };
+        let line = JsonlLine::Entry(entry.clone());
+        let json = serde_json::to_string(&line).unwrap();
+        let back: JsonlLine = serde_json::from_str(&json).unwrap();
+        assert_eq!(line, back);
+    }
+
+    #[test]
+    fn save_reopen_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test_session.jsonl");
+
+        // Create a session, add entries, and flush.
+        let mut session = Session::in_memory("test-model", Some("you are helpful"), vec![], "/tmp");
+        let root_id = session.leaf().unwrap();
+        let user_id = session.append_user_message("find the secret: TIGER-7742");
+        let _asst_id = session.append_assistant_message(ChatMessage::assistant_text("ok"));
+        let _user2_id = session.append_user_message("read another file");
+
+        // Manually set the save path and flushed count to simulate persistence.
+        // We can't use Session::new directly in tests because it writes to ~/.rho,
+        // so we use in_memory + manual flush.
+        session.persist.save_path = Some(path.clone());
+        session.persist.flushed_count = 0;
+
+        // Flush to disk
+        session.flush().unwrap();
+
+        // Verify the file exists
+        assert!(path.exists(), "session file should exist after flush");
+
+        // Read back
+        let reopened = Session::open(&path).unwrap();
+
+        // Verify header
+        assert_eq!(reopened.header().id, session.header().id);
+        assert_eq!(reopened.header().version, 1);
+        assert_eq!(reopened.header().cwd, PathBuf::from("/tmp"));
+
+        // Verify entries
+        assert_eq!(reopened.entry_count(), session.entry_count());
+
+        // Verify the leaf
+        assert_eq!(reopened.leaf(), session.leaf());
+
+        // Verify specific entries are accessible
+        assert!(reopened.entry(&root_id).is_some());
+        assert!(reopened.entry(&user_id).is_some());
+
+        // Verify entry content
+        let root_entry = reopened.entry(&root_id).unwrap();
+        assert!(matches!(root_entry.resolution, EntryResolution::Full));
+
+        let user_entry = reopened.entry(&user_id).unwrap();
+        if let EntryPayload::Message(ChatMessage::User { content }) = &user_entry.payload {
+            let ContentBlock::Text { text } = &content[0];
+            assert!(
+                text.contains("TIGER-7742"),
+                "user message content should survive round-trip"
+            );
+        } else {
+            panic!("expected User message");
+        }
+    }
+
+    #[test]
+    fn open_nonexistent_file_returns_error() {
+        let result = Session::open(Path::new("/nonexistent/path/session.jsonl"));
+        assert!(result.is_err(), "opening nonexistent file should fail");
+    }
+
+    #[test]
+    fn open_empty_file_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("empty.jsonl");
+        std::fs::write(&path, "").unwrap();
+        let result = Session::open(&path);
+        assert!(result.is_err(), "opening empty file should fail");
+    }
+
+    #[test]
+    fn open_file_with_only_header_returns_empty_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("header_only.jsonl");
+
+        // Write just a header line
+        let header = JsonlLine::Header {
+            id: "abc12345".to_owned(),
+            version: 1,
+            created_at_secs: 1_700_000_000,
+            cwd: "/tmp".to_owned(),
+            parent_session: None,
+        };
+        let json = serde_json::to_string(&header).unwrap();
+        std::fs::write(&path, format!("{json}\n")).unwrap();
+
+        let result = Session::open(&path);
+        // A header-only file has no entries — the session should be created
+        // but with an empty tree.
+        assert!(result.is_ok(), "header-only file should open");
+        let session = result.unwrap();
+        assert_eq!(session.entry_count(), 0);
+        assert!(session.leaf().is_none());
+    }
+
+    #[test]
+    fn flush_creates_parent_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("a").join("b").join("session.jsonl");
+
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        session.persist.save_path = Some(nested.clone());
+        session.persist.flushed_count = 0;
+
+        session.flush().unwrap();
+
+        assert!(nested.exists(), "flush should create parent directories");
+    }
+
+    #[test]
+    fn incremental_flush_appends_new_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("incremental.jsonl");
+
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        session.persist.save_path = Some(path.clone());
+        session.persist.flushed_count = 0;
+
+        // First flush writes the header + root entry
+        session.flush().unwrap();
+        let file_size_1 = std::fs::metadata(&path).unwrap().len();
+        assert!(file_size_1 > 0);
+
+        // Append a user message (in-memory, since we're not using auto-flush)
+        session.append_user_message("hello");
+        // Manually flush the new entry
+        session.flush().unwrap();
+        let file_size_2 = std::fs::metadata(&path).unwrap().len();
+        assert!(
+            file_size_2 > file_size_1,
+            "file should grow after appending entries"
+        );
+
+        // Read back and verify
+        let reopened = Session::open(&path).unwrap();
+        assert_eq!(reopened.entry_count(), 2, "should have system + user entry");
+    }
+
+    #[test]
+    fn resolution_levels_survive_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("resolution.jsonl");
+
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let _root_id = session.leaf().unwrap();
+        let user_id = session.append_user_message("find the secret: TIGER-7742");
+        let _asst_id = session.append_assistant_message(ChatMessage::assistant_text("ok"));
+
+        // Manually compact the user entry (simulate compaction)
+        if let Some(entry) = session.entries.get_mut(&user_id) {
+            entry.resolution = EntryResolution::Compacted {
+                into: EntryId::from("compaction"),
+            };
+        }
+
+        session.persist.save_path = Some(path.clone());
+        session.persist.flushed_count = 0;
+        session.flush().unwrap();
+
+        let reopened = Session::open(&path).unwrap();
+        let user_entry = reopened.entry(&user_id).unwrap();
+        assert!(
+            matches!(&user_entry.resolution, EntryResolution::Compacted { into } if *into == EntryId::from("compaction")),
+            "compacted resolution should survive round-trip"
+        );
+    }
+
+    #[test]
+    fn branch_operation_survives_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("branch.jsonl");
+
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let root_id = session.leaf().unwrap();
+        let _user_id = session.append_user_message("hello");
+        let _asst_id = session.append_assistant_message(ChatMessage::assistant_text("reply A"));
+
+        // Branch back to root
+        session.branch_to(&root_id).unwrap();
+
+        session.persist.save_path = Some(path.clone());
+        session.persist.flushed_count = 0;
+        session.flush().unwrap();
+
+        let reopened = Session::open(&path).unwrap();
+
+        // The leaf should be at the LeafMoved entry
+        let leaf_id = reopened.leaf().unwrap();
+        let leaf_entry = reopened.entry(&leaf_id).unwrap();
+        assert!(
+            matches!(leaf_entry.payload, EntryPayload::LeafMoved { .. }),
+            "leaf should be a LeafMoved entry after branch"
+        );
+    }
+
+    #[test]
+    fn all_payload_types_round_trip_via_jsonl() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("all_types.jsonl");
+
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let root_id = session.leaf().unwrap();
+        let user_id = session.append_user_message("hello");
+        let asst_id = session.append_assistant_message(ChatMessage::assistant_text("reply"));
+        session.append_label(root_id.clone(), Some("checkpoint".to_owned()));
+        session.append_custom_state("rho.test.v1".to_owned(), serde_json::json!({"count": 42}));
+        session.append_custom_message(
+            "rho.test-msg.v1".to_owned(),
+            vec![ContentBlock::Text {
+                text: "test message".to_owned(),
+            }],
+        );
+
+        // Append a compaction entry
+        let summary = CompactionSummary {
+            original_request: Some("hello".to_owned()),
+            tool_calls: std::collections::BTreeMap::new(),
+            tokens_compacted: 100,
+            entry_count: 2,
+            time_span: std::time::Duration::from_secs(10),
+            notes: None,
+        };
+        session.append_compaction(summary, asst_id.clone(), 200);
+
+        // Branch back and add a branch summary
+        session.branch_to(&user_id).unwrap();
+        let branch_summary = CompactionSummary {
+            original_request: None,
+            tool_calls: std::collections::BTreeMap::new(),
+            tokens_compacted: 50,
+            entry_count: 1,
+            time_span: std::time::Duration::from_secs(5),
+            notes: None,
+        };
+        session.append_branch_summary(branch_summary, EntryId::from("old_leaf"));
+
+        session.persist.save_path = Some(path.clone());
+        session.persist.flushed_count = 0;
+        session.flush().unwrap();
+
+        let reopened = Session::open(&path).unwrap();
+
+        // Verify all entries survived
+        assert_eq!(reopened.entry_count(), session.entry_count());
+
+        // Check specific entry types
+        let root_entry = reopened.entry(&root_id).unwrap();
+        assert!(matches!(
+            root_entry.payload,
+            EntryPayload::Message(ChatMessage::System { .. })
+        ));
+
+        let user_entry = reopened.entry(&user_id).unwrap();
+        assert!(matches!(
+            user_entry.payload,
+            EntryPayload::Message(ChatMessage::User { .. })
+        ));
+
+        let asst_entry = reopened.entry(&asst_id).unwrap();
+        assert!(matches!(
+            asst_entry.payload,
+            EntryPayload::Message(ChatMessage::Assistant { .. })
+        ));
+    }
+
+    #[test]
+    fn in_memory_session_flush_does_nothing() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        session.append_user_message("hello");
+
+        // flush should be a no-op for in-memory sessions
+        assert!(session.flush().is_ok());
+        assert!(session.save_path().is_none());
+    }
+
+    #[test]
+    fn jsonl_line_discriminant_tags() {
+        // Verify the `type` tag is present and correct in serialized form
+        let header = JsonlLine::Header {
+            id: "abc".to_owned(),
+            version: 1,
+            created_at_secs: 0,
+            cwd: "/tmp".to_owned(),
+            parent_session: None,
+        };
+        let json = serde_json::to_string(&header).unwrap();
+        assert!(
+            json.contains("\"type\":\"Header\""),
+            "Header should have type tag: {json}"
+        );
+
+        let entry = Entry {
+            id: EntryId::from("test1234"),
+            parent_id: None,
+            timestamp: std::time::SystemTime::UNIX_EPOCH,
+            resolution: EntryResolution::Full,
+            payload: EntryPayload::Message(ChatMessage::system_text("hello")),
+        };
+        let entry_line = JsonlLine::Entry(entry);
+        let json = serde_json::to_string(&entry_line).unwrap();
+        assert!(
+            json.contains("\"type\":\"Entry\""),
+            "Entry should have type tag: {json}"
+        );
+    }
+
+    #[test]
+    fn auto_flush_writes_on_append() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("auto_flush.jsonl");
+
+        // Use Session::new which has auto-flush enabled.
+        // We need a temp dir for the CWD so the session path is writable.
+        let cwd = dir.path();
+
+        let mut session = Session::new("m", Some("sys"), vec![], cwd);
+        // Redirect save path to our temp location
+        session.persist.save_path = Some(path.clone());
+        // Reset flushed_count since we changed the path after initial auto-flush
+        // (the initial root entry was auto-flushed to the original path)
+        session.persist.flushed_count = 0;
+
+        session.append_user_message("hello");
+
+        // Auto-flush should have written to disk
+        assert!(path.exists(), "auto-flush should create the file");
+
+        // Read back and verify
+        let reopened = Session::open(&path).unwrap();
+        assert!(
+            reopened.entry_count() >= 2,
+            "should have system + user entries, got {}",
+            reopened.entry_count()
+        );
     }
 }

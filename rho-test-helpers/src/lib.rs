@@ -22,8 +22,8 @@
 
 use async_trait::async_trait;
 use rho_core::{
-    ChatClient, ChatRequest, ModelResponse, RhoError, SandboxRoot, ShellExecutor, ShellOutput,
-    TrustStore, approval::ApprovalGate, message::ModelToolCall, tool::ToolRisk,
+    ChatClient, ChatRequest, ModelResponse, RhoError, SandboxRoot, Session, ShellExecutor,
+    ShellOutput, TrustStore, approval::ApprovalGate, message::ModelToolCall, tool::ToolRisk,
 };
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -510,4 +510,17 @@ pub fn detect_shell() -> Option<&'static str> {
 /// circular dev-dependency).
 fn which_exists(name: &str) -> bool {
     which::which(name).is_ok()
+}
+
+// ── Session helpers ──────────────────────────────────────────────────────────
+
+/// Create an in-memory session suitable for testing.
+///
+/// Uses [`Session::in_memory`] so no disk I/O occurs. The model is set to
+/// `"mock"` and the CWD to `/tmp`.
+///
+/// If `system_prompt` is `None`, a default `"you are a test assistant"` is used.
+pub fn in_memory_session(system_prompt: Option<&str>, tools: Vec<rho_core::ToolSchema>) -> Session {
+    let prompt = system_prompt.unwrap_or("you are a test assistant");
+    Session::in_memory("mock", Some(prompt), tools, "/tmp")
 }

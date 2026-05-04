@@ -6,9 +6,10 @@
 
 use crate::approval::{ApprovalGate, ApprovalPolicy, DefaultApprovalPolicy};
 use crate::client::ChatClient;
-use crate::conversation::{AssistantResponse, Conversation};
+use crate::conversation::AssistantResponse;
 use crate::error::{Result, RhoError};
 use crate::newtypes::ToolCallId;
+use crate::session::Session;
 use crate::tool::{CancellationToken, Tool, ToolRegistry, ToolResult};
 use tracing::{debug, error, info, warn};
 
@@ -184,7 +185,7 @@ impl AgentConfig {
 #[tracing::instrument(skip_all, fields(input_len = message.len()))]
 #[allow(unused_variables, unused_assignments)]
 pub async fn run_loop(
-    conversation: &mut Conversation,
+    session: &mut Session,
     message: &str,
     client: &dyn ChatClient,
     registry: &ToolRegistry,
@@ -192,7 +193,7 @@ pub async fn run_loop(
     cancel: CancellationToken,
     gate: &dyn ApprovalGate,
 ) -> Result<String> {
-    conversation.push_user_text(message);
+    session.append_user_message(message);
 
     // `state` is the observable agent state. The assignments below are
     // intentional architectural stubs: Phase 4 will wire a state-change channel
@@ -215,7 +216,7 @@ pub async fn run_loop(
             return Err(RhoError::Cancelled);
         }
 
-        let response = send_with_retry(conversation, client, config).await?;
+        let response = send_with_retry(session, client, config).await?;
 
         iterations += 1;
         if iterations > config.max_iterations {
@@ -238,7 +239,7 @@ pub async fn run_loop(
                 }
 
                 // Execute each tool call sequentially. All results are appended
-                // before the conversation is re-sent to the model on the next
+                // before the session is re-sent to the model on the next
                 // loop iteration.
                 for call in calls {
                     if cancel.is_cancelled() {
@@ -259,7 +260,7 @@ pub async fn run_loop(
                         let approved = gate.request_approval(&call, risk).await;
                         if !approved {
                             debug!(tool_name = %call.function.name, action = "denied");
-                            conversation.push_tool_result(
+                            session.append_tool_result(
                                 call_id,
                                 &ToolResult::error("Tool call denied by user."),
                             );
@@ -271,7 +272,7 @@ pub async fn run_loop(
                     // ── ExecutingTool ─────────────────────────────────────────
                     state = AgentState::ExecutingTool;
                     let result = registry.execute(&call, cancel.clone()).await?;
-                    conversation.push_tool_result(call_id, &result);
+                    session.append_tool_result(call_id, &result);
                     state = AgentState::Thinking;
                 }
             }
@@ -286,14 +287,14 @@ pub async fn run_loop(
 /// Returns [`RhoError::RetryBudgetExhausted`] when the retry budget is exceeded.
 /// Returns any non-retryable [`RhoError`] immediately.
 async fn send_with_retry(
-    conversation: &mut Conversation,
+    session: &mut Session,
     client: &dyn ChatClient,
     config: &AgentConfig,
 ) -> Result<AssistantResponse> {
     let mut attempts = 0u32;
     let mut last_error: Option<RhoError> = None;
     loop {
-        match conversation.send_current(client).await {
+        match session.send_current(client).await {
             Ok(r) => return Ok(r),
             Err(e) => match TransitionError::from_error(e) {
                 TransitionError::Retryable(re) if attempts < config.retry_budget => {

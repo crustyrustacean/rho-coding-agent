@@ -4,7 +4,7 @@
 //! is required.
 
 use rho_core::{
-    AgentConfig, ChatMessage, ContentBlock, ContextManager, Conversation, RhoError, ToolCallId,
+    AgentConfig, ChatMessage, ContentBlock, ContextManager, RhoError, Session, ToolCallId,
     ToolName, ToolOutcome, ToolRegistry, ToolResult, ToolRisk,
     agent::run_loop,
     message::{ModelToolCall, ToolCallFunction},
@@ -219,10 +219,10 @@ async fn assistant_tool_call_message_persisted_before_tool_result() {
 
     let registry = echo_registry("echo_tool", "echo output");
     let config = AgentConfig::default();
-    let mut conv = Conversation::new("mock", None, registry.tool_schemas());
+    let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
 
     let result = run_loop(
-        &mut conv,
+        &mut session,
         "do something",
         &client,
         &registry,
@@ -300,10 +300,10 @@ async fn multiple_tool_calls_executed_sequentially() {
     }));
 
     let config = AgentConfig::default();
-    let mut conv = Conversation::new("mock", None, registry.tool_schemas());
+    let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
 
     let result = run_loop(
-        &mut conv,
+        &mut session,
         "do two things",
         &client,
         &registry,
@@ -374,10 +374,10 @@ async fn multi_tool_call_persistence_invariant() {
 
     let registry = echo_registry("echo_tool", "echo");
     let config = AgentConfig::default();
-    let mut conv = Conversation::new("mock", None, registry.tool_schemas());
+    let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
 
     let _ = run_loop(
-        &mut conv,
+        &mut session,
         "do two things",
         &client,
         &registry,
@@ -443,10 +443,10 @@ async fn mixed_approval_with_multi_tool_call() {
     registry.register(Box::new(WriteEchoTool));
 
     let config = AgentConfig::default(); // DefaultApprovalPolicy: Read auto, Write needs approval
-    let mut conv = Conversation::new("mock", None, registry.tool_schemas());
+    let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
 
     let result = run_loop(
-        &mut conv,
+        &mut session,
         "read then write",
         &client,
         &registry,
@@ -557,10 +557,10 @@ async fn all_tool_calls_denied_still_feeds_results_and_resends() {
     registry.register(Box::new(WriteEchoTool));
 
     let config = AgentConfig::default();
-    let mut conv = Conversation::new("mock", None, registry.tool_schemas());
+    let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
 
     let result = run_loop(
-        &mut conv,
+        &mut session,
         "write two files",
         &client,
         &registry,
@@ -615,7 +615,7 @@ async fn cancellation_between_tool_calls_in_batch() {
     registry.register(Box::new(SlowTool));
 
     let config = AgentConfig::default();
-    let mut conv = Conversation::new("mock", None, registry.tool_schemas());
+    let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
 
     // Cancel after 150ms — the SlowTool runs 20 × 50ms = 1000ms polling loop.
     // The first tool will observe the cancellation and return early.
@@ -626,7 +626,7 @@ async fn cancellation_between_tool_calls_in_batch() {
     });
 
     let err = run_loop(
-        &mut conv,
+        &mut session,
         "do two things",
         &client,
         &registry,
@@ -643,7 +643,7 @@ async fn cancellation_between_tool_calls_in_batch() {
     );
 
     // The first tool result (cancelled) should be in conversation history.
-    let msgs = conv.messages();
+    let msgs = session.path_messages();
     let has_cancelled_result = msgs.iter().any(|m| {
         matches!(m, ChatMessage::Tool { content, .. } if content.iter().any(
             |b| matches!(b, ContentBlock::Text { text } if text.contains("cancelled"))
@@ -667,10 +667,10 @@ async fn empty_tool_calls_vec_returns_error() {
 
     let registry = ToolRegistry::new();
     let config = AgentConfig::default();
-    let mut conv = Conversation::new("mock", None, vec![]);
+    let mut session = Session::in_memory("mock", None, vec![], "/tmp");
 
     let err = run_loop(
-        &mut conv,
+        &mut session,
         "hello",
         &client,
         &registry,
@@ -706,10 +706,10 @@ async fn iteration_count_includes_multi_tool_call_response() {
         max_iterations: 5,
         ..AgentConfig::default()
     };
-    let mut conv = Conversation::new("mock", None, registry.tool_schemas());
+    let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
 
     let err = run_loop(
-        &mut conv,
+        &mut session,
         "loop forever",
         &client,
         &registry,
@@ -741,10 +741,10 @@ async fn loop_terminates_after_max_iterations() {
         max_iterations: 5,
         ..AgentConfig::default()
     };
-    let mut conv = Conversation::new("mock", None, registry.tool_schemas());
+    let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
 
     let err = run_loop(
-        &mut conv,
+        &mut session,
         "loop forever",
         &client,
         &registry,
@@ -774,10 +774,10 @@ async fn non_retryable_error_propagates_immediately() {
         initial_backoff_ms: 0,
         ..AgentConfig::default()
     };
-    let mut conv = Conversation::new("mock", None, vec![]);
+    let mut session = Session::in_memory("mock", None, vec![], "/tmp");
 
     let err = run_loop(
-        &mut conv,
+        &mut session,
         "hello",
         &client,
         &registry,
@@ -857,10 +857,10 @@ async fn retry_budget_exhausted_on_transient_errors() {
         initial_backoff_ms: 0, // no delay in tests
         ..AgentConfig::default()
     };
-    let mut conv = Conversation::new("mock", None, vec![]);
+    let mut session = Session::in_memory("mock", None, vec![], "/tmp");
 
     let err = run_loop(
-        &mut conv,
+        &mut session,
         "hello",
         &client,
         &registry,
@@ -897,10 +897,10 @@ async fn retry_succeeds_after_transient_error() {
         initial_backoff_ms: 0, // no delay in tests
         ..AgentConfig::default()
     };
-    let mut conv = Conversation::new("mock", None, vec![]);
+    let mut session = Session::in_memory("mock", None, vec![], "/tmp");
 
     let result = run_loop(
-        &mut conv,
+        &mut session,
         "hello",
         &client,
         &registry,
@@ -1012,10 +1012,10 @@ async fn cancellation_checked_at_top_of_loop() {
     registry.register(Box::new(SlowTool));
 
     let config = AgentConfig::default();
-    let mut conv = Conversation::new("mock", None, registry.tool_schemas());
+    let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
 
     let err = run_loop(
-        &mut conv,
+        &mut session,
         "do it",
         &client,
         &registry,
@@ -1054,12 +1054,12 @@ async fn cancellation_propagates_into_running_tool() {
     registry.register(Box::new(SlowTool));
 
     let config = AgentConfig::default();
-    let mut conv = Conversation::new("mock", None, registry.tool_schemas());
+    let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
 
     // The loop should exit with a cancellation error. The token is still
     // set when the loop re-enters Thinking after the tool returned.
     let err = run_loop(
-        &mut conv,
+        &mut session,
         "do it",
         &client,
         &registry,
@@ -1078,7 +1078,7 @@ async fn cancellation_propagates_into_running_tool() {
     // The key assertion: the tool result (cancelled) was fed back into
     // conversation history before the loop exited. This proves cancellation
     // propagated *into* the running tool, not just at the top-of-loop check.
-    let msgs = conv.messages();
+    let msgs = session.path_messages();
     let has_cancelled_tool_result = msgs.iter().any(|m| {
         matches!(m, ChatMessage::Tool { content, .. } if content.iter().any(
             |b| matches!(b, ContentBlock::Text { text } if text.contains("cancelled"))
@@ -1126,27 +1126,28 @@ async fn local_chat_client_returns_http_error_when_server_unreachable() {
 #[test]
 fn base_prompt_used_as_default_system_message() {
     let prompt = rho_core::base_prompt();
-    let conv = Conversation::new("model", Some(prompt), vec![]);
-    assert_eq!(conv.system_prompt(), Some(prompt));
+    let session = Session::in_memory("model", Some(prompt), vec![], "/tmp");
+    assert_eq!(session.system_prompt(), Some(prompt));
 }
 
 #[test]
 fn conversation_default_token_budget_is_32k() {
     use rho_core::context::TokenBudget;
-    let conv = Conversation::new("model", None, vec![]);
+    let session = Session::in_memory("model", None, vec![], "/tmp");
     // Conversation uses TokenBudget::default() which is now 32K.
     // We verify by checking that the context manager's fit method
     // retains all messages when they're well under 32K tokens.
-    let messages = conv.messages();
+    let messages = session.path_messages();
     let cm = rho_core::SlidingWindowContextManager::new();
-    let fitted = cm.fit(messages, TokenBudget::default());
+    let fitted = cm.fit(&messages, TokenBudget::default());
     assert_eq!(fitted.len(), messages.len());
 }
 
 #[test]
 fn conversation_with_custom_token_budget() {
     use rho_core::context::TokenBudget;
-    let _conv = Conversation::new("model", None, vec![]).with_token_budget(TokenBudget::new(1024));
+    let _conv =
+        Session::in_memory("model", None, vec![], "/tmp").with_token_budget(TokenBudget::new(1024));
     // Verify the budget is applied by constructing a conversation that
     // would overflow 1024 tokens.
     let prompt = "a".repeat(5000); // ~1,250 tokens — exceeds 1024
@@ -1206,8 +1207,8 @@ fn compact_prompt_sha256_is_pinned() {
 
 #[test]
 fn custom_system_overrides_base_prompt() {
-    let conv = Conversation::new("model", Some("custom system"), vec![]);
-    assert_eq!(conv.system_prompt(), Some("custom system"));
+    let session = Session::in_memory("model", Some("custom system"), vec![], "/tmp");
+    assert_eq!(session.system_prompt(), Some("custom system"));
 }
 
 // ── Task 12: Egress enforcement in LocalChatClient ─────────────────────────────
