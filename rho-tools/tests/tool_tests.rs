@@ -422,7 +422,7 @@ async fn run_command_warns_on_cd_with_dotdot() {
     // but the output should include a warning prefix.
     let output = immediate_output(&outcome);
     assert!(
-        output.contains("[WARNING"),
+        output.contains("fresh process"),
         "output should contain working directory warning: {output}"
     );
 }
@@ -443,7 +443,7 @@ async fn run_command_warns_on_set_location_with_dotdot() {
 
     let output = immediate_output(&outcome);
     assert!(
-        output.contains("[WARNING"),
+        output.contains("fresh process"),
         "output should contain working directory warning: {output}"
     );
 }

@@ -193,6 +193,30 @@ async fn main() -> Result<()> {
         eprintln!("resuming session from: {}", path.display());
         let mut s =
             Session::open(path).map_err(|e| anyhow::anyhow!("failed to open session: {e}"))?;
+
+        // Detect stale CWD: the session was created in a different directory
+        // than the current one. Tools use the current sandbox root, so the
+        // model should be told the truth.
+        let session_cwd = s.header().cwd.clone();
+        let current_cwd = sandbox.path();
+        if session_cwd != current_cwd {
+            if !session_cwd.as_os_str().is_empty() && !session_cwd.exists() {
+                eprintln!(
+                    "warning: session's working directory no longer exists\n  \
+  session: {}\n  current: {}\n  continuing with current directory",
+                    session_cwd.display(),
+                    current_cwd.display()
+                );
+            } else {
+                eprintln!(
+                    "warning: session was created in a different directory\n  \
+  session: {}\n  current: {}\n  continuing with current directory",
+                    session_cwd.display(),
+                    current_cwd.display()
+                );
+            }
+        }
+
         // Apply the resolved model, budget, redactor, and tools
         s.set_model(&model);
         s.set_token_budget(token_budget);
@@ -335,22 +359,43 @@ async fn resolve_model(
 }
 
 /// Load the system prompt from CLI override or project context files.
+///
+/// Appends the project root as the model's working directory so the model
+/// knows its absolute path and that each `run_command` starts a fresh
+/// process (i.e. `cd` does not persist between commands).
 fn load_system_prompt(sandbox: &SandboxRoot, cli: &Cli) -> String {
-    if let Some(custom) = &cli.system {
-        return custom.clone();
-    }
-    let prompt_base = if cli.compact {
-        compact_prompt()
+    let mut prompt = if let Some(custom) = &cli.system {
+        custom.clone()
     } else {
-        base_prompt()
+        let prompt_base = if cli.compact {
+            compact_prompt()
+        } else {
+            base_prompt()
+        };
+        let mut trust_store = TrustStore::load_default();
+        let scanner = ContextScanner::new(sandbox);
+        let mut stdout = io::stdout();
+        let stdin = io::stdin();
+        let mut stdin_locked = stdin.lock();
+        let context_files = scanner.run(&mut trust_store, &mut stdin_locked, &mut stdout);
+        compose_system_prompt(prompt_base, &context_files)
     };
-    let mut trust_store = TrustStore::load_default();
-    let scanner = ContextScanner::new(sandbox);
-    let mut stdout = io::stdout();
-    let stdin = io::stdin();
-    let mut stdin_locked = stdin.lock();
-    let context_files = scanner.run(&mut trust_store, &mut stdin_locked, &mut stdout);
-    compose_system_prompt(prompt_base, &context_files)
+
+    // Append the working directory so the model knows its absolute path.
+    // Each run_command starts a fresh process in this directory —
+    // cd / Set-Location does not persist between invocations.
+    let root = sandbox.path().display();
+    #[allow(clippy::format_push_string)]
+    prompt.push_str(&format!(
+        "\n\n# Environment\n\n\
+         - Working directory (project root): `{root}`\n\
+         - All relative file paths and shell commands resolve from this directory.\n\
+         - Each `run_command` invocation starts a fresh process in this directory.\n\
+           `cd` and `Set-Location` do not persist between commands — include the\n\
+           full relative path from the project root in every command."
+    ));
+
+    prompt
 }
 
 /// Display a consent warning and read confirmation for external providers.

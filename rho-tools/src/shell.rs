@@ -411,12 +411,8 @@ impl Tool for RunCommand {
             format!("{}\nstderr:\n{}", shell_output.stdout, shell_output.stderr)
         };
 
-        // 4. Working directory escape warning.
-        let warning = if command_attempts_directory_escape(&command) {
-            Some("[WARNING: command may navigate outside project directory]\n".to_owned())
-        } else {
-            None
-        };
+        // 4. Ephemeral cd warning.
+        let warning = cd_warning(&command).map(str::to_owned);
 
         let result = if shell_output.is_success() {
             ToolResult::success(format!(
@@ -481,32 +477,43 @@ fn is_path_char(ch: char) -> bool {
 
 // ── Working directory escape detection ────────────────────────────────────────
 
-/// Detect if a command attempts to change directory outside the project root.
+/// Detect if a command attempts to change the working directory.
 ///
-/// Checks for `cd ..` and `Set-Location ..` patterns. This is a best-effort
-/// heuristic — it catches the obvious cases but cannot detect all escape
-/// techniques (e.g., `Push-Location ..`, environment variable expansion, etc.).
-/// The approval gate is the primary defense.
-fn command_attempts_directory_escape(command: &str) -> bool {
+/// Returns `Some(warning)` if the command contains `cd`, `Set-Location`, or
+/// `Push-Location`. Every `run_command` starts a fresh process in the project
+/// root, so directory changes are ephemeral — this warning tells the model
+/// to include full paths in every command.
+///
+/// This is a best-effort heuristic — it catches the common cases but cannot
+/// detect every possible escape technique (environment variable expansion,
+/// indirection via aliases, etc.). The approval gate is the primary defense.
+fn cd_warning(command: &str) -> Option<&'static str> {
+    const NOTE: &str = "[NOTE: each run_command starts a fresh process in the project root. \
+\ncd and Set-Location do not persist between commands. \
+\nInclude the full relative path from the project root in every command.]\n";
+
     let lower = command.to_lowercase();
 
-    // Check for `cd ..` or `Set-Location ..` patterns.
-    // Match: "cd ..", "cd  ..", "cd\t..", "Set-Location .."
+    // Check for `cd`, `Set-Location`, or `Push-Location` patterns.
+    // Match: "cd src", "cd ..", "Set-Location rho-core/src", etc.
     if let Some(pos) = lower.find("cd ") {
+        // Avoid matching cmdlets that happen to start with "cd" (unlikely
+        // but defensive). "cd " followed by something is always a cd invocation.
         let after = lower[pos + 3..].trim_start();
-        if after.starts_with("..") {
-            return true;
+        if !after.is_empty() {
+            return Some(NOTE);
         }
     }
 
-    if let Some(pos) = lower.find("set-location ") {
-        let after = lower[pos + 13..].trim_start();
-        if after.starts_with("..") {
-            return true;
-        }
+    if lower.contains("set-location ") {
+        return Some(NOTE);
     }
 
-    false
+    if lower.contains("push-location ") {
+        return Some(NOTE);
+    }
+
+    None
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -762,41 +769,62 @@ mod tests {
         assert_eq!(normalize_path_separators("cd src/"), "cd src\\");
     }
 
-    // ── Working directory escape detection ─────────────────────────────────
+    // ── cd warning detection ─────────────────────────────────────────────
 
     #[test]
-    fn detects_cd_dotdot() {
-        assert!(command_attempts_directory_escape("cd .."));
+    fn warns_on_cd_dotdot() {
+        assert!(cd_warning("cd ..").is_some());
     }
 
     #[test]
-    fn detects_cd_dotdot_with_path() {
-        assert!(command_attempts_directory_escape("cd ../other"));
+    fn warns_on_cd_dotdot_with_path() {
+        assert!(cd_warning("cd ../other").is_some());
     }
 
     #[test]
-    fn detects_set_location_dotdot() {
-        assert!(command_attempts_directory_escape("Set-Location .."));
+    fn warns_on_cd_subdirectory() {
+        assert!(cd_warning("cd src").is_some());
     }
 
     #[test]
-    fn detects_set_location_dotdot_case_insensitive() {
-        assert!(command_attempts_directory_escape("set-location .."));
+    fn warns_on_cd_absolute_path() {
+        assert!(cd_warning("cd C:\\Users").is_some());
     }
 
     #[test]
-    fn no_escape_for_cd_subdirectory() {
-        assert!(!command_attempts_directory_escape("cd src"));
+    fn warns_on_set_location() {
+        assert!(cd_warning("Set-Location ..").is_some());
     }
 
     #[test]
-    fn no_escape_for_cd_absolute_path() {
-        // cd to an absolute path isn't a ".." escape — it's a different concern.
-        assert!(!command_attempts_directory_escape("cd C:\\Users"));
+    fn warns_on_set_location_subdirectory() {
+        assert!(cd_warning("Set-Location rho-core/src").is_some());
     }
 
     #[test]
-    fn no_escape_for_regular_command() {
-        assert!(!command_attempts_directory_escape("Get-ChildItem"));
+    fn warns_on_set_location_case_insensitive() {
+        assert!(cd_warning("set-location ..").is_some());
+    }
+
+    #[test]
+    fn warns_on_push_location() {
+        assert!(cd_warning("Push-Location src").is_some());
+    }
+
+    #[test]
+    fn no_warning_for_regular_command() {
+        assert!(cd_warning("Get-ChildItem").is_none());
+    }
+
+    #[test]
+    fn no_warning_for_cargo_check() {
+        assert!(cd_warning("cargo check").is_none());
+    }
+
+    #[test]
+    fn warning_contains_use_full_paths() {
+        let note = cd_warning("cd src").unwrap();
+        assert!(note.contains("full relative path"));
+        assert!(note.contains("fresh process"));
     }
 }
