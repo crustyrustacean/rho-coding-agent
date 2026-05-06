@@ -754,6 +754,11 @@ async fn edit_file_old_text_not_found_returns_error() {
         output.contains("not found"),
         "expected 'not found' in: {output}"
     );
+    // Plain text should NOT trigger the regex hint.
+    assert!(
+        !output.contains("Hint"),
+        "plain-text miss should not contain a regex hint: {output}"
+    );
 
     // File should be unchanged.
     assert_eq!(fs::read_to_string(&path).unwrap(), "fn main() {}");
@@ -915,6 +920,100 @@ async fn edit_file_deletion_with_empty_new_text() {
 
     assert!(!immediate_is_error(&outcome));
     assert_eq!(fs::read_to_string(&path).unwrap(), "line1\nline3");
+}
+
+// ── EditFile: regex-pattern hint diagnostics ─────────────────────────────────
+
+#[tokio::test]
+async fn edit_file_regex_old_text_shows_hint() {
+    let (dir, root) = setup();
+    let path = dir.path().join("code.rs");
+    fs::write(&path, "fn main() {\n    println!(\"hello\");\n}").unwrap();
+
+    let tool = EditFile { root };
+    // Simulate the exact class of mistake from the failing session:
+    // the model sends regex-like \s* and \n instead of literal text.
+    let args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": [{
+            "old_text": r#"fn main() {\s*println!("hello");\n}"#,
+            "new_text": "replacement"
+        }]
+    });
+    let outcome = tool.execute(args, CancellationToken::new()).await.unwrap();
+
+    assert!(immediate_is_error(&outcome));
+    let output = immediate_output(&outcome);
+    assert!(
+        output.contains("not found"),
+        "expected 'not found' in: {output}"
+    );
+    assert!(
+        output.contains("Hint"),
+        "regex old_text should trigger a hint: {output}"
+    );
+    assert!(
+        output.contains(r"\s*"),
+        "hint should mention the offending pattern: {output}"
+    );
+    assert!(
+        output.contains("not a regex"),
+        "hint should tell the model it's not a regex: {output}"
+    );
+
+    // File should be unchanged.
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "fn main() {\n    println!(\"hello\");\n}"
+    );
+}
+
+/// Reproducer for the exact failure shape from session `1778102100_a57ac869`:
+/// the model sends `old_text` full of `\n` and `\s*` escape sequences.
+#[tokio::test]
+async fn edit_file_session_reproducer_regex_loop() {
+    let (dir, root) = setup();
+    let path = dir.path().join("main.rs");
+    let real_content = "\
+fn main() {
+    greet_user();
+}
+
+fn greet_user() {
+    println!(\"What is your name?\\n\");
+    let mut name = String::new();
+    std::io::stdin().read_line(&mut name).expect(\"Failed to read line\");
+    let name = name.trim();
+    println!(\"Hello, {}!\", name);
+}";
+    fs::write(&path, real_content).unwrap();
+
+    let tool = EditFile { root };
+    // This is a representative substring of the model's actual payload:
+    // escaped \n and \s* instead of literal whitespace.
+    let args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": [{
+            "old_text": r#"fn greet_user() {\n\s*println!("What is your name?\\n");"#,
+            "new_text": "fn greet_user() { /* replaced */ }"
+        }]
+    });
+    let outcome = tool.execute(args, CancellationToken::new()).await.unwrap();
+
+    assert!(immediate_is_error(&outcome));
+    let output = immediate_output(&outcome);
+    assert!(
+        output.contains("not found"),
+        "expected 'not found' in: {output}"
+    );
+    assert!(output.contains("Hint"), "should show regex hint: {output}");
+    assert!(
+        output.contains(r"\s*") || output.contains(r"\n"),
+        "hint should identify the regex patterns: {output}"
+    );
+
+    // File must be untouched.
+    assert_eq!(fs::read_to_string(&path).unwrap(), real_content);
 }
 
 // ── CommandDenylist::from_config ───────────────────────────────────────────────

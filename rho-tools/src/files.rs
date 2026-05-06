@@ -344,6 +344,8 @@ impl Tool for EditFile {
     fn description(&self) -> &str {
         "Apply targeted exact-match replacements to a file within the project. \
          Each edit specifies old_text to find and new_text to replace it with. \
+         old_text must be an exact character-for-character copy of the text in the file, \
+         including whitespace and newlines — it is NOT a regex or pattern. \
          All old_text occurrences must be unique (exactly one match each) and \
          edits must not overlap. The file is not modified if any edit fails validation."
     }
@@ -364,7 +366,10 @@ impl Tool for EditFile {
                         "properties": {
                             "old_text": {
                                 "type": "string",
-                                "description": "The exact text to find in the file."
+                                "description": "The exact literal text to find in the file. \
+                                    Must match character-for-character including whitespace \
+                                    and newlines. Not a regex — do not use \\s, .*, or \
+                                    escape sequences for whitespace."
                             },
                             "new_text": {
                                 "type": "string",
@@ -440,8 +445,19 @@ impl Tool for EditFile {
             let occurrences: Vec<_> = content.match_indices(&edit.old_text).collect();
             match occurrences.len() {
                 0 => {
+                    let hint = detect_regex_patterns(&edit.old_text).map_or_else(
+                        String::new,
+                        |patterns| {
+                            format!(
+                                " Hint: old_text contains regex-like patterns ({patterns}). \
+                                 old_text must be an exact character-for-character match \
+                                 of the file content, not a regex. Use read_file to see \
+                                 the exact content, then copy the literal text."
+                            )
+                        },
+                    );
                     return Ok(ToolOutcome::Immediate(ToolResult::error(format!(
-                        "edit_file: old_text not found in `{path_str}`: {:?}",
+                        "edit_file: old_text not found in `{path_str}`: {:?}{hint}",
                         truncate_for_error(&edit.old_text, 80)
                     ))));
                 }
@@ -495,6 +511,33 @@ impl Tool for EditFile {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/// Detect common regex metacharacter patterns in `old_text`.
+///
+/// Returns a comma-separated list of the regex-like tokens found, or `None`
+/// if the text looks like a plausible literal string. This is a best-effort
+/// heuristic — false positives are acceptable because the result is only
+/// used in a diagnostic hint, not to block the operation.
+fn detect_regex_patterns(text: &str) -> Option<String> {
+    /// Patterns that virtually never appear in literal source code but are
+    /// common when a model mistakenly treats `old_text` as a regex.
+    const REGEX_TOKENS: &[&str] = &[
+        r"\s*", r"\s+", r"\d+", r"\d*", r"\w+", r"\w*", r"\n", r"\t", r"\r", r".+", r".*",
+    ];
+
+    let mut found: Vec<&str> = Vec::new();
+    for token in REGEX_TOKENS {
+        if text.contains(token) && !found.contains(token) {
+            found.push(token);
+        }
+    }
+
+    if found.is_empty() {
+        None
+    } else {
+        Some(found.join(", "))
+    }
+}
+
 /// Truncate `text` to `max_len` characters for inclusion in error messages.
 ///
 /// Appends "…" if truncation occurred.
@@ -510,6 +553,8 @@ fn truncate_for_error(text: &str, max_len: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── truncate_for_error ────────────────────────────────────────────────
 
     #[test]
     fn truncate_short_text_unchanged() {
@@ -531,5 +576,133 @@ mod tests {
     #[test]
     fn truncate_empty() {
         assert_eq!(truncate_for_error("", 10), "");
+    }
+
+    // ── detect_regex_patterns ─────────────────────────────────────────────
+
+    #[test]
+    fn detect_regex_finds_backslash_s_star() {
+        let text = r"fn foo() {\s*bar()}";
+        let result = detect_regex_patterns(text);
+        assert!(result.is_some(), "should detect \\s*");
+        assert!(result.unwrap().contains(r"\s*"));
+    }
+
+    #[test]
+    fn detect_regex_finds_backslash_n() {
+        let text = r"line1\nline2";
+        let result = detect_regex_patterns(text);
+        assert!(result.is_some(), "should detect \\n");
+        assert!(result.unwrap().contains(r"\n"));
+    }
+
+    #[test]
+    fn detect_regex_finds_multiple_patterns() {
+        let text = r"fn foo() {\s*bar()\n}";
+        let result = detect_regex_patterns(text);
+        assert!(result.is_some());
+        let found = result.unwrap();
+        assert!(found.contains(r"\s*"), "should detect \\s*");
+        assert!(found.contains(r"\n"), "should detect \\n");
+    }
+
+    #[test]
+    fn detect_regex_clean_literal_text() {
+        let text = "fn main() {\n    println!(\"hello\");\n}";
+        let result = detect_regex_patterns(text);
+        assert!(
+            result.is_none(),
+            "literal newlines should not trigger detection"
+        );
+    }
+
+    #[test]
+    fn detect_regex_empty_text() {
+        assert!(detect_regex_patterns("").is_none());
+    }
+
+    #[test]
+    fn detect_regex_dot_star() {
+        let text = r"fn .*()";
+        let result = detect_regex_patterns(text);
+        assert!(result.is_some(), "should detect .*");
+    }
+
+    #[test]
+    fn detect_regex_dot_plus() {
+        let text = r"name: .+";
+        let result = detect_regex_patterns(text);
+        assert!(result.is_some(), "should detect .+");
+        assert!(result.unwrap().contains(r".+"));
+    }
+
+    #[test]
+    fn detect_regex_backslash_d() {
+        let text = r"id: \d+";
+        let result = detect_regex_patterns(text);
+        assert!(result.is_some(), "should detect \\d+");
+        assert!(result.unwrap().contains(r"\d+"));
+    }
+
+    #[test]
+    fn detect_regex_backslash_d_star() {
+        let text = r"count\d*";
+        let result = detect_regex_patterns(text);
+        assert!(result.is_some(), "should detect \\d*");
+        assert!(result.unwrap().contains(r"\d*"));
+    }
+
+    #[test]
+    fn detect_regex_backslash_w() {
+        let text = r"var \w+";
+        let result = detect_regex_patterns(text);
+        assert!(result.is_some(), "should detect \\w+");
+        assert!(result.unwrap().contains(r"\w+"));
+    }
+
+    #[test]
+    fn detect_regex_backslash_w_star() {
+        let text = r"prefix\w*";
+        let result = detect_regex_patterns(text);
+        assert!(result.is_some(), "should detect \\w*");
+        assert!(result.unwrap().contains(r"\w*"));
+    }
+
+    #[test]
+    fn detect_regex_backslash_t() {
+        let text = r"col1\tcol2";
+        let result = detect_regex_patterns(text);
+        assert!(result.is_some(), "should detect \\t");
+        assert!(result.unwrap().contains(r"\t"));
+    }
+
+    #[test]
+    fn detect_regex_backslash_r() {
+        let text = r"line\r\n";
+        let result = detect_regex_patterns(text);
+        assert!(result.is_some(), "should detect \\r");
+        let found = result.unwrap();
+        assert!(found.contains(r"\r"));
+        assert!(found.contains(r"\n"));
+    }
+
+    #[test]
+    fn detect_regex_backslash_s_plus() {
+        let text = r"word\s+word";
+        let result = detect_regex_patterns(text);
+        assert!(result.is_some(), "should detect \\s+");
+        assert!(result.unwrap().contains(r"\s+"));
+    }
+
+    #[test]
+    fn detect_regex_deduplicates_repeated_tokens() {
+        // \s* appears three times, but should be listed only once.
+        let text = r"a\s*b\s*c\s*d";
+        let result = detect_regex_patterns(text);
+        assert!(result.is_some());
+        let found = result.unwrap();
+        // Count occurrences of \s* in the output.
+        let count = found.matches(r"\s*").count();
+        assert_eq!(count, 1, "\\s* should appear exactly once, got: {found}");
     }
 }
