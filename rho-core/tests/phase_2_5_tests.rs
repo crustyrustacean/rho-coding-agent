@@ -672,8 +672,7 @@ async fn session_bounded_tool_result_preserves_tool_pair() {
     // Add an oversized tool result — it should be truncated
     let huge = "x".repeat(200_000);
     let result = ToolResult::success(&huge);
-    let (_id, details) =
-        session.append_tool_result_with_details(ToolCallId::from("call_1"), &result);
+    let (_id, details) = session.append_tool_result(ToolCallId::from("call_1"), &result);
 
     assert!(
         matches!(details, rho_core::ToolResultDetails::FullOutput { .. }),
@@ -697,10 +696,10 @@ async fn session_bounded_tool_result_preserves_tool_pair() {
     );
 }
 
-/// (c) Long-conversation pressure test: the first user message survives
+/// (c) Long-session pressure test: the first user message survives
 /// even under severe budget pressure.
 #[tokio::test]
-async fn long_conversation_pressure_first_user_survives() {
+async fn long_session_pressure_first_user_survives() {
     let registry = fixed_registry("echo", "ok".to_owned(), rho_core::ToolRisk::Read);
 
     let mut session = Session::in_memory("m", Some("sys"), registry.tool_schemas(), "/tmp")
@@ -743,9 +742,9 @@ async fn long_conversation_pressure_first_user_survives() {
     );
 }
 
-/// (c) Long-conversation: no orphan tool results after eviction.
+/// (c) Long-session: no orphan tool results after eviction.
 #[tokio::test]
-async fn long_conversation_pressure_no_orphan_tool_results() {
+async fn long_session_pressure_no_orphan_tool_results() {
     let registry = fixed_registry(
         "read_file",
         "file content here".to_owned(),
@@ -782,9 +781,9 @@ async fn long_conversation_pressure_no_orphan_tool_results() {
     assert_no_orphan_tool_results(&messages);
 }
 
-/// (c) Long-conversation: coherent path after compaction.
+/// (c) Long-session: coherent path after compaction.
 #[tokio::test]
-async fn long_conversation_pressure_coherent_after_compaction() {
+async fn long_session_pressure_coherent_after_compaction() {
     let registry = fixed_registry("echo", "ok".to_owned(), rho_core::ToolRisk::Read);
 
     let mut session = Session::in_memory("m", Some("sys"), registry.tool_schemas(), "/tmp")

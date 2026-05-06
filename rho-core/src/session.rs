@@ -144,9 +144,9 @@ pub struct SessionHeader {
 ///
 /// # Builder methods
 ///
-/// Follow the same pattern as [`Conversation`](crate::Conversation):
-/// `with_context_manager`, `with_token_budget`, `with_redactor`, plus the new
-/// `with_estimator`.
+/// Builder methods (`with_context_manager`, `with_token_budget`,
+/// `with_redactor`, `with_estimator`) follow a fluent pattern for
+/// overriding defaults after construction.
 ///
 /// # Persistence
 ///
@@ -170,7 +170,6 @@ pub struct Session {
     /// Model identifier.
     model: String,
     /// Tool schemas sent with every request.
-    #[allow(dead_code)]
     tools: Vec<ToolSchema>,
     /// Context window manager applied before each request.
     context_manager: Box<dyn ContextManager>,
@@ -178,6 +177,12 @@ pub struct Session {
     token_budget: TokenBudget,
     /// Secret redactor applied to tool results before they enter history.
     redactor: Redactor,
+    /// Full content of truncated tool results, indexed by entry ID.
+    ///
+    /// When a tool result exceeds the budget fraction and is truncated, the
+    /// full (redacted) content is stored here so it can be retrieved later
+    /// via [`get_full_result`](Session::get_full_result).
+    details_store: HashMap<EntryId, ToolResultDetails>,
     /// Persistence state (save path, flushed count).
     persist: PersistState,
 }
@@ -250,6 +255,7 @@ impl Session {
             context_manager: Box::new(SlidingWindowContextManager::new()),
             token_budget: TokenBudget::default(),
             redactor: Redactor::new(),
+            details_store: HashMap::new(),
             persist: PersistState::with_path(save_path, initial_count),
         }
     }
@@ -300,6 +306,7 @@ impl Session {
             context_manager: Box::new(SlidingWindowContextManager::new()),
             token_budget: TokenBudget::default(),
             redactor: Redactor::new(),
+            details_store: HashMap::new(),
             persist: PersistState::in_memory(),
         }
     }
@@ -349,6 +356,7 @@ impl Session {
             context_manager: Box::new(SlidingWindowContextManager::new()),
             token_budget: TokenBudget::default(),
             redactor: Redactor::new(),
+            details_store: HashMap::new(),
             persist: persist_state,
         }
     }
@@ -449,23 +457,75 @@ impl Session {
     /// Append a tool result message, applying secret redaction and
     /// bounded resolution first.
     ///
-    /// This is the public entry point for adding tool results to the
-    /// session (e.g., from integration tests). It always applies
-    /// redaction — there is no way to bypass the redactor through this API.
+    /// This is a convenience alias for [`append_tool_result`](Session::append_tool_result).
+    /// It always applies redaction — there is no way to bypass the
+    /// redactor through this API.
+    ///
+    /// If the result is truncated, the full content is stored in the
+    /// session's details store and can be retrieved via
+    /// [`get_full_result`](Session::get_full_result).
     ///
     /// Returns the [`EntryId`] of the new entry and the
-    /// [`ToolResultDetails`] if truncation occurred.
+    /// [`ToolResultDetails`] indicating whether truncation occurred.
     pub fn add_tool_result(
         &mut self,
         id: ToolCallId,
         result: &ToolResult,
     ) -> (EntryId, ToolResultDetails) {
-        self.append_tool_result_with_details(id, result)
+        self.append_tool_result(id, result)
+    }
+
+    /// Retrieve the full (un-truncated) content of a tool result.
+    ///
+    /// Returns `Some(&ToolResultDetails)` if the entry was truncated and
+    /// its full content was preserved; `None` if the entry was not
+    /// truncated or does not exist.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let (entry_id, details) = session.append_tool_result(call_id, &result);
+    /// // Later, retrieve the full content:
+    /// if let Some(full) = session.get_full_result(&entry_id) {
+    ///     // `full` is the ToolResultDetails::FullOutput variant
+    /// }
+    /// ```
+    pub fn get_full_result(&self, entry_id: &EntryId) -> Option<&ToolResultDetails> {
+        self.details_store.get(entry_id)
     }
 
     /// The token budget.
     pub fn token_budget(&self) -> TokenBudget {
         self.token_budget
+    }
+
+    /// Estimate the token overhead of the system prompt.
+    ///
+    /// Searches the entry tree for the root `System` message and estimates
+    /// its token count using the calibrated estimator. Returns 0 if no
+    /// system prompt was set.
+    pub fn system_overhead(&self) -> usize {
+        self.system_prompt()
+            .map_or(0, |text| self.estimator.estimate(text))
+    }
+
+    /// Estimate the token overhead of the tool schemas.
+    ///
+    /// Tool schemas are sent with every request but are not part of the
+    /// message history. This returns their estimated token count.
+    pub fn schema_overhead(&self) -> usize {
+        crate::context::estimate_tool_schema_overhead(&self.tools, self.estimator.as_ref())
+    }
+
+    /// The token budget available for conversation messages after
+    /// subtracting system prompt and tool-schema overhead.
+    ///
+    /// This is a convenience wrapper around
+    /// [`TokenBudget::message_budget`](crate::TokenBudget::message_budget)
+    /// that uses the session's measured overheads.
+    pub fn message_budget(&self) -> usize {
+        self.token_budget
+            .message_budget(self.system_overhead(), self.schema_overhead())
     }
 
     /// Read-only access to the redactor.
@@ -804,8 +864,7 @@ impl Session {
 
     /// Build the message list for the model from the leaf-to-root path.
     ///
-    /// This is the `Session` equivalent of `Conversation::messages()` —
-    /// it returns the messages that would be sent to the model, after
+    /// Returns the messages that would be sent to the model, after
     /// applying resolution filtering and overhead subtraction via
     /// [`ContextManager::fit_path`].
     ///
@@ -826,7 +885,6 @@ impl Session {
 
     /// Send the current session state to the model and persist the response.
     ///
-    /// This is the `Session` equivalent of `Conversation::send_current`:
     /// 1. Builds the message list via [`path_messages`](Self::path_messages).
     /// 2. Constructs a [`ChatRequest`](crate::request::ChatRequest).
     /// 3. Calls the client.
@@ -924,7 +982,6 @@ impl Session {
     /// Append an assistant message (used by `send_current` to persist model responses).
     ///
     /// Returns the [`EntryId`] of the new entry.
-    #[allow(dead_code)]
     pub(crate) fn append_assistant_message(&mut self, msg: ChatMessage) -> EntryId {
         self.append_entry(EntryPayload::Message(msg), EntryResolution::Full)
     }
@@ -935,17 +992,18 @@ impl Session {
     /// content would consume more than half the prompt budget (per the calibrated
     /// estimator), it is truncated at a UTF-8-safe character boundary. The
     /// truncated content goes into the entry's `Message` payload; the *full*
-    /// content is preserved out-of-band as `ToolResultDetails::FullOutput`.
+    /// content is preserved in the session's details store and can be retrieved
+    /// later via [`get_full_result`](Session::get_full_result).
     ///
     /// A `warn!` log is emitted when truncation occurs.
     ///
-    /// Returns the [`EntryId`] of the new entry.
-    #[allow(dead_code)]
-    pub(crate) fn append_tool_result(
+    /// Returns the [`EntryId`] of the new entry and the [`ToolResultDetails`]
+    /// indicating whether truncation occurred.
+    pub fn append_tool_result(
         &mut self,
         call_id: ToolCallId,
         result: &ToolResult,
-    ) -> EntryId {
+    ) -> (EntryId, ToolResultDetails) {
         // Step 1: redact secrets
         let redacted = self.redactor.redact(&result.output);
 
@@ -988,69 +1046,16 @@ impl Session {
             (redacted, ToolResultDetails::None)
         };
 
-        let _ = details; // Will be stored on ToolResult when Session drives tool execution
-        self.append_entry(
-            EntryPayload::Message(ChatMessage::tool_result(call_id, content)),
-            EntryResolution::Full,
-        )
-    }
-
-    /// Append a tool result with full `ToolResult` metadata (including `details`).
-    ///
-    /// This is the public entry point for adding tool results to the session
-    /// (e.g., from integration tests). It always applies redaction and
-    /// bounded resolution — there is no way to bypass either through this API.
-    ///
-    /// Returns the [`EntryId`] of the new entry and the `ToolResultDetails`
-    /// (if truncation occurred, the full output is preserved here).
-    pub fn append_tool_result_with_details(
-        &mut self,
-        call_id: ToolCallId,
-        result: &ToolResult,
-    ) -> (EntryId, ToolResultDetails) {
-        let redacted = self.redactor.redact(&result.output);
-
-        #[allow(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            clippy::cast_precision_loss
-        )]
-        let max_tokens =
-            (self.token_budget.prompt_budget() as f32 * MAX_TOOL_RESULT_FRACTION) as usize;
-        let estimated_tokens = self.estimator.estimate(&redacted);
-
-        let (content, details) = if estimated_tokens > max_tokens {
-            let max_chars = chars_to_fit_tokens(&redacted, max_tokens, self.estimator.as_ref());
-            let original_size = redacted.len();
-            let truncated = format!(
-                "{}\n\n{}",
-                &redacted[..floor_char_boundary(&redacted, max_chars)],
-                truncation_footer(original_size),
-            );
-
-            warn!(
-                original_size,
-                truncated_size = truncated.len(),
-                estimated_tokens,
-                max_tokens,
-                "tool result truncated to fit budget"
-            );
-
-            (
-                truncated,
-                ToolResultDetails::FullOutput {
-                    original_size,
-                    content: redacted,
-                },
-            )
-        } else {
-            (redacted, ToolResultDetails::None)
-        };
-
         let id = self.append_entry(
             EntryPayload::Message(ChatMessage::tool_result(call_id, content)),
             EntryResolution::Full,
         );
+
+        // Store full content in the details store for later retrieval
+        if matches!(details, ToolResultDetails::FullOutput { .. }) {
+            self.details_store.insert(id.clone(), details.clone());
+        }
+
         (id, details)
     }
 
@@ -1621,6 +1626,82 @@ mod tests {
         session.estimator_mut().calibrate("test-model", 10, 12);
     }
 
+    // ── Overhead measurement tests (Fix 2c) ───────────────────────────
+
+    #[test]
+    fn system_overhead_returns_nonzero_for_session_with_prompt() {
+        let session = Session::in_memory("m", Some("You are a helpful assistant."), vec![], "/tmp");
+        let overhead = session.system_overhead();
+        assert!(
+            overhead > 0,
+            "system overhead should be > 0 for a non-empty prompt"
+        );
+    }
+
+    #[test]
+    fn system_overhead_returns_zero_without_prompt() {
+        let session = Session::in_memory("m", None, vec![], "/tmp");
+        assert_eq!(session.system_overhead(), 0);
+    }
+
+    #[test]
+    fn schema_overhead_returns_zero_without_tools() {
+        let session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        assert_eq!(session.schema_overhead(), 0);
+    }
+
+    #[test]
+    fn schema_overhead_returns_nonzero_with_tools() {
+        use crate::schema::ToolSchema;
+        let tools = vec![ToolSchema::function(
+            "read_file",
+            "Read a file",
+            serde_json::json!({
+                "type": "object",
+                "properties": {"path": {"type": "string"}}
+            }),
+        )];
+        let session = Session::in_memory("m", Some("sys"), tools, "/tmp");
+        assert!(
+            session.schema_overhead() > 0,
+            "schema overhead should be > 0 when tools are registered"
+        );
+    }
+
+    #[test]
+    fn message_budget_is_prompt_minus_overheads() {
+        use crate::schema::ToolSchema;
+        let tools = vec![ToolSchema::function(
+            "read_file",
+            "Read a file",
+            serde_json::json!({"type": "object"}),
+        )];
+        let session = Session::in_memory("m", Some("sys"), tools, "/tmp")
+            .with_token_budget(TokenBudget::new(32_768));
+
+        let budget = session.token_budget();
+        let expected = budget
+            .prompt_budget()
+            .saturating_sub(session.system_overhead())
+            .saturating_sub(session.schema_overhead());
+        assert_eq!(session.message_budget(), expected);
+        assert!(
+            session.message_budget() < budget.prompt_budget(),
+            "message budget should be less than prompt budget when overhead exists"
+        );
+    }
+
+    #[test]
+    fn message_budget_without_tools_or_prompt() {
+        let session = Session::in_memory("m", None, vec![], "/tmp")
+            .with_token_budget(TokenBudget::new(10_000));
+        // No system prompt, no tools → message budget = prompt budget
+        assert_eq!(
+            session.message_budget(),
+            session.token_budget().prompt_budget()
+        );
+    }
+
     // ── Append operation tests ──────────────────────────────────────────
 
     #[test]
@@ -1684,8 +1765,7 @@ mod tests {
             .with_token_budget(TokenBudget::new(32_768));
 
         let result = ToolResult::success("small output");
-        let (id, details) =
-            session.append_tool_result_with_details(ToolCallId::from("call_1"), &result);
+        let (id, details) = session.append_tool_result(ToolCallId::from("call_1"), &result);
 
         let entry = session.entry(&id).unwrap();
         if let EntryPayload::Message(ChatMessage::Tool { content, .. }) = &entry.payload {
@@ -1712,8 +1792,7 @@ mod tests {
         let huge_content = "x".repeat(2000);
         let result = ToolResult::success(&huge_content);
 
-        let (id, details) =
-            session.append_tool_result_with_details(ToolCallId::from("call_1"), &result);
+        let (id, details) = session.append_tool_result(ToolCallId::from("call_1"), &result);
 
         let entry = session.entry(&id).unwrap();
         if let EntryPayload::Message(ChatMessage::Tool { content, .. }) = &entry.payload {
@@ -1758,8 +1837,7 @@ mod tests {
         let content = "日".repeat(500); // 1500 bytes
         let result = ToolResult::success(&content);
 
-        let (id, details) =
-            session.append_tool_result_with_details(ToolCallId::from("call_1"), &result);
+        let (id, details) = session.append_tool_result(ToolCallId::from("call_1"), &result);
 
         // The entry should be created without panicking (valid UTF-8 slice)
         let entry = session.entry(&id).unwrap();
@@ -1795,6 +1873,103 @@ mod tests {
         assert_eq!(floor_char_boundary(s, 4), 3); // floor to previous boundary
         assert_eq!(floor_char_boundary(s, 6), 6); // exact boundary
         assert_eq!(floor_char_boundary(s, 8), 6); // floor to previous boundary
+    }
+
+    // ── Details store tests (Fix 1d) ─────────────────────────────────────
+
+    #[test]
+    fn get_full_result_returns_none_for_non_truncated_entry() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
+            .with_token_budget(TokenBudget::new(32_768));
+
+        let result = ToolResult::success("small output");
+        let (id, details) = session.append_tool_result(ToolCallId::from("call_1"), &result);
+
+        assert_eq!(details, ToolResultDetails::None);
+        assert!(
+            session.get_full_result(&id).is_none(),
+            "non-truncated entries should not be in the details store"
+        );
+    }
+
+    #[test]
+    fn get_full_result_returns_full_content_for_truncated_entry() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
+            .with_token_budget(TokenBudget::with_reserve(100, 10));
+
+        let huge_content = "x".repeat(2000);
+        let result = ToolResult::success(&huge_content);
+        let (id, details) = session.append_tool_result(ToolCallId::from("call_1"), &result);
+
+        // The return value should indicate truncation
+        assert!(
+            matches!(details, ToolResultDetails::FullOutput { .. }),
+            "expected FullOutput details"
+        );
+
+        // The details store should have the full content
+        let stored = session
+            .get_full_result(&id)
+            .expect("truncated entry should be in the details store");
+        if let ToolResultDetails::FullOutput {
+            original_size,
+            content,
+        } = stored
+        {
+            assert_eq!(*original_size, huge_content.len());
+            assert_eq!(content.len(), huge_content.len());
+        } else {
+            panic!("expected FullOutput in details store");
+        }
+    }
+
+    #[test]
+    fn get_full_result_returns_none_for_nonexistent_entry() {
+        let session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let fake_id = EntryId::new();
+        assert!(
+            session.get_full_result(&fake_id).is_none(),
+            "nonexistent entry should return None"
+        );
+    }
+
+    #[test]
+    fn details_store_independent_per_entry() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
+            .with_token_budget(TokenBudget::with_reserve(100, 10));
+
+        // First tool result: truncated
+        let huge = ToolResult::success("a".repeat(2000));
+        let (id1, _) = session.append_tool_result(ToolCallId::from("call_1"), &huge);
+
+        // Second tool result: not truncated
+        let small = ToolResult::success("tiny");
+        let (id2, _) = session.append_tool_result(ToolCallId::from("call_2"), &small);
+
+        // Third tool result: also truncated
+        let huge2 = ToolResult::success("b".repeat(3000));
+        let (id3, _) = session.append_tool_result(ToolCallId::from("call_3"), &huge2);
+
+        assert!(
+            session.get_full_result(&id1).is_some(),
+            "first should be stored"
+        );
+        assert!(
+            session.get_full_result(&id2).is_none(),
+            "second should not be stored"
+        );
+        assert!(
+            session.get_full_result(&id3).is_some(),
+            "third should be stored"
+        );
+
+        // Verify different content
+        if let Some(ToolResultDetails::FullOutput { content, .. }) = session.get_full_result(&id1) {
+            assert!(content.starts_with('a'));
+        }
+        if let Some(ToolResultDetails::FullOutput { content, .. }) = session.get_full_result(&id3) {
+            assert!(content.starts_with('b'));
+        }
     }
 
     // ── Append other entry types ────────────────────────────────────────

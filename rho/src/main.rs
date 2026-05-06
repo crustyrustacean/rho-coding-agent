@@ -173,7 +173,7 @@ async fn main() -> Result<()> {
 
     let client = LocalChatClient::with_endpoint_and_egress(endpoint, rho_config.egress.clone());
 
-    // --- Conversation ---
+    // --- Session ---
     let model = resolve_model(&rho_config, cli.model.as_ref(), &client).await?;
     let config = AgentConfig::from_config(&rho_config);
 
@@ -249,6 +249,9 @@ async fn main() -> Result<()> {
         eprintln!("session: {}", path.display());
     }
 
+    // --- Startup budget diagnostics ---
+    log_budget_diagnostics(&session);
+
     let gate = ReplApprovalGate;
     let cancel = CancellationToken::new();
 
@@ -322,6 +325,41 @@ async fn main() -> Result<()> {
 }
 
 // ── Startup helpers ────────────────────────────────────────────────────────────
+
+/// Log token budget diagnostics at startup.
+///
+/// Displays the budget breakdown so the user knows how much context is
+/// available for conversation after system prompt and tool-schema overhead.
+/// Warns when overhead consumes more than half the prompt budget.
+fn log_budget_diagnostics(session: &rho_core::Session) {
+    let budget = session.token_budget();
+    let system = session.system_overhead();
+    let schema = session.schema_overhead();
+    let total_overhead = system + schema;
+    let prompt = budget.prompt_budget();
+    let available = session.message_budget();
+
+    eprintln!(
+        "budget: {}T context, {}T reserve, {}T prompt \
+         ({}T system + {}T schema = {}T overhead, {}T for conversation)",
+        budget.context_window,
+        budget.completion_reserve,
+        prompt,
+        system,
+        schema,
+        total_overhead,
+        available,
+    );
+
+    if total_overhead > prompt / 2 {
+        #[allow(clippy::cast_possible_truncation)]
+        let pct = (100_usize.saturating_mul(total_overhead) / prompt.max(1)) as u32;
+        eprintln!(
+            "warning: system overhead is {pct}% of prompt budget — \
+             consider --compact or increasing token_budget in .rho/config.toml"
+        );
+    }
+}
 
 /// Resolve the model identifier.
 ///

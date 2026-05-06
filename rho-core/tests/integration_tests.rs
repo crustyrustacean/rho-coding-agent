@@ -1081,10 +1081,10 @@ fn base_prompt_used_as_default_system_message() {
 }
 
 #[test]
-fn conversation_default_token_budget_is_32k() {
+fn session_default_token_budget_is_32k() {
     use rho_core::context::TokenBudget;
     let session = Session::in_memory("model", None, vec![], "/tmp");
-    // Conversation uses TokenBudget::default() which is now 32K.
+    // Session uses TokenBudget::default() which is now 32K.
     // We verify by checking that the context manager's fit method
     // retains all messages when they're well under 32K tokens.
     let messages = session.path_messages();
@@ -1094,7 +1094,7 @@ fn conversation_default_token_budget_is_32k() {
 }
 
 #[test]
-fn conversation_with_custom_token_budget() {
+fn session_with_custom_token_budget() {
     use rho_core::context::TokenBudget;
     let _conv =
         Session::in_memory("model", None, vec![], "/tmp").with_token_budget(TokenBudget::new(1024));

@@ -1,0 +1,12 @@
+You MUST use the read_file tool to read each of these files before answering. Do NOT answer from memory — read the actual source code first.
+
+Read ALL of the following files using the read_file tool:
+1. rho-core/src/sandbox.rs
+2. rho-core/src/newtypes.rs
+3. rho-core/src/config.rs
+4. rho-tools/src/shell.rs
+5. rho/src/main.rs
+6. rho-core/src/agent.rs
+7. rho-tools/src/lib.rs
+
+After reading all files, provide a detailed multi-section explanation of how the sandbox system works, covering path validation, file operations, and safety guarantees.

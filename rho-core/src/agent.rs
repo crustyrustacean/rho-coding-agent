@@ -260,7 +260,7 @@ pub async fn run_loop(
                         let approved = gate.request_approval(&call, risk).await;
                         if !approved {
                             debug!(tool_name = %call.function.name, action = "denied");
-                            session.append_tool_result(
+                            let _ = session.append_tool_result(
                                 call_id,
                                 &ToolResult::error("Tool call denied by user."),
                             );
@@ -272,7 +272,7 @@ pub async fn run_loop(
                     // ── ExecutingTool ─────────────────────────────────────────
                     state = AgentState::ExecutingTool;
                     let result = registry.execute(&call, cancel.clone()).await?;
-                    session.append_tool_result(call_id, &result);
+                    let _ = session.append_tool_result(call_id, &result);
                     state = AgentState::Thinking;
                 }
             }
@@ -280,7 +280,7 @@ pub async fn run_loop(
     }
 }
 
-/// Send `conversation.send_current` with exponential backoff on transient errors.
+/// Send `session.send_current` with exponential backoff on transient errors.
 ///
 /// # Errors
 ///

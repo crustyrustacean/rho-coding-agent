@@ -28,11 +28,22 @@ use tracing::{debug, warn};
 ///
 /// `prompt_budget()` returns `context_window - completion_reserve`. All
 /// context-fitting logic should use this, not `context_window` directly.
+///
+/// # Invariant
+///
+/// The completion reserve is **hard**: conversation + system prompt +
+/// tool schemas must never consume it. All context-fitting paths
+/// ([`ContextManager::fit_path`], [`ContextManager::fit`]) enforce this
+/// by subtracting overhead before fitting messages.
 #[derive(Clone, Copy, Debug)]
 pub struct TokenBudget {
     /// The model's total context window size.
     pub context_window: usize,
     /// Tokens reserved for the model's completion. Default: 4096.
+    ///
+    /// **Invariant:** conversation + system + schema ≤
+    /// (`context_window` − `completion_reserve`). This reserve is never
+    /// consumed by conversation history.
     pub completion_reserve: usize,
 }
 
@@ -67,6 +78,32 @@ impl TokenBudget {
     /// Prefer [`prompt_budget()`](Self::prompt_budget) for fitting logic.
     pub fn max_tokens(&self) -> usize {
         self.context_window
+    }
+
+    /// The budget available for conversation messages after subtracting
+    /// system prompt and tool-schema overhead.
+    ///
+    /// This is the number of tokens that can actually be filled with
+    /// user/assistant/tool messages. Returns 0 (via saturating subtraction)
+    /// when overhead exceeds the prompt budget.
+    pub fn message_budget(&self, system_overhead: usize, schema_overhead: usize) -> usize {
+        self.prompt_budget()
+            .saturating_sub(system_overhead)
+            .saturating_sub(schema_overhead)
+    }
+
+    /// Returns `true` if the given token totals would exceed the prompt
+    /// budget, violating the completion-reserve invariant.
+    pub fn would_exceed(
+        &self,
+        conversation_tokens: usize,
+        system_overhead: usize,
+        schema_overhead: usize,
+    ) -> bool {
+        let total = conversation_tokens
+            .saturating_add(system_overhead)
+            .saturating_add(schema_overhead);
+        total > self.prompt_budget()
     }
 }
 
@@ -269,7 +306,10 @@ pub fn render_compaction_summary(summary: &crate::session::CompactionSummary) ->
 /// Tool schemas are sent with every request but are not part of the
 /// message history. Their token cost must be subtracted from the prompt
 /// budget to avoid over-estimating available space.
-fn estimate_tool_schema_overhead(schemas: &[ToolSchema], estimator: &dyn TokenEstimator) -> usize {
+pub(crate) fn estimate_tool_schema_overhead(
+    schemas: &[ToolSchema],
+    estimator: &dyn TokenEstimator,
+) -> usize {
     if schemas.is_empty() {
         return 0;
     }
@@ -391,7 +431,7 @@ impl ContextManager for SlidingWindowContextManager {
         // contains the user's original request; losing it means the model
         // forgets what it was asked to do. (This is the amnesia bug that
         // Phase 2.5's CompactionSummary::original_request solves structurally;
-        // in the linear Conversation model, pinning is the fix.)
+        // in the linear model, pinning is the fix.)
         let first_user_turn = turns.iter().position(|t| {
             t.first()
                 .is_some_and(|m| matches!(m, ChatMessage::User { .. }))
@@ -553,6 +593,45 @@ mod tests {
     #[test]
     fn token_budget_default_is_32k() {
         assert_eq!(TokenBudget::default().context_window, 32_768);
+    }
+
+    // ── TokenBudget convenience method tests (Fix 2a) ────────────────────
+
+    #[test]
+    fn message_budget_subtracts_overheads() {
+        let budget = TokenBudget::new(32_768); // reserve = 4096, prompt = 28672
+        assert_eq!(budget.message_budget(5000, 1000), 28_672 - 5000 - 1000);
+    }
+
+    #[test]
+    fn message_budget_saturates_at_zero() {
+        let budget = TokenBudget::new(100); // reserve = 4096, prompt = 0 (saturating)
+        assert_eq!(budget.message_budget(5000, 1000), 0);
+    }
+
+    #[test]
+    fn would_exceed_returns_false_when_under_budget() {
+        let budget = TokenBudget::new(32_768);
+        assert!(!budget.would_exceed(10_000, 5000, 1000));
+    }
+
+    #[test]
+    fn would_exceed_returns_true_when_over_budget() {
+        let budget = TokenBudget::new(32_768); // prompt = 28672
+        assert!(budget.would_exceed(25_000, 5000, 1000)); // 31000 > 28672
+    }
+
+    #[test]
+    fn would_exceed_returns_false_at_exact_budget() {
+        let budget = TokenBudget::with_reserve(10_000, 2000); // prompt = 8000
+        assert!(!budget.would_exceed(5000, 2000, 1000)); // 8000 == 8000
+    }
+
+    #[test]
+    fn would_exceed_handles_overflow_safely() {
+        let budget = TokenBudget::new(100);
+        // usize::MAX values should not panic
+        assert!(budget.would_exceed(usize::MAX, 1, 1));
     }
 
     #[test]

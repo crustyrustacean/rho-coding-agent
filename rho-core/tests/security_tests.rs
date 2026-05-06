@@ -530,11 +530,11 @@ fn disabled_redactor_skips_builtin_patterns() {
 }
 
 #[test]
-fn enabled_redactor_with_custom_pattern_redacts_in_conversation() {
+fn enabled_redactor_with_custom_pattern_redacts_in_session() {
     use rho_core::tool::ToolResult;
 
     // A config-driven redactor with a custom pattern should redact
-    // matches of that pattern when tool results enter the conversation.
+    // matches of that pattern when tool results enter the session.
     let redactor = rho_core::Redactor::from_config(true, &[r"COMPANY_KEY_\S+".to_owned()]);
     let mut session = Session::in_memory("mock", None, vec![], "/tmp").with_redactor(redactor);
 

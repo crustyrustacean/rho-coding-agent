@@ -16,7 +16,7 @@
 //! | [`tool`] | [`Tool`] trait, [`ToolRegistry`], [`ToolRisk`], [`ToolResult`], [`CancellationToken`] |
 //! | [`client`] | [`ChatClient`] trait, [`LocalChatClient`] |
 //! | [`context`] | [`ContextManager`] trait, [`SlidingWindowContextManager`], [`TokenBudget`] |
-//! | [`conversation`] | [`Conversation`], [`AssistantResponse`] |
+//! | [`conversation`] | [`AssistantResponse`] |
 //! | [`session`] | [`Entry`], [`EntryPayload`], [`EntryResolution`], [`CompactionSummary`], [`ExtensionEntry`], [`ExtensionMessageEntry`] |
 //! | [`agent`] | [`AgentState`], [`AgentConfig`], [`run_loop`] |
 //! | [`config`] | [`RhoConfig`], [`ConfigLoader`], [`ApprovalAction`] |
@@ -54,7 +54,6 @@
 //! [`ContextManager`]: context::ContextManager
 //! [`SlidingWindowContextManager`]: context::SlidingWindowContextManager
 //! [`TokenBudget`]: context::TokenBudget
-//! [`Conversation`]: conversation::Conversation
 //! [`AssistantResponse`]: conversation::AssistantResponse
 //! [`Entry`]: session::Entry
 //! [`EntryPayload`]: session::EntryPayload
@@ -97,7 +96,7 @@ pub use config::{
 };
 pub use context::{ContextManager, SlidingWindowContextManager, TokenBudget};
 pub use context_files::{ContextFile, ContextScanner, TrustStore, compose_system_prompt};
-pub use conversation::{AssistantResponse, Conversation};
+pub use conversation::AssistantResponse;
 pub use error::{Result, RhoError};
 pub use message::{ChatMessage, ContentBlock, ModelToolCall, ToolCallFunction};
 pub use newtypes::{DiagnosticCode, EntryId, FilePath, SessionId, ToolCallId, ToolName};
