@@ -446,7 +446,14 @@ impl Tool for EditFile {
             match occurrences.len() {
                 0 => {
                     let hint = detect_regex_patterns(&edit.old_text).map_or_else(
-                        String::new,
+                        || {
+                            " Hint: old_text must be an exact character-for-character \
+                            copy of the file content, including whitespace, indentation, \
+                            and newlines. Use read_file to see the exact content, then \
+                            copy the literal text — do not collapse multiple lines into \
+                            one or paraphrase."
+                                .to_owned()
+                        },
                         |patterns| {
                             format!(
                                 " Hint: old_text contains regex-like patterns ({patterns}). \

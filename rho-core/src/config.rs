@@ -98,6 +98,11 @@ pub struct AgentLoopConfig {
     /// [`SlidingWindowContextManager`]: crate::context::SlidingWindowContextManager
     #[serde(default = "default_token_budget")]
     pub token_budget: u32,
+    /// Number of consecutive identical (`tool_name`, `arguments`, `output`)
+    /// repetitions before the agent injects a stuck-loop nudge.
+    /// Set to 0 to disable. Defaults to 3.
+    #[serde(default = "default_stuck_loop_threshold")]
+    pub stuck_loop_threshold: u32,
 }
 
 impl Default for AgentLoopConfig {
@@ -108,6 +113,7 @@ impl Default for AgentLoopConfig {
             retry_budget: default_retry_budget(),
             initial_backoff_ms: default_initial_backoff_ms(),
             token_budget: default_token_budget(),
+            stuck_loop_threshold: default_stuck_loop_threshold(),
         }
     }
 }
@@ -130,6 +136,10 @@ fn default_initial_backoff_ms() -> u64 {
 /// prompt (~4,700 tokens), compared to ~3,500 with the old 8K default.
 fn default_token_budget() -> u32 {
     32_768
+}
+/// Default value for `stuck_loop_threshold`.
+fn default_stuck_loop_threshold() -> u32 {
+    3
 }
 
 // ── ProviderConfig ────────────────────────────────────────────────────────────
@@ -368,6 +378,9 @@ struct WireAgentLoopConfig {
     /// Context window token budget.
     #[serde(default)]
     token_budget: Option<u32>,
+    /// Stuck-loop detection threshold.
+    #[serde(default)]
+    stuck_loop_threshold: Option<u32>,
 }
 
 // ── ConfigLoader ──────────────────────────────────────────────────────────────
@@ -443,6 +456,10 @@ impl ConfigLoader {
                     .token_budget
                     .or(user_agent.token_budget)
                     .unwrap_or(default_token_budget()),
+                stuck_loop_threshold: project_agent
+                    .stuck_loop_threshold
+                    .or(user_agent.stuck_loop_threshold)
+                    .unwrap_or(default_stuck_loop_threshold()),
             },
             provider: {
                 let up = user.provider.unwrap_or_default();

@@ -469,6 +469,113 @@ async fn run_command_no_warning_for_cd_within_sandbox() {
     );
 }
 
+// ── run_command cwd parameter ─────────────────────────────────────────────────
+
+#[tokio::test]
+async fn run_command_cwd_defaults_to_project_root() {
+    let (dir, root) = setup();
+
+    let mock = MockShellExecutor::new(vec![ShellOutput::new("ok", "", 0)]);
+    let tool = RunCommand {
+        root,
+        executor: Box::new(mock.clone()),
+        denylist: CommandDenylist::default_powershell(),
+    };
+
+    // No cwd parameter — should use project root.
+    let args = serde_json::json!({ "command": "Get-Date" });
+    tool.execute(args, CancellationToken::new()).await.unwrap();
+
+    let dirs = mock.working_dirs();
+    assert_eq!(dirs.len(), 1);
+    // Compare canonicalized paths to handle Windows UNC prefix differences.
+    assert_eq!(
+        dunce::canonicalize(&dirs[0]).unwrap(),
+        dunce::canonicalize(dir.path()).unwrap()
+    );
+}
+
+#[tokio::test]
+async fn run_command_cwd_resolves_subdirectory() {
+    let (dir, root) = setup();
+    let subdir = dir.path().join("subproject");
+    fs::create_dir(&subdir).unwrap();
+
+    let mock = MockShellExecutor::new(vec![ShellOutput::new("ok", "", 0)]);
+    let tool = RunCommand {
+        root,
+        executor: Box::new(mock.clone()),
+        denylist: CommandDenylist::default_powershell(),
+    };
+
+    let args = serde_json::json!({ "command": "cargo check", "cwd": "subproject" });
+    let outcome = tool.execute(args, CancellationToken::new()).await.unwrap();
+
+    assert!(!immediate_is_error(&outcome));
+    let dirs = mock.working_dirs();
+    assert_eq!(dirs.len(), 1);
+    assert_eq!(
+        dunce::canonicalize(&dirs[0]).unwrap(),
+        dunce::canonicalize(&subdir).unwrap()
+    );
+}
+
+#[tokio::test]
+async fn run_command_cwd_rejects_path_outside_sandbox() {
+    let (_dir, root) = setup();
+
+    let mock = MockShellExecutor::new(vec![]);
+    let tool = RunCommand {
+        root,
+        executor: Box::new(mock),
+        denylist: CommandDenylist::default_powershell(),
+    };
+
+    let args = serde_json::json!({ "command": "cargo check", "cwd": "../../etc" });
+    let result = tool.execute(args, CancellationToken::new()).await;
+    assert!(result.is_err(), "cwd outside sandbox must be rejected");
+}
+
+#[tokio::test]
+async fn run_command_cwd_rejects_nonexistent_directory() {
+    let (_dir, root) = setup();
+
+    let mock = MockShellExecutor::new(vec![]);
+    let tool = RunCommand {
+        root,
+        executor: Box::new(mock),
+        denylist: CommandDenylist::default_powershell(),
+    };
+
+    let args = serde_json::json!({ "command": "cargo check", "cwd": "no-such-dir" });
+    let result = tool.execute(args, CancellationToken::new()).await;
+    // Should fail because the directory doesn't exist (sandbox validation rejects it).
+    assert!(result.is_err(), "nonexistent cwd must be rejected");
+}
+
+#[tokio::test]
+async fn run_command_cwd_rejects_file_as_directory() {
+    let (dir, root) = setup();
+    let file = dir.path().join("not-a-dir.txt");
+    fs::write(&file, "content").unwrap();
+
+    let mock = MockShellExecutor::new(vec![]);
+    let tool = RunCommand {
+        root,
+        executor: Box::new(mock),
+        denylist: CommandDenylist::default_powershell(),
+    };
+
+    let args = serde_json::json!({ "command": "cargo check", "cwd": "not-a-dir.txt" });
+    let outcome = tool.execute(args, CancellationToken::new()).await.unwrap();
+    assert!(immediate_is_error(&outcome));
+    let output = immediate_output(&outcome);
+    assert!(
+        output.contains("not a directory"),
+        "expected 'not a directory' in: {output}"
+    );
+}
+
 // ── Cancellation ──────────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -754,9 +861,13 @@ async fn edit_file_old_text_not_found_returns_error() {
         output.contains("not found"),
         "expected 'not found' in: {output}"
     );
-    // Plain text should NOT trigger the regex hint.
+    // Plain text should show the general exactness hint, not the regex hint.
     assert!(
-        !output.contains("Hint"),
+        output.contains("Hint"),
+        "plain-text miss should contain an exactness hint: {output}"
+    );
+    assert!(
+        !output.contains("regex-like patterns"),
         "plain-text miss should not contain a regex hint: {output}"
     );
 

@@ -711,6 +711,92 @@ async fn loop_terminates_after_max_iterations() {
     );
 }
 
+// ── Agent loop: stuck-loop detection ──────────────────────────────────────────
+
+/// When the model calls the same tool with the same arguments and gets the same
+/// output N times (where N = `stuck_loop_threshold`), the agent injects a nudge
+/// instead of feeding the real tool result. The model then gets one more chance.
+#[tokio::test]
+async fn stuck_loop_injects_nudge_after_threshold() {
+    // Queue: 3 identical tool calls (threshold), then a text reply after the nudge.
+    let mut responses: Vec<rho_core::ModelResponse> = (0..4)
+        .map(|i| tool_call_response(format!("call_{i}"), "echo_tool", "{}"))
+        .collect();
+    responses.push(text_response("I see the nudge, stopping."));
+
+    let client = MockChatClient::new(responses);
+    let registry = fixed_registry("echo_tool", "same result".into(), ToolRisk::Read);
+    let config = AgentConfig {
+        stuck_loop_threshold: 3,
+        max_iterations: 10,
+        ..AgentConfig::default()
+    };
+    let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
+
+    let reply = run_loop(
+        &mut session,
+        "do something",
+        &client,
+        &registry,
+        &config,
+        CancellationToken::new(),
+        &AutoApproveGate,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(reply, "I see the nudge, stopping.");
+
+    // The path should contain at least one tool result with "STUCK LOOP DETECTED".
+    let path = session.path_to_root();
+    let has_nudge = path.iter().any(|e| {
+        if let rho_core::session::EntryPayload::Message(msg) = &e.payload
+            && let ChatMessage::Tool { content, .. } = msg
+        {
+            return content
+                .iter()
+                .any(|b| matches!(b, ContentBlock::Text { text } if text.contains("STUCK LOOP")));
+        }
+        false
+    });
+    assert!(has_nudge, "expected a STUCK LOOP nudge in the session");
+}
+
+/// Stuck-loop detection is disabled when `stuck_loop_threshold` is 0.
+#[tokio::test]
+async fn stuck_loop_disabled_when_threshold_is_zero() {
+    // 6 identical calls → should hit max_iterations, not the nudge.
+    let responses: Vec<_> = (0..10)
+        .map(|i| tool_call_response(format!("call_{i}"), "echo_tool", "{}"))
+        .collect();
+
+    let client = MockChatClient::new(responses);
+    let registry = fixed_registry("echo_tool", "same result".into(), ToolRisk::Read);
+    let config = AgentConfig {
+        stuck_loop_threshold: 0, // disabled
+        max_iterations: 5,
+        ..AgentConfig::default()
+    };
+    let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
+
+    let err = run_loop(
+        &mut session,
+        "loop",
+        &client,
+        &registry,
+        &config,
+        CancellationToken::new(),
+        &AutoApproveGate,
+    )
+    .await
+    .unwrap_err();
+
+    assert!(
+        matches!(err, rho_core::RhoError::MaxIterationsExceeded(5)),
+        "expected MaxIterationsExceeded(5), got: {err}"
+    );
+}
+
 // ── Agent loop: non-retryable errors ───────────────────────────────────────────
 
 #[tokio::test]

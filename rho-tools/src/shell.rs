@@ -355,7 +355,9 @@ impl Tool for RunCommand {
 
     fn description(&self) -> &str {
         "Execute a PowerShell command within the project directory \
-         and return its stdout, stderr, and exit code."
+         and return its stdout, stderr, and exit code. \
+         Use the optional cwd parameter to run in a subdirectory \
+         instead of the project root."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -365,6 +367,10 @@ impl Tool for RunCommand {
                 "command": {
                     "type": "string",
                     "description": "The PowerShell command to execute."
+                },
+                "cwd": {
+                    "type": "string",
+                    "description": "Working directory for the command, relative to the project root. Defaults to the project root if omitted."
                 }
             },
             "required": ["command"]
@@ -384,6 +390,7 @@ impl Tool for RunCommand {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("run_command: missing required argument `command`"))?
             .to_owned();
+        let cwd_arg = arguments["cwd"].as_str();
 
         if cancel.is_cancelled() {
             return Ok(ToolOutcome::Immediate(ToolResult::error("cancelled")));
@@ -396,13 +403,28 @@ impl Tool for RunCommand {
             ))));
         }
 
-        // 2. Execute the command.
+        // 2. Resolve working directory — use cwd if provided, else project root.
+        let working_dir = if let Some(rel) = cwd_arg {
+            let candidate = self.root.path().join(rel);
+            // Validate that the resolved path is within the sandbox.
+            let safe = self.root.validate(&candidate)?;
+            if !safe.is_dir() {
+                return Ok(ToolOutcome::Immediate(ToolResult::error(format!(
+                    "run_command: cwd `{rel}` is not a directory"
+                ))));
+            }
+            safe.to_path_buf()
+        } else {
+            self.root.path().to_path_buf()
+        };
+
+        // 3. Execute the command.
         let shell_output = self
             .executor
-            .execute(&command, self.root.path(), None, cancel)
+            .execute(&command, &working_dir, None, cancel)
             .await?;
 
-        // 3. Map ShellOutput → ToolResult at the tool boundary.
+        // 4. Map ShellOutput → ToolResult at the tool boundary.
         let combined = if shell_output.stderr.is_empty() {
             shell_output.stdout.clone()
         } else if shell_output.stdout.is_empty() {
@@ -411,7 +433,7 @@ impl Tool for RunCommand {
             format!("{}\nstderr:\n{}", shell_output.stdout, shell_output.stderr)
         };
 
-        // 4. Ephemeral cd warning.
+        // 5. Ephemeral cd warning.
         let warning = cd_warning(&command).map(str::to_owned);
 
         let result = if shell_output.is_success() {

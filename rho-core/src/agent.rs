@@ -11,6 +11,7 @@ use crate::error::{Result, RhoError};
 use crate::newtypes::ToolCallId;
 use crate::session::Session;
 use crate::tool::{CancellationToken, Tool, ToolRegistry, ToolResult};
+use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
 
 // ── State and error types ─────────────────────────────────────────────────────
@@ -83,6 +84,10 @@ pub struct AgentConfig {
     pub initial_backoff_ms: u64,
     /// Policy that decides whether a tool call needs human approval.
     pub approval_policy: Box<dyn ApprovalPolicy>,
+    /// Number of times a tool call with identical (name, arguments, output)
+    /// may repeat before the agent injects a stuck-loop nudge into the
+    /// conversation. Set to 0 to disable stuck-loop detection.
+    pub stuck_loop_threshold: u32,
 }
 
 impl std::fmt::Debug for AgentConfig {
@@ -92,6 +97,7 @@ impl std::fmt::Debug for AgentConfig {
             .field("retry_budget", &self.retry_budget)
             .field("initial_backoff_ms", &self.initial_backoff_ms)
             .field("approval_policy", &"<dyn ApprovalPolicy>")
+            .field("stuck_loop_threshold", &self.stuck_loop_threshold)
             .finish()
     }
 }
@@ -103,6 +109,7 @@ impl Default for AgentConfig {
             retry_budget: 4,
             initial_backoff_ms: 500,
             approval_policy: Box::new(DefaultApprovalPolicy),
+            stuck_loop_threshold: 3,
         }
     }
 }
@@ -123,6 +130,7 @@ impl AgentConfig {
             retry_budget: config.agent.retry_budget,
             initial_backoff_ms: config.agent.initial_backoff_ms,
             approval_policy: Box::new(ConfigApprovalPolicy::new(config)),
+            stuck_loop_threshold: config.agent.stuck_loop_threshold,
         }
     }
 }
@@ -204,6 +212,10 @@ pub async fn run_loop(
     let mut state = AgentState::Thinking;
     let mut iterations = 0u32;
 
+    // Stuck-loop detection: track how many consecutive times each
+    // (tool_name, arguments) pair produces the same output.
+    let mut repetition_counts: HashMap<(String, String), (String, u32)> = HashMap::new();
+
     loop {
         // Each iteration gets its own span so the `iteration` field is a
         // single value (not accumulated). `tracing` span fields are
@@ -272,6 +284,47 @@ pub async fn run_loop(
                     // ── ExecutingTool ─────────────────────────────────────────
                     state = AgentState::ExecutingTool;
                     let result = registry.execute(&call, cancel.clone()).await?;
+
+                    // ── Stuck-loop detection ──────────────────────────────────
+                    if config.stuck_loop_threshold > 0 {
+                        let key = (
+                            call.function.name.to_string(),
+                            call.function.arguments.clone(),
+                        );
+                        let entry = repetition_counts
+                            .entry(key)
+                            .or_insert_with(|| (String::new(), 0));
+                        if entry.0 == result.output {
+                            entry.1 += 1;
+                        } else {
+                            *entry = (result.output.clone(), 1);
+                        }
+                        if entry.1 >= config.stuck_loop_threshold {
+                            warn!(
+                                tool_name = %call.function.name,
+                                repeat_count = entry.1,
+                                "stuck loop detected — same tool call produced \
+                                 identical output {} times",
+                                entry.1
+                            );
+                            let nudge = ToolResult::error(format!(
+                                "STUCK LOOP DETECTED: you have called `{}` with the \
+                                 same arguments {} times and received the same result \
+                                 each time. The file on disk has NOT changed between \
+                                 calls. You must use edit_file or write_file to modify \
+                                 the source code BEFORE running the command again. \
+                                 Re-read the file with read_file to see its current \
+                                 state, then apply the necessary edits.",
+                                call.function.name, entry.1
+                            ));
+                            let _ = session.append_tool_result(call_id, &nudge);
+                            // Reset counter so the model gets another chance.
+                            entry.1 = 0;
+                            state = AgentState::Thinking;
+                            continue;
+                        }
+                    }
+
                     let _ = session.append_tool_result(call_id, &result);
                     state = AgentState::Thinking;
                 }

@@ -123,6 +123,8 @@ pub struct MockShellExecutor {
     outputs: Arc<Mutex<Vec<ShellOutput>>>,
     /// All commands received, in order.
     commands: Arc<Mutex<Vec<String>>>,
+    /// All working directories received, in order.
+    working_dirs: Arc<Mutex<Vec<std::path::PathBuf>>>,
 }
 
 impl MockShellExecutor {
@@ -131,6 +133,7 @@ impl MockShellExecutor {
         Self {
             outputs: Arc::new(Mutex::new(outputs)),
             commands: Arc::new(Mutex::new(Vec::new())),
+            working_dirs: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -142,6 +145,15 @@ impl MockShellExecutor {
     pub fn commands(&self) -> Vec<String> {
         self.commands.lock().unwrap().clone()
     }
+
+    /// All working directories that have been passed to this executor, in order.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal mutex is poisoned.
+    pub fn working_dirs(&self) -> Vec<std::path::PathBuf> {
+        self.working_dirs.lock().unwrap().clone()
+    }
 }
 
 #[async_trait]
@@ -149,11 +161,15 @@ impl ShellExecutor for MockShellExecutor {
     async fn execute(
         &self,
         command: &str,
-        _working_dir: &Path,
+        working_dir: &Path,
         _timeout: Option<Duration>,
         _cancel: rho_core::CancellationToken,
     ) -> rho_core::Result<ShellOutput> {
         self.commands.lock().unwrap().push(command.to_owned());
+        self.working_dirs
+            .lock()
+            .unwrap()
+            .push(working_dir.to_path_buf());
         let mut outputs = self.outputs.lock().unwrap();
         assert!(
             !outputs.is_empty(),
