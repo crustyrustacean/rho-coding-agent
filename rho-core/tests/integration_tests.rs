@@ -11,46 +11,11 @@ use rho_core::{
     tool::{CancellationToken, Tool},
 };
 use rho_test_helpers::{
-    AutoApproveGate, MockChatClient, load_fixture, multi_tool_call_response, text_response,
-    tool_call_response,
+    AutoApproveGate, FixedResponseTool, MockChatClient, fixed_registry, load_fixture,
+    multi_tool_call_response, text_response, tool_call_response,
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-/// A no-op tool that always returns a fixed string.
-struct EchoTool {
-    name: &'static str,
-    response: &'static str,
-}
-
-#[async_trait::async_trait]
-impl Tool for EchoTool {
-    fn name(&self) -> ToolName {
-        ToolName::from(self.name)
-    }
-    fn description(&self) -> &str {
-        "echo"
-    }
-    fn parameters_schema(&self) -> serde_json::Value {
-        serde_json::json!({"type": "object", "properties": {}})
-    }
-    fn risk(&self) -> ToolRisk {
-        ToolRisk::Read
-    }
-    async fn execute(
-        &self,
-        _arguments: serde_json::Value,
-        _cancel: CancellationToken,
-    ) -> rho_core::Result<ToolOutcome> {
-        Ok(ToolOutcome::Immediate(ToolResult::success(self.response)))
-    }
-}
-
-fn echo_registry(name: &'static str, response: &'static str) -> ToolRegistry {
-    let mut reg = ToolRegistry::new();
-    reg.register(Box::new(EchoTool { name, response }));
-    reg
-}
 
 // ── Fixture deserialization ───────────────────────────────────────────────────
 
@@ -217,7 +182,7 @@ async fn assistant_tool_call_message_persisted_before_tool_result() {
         text_response("all done"),
     ]);
 
-    let registry = echo_registry("echo_tool", "echo output");
+    let registry = fixed_registry("echo_tool", "echo output".into(), ToolRisk::Read);
     let config = AgentConfig::default();
     let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
 
@@ -290,13 +255,15 @@ async fn multiple_tool_calls_executed_sequentially() {
     ]);
 
     let mut registry = ToolRegistry::new();
-    registry.register(Box::new(EchoTool {
+    registry.register(Box::new(FixedResponseTool {
         name: "echo_a",
-        response: "result_a",
+        response: "result_a".into(),
+        risk: ToolRisk::Read,
     }));
-    registry.register(Box::new(EchoTool {
+    registry.register(Box::new(FixedResponseTool {
         name: "echo_b",
-        response: "result_b",
+        response: "result_b".into(),
+        risk: ToolRisk::Read,
     }));
 
     let config = AgentConfig::default();
@@ -372,7 +339,7 @@ async fn multi_tool_call_persistence_invariant() {
         text_response("done"),
     ]);
 
-    let registry = echo_registry("echo_tool", "echo");
+    let registry = fixed_registry("echo_tool", "echo".into(), ToolRisk::Read);
     let config = AgentConfig::default();
     let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
 
@@ -436,11 +403,16 @@ async fn mixed_approval_with_multi_tool_call() {
     ]);
 
     let mut registry = ToolRegistry::new();
-    registry.register(Box::new(EchoTool {
+    registry.register(Box::new(FixedResponseTool {
         name: "read_tool",
-        response: "read_result",
+        response: "read_result".into(),
+        risk: ToolRisk::Read,
     }));
-    registry.register(Box::new(WriteEchoTool));
+    registry.register(Box::new(FixedResponseTool {
+        name: "write_tool",
+        response: "written".into(),
+        risk: ToolRisk::Write,
+    }));
 
     let config = AgentConfig::default(); // DefaultApprovalPolicy: Read auto, Write needs approval
     let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
@@ -512,32 +484,6 @@ async fn mixed_approval_with_multi_tool_call() {
     }
 }
 
-/// A write-risk echo tool for testing approval policy.
-struct WriteEchoTool;
-
-#[async_trait::async_trait]
-impl Tool for WriteEchoTool {
-    fn name(&self) -> ToolName {
-        ToolName::from("write_tool")
-    }
-    fn description(&self) -> &str {
-        "write echo"
-    }
-    fn parameters_schema(&self) -> serde_json::Value {
-        serde_json::json!({"type": "object", "properties": {}})
-    }
-    fn risk(&self) -> ToolRisk {
-        ToolRisk::Write
-    }
-    async fn execute(
-        &self,
-        _arguments: serde_json::Value,
-        _cancel: CancellationToken,
-    ) -> rho_core::Result<ToolOutcome> {
-        Ok(ToolOutcome::Immediate(ToolResult::success("written")))
-    }
-}
-
 #[tokio::test]
 async fn all_tool_calls_denied_still_feeds_results_and_resends() {
     // Model requests two write tools; both are denied.
@@ -554,7 +500,11 @@ async fn all_tool_calls_denied_still_feeds_results_and_resends() {
     ]);
 
     let mut registry = ToolRegistry::new();
-    registry.register(Box::new(WriteEchoTool));
+    registry.register(Box::new(FixedResponseTool {
+        name: "write_tool",
+        response: "written".into(),
+        risk: ToolRisk::Write,
+    }));
 
     let config = AgentConfig::default();
     let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
@@ -701,7 +651,7 @@ async fn iteration_count_includes_multi_tool_call_response() {
         .collect();
 
     let client = MockChatClient::new(responses);
-    let registry = echo_registry("echo_tool", "result");
+    let registry = fixed_registry("echo_tool", "result".into(), ToolRisk::Read);
     let config = AgentConfig {
         max_iterations: 5,
         ..AgentConfig::default()
@@ -736,7 +686,7 @@ async fn loop_terminates_after_max_iterations() {
         .collect();
 
     let client = MockChatClient::new(responses);
-    let registry = echo_registry("echo_tool", "result");
+    let registry = fixed_registry("echo_tool", "result".into(), ToolRisk::Read);
     let config = AgentConfig {
         max_iterations: 5,
         ..AgentConfig::default()

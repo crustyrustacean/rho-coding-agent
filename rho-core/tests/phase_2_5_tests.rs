@@ -18,62 +18,22 @@
 use rho_core::{
     AgentConfig, ChatMessage, ContentBlock, ContextManager, MechanicalCompactionStrategy,
     ModelResponse, Session, SlidingWindowContextManager, TokenBudget, ToolCallId, ToolName,
-    ToolOutcome, ToolRegistry, ToolResult,
+    ToolRegistry, ToolResult,
     agent::run_loop,
     message::{ModelToolCall, ToolCallFunction},
     session::{
         CompactionSummary, Entry, EntryPayload, EntryResolution, HeuristicEstimator, TokenEstimator,
     },
-    tool::{CancellationToken, Tool},
+    tool::CancellationToken,
 };
 use rho_test_helpers::{
-    AutoApproveGate, MockChatClient, in_memory_session, text_response, tool_call_response,
+    AutoApproveGate, MockChatClient, fixed_registry, in_memory_session, text_response,
+    tool_call_response,
 };
 use std::collections::BTreeMap;
 use std::time::Duration;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
-
-/// A no-op tool that always returns a fixed string.
-struct FixedResponseTool {
-    name: &'static str,
-    response: String,
-    risk: rho_core::ToolRisk,
-}
-
-#[async_trait::async_trait]
-impl Tool for FixedResponseTool {
-    fn name(&self) -> ToolName {
-        ToolName::from(self.name)
-    }
-    fn description(&self) -> &str {
-        "fixed response tool"
-    }
-    fn parameters_schema(&self) -> serde_json::Value {
-        serde_json::json!({"type": "object", "properties": {}})
-    }
-    fn risk(&self) -> rho_core::ToolRisk {
-        self.risk
-    }
-    async fn execute(
-        &self,
-        _arguments: serde_json::Value,
-        _cancel: CancellationToken,
-    ) -> rho_core::Result<ToolOutcome> {
-        Ok(ToolOutcome::Immediate(ToolResult::success(&self.response)))
-    }
-}
-
-/// Build a registry with a single `FixedResponseTool`.
-fn fixed_registry(name: &'static str, response: String, risk: rho_core::ToolRisk) -> ToolRegistry {
-    let mut reg = ToolRegistry::new();
-    reg.register(Box::new(FixedResponseTool {
-        name,
-        response,
-        risk,
-    }));
-    reg
-}
 
 /// Response builder with known prompt_tokens for calibration tests.
 fn response_with_usage(text: &str, prompt_tokens: usize) -> ModelResponse {

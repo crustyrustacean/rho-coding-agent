@@ -6,6 +6,9 @@
 //!   values and records every [`ChatRequest`] it receives.
 //! - [`MockShellExecutor`] — a [`ShellExecutor`] that returns canned [`ShellOutput`]
 //!   values and records every command it receives.
+//! - [`FixedResponseTool`] — a [`Tool`] that always returns a fixed string,
+//!   with configurable name, response, and risk level. Use [`fixed_registry`]
+//!   to build a [`ToolRegistry`] containing a single `FixedResponseTool`.
 //! - [`FileTestEnv`] — a temporary directory with a [`SandboxRoot`] and helpers
 //!   for creating files and subdirectories inside the sandbox.
 //! - [`detect_shell`] — detect the available PowerShell executable (`pwsh` or
@@ -22,8 +25,9 @@
 
 use async_trait::async_trait;
 use rho_core::{
-    ChatClient, ChatRequest, ModelResponse, RhoError, SandboxRoot, Session, ShellExecutor,
-    ShellOutput, TrustStore, approval::ApprovalGate, message::ModelToolCall, tool::ToolRisk,
+    CancellationToken, ChatClient, ChatRequest, ModelResponse, RhoError, SandboxRoot, Session,
+    ShellExecutor, ShellOutput, Tool, ToolName, ToolOutcome, ToolRegistry, ToolResult, TrustStore,
+    approval::ApprovalGate, message::ModelToolCall, tool::ToolRisk,
 };
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -157,6 +161,60 @@ impl ShellExecutor for MockShellExecutor {
         );
         Ok(outputs.remove(0))
     }
+}
+
+// ── FixedResponseTool ───────────────────────────────────────────────────
+
+/// A tool that always returns a fixed string. Used in integration tests
+/// as a stand-in for any tool the model might call.
+///
+/// The name, response text, and risk level are all configurable, making
+/// this a universal replacement for stub tools scattered across test files.
+pub struct FixedResponseTool {
+    /// The tool's registered name.
+    pub name: &'static str,
+    /// The fixed text to return on every invocation.
+    pub response: String,
+    /// The risk classification reported to the approval policy.
+    pub risk: ToolRisk,
+}
+
+#[async_trait]
+impl Tool for FixedResponseTool {
+    fn name(&self) -> ToolName {
+        ToolName::from(self.name)
+    }
+
+    fn description(&self) -> &str {
+        "fixed response tool"
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object", "properties": {}})
+    }
+
+    fn risk(&self) -> ToolRisk {
+        self.risk
+    }
+
+    async fn execute(
+        &self,
+        _arguments: serde_json::Value,
+        _cancel: CancellationToken,
+    ) -> rho_core::Result<ToolOutcome> {
+        Ok(ToolOutcome::Immediate(ToolResult::success(&self.response)))
+    }
+}
+
+/// Build a [`ToolRegistry`] containing a single [`FixedResponseTool`].
+pub fn fixed_registry(name: &'static str, response: String, risk: ToolRisk) -> ToolRegistry {
+    let mut reg = ToolRegistry::new();
+    reg.register(Box::new(FixedResponseTool {
+        name,
+        response,
+        risk,
+    }));
+    reg
 }
 
 // ── Response builders ─────────────────────────────────────────────────────────

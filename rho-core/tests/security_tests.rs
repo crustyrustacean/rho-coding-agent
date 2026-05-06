@@ -4,16 +4,15 @@
 //! secret redaction, and project context file trust.
 
 use rho_core::{
-    AgentConfig, ChatMessage, RhoConfig, Session, ToolCallId, ToolName, ToolOutcome, ToolRegistry,
-    ToolResult, ToolRisk,
+    AgentConfig, ChatMessage, RhoConfig, Session, ToolCallId, ToolName, ToolRegistry, ToolRisk,
     agent::run_loop,
     approval::{ApprovalPolicy, DefaultApprovalPolicy},
     context_files::{ContextScanner, compose_system_prompt},
-    tool::{CancellationToken, Tool},
+    tool::CancellationToken,
 };
 use rho_test_helpers::{
-    AutoApproveGate, AutoDenyGate, MockChatClient, empty_trust_store, tempdir_with_sandbox,
-    text_response, tool_call_response,
+    AutoApproveGate, AutoDenyGate, FixedResponseTool, MockChatClient, empty_trust_store,
+    tempdir_with_sandbox, text_response, tool_call_response,
 };
 use std::io::Cursor;
 
@@ -37,32 +36,6 @@ fn destructive_tools_require_approval() {
     assert!(policy.requires_approval(&ToolName::from("run_command"), ToolRisk::Destructive));
 }
 
-/// A tool that requires approval (Destructive).
-struct DestructiveTool;
-
-#[async_trait::async_trait]
-impl Tool for DestructiveTool {
-    fn name(&self) -> ToolName {
-        ToolName::from("bang")
-    }
-    fn description(&self) -> &str {
-        "destructive"
-    }
-    fn parameters_schema(&self) -> serde_json::Value {
-        serde_json::json!({"type": "object", "properties": {}})
-    }
-    fn risk(&self) -> ToolRisk {
-        ToolRisk::Destructive
-    }
-    async fn execute(
-        &self,
-        _args: serde_json::Value,
-        _cancel: CancellationToken,
-    ) -> rho_core::Result<ToolOutcome> {
-        Ok(ToolOutcome::Immediate(ToolResult::success("executed")))
-    }
-}
-
 #[tokio::test]
 async fn denied_tool_gets_denial_message_fed_back() {
     // Model requests a destructive tool; user denies it; model then says "ok".
@@ -72,7 +45,11 @@ async fn denied_tool_gets_denial_message_fed_back() {
     ]);
 
     let mut registry = ToolRegistry::new();
-    registry.register(Box::new(DestructiveTool));
+    registry.register(Box::new(FixedResponseTool {
+        name: "bang",
+        response: "executed".into(),
+        risk: ToolRisk::Destructive,
+    }));
 
     let config = AgentConfig::default(); // DefaultApprovalPolicy → requires approval
     let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
@@ -122,7 +99,11 @@ async fn approved_tool_executes() {
     ]);
 
     let mut registry = ToolRegistry::new();
-    registry.register(Box::new(DestructiveTool));
+    registry.register(Box::new(FixedResponseTool {
+        name: "bang",
+        response: "executed".into(),
+        risk: ToolRisk::Destructive,
+    }));
 
     let config = AgentConfig::default();
     let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
