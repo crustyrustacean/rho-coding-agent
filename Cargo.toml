@@ -2,6 +2,7 @@
 members = [
     "rho",
     "rho-core",
+    "rho-highlight",
     "rho-tools",
     "rho-test-helpers",
     "xtask",

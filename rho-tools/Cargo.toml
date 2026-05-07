@@ -20,6 +20,7 @@ tempfile = "3"
 
 [dependencies]
 rho-core = { path = "../rho-core" }
+rho-highlight = { path = "../rho-highlight" }
 async-trait = "0.1"
 anyhow = "1.0.102"
 ignore = "0.4"
