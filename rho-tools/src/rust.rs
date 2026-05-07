@@ -685,6 +685,112 @@ impl Tool for CargoTest {
     }
 }
 
+// ── CargoFix tool ────────────────────────────────────────────────────────────
+
+/// Run `cargo fix --allow-dirty` to apply machine-applicable compiler suggestions.
+///
+/// This tool applies the compiler's own fix suggestions to the source files.
+/// It is most effective after `cargo_check` or `cargo_clippy` has identified
+/// diagnostics with `MachineApplicable` suggestions.
+///
+/// ## Optional parameters
+///
+/// - `package` — restrict to a single workspace member.
+/// - `clippy` — if `true`, applies clippy fixes (`--clippy`) in addition to
+///   compiler fixes.
+pub struct CargoFix {
+    /// Sandbox root used as the working directory.
+    pub root: SandboxRoot,
+    /// The shell executor that runs commands.
+    pub executor: Box<dyn ShellExecutor>,
+}
+
+#[async_trait]
+impl Tool for CargoFix {
+    fn name(&self) -> ToolName {
+        ToolName::from("cargo_fix")
+    }
+
+    fn description(&self) -> &str {
+        "Run `cargo fix` to automatically apply machine-applicable compiler \
+         and clippy suggestions. This modifies source files in place. \
+         Use after cargo_check or cargo_clippy to apply suggested fixes."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "package": {
+                    "type": "string",
+                    "description": "Optional: fix only this workspace member package name."
+                },
+                "clippy": {
+                    "type": "boolean",
+                    "description": "Optional: if true, also apply clippy fixes. Default: false."
+                }
+            },
+            "required": []
+        })
+    }
+
+    fn risk(&self) -> ToolRisk {
+        ToolRisk::Write
+    }
+
+    async fn execute(
+        &self,
+        arguments: serde_json::Value,
+        cancel: CancellationToken,
+    ) -> Result<ToolOutcome> {
+        if cancel.is_cancelled() {
+            return Ok(ToolOutcome::Immediate(ToolResult::error("cancelled")));
+        }
+
+        let package = arguments.get("package").and_then(serde_json::Value::as_str);
+        let clippy = arguments
+            .get("clippy")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+
+        let mut cmd = String::from("cargo fix --allow-dirty --allow-staged");
+        if clippy {
+            cmd.push_str(" --clippy");
+        }
+        if let Some(pkg) = package {
+            cmd.push_str(" --package ");
+            cmd.push_str(pkg);
+        }
+
+        let shell_output = self
+            .executor
+            .execute(&cmd, self.root.path(), None, cancel)
+            .await?;
+
+        // Combine stdout and stderr — cargo fix writes progress to stderr.
+        let combined = if shell_output.stderr.is_empty() {
+            shell_output.stdout.clone()
+        } else if shell_output.stdout.is_empty() {
+            shell_output.stderr.clone()
+        } else {
+            format!("{}\n{}", shell_output.stdout, shell_output.stderr)
+        };
+
+        let output = combined.trim();
+        let result = if shell_output.is_success() {
+            if output.is_empty() {
+                ToolResult::success("cargo fix: no changes needed")
+            } else {
+                ToolResult::success(output)
+            }
+        } else {
+            ToolResult::error(output)
+        };
+
+        Ok(ToolOutcome::Immediate(result))
+    }
+}
+
 // ── Shared execution helper ───────────────────────────────────────────────────
 
 /// Shared logic for `CargoCheck` and `CargoClippy`: parse NDJSON, format, and
@@ -1464,6 +1570,146 @@ mod tests {
             }
             ToolOutcome::Streamed(_) => panic!("expected immediate result"),
         }
+    }
+
+    // ── CargoFix tool tests ───────────────────────────────────
+
+    #[tokio::test]
+    async fn cargo_fix_tool_returns_success_on_no_changes() {
+        let env = rho_test_helpers::FileTestEnv::new();
+        let mock = rho_test_helpers::MockShellExecutor::new(vec![rho_core::ShellOutput::new(
+            String::new(),
+            String::new(),
+            0,
+        )]);
+
+        let tool = CargoFix {
+            root: env.sandbox().clone(),
+            executor: Box::new(mock.clone()),
+        };
+
+        let cancel = CancellationToken::new();
+        let result = tool.execute(serde_json::json!({}), cancel).await.unwrap();
+
+        match result {
+            ToolOutcome::Immediate(r) => {
+                assert!(!r.is_error);
+                assert!(r.output.contains("no changes needed"));
+            }
+            ToolOutcome::Streamed(_) => panic!("expected immediate result"),
+        }
+
+        let commands = mock.commands();
+        assert_eq!(commands.len(), 1);
+        assert!(commands[0].contains("cargo fix --allow-dirty --allow-staged"));
+    }
+
+    #[tokio::test]
+    async fn cargo_fix_tool_passes_clippy_flag() {
+        let env = rho_test_helpers::FileTestEnv::new();
+        let mock = rho_test_helpers::MockShellExecutor::new(vec![rho_core::ShellOutput::new(
+            String::new(),
+            "Fixed 2 warnings".to_owned(),
+            0,
+        )]);
+
+        let tool = CargoFix {
+            root: env.sandbox().clone(),
+            executor: Box::new(mock.clone()),
+        };
+
+        let cancel = CancellationToken::new();
+        let _result = tool
+            .execute(serde_json::json!({"clippy": true}), cancel)
+            .await
+            .unwrap();
+
+        let commands = mock.commands();
+        assert!(commands[0].contains("--clippy"));
+    }
+
+    #[tokio::test]
+    async fn cargo_fix_tool_passes_package_argument() {
+        let env = rho_test_helpers::FileTestEnv::new();
+        let mock = rho_test_helpers::MockShellExecutor::new(vec![rho_core::ShellOutput::new(
+            String::new(),
+            String::new(),
+            0,
+        )]);
+
+        let tool = CargoFix {
+            root: env.sandbox().clone(),
+            executor: Box::new(mock.clone()),
+        };
+
+        let cancel = CancellationToken::new();
+        let _result = tool
+            .execute(serde_json::json!({"package": "rho-core"}), cancel)
+            .await
+            .unwrap();
+
+        let commands = mock.commands();
+        assert!(commands[0].contains("--package rho-core"));
+    }
+
+    #[tokio::test]
+    async fn cargo_fix_tool_returns_error_on_failure() {
+        let env = rho_test_helpers::FileTestEnv::new();
+        let mock = rho_test_helpers::MockShellExecutor::new(vec![rho_core::ShellOutput::new(
+            String::new(),
+            "error: could not compile".to_owned(),
+            101,
+        )]);
+
+        let tool = CargoFix {
+            root: env.sandbox().clone(),
+            executor: Box::new(mock),
+        };
+
+        let cancel = CancellationToken::new();
+        let result = tool.execute(serde_json::json!({}), cancel).await.unwrap();
+
+        match result {
+            ToolOutcome::Immediate(r) => {
+                assert!(r.is_error);
+                assert!(r.output.contains("could not compile"));
+            }
+            ToolOutcome::Streamed(_) => panic!("expected immediate result"),
+        }
+    }
+
+    #[tokio::test]
+    async fn cargo_fix_tool_returns_cancelled_when_cancelled() {
+        let env = rho_test_helpers::FileTestEnv::new();
+        let mock = rho_test_helpers::MockShellExecutor::new(vec![]);
+
+        let tool = CargoFix {
+            root: env.sandbox().clone(),
+            executor: Box::new(mock),
+        };
+
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let result = tool.execute(serde_json::json!({}), cancel).await.unwrap();
+
+        match result {
+            ToolOutcome::Immediate(r) => {
+                assert!(r.is_error);
+                assert_eq!(r.output, "cancelled");
+            }
+            ToolOutcome::Streamed(_) => panic!("expected immediate result"),
+        }
+    }
+
+    #[tokio::test]
+    async fn cargo_fix_is_risk_write() {
+        let env = rho_test_helpers::FileTestEnv::new();
+        let mock = rho_test_helpers::MockShellExecutor::new(vec![]);
+        let tool = CargoFix {
+            root: env.sandbox().clone(),
+            executor: Box::new(mock),
+        };
+        assert_eq!(tool.risk(), ToolRisk::Write);
     }
 
     // ── CargoTest tool tests ──────────────────────────────────
