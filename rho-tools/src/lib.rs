@@ -22,7 +22,7 @@ pub mod rust;
 pub mod shell;
 
 pub use files::{EditFile, ListDir, ReadFile, WriteFile};
-pub use rust::CargoCheck;
+pub use rust::{CargoCheck, CargoClippy};
 pub use shell::{CommandDenylist, PowerShellExecutor, RunCommand};
 
 use rho_core::{SandboxRoot, ToolRegistry};
@@ -44,6 +44,11 @@ pub fn register_all(registry: &mut ToolRegistry, root: SandboxRoot, config: &rho
     registry.register(Box::new(CargoCheck {
         root: root.clone(),
         executor: check_executor,
+    }));
+    let clippy_executor = Box::new(PowerShellExecutor::new());
+    registry.register(Box::new(CargoClippy {
+        root: root.clone(),
+        executor: clippy_executor,
     }));
 
     let executor = Box::new(PowerShellExecutor::new());

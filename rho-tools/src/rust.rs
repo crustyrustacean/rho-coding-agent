@@ -239,9 +239,10 @@ fn path_is_within(root: &Path, candidate: &str) -> bool {
 ///
 /// Uses the compiler's `rendered` text when available, falling back to a
 /// structured format. Includes machine-applicable suggestions inline.
-fn format_diagnostics_for_model(diagnostics: &[Diagnostic]) -> String {
+/// `tool_label` is used in the header (e.g. `"cargo check"` or `"cargo clippy"`).
+fn format_diagnostics_for_model(tool_label: &str, diagnostics: &[Diagnostic]) -> String {
     if diagnostics.is_empty() {
-        return "cargo check: no errors or warnings".to_owned();
+        return format!("{tool_label}: no errors or warnings");
     }
 
     let error_count = diagnostics
@@ -256,7 +257,7 @@ fn format_diagnostics_for_model(diagnostics: &[Diagnostic]) -> String {
     let mut output = String::new();
     let _ = write!(
         output,
-        "cargo check: {error_count} error(s), {warning_count} warning(s)\n\n"
+        "{tool_label}: {error_count} error(s), {warning_count} warning(s)\n\n"
     );
 
     for diag in diagnostics {
@@ -395,24 +396,111 @@ impl Tool for CargoCheck {
             .execute(&cmd, self.root.path(), None, cancel)
             .await?;
 
-        // cargo writes JSON to stdout; human-readable errors to stderr.
-        let diagnostics = parse_cargo_diagnostics(&shell_output.stdout, self.root.path());
-
-        let summary = format_diagnostics_for_model(&diagnostics);
-        let is_error = diagnostics
-            .iter()
-            .any(|d| d.level == DiagnosticLevel::Error);
-
-        let details = ToolResultDetails::Diagnostics(diagnostics);
-
-        let result = ToolResult {
-            output: summary,
-            is_error,
-            details,
-        };
-
-        Ok(ToolOutcome::Immediate(result))
+        execute_cargo_diagnostic_tool("cargo check", &shell_output.stdout, self.root.path())
     }
+}
+
+// ── CargoClippy tool ──────────────────────────────────────────────────────────
+
+/// Run `cargo clippy --message-format=json` and return structured diagnostics.
+///
+/// Same as [`CargoCheck`] but runs Clippy instead of the basic compiler check.
+/// Clippy diagnostics include lint names and additional code-quality warnings
+/// beyond what `cargo check` reports.
+///
+/// ## Optional parameters
+///
+/// - `package` — restrict to a single workspace member.
+pub struct CargoClippy {
+    /// Sandbox root used as the working directory.
+    pub root: SandboxRoot,
+    /// The shell executor that runs commands.
+    pub executor: Box<dyn ShellExecutor>,
+}
+
+#[async_trait]
+impl Tool for CargoClippy {
+    fn name(&self) -> ToolName {
+        ToolName::from("cargo_clippy")
+    }
+
+    fn description(&self) -> &str {
+        "Run `cargo clippy` and return structured lint diagnostics. \
+         Returns lint names, messages, file locations, and machine-applicable \
+         fix suggestions. Use this to find code-quality issues beyond \
+         compilation errors."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "package": {
+                    "type": "string",
+                    "description": "Optional: check only this workspace member package name."
+                }
+            },
+            "required": []
+        })
+    }
+
+    fn risk(&self) -> ToolRisk {
+        ToolRisk::Read
+    }
+
+    async fn execute(
+        &self,
+        arguments: serde_json::Value,
+        cancel: CancellationToken,
+    ) -> Result<ToolOutcome> {
+        if cancel.is_cancelled() {
+            return Ok(ToolOutcome::Immediate(ToolResult::error("cancelled")));
+        }
+
+        let package = arguments.get("package").and_then(serde_json::Value::as_str);
+
+        let mut cmd = String::from("cargo clippy --message-format=json");
+        if let Some(pkg) = package {
+            cmd.push_str(" --package ");
+            cmd.push_str(pkg);
+        }
+
+        let shell_output = self
+            .executor
+            .execute(&cmd, self.root.path(), None, cancel)
+            .await?;
+
+        execute_cargo_diagnostic_tool("cargo clippy", &shell_output.stdout, self.root.path())
+    }
+}
+
+// ── Shared execution helper ───────────────────────────────────────────────────
+
+/// Shared logic for `CargoCheck` and `CargoClippy`: parse NDJSON, format, and
+/// build the `ToolOutcome`.
+///
+/// Returns `Result` for ergonomic use with the `?` operator at call sites,
+/// even though the function itself is infallible.
+#[allow(clippy::unnecessary_wraps)]
+fn execute_cargo_diagnostic_tool(
+    tool_label: &str,
+    stdout: &str,
+    workspace_root: &Path,
+) -> Result<ToolOutcome> {
+    let diagnostics = parse_cargo_diagnostics(stdout, workspace_root);
+
+    let summary = format_diagnostics_for_model(tool_label, &diagnostics);
+    let is_error = diagnostics
+        .iter()
+        .any(|d| d.level == DiagnosticLevel::Error);
+
+    let details = ToolResultDetails::Diagnostics(diagnostics);
+
+    Ok(ToolOutcome::Immediate(ToolResult {
+        output: summary,
+        is_error,
+        details,
+    }))
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -704,7 +792,7 @@ mod tests {
 
     #[test]
     fn format_empty_diagnostics_shows_no_errors() {
-        let output = format_diagnostics_for_model(&[]);
+        let output = format_diagnostics_for_model("cargo check", &[]);
         assert_eq!(output, "cargo check: no errors or warnings");
     }
 
@@ -718,7 +806,7 @@ mod tests {
             children: vec![],
             rendered: Some("error[E0308]: mismatched types\n --> src/lib.rs:2:18".to_owned()),
         };
-        let output = format_diagnostics_for_model(&[diag]);
+        let output = format_diagnostics_for_model("cargo check", &[diag]);
         assert!(output.contains("error[E0308]: mismatched types"));
         assert!(output.contains("1 error(s), 0 warning(s)"));
     }
@@ -742,7 +830,7 @@ mod tests {
             children: vec![],
             rendered: None,
         };
-        let output = format_diagnostics_for_model(&[diag]);
+        let output = format_diagnostics_for_model("cargo check", &[diag]);
         assert!(output.contains("warning: unused variable [unused_variables]"));
         assert!(output.contains("--> src/main.rs:5:9"));
     }
@@ -776,7 +864,7 @@ mod tests {
             }],
             rendered: Some("warning: unused import\n".to_owned()),
         };
-        let output = format_diagnostics_for_model(&[diag]);
+        let output = format_diagnostics_for_model("cargo check", &[diag]);
         assert!(output.contains("[machine-applicable fix]"));
     }
 
@@ -808,7 +896,7 @@ mod tests {
                 rendered: Some("error: error two\n".to_owned()),
             },
         ];
-        let output = format_diagnostics_for_model(&diagnostics);
+        let output = format_diagnostics_for_model("cargo check", &diagnostics);
         assert!(output.contains("2 error(s), 1 warning(s)"));
     }
 
@@ -930,6 +1018,135 @@ mod tests {
             ToolOutcome::Immediate(r) => {
                 assert!(r.is_error);
                 assert_eq!(r.output, "cancelled");
+            }
+            ToolOutcome::Streamed(_) => panic!("expected immediate result"),
+        }
+    }
+
+    // ── CargoClippy tool via MockShellExecutor ─────────────────────
+
+    #[tokio::test]
+    async fn cargo_clippy_tool_returns_success_on_clean_build() {
+        let env = rho_test_helpers::FileTestEnv::new();
+        let ndjson = r#"{"reason":"build-finished","success":true}"#;
+
+        let mock = rho_test_helpers::MockShellExecutor::new(vec![rho_core::ShellOutput::new(
+            ndjson.to_owned(),
+            String::new(),
+            0,
+        )]);
+
+        let tool = CargoClippy {
+            root: env.sandbox().clone(),
+            executor: Box::new(mock.clone()),
+        };
+
+        let cancel = CancellationToken::new();
+        let result = tool.execute(serde_json::json!({}), cancel).await.unwrap();
+
+        match result {
+            ToolOutcome::Immediate(r) => {
+                assert!(!r.is_error);
+                assert!(r.output.contains("cargo clippy: no errors or warnings"));
+            }
+            ToolOutcome::Streamed(_) => panic!("expected immediate result"),
+        }
+
+        let commands = mock.commands();
+        assert_eq!(commands.len(), 1);
+        assert!(commands[0].contains("cargo clippy --message-format=json"));
+    }
+
+    #[tokio::test]
+    async fn cargo_clippy_tool_passes_package_argument() {
+        let env = rho_test_helpers::FileTestEnv::new();
+        let mock = rho_test_helpers::MockShellExecutor::new(vec![rho_core::ShellOutput::new(
+            r#"{"reason":"build-finished","success":true}"#.to_owned(),
+            String::new(),
+            0,
+        )]);
+
+        let tool = CargoClippy {
+            root: env.sandbox().clone(),
+            executor: Box::new(mock.clone()),
+        };
+
+        let cancel = CancellationToken::new();
+        let _result = tool
+            .execute(serde_json::json!({"package": "rho-core"}), cancel)
+            .await
+            .unwrap();
+
+        let commands = mock.commands();
+        assert_eq!(commands.len(), 1);
+        assert!(commands[0].contains("cargo clippy --message-format=json --package rho-core"));
+    }
+
+    #[tokio::test]
+    async fn cargo_clippy_tool_returns_cancelled_when_cancelled() {
+        let env = rho_test_helpers::FileTestEnv::new();
+        let mock = rho_test_helpers::MockShellExecutor::new(vec![]);
+
+        let tool = CargoClippy {
+            root: env.sandbox().clone(),
+            executor: Box::new(mock),
+        };
+
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let result = tool.execute(serde_json::json!({}), cancel).await.unwrap();
+
+        match result {
+            ToolOutcome::Immediate(r) => {
+                assert!(r.is_error);
+                assert_eq!(r.output, "cancelled");
+            }
+            ToolOutcome::Streamed(_) => panic!("expected immediate result"),
+        }
+    }
+
+    #[test]
+    fn format_clippy_label_in_header() {
+        let output = format_diagnostics_for_model("cargo clippy", &[]);
+        assert_eq!(output, "cargo clippy: no errors or warnings");
+    }
+
+    #[tokio::test]
+    async fn cargo_clippy_tool_returns_warnings_for_lint() {
+        let env = rho_test_helpers::FileTestEnv::new();
+        let root_path = env.root().to_string_lossy().replace('\\', "/");
+
+        let ndjson = format!(
+            r#"{{"reason":"compiler-message","package_id":"test","manifest_path":"test","target":{{"kind":["lib"],"crate_types":["lib"],"name":"mylib","src_path":"{root_path}/src/lib.rs","edition":"2021","doc":true,"doctest":true,"test":true}},"message":{{"message":"redundant clone","code":{{"code":"clippy::redundant_clone"}},"level":"warning","spans":[{{"file_name":"src/lib.rs","byte_start":0,"byte_end":10,"line_start":1,"line_end":1,"column_start":1,"column_end":11,"is_primary":true,"text":[],"label":null,"suggested_replacement":null,"suggestion_applicability":null,"expansion":null}}],"children":[],"rendered":"warning: redundant clone\n"}}}}"#
+        );
+
+        let mock = rho_test_helpers::MockShellExecutor::new(vec![rho_core::ShellOutput::new(
+            ndjson,
+            String::new(),
+            0,
+        )]);
+
+        let tool = CargoClippy {
+            root: env.sandbox().clone(),
+            executor: Box::new(mock),
+        };
+
+        let cancel = CancellationToken::new();
+        let result = tool.execute(serde_json::json!({}), cancel).await.unwrap();
+
+        match result {
+            ToolOutcome::Immediate(r) => {
+                assert!(!r.is_error);
+                assert!(r.output.contains("cargo clippy:"));
+                assert!(r.output.contains("0 error(s), 1 warning(s)"));
+                match &r.details {
+                    ToolResultDetails::Diagnostics(diags) => {
+                        assert_eq!(diags.len(), 1);
+                        assert_eq!(diags[0].code.as_deref(), Some("clippy::redundant_clone"));
+                        assert_eq!(diags[0].level, DiagnosticLevel::Warning);
+                    }
+                    _ => panic!("expected Diagnostics details"),
+                }
             }
             ToolOutcome::Streamed(_) => panic!("expected immediate result"),
         }
