@@ -2,6 +2,7 @@
 members = [
     "rho",
     "rho-core",
+    "rho-eval",
     "rho-highlight",
     "rho-tools",
     "rho-test-helpers",
