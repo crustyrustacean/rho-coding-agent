@@ -573,6 +573,118 @@ fn is_valid_error_code(code: &str) -> bool {
     !digits.is_empty() && digits.len() <= 4 && digits.iter().all(u8::is_ascii_digit)
 }
 
+// ── CargoTest tool ───────────────────────────────────────────────────────────
+
+/// Run `cargo test` and return test results.
+///
+/// The tool runs `cargo test` within the sandbox root and captures the
+/// human-readable test output. On stable Rust, JSON test output is not
+/// available, so the tool returns the standard test runner output which
+/// includes test names, pass/fail status, and failure messages.
+///
+/// ## Optional parameters
+///
+/// - `package` — restrict to a single workspace member.
+/// - `filter` — a test name filter (passed as a positional argument).
+/// - `exact` — if `true`, the filter matches exactly (passes `--exact`).
+pub struct CargoTest {
+    /// Sandbox root used as the working directory.
+    pub root: SandboxRoot,
+    /// The shell executor that runs commands.
+    pub executor: Box<dyn ShellExecutor>,
+}
+
+#[async_trait]
+impl Tool for CargoTest {
+    fn name(&self) -> ToolName {
+        ToolName::from("cargo_test")
+    }
+
+    fn description(&self) -> &str {
+        "Run `cargo test` and return test results. \
+         Shows which tests passed, failed, and any failure output. \
+         Use the optional filter parameter to run specific tests."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "package": {
+                    "type": "string",
+                    "description": "Optional: test only this workspace member package name."
+                },
+                "filter": {
+                    "type": "string",
+                    "description": "Optional: filter tests by name (substring match)."
+                },
+                "exact": {
+                    "type": "boolean",
+                    "description": "Optional: if true, filter matches exactly. Default: false."
+                }
+            },
+            "required": []
+        })
+    }
+
+    fn risk(&self) -> ToolRisk {
+        ToolRisk::Read
+    }
+
+    async fn execute(
+        &self,
+        arguments: serde_json::Value,
+        cancel: CancellationToken,
+    ) -> Result<ToolOutcome> {
+        if cancel.is_cancelled() {
+            return Ok(ToolOutcome::Immediate(ToolResult::error("cancelled")));
+        }
+
+        let package = arguments.get("package").and_then(serde_json::Value::as_str);
+        let filter = arguments.get("filter").and_then(serde_json::Value::as_str);
+        let exact = arguments
+            .get("exact")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+
+        let mut cmd = String::from("cargo test");
+        if let Some(pkg) = package {
+            cmd.push_str(" --package ");
+            cmd.push_str(pkg);
+        }
+        if let Some(f) = filter {
+            cmd.push_str(" -- ");
+            cmd.push_str(f);
+            if exact {
+                cmd.push_str(" --exact");
+            }
+        }
+
+        let shell_output = self
+            .executor
+            .execute(&cmd, self.root.path(), None, cancel)
+            .await?;
+
+        // Combine stdout and stderr — cargo test writes compilation to stderr
+        // and test results to stdout.
+        let combined = if shell_output.stderr.is_empty() {
+            shell_output.stdout.clone()
+        } else if shell_output.stdout.is_empty() {
+            shell_output.stderr.clone()
+        } else {
+            format!("{}\n{}", shell_output.stdout, shell_output.stderr)
+        };
+
+        let result = if shell_output.is_success() {
+            ToolResult::success(combined.trim())
+        } else {
+            ToolResult::error(combined.trim())
+        };
+
+        Ok(ToolOutcome::Immediate(result))
+    }
+}
+
 // ── Shared execution helper ───────────────────────────────────────────────────
 
 /// Shared logic for `CargoCheck` and `CargoClippy`: parse NDJSON, format, and
@@ -1344,6 +1456,166 @@ mod tests {
             .execute(serde_json::json!({"code": "E0308"}), cancel)
             .await
             .unwrap();
+
+        match result {
+            ToolOutcome::Immediate(r) => {
+                assert!(r.is_error);
+                assert_eq!(r.output, "cancelled");
+            }
+            ToolOutcome::Streamed(_) => panic!("expected immediate result"),
+        }
+    }
+
+    // ── CargoTest tool tests ──────────────────────────────────
+
+    #[tokio::test]
+    async fn cargo_test_tool_returns_success_on_passing_tests() {
+        let env = rho_test_helpers::FileTestEnv::new();
+        let test_output = "running 3 tests\ntest foo ... ok\ntest bar ... ok\ntest baz ... ok\n\ntest result: ok. 3 passed; 0 failed;";
+
+        let mock = rho_test_helpers::MockShellExecutor::new(vec![rho_core::ShellOutput::new(
+            test_output.to_owned(),
+            String::new(),
+            0,
+        )]);
+
+        let tool = CargoTest {
+            root: env.sandbox().clone(),
+            executor: Box::new(mock.clone()),
+        };
+
+        let cancel = CancellationToken::new();
+        let result = tool.execute(serde_json::json!({}), cancel).await.unwrap();
+
+        match result {
+            ToolOutcome::Immediate(r) => {
+                assert!(!r.is_error);
+                assert!(r.output.contains("3 passed"));
+            }
+            ToolOutcome::Streamed(_) => panic!("expected immediate result"),
+        }
+
+        let commands = mock.commands();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0], "cargo test");
+    }
+
+    #[tokio::test]
+    async fn cargo_test_tool_returns_error_on_failing_tests() {
+        let env = rho_test_helpers::FileTestEnv::new();
+        let test_output = "running 2 tests\ntest foo ... ok\ntest bar ... FAILED\n\ntest result: FAILED. 1 passed; 1 failed;";
+
+        let mock = rho_test_helpers::MockShellExecutor::new(vec![rho_core::ShellOutput::new(
+            test_output.to_owned(),
+            String::new(),
+            101,
+        )]);
+
+        let tool = CargoTest {
+            root: env.sandbox().clone(),
+            executor: Box::new(mock),
+        };
+
+        let cancel = CancellationToken::new();
+        let result = tool.execute(serde_json::json!({}), cancel).await.unwrap();
+
+        match result {
+            ToolOutcome::Immediate(r) => {
+                assert!(r.is_error);
+                assert!(r.output.contains("FAILED"));
+            }
+            ToolOutcome::Streamed(_) => panic!("expected immediate result"),
+        }
+    }
+
+    #[tokio::test]
+    async fn cargo_test_tool_passes_package_argument() {
+        let env = rho_test_helpers::FileTestEnv::new();
+        let mock = rho_test_helpers::MockShellExecutor::new(vec![rho_core::ShellOutput::new(
+            "test result: ok.".to_owned(),
+            String::new(),
+            0,
+        )]);
+
+        let tool = CargoTest {
+            root: env.sandbox().clone(),
+            executor: Box::new(mock.clone()),
+        };
+
+        let cancel = CancellationToken::new();
+        let _result = tool
+            .execute(serde_json::json!({"package": "rho-core"}), cancel)
+            .await
+            .unwrap();
+
+        let commands = mock.commands();
+        assert!(commands[0].contains("--package rho-core"));
+    }
+
+    #[tokio::test]
+    async fn cargo_test_tool_passes_filter_argument() {
+        let env = rho_test_helpers::FileTestEnv::new();
+        let mock = rho_test_helpers::MockShellExecutor::new(vec![rho_core::ShellOutput::new(
+            "test result: ok.".to_owned(),
+            String::new(),
+            0,
+        )]);
+
+        let tool = CargoTest {
+            root: env.sandbox().clone(),
+            executor: Box::new(mock.clone()),
+        };
+
+        let cancel = CancellationToken::new();
+        let _result = tool
+            .execute(serde_json::json!({"filter": "my_test"}), cancel)
+            .await
+            .unwrap();
+
+        let commands = mock.commands();
+        assert!(commands[0].contains("-- my_test"));
+    }
+
+    #[tokio::test]
+    async fn cargo_test_tool_passes_exact_flag() {
+        let env = rho_test_helpers::FileTestEnv::new();
+        let mock = rho_test_helpers::MockShellExecutor::new(vec![rho_core::ShellOutput::new(
+            "test result: ok.".to_owned(),
+            String::new(),
+            0,
+        )]);
+
+        let tool = CargoTest {
+            root: env.sandbox().clone(),
+            executor: Box::new(mock.clone()),
+        };
+
+        let cancel = CancellationToken::new();
+        let _result = tool
+            .execute(
+                serde_json::json!({"filter": "my_test", "exact": true}),
+                cancel,
+            )
+            .await
+            .unwrap();
+
+        let commands = mock.commands();
+        assert!(commands[0].contains("-- my_test --exact"));
+    }
+
+    #[tokio::test]
+    async fn cargo_test_tool_returns_cancelled_when_cancelled() {
+        let env = rho_test_helpers::FileTestEnv::new();
+        let mock = rho_test_helpers::MockShellExecutor::new(vec![]);
+
+        let tool = CargoTest {
+            root: env.sandbox().clone(),
+            executor: Box::new(mock),
+        };
+
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let result = tool.execute(serde_json::json!({}), cancel).await.unwrap();
 
         match result {
             ToolOutcome::Immediate(r) => {
