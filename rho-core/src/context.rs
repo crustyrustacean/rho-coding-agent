@@ -227,7 +227,8 @@ pub trait ContextManager: Send + Sync {
                 | EntryPayload::Label { .. }
                 | EntryPayload::LeafMoved { .. }
                 | EntryPayload::ModelChange { .. }
-                | EntryPayload::SessionInfo { .. } => {
+                | EntryPayload::SessionInfo { .. }
+                | EntryPayload::SessionEnded { .. } => {
                     // Silently skipped — these don't reach the model.
                 }
             }

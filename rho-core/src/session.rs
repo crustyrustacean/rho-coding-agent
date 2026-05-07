@@ -1138,6 +1138,24 @@ impl Session {
         )
     }
 
+    /// Append a `SessionEnded` entry marking the clean close of this session.
+    ///
+    /// The `reason` is a human-readable string explaining why the session
+    /// ended (e.g. `"user quit"`, `"prompt file completed"`). The entry
+    /// is `Attached` resolution — it does not participate in the LLM context.
+    ///
+    /// This is called on graceful exit. The absence of a `SessionEnded`
+    /// entry in the JSONL file indicates an unclean shutdown (crash, kill,
+    /// or Ctrl-C).
+    pub fn close(&mut self, reason: impl Into<String>) {
+        self.append_entry(
+            EntryPayload::SessionEnded {
+                reason: reason.into(),
+            },
+            EntryResolution::Attached,
+        );
+    }
+
     // ── Typed extension entry methods ─────────────────────────────────────
 
     /// Write a typed extension state entry using the [`ExtensionEntry`] trait.
@@ -1484,6 +1502,7 @@ fn estimate_entry_tokens_for_compaction(entry: &Entry, estimator: &dyn TokenEsti
         }
         EntryPayload::SessionInfo { name } => estimator.estimate(name).max(1),
         EntryPayload::LeafMoved { .. } => 1,
+        EntryPayload::SessionEnded { reason } => estimator.estimate(reason).max(1),
     }
 }
 
@@ -3700,6 +3719,8 @@ mod tests {
         };
         session.append_branch_summary(branch_summary, EntryId::from("old_leaf"));
 
+        session.close("test completed");
+
         session.persist.save_path = Some(path.clone());
         session.persist.flushed_count = 0;
         session.flush().unwrap();
@@ -3726,6 +3747,15 @@ mod tests {
         assert!(matches!(
             asst_entry.payload,
             EntryPayload::Message(ChatMessage::Assistant { .. })
+        ));
+
+        // Verify SessionEnded entry survived
+        let leaf = reopened.leaf().unwrap();
+        let leaf_entry = reopened.entry(&leaf).unwrap();
+        assert_eq!(leaf_entry.resolution, EntryResolution::Attached);
+        assert!(matches!(
+            &leaf_entry.payload,
+            EntryPayload::SessionEnded { reason } if reason == "test completed"
         ));
     }
 

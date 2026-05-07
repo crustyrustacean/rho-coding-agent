@@ -83,7 +83,9 @@ impl Tool for ReadFile {
 
         // Wrap in <context> framing — signals to the model that this is data,
         // not instructions. The system prompt reinforces this contract.
-        let framed = format!("<context>\n{content}\n</context>");
+        // <context:end> is an explicit boundary marker so the model can
+        // distinguish the framing from trailing newlines in the file content.
+        let framed = format!("<context>\n{content}\n<context:end>");
 
         Ok(ToolOutcome::Immediate(ToolResult::success(framed)))
     }
@@ -447,19 +449,17 @@ impl Tool for EditFile {
                 0 => {
                     let hint = detect_regex_patterns(&edit.old_text).map_or_else(
                         || {
-                            " Hint: old_text must be an exact character-for-character \
-                            copy of the file content, including whitespace, indentation, \
-                            and newlines. Use read_file to see the exact content, then \
-                            copy the literal text — do not collapse multiple lines into \
-                            one or paraphrase."
+                            " Hint: old_text must match the file content exactly, \
+                            character-for-character. Do not include `<context>` tags \
+                            or `<context:end>` markers — they are framing, not file content. \
+                            Use read_file to see the exact content."
                                 .to_owned()
                         },
                         |patterns| {
                             format!(
                                 " Hint: old_text contains regex-like patterns ({patterns}). \
                                  old_text must be an exact character-for-character match \
-                                 of the file content, not a regex. Use read_file to see \
-                                 the exact content, then copy the literal text."
+                                 of the file content, not a regex."
                             )
                         },
                     );

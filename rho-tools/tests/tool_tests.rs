@@ -56,7 +56,7 @@ async fn read_file_returns_contents_wrapped_in_context() {
         output.contains("hello world"),
         "output must contain file contents"
     );
-    assert!(output.contains("</context>"));
+    assert!(output.contains("<context:end>"));
 }
 
 #[tokio::test]

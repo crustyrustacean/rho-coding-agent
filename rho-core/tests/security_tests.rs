@@ -230,7 +230,7 @@ fn user_context_text_wraps_in_context_tags() {
     let json = serde_json::to_string(&msg).unwrap();
     assert!(json.contains("<context>"));
     assert!(json.contains("file contents here"));
-    assert!(json.contains("</context>"));
+    assert!(json.contains("<context:end>"));
 }
 
 #[test]

@@ -1224,7 +1224,7 @@ fn base_prompt_sha256_is_pinned() {
     let normalized = rho_core::base_prompt().replace('\r', "");
     let hash = rho_core::context_files::sha256_hex(&normalized);
     assert_eq!(
-        hash, "20c3279771bfe3181067dcb2f7c802aa95898d5fd87bf8a4f474134c65c6e1df",
+        hash, "d0fbcf5f3e6ec334d63dfd8e7f797fbeee9e415f2d2342bf519457a8937ddf06",
         "base_prompt() hash changed — update this test to match the new hash"
     );
 }
@@ -1236,7 +1236,7 @@ fn compact_prompt_sha256_is_pinned() {
     let normalized = rho_core::compact_prompt().replace('\r', "");
     let hash = rho_core::context_files::sha256_hex(&normalized);
     assert_eq!(
-        hash, "412d4122d4934dbf3c41586bea74acf8de6e9661ae4304b7e19b7b515bc9bbea",
+        hash, "d04efc17ad433ab96be8fb2bcead15e15612ad9caecef9a04c8a8e10fdbc0024",
         "compact_prompt() hash changed — update this test to match the new hash"
     );
 }

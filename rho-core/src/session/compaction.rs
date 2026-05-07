@@ -179,6 +179,7 @@ fn estimate_entry_tokens(entry: &Entry) -> usize {
         EntryPayload::Label { label, .. } => label.as_ref().map_or(20, |l| l.len() + 20),
         EntryPayload::SessionInfo { name } => name.len() + 20,
         EntryPayload::LeafMoved { .. } => 40,
+        EntryPayload::SessionEnded { .. } => 1,
     };
 
     chars.div_ceil(4).max(1)

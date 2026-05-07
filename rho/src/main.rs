@@ -275,6 +275,7 @@ async fn main() -> Result<()> {
             Err(e) => eprintln!("Error: {e}"),
         }
 
+        session.close("prompt file completed");
         return Ok(());
     }
 
@@ -288,7 +289,10 @@ async fn main() -> Result<()> {
         let input = input.trim();
 
         match input {
-            "/quit" | "quit" => break,
+            "/quit" | "quit" => {
+                session.close("user quit");
+                break;
+            }
             "/clear" => {
                 // Branch back to the system message — same effect as
                 // clearing the conversation, but the old tree is preserved

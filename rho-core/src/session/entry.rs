@@ -19,6 +19,7 @@
 //! | [`LeafMoved`](EntryPayload::LeafMoved) | Attached | No (audit trail only) |
 //! | [`Custom`](EntryPayload::Custom) | Attached | No (extension state) |
 //! | [`CustomMessage`](EntryPayload::CustomMessage) | Full | Yes (extension content) |
+//! | [`SessionEnded`](EntryPayload::SessionEnded) | Attached | No (audit trailer) |
 
 use crate::message::{ChatMessage, ContentBlock};
 use crate::newtypes::{EntryId, ToolName};
@@ -160,6 +161,14 @@ pub enum EntryPayload {
         kind: String,
         content: Vec<ContentBlock>,
     },
+
+    /// Marks the clean end of a session.
+    ///
+    /// Default resolution: **Attached**. Does NOT participate in LLM context.
+    /// Written when the session is closed gracefully (via `/quit` or normal
+    /// process exit). Absence of this entry indicates an unclean shutdown
+    /// (crash, kill, or Ctrl-C).
+    SessionEnded { reason: String },
 }
 
 // ── CompactionSummary ─────────────────────────────────────────────────────────
