@@ -474,6 +474,105 @@ impl Tool for CargoClippy {
     }
 }
 
+// ── RustcExplain tool ─────────────────────────────────────────────────────────
+
+/// Run `rustc --explain <code>` and return the explanation text.
+///
+/// The model can use this to understand what an error code means before
+/// attempting a fix. The explanation text is returned verbatim from `rustc`.
+pub struct RustcExplain {
+    /// The shell executor that runs commands.
+    pub executor: Box<dyn ShellExecutor>,
+    /// Sandbox root used as the working directory.
+    pub root: SandboxRoot,
+}
+
+#[async_trait]
+impl Tool for RustcExplain {
+    fn name(&self) -> ToolName {
+        ToolName::from("rustc_explain")
+    }
+
+    fn description(&self) -> &str {
+        "Look up the explanation for a Rust compiler error code (e.g. E0308). \
+         Returns the detailed explanation text from `rustc --explain`."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "description": "The error code to explain (e.g. \"E0308\")."
+                }
+            },
+            "required": ["code"]
+        })
+    }
+
+    fn risk(&self) -> ToolRisk {
+        ToolRisk::Read
+    }
+
+    async fn execute(
+        &self,
+        arguments: serde_json::Value,
+        cancel: CancellationToken,
+    ) -> Result<ToolOutcome> {
+        if cancel.is_cancelled() {
+            return Ok(ToolOutcome::Immediate(ToolResult::error("cancelled")));
+        }
+
+        let code = arguments
+            .get("code")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                rho_core::RhoError::Unexpected(anyhow::anyhow!(
+                    "rustc_explain: missing required argument `code`"
+                ))
+            })?;
+
+        // Validate the code looks like an error code (E followed by digits).
+        if !is_valid_error_code(code) {
+            return Ok(ToolOutcome::Immediate(ToolResult::error(format!(
+                "invalid error code: {code:?} — expected format like \"E0308\""
+            ))));
+        }
+
+        let cmd = format!("rustc --explain {code}");
+
+        let shell_output = self
+            .executor
+            .execute(&cmd, self.root.path(), None, cancel)
+            .await?;
+
+        if shell_output.is_success() && !shell_output.stdout.trim().is_empty() {
+            Ok(ToolOutcome::Immediate(ToolResult::success(
+                shell_output.stdout.trim(),
+            )))
+        } else {
+            // rustc --explain exits non-zero for unknown codes.
+            let msg = if shell_output.stderr.trim().is_empty() {
+                format!("no explanation found for error code {code}")
+            } else {
+                shell_output.stderr.trim().to_owned()
+            };
+            Ok(ToolOutcome::Immediate(ToolResult::error(msg)))
+        }
+    }
+}
+
+/// Validate that an error code looks like `E0308` (E followed by 1–4 digits).
+fn is_valid_error_code(code: &str) -> bool {
+    let bytes = code.as_bytes();
+    if bytes.is_empty() || bytes[0] != b'E' {
+        return false;
+    }
+    let digits = &bytes[1..];
+    !digits.is_empty() && digits.len() <= 4 && digits.iter().all(u8::is_ascii_digit)
+}
+
 // ── Shared execution helper ───────────────────────────────────────────────────
 
 /// Shared logic for `CargoCheck` and `CargoClippy`: parse NDJSON, format, and
@@ -1104,6 +1203,158 @@ mod tests {
             ToolOutcome::Streamed(_) => panic!("expected immediate result"),
         }
     }
+
+    // ── RustcExplain tool tests ─────────────────────────────────
+
+    #[test]
+    fn valid_error_code_e0308() {
+        assert!(is_valid_error_code("E0308"));
+    }
+
+    #[test]
+    fn valid_error_code_e0001() {
+        assert!(is_valid_error_code("E0001"));
+    }
+
+    #[test]
+    fn invalid_error_code_no_e_prefix() {
+        assert!(!is_valid_error_code("0308"));
+    }
+
+    #[test]
+    fn invalid_error_code_too_many_digits() {
+        assert!(!is_valid_error_code("E00001"));
+    }
+
+    #[test]
+    fn invalid_error_code_empty() {
+        assert!(!is_valid_error_code(""));
+    }
+
+    #[test]
+    fn invalid_error_code_letters_after_e() {
+        assert!(!is_valid_error_code("Eabcd"));
+    }
+
+    #[test]
+    fn invalid_error_code_just_e() {
+        assert!(!is_valid_error_code("E"));
+    }
+
+    #[tokio::test]
+    async fn rustc_explain_returns_explanation_on_success() {
+        let env = rho_test_helpers::FileTestEnv::new();
+        let explanation = "Expected type did not match the received type.\n";
+        let mock = rho_test_helpers::MockShellExecutor::new(vec![rho_core::ShellOutput::new(
+            explanation.to_owned(),
+            String::new(),
+            0,
+        )]);
+
+        let tool = RustcExplain {
+            root: env.sandbox().clone(),
+            executor: Box::new(mock.clone()),
+        };
+
+        let cancel = CancellationToken::new();
+        let result = tool
+            .execute(serde_json::json!({"code": "E0308"}), cancel)
+            .await
+            .unwrap();
+
+        match result {
+            ToolOutcome::Immediate(r) => {
+                assert!(!r.is_error);
+                assert!(r.output.contains("Expected type did not match"));
+            }
+            ToolOutcome::Streamed(_) => panic!("expected immediate result"),
+        }
+
+        let commands = mock.commands();
+        assert_eq!(commands.len(), 1);
+        assert!(commands[0].contains("rustc --explain E0308"));
+    }
+
+    #[tokio::test]
+    async fn rustc_explain_returns_error_for_unknown_code() {
+        let env = rho_test_helpers::FileTestEnv::new();
+        let mock = rho_test_helpers::MockShellExecutor::new(vec![rho_core::ShellOutput::new(
+            String::new(),
+            "error: unknown error code\n".to_owned(),
+            1,
+        )]);
+
+        let tool = RustcExplain {
+            root: env.sandbox().clone(),
+            executor: Box::new(mock),
+        };
+
+        let cancel = CancellationToken::new();
+        let result = tool
+            .execute(serde_json::json!({"code": "E9999"}), cancel)
+            .await
+            .unwrap();
+
+        match result {
+            ToolOutcome::Immediate(r) => {
+                assert!(r.is_error);
+            }
+            ToolOutcome::Streamed(_) => panic!("expected immediate result"),
+        }
+    }
+
+    #[tokio::test]
+    async fn rustc_explain_rejects_invalid_code_format() {
+        let env = rho_test_helpers::FileTestEnv::new();
+        let mock = rho_test_helpers::MockShellExecutor::new(vec![]);
+
+        let tool = RustcExplain {
+            root: env.sandbox().clone(),
+            executor: Box::new(mock),
+        };
+
+        let cancel = CancellationToken::new();
+        let result = tool
+            .execute(serde_json::json!({"code": "not-a-code"}), cancel)
+            .await
+            .unwrap();
+
+        match result {
+            ToolOutcome::Immediate(r) => {
+                assert!(r.is_error);
+                assert!(r.output.contains("invalid error code"));
+            }
+            ToolOutcome::Streamed(_) => panic!("expected immediate result"),
+        }
+    }
+
+    #[tokio::test]
+    async fn rustc_explain_returns_cancelled_when_cancelled() {
+        let env = rho_test_helpers::FileTestEnv::new();
+        let mock = rho_test_helpers::MockShellExecutor::new(vec![]);
+
+        let tool = RustcExplain {
+            root: env.sandbox().clone(),
+            executor: Box::new(mock),
+        };
+
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let result = tool
+            .execute(serde_json::json!({"code": "E0308"}), cancel)
+            .await
+            .unwrap();
+
+        match result {
+            ToolOutcome::Immediate(r) => {
+                assert!(r.is_error);
+                assert_eq!(r.output, "cancelled");
+            }
+            ToolOutcome::Streamed(_) => panic!("expected immediate result"),
+        }
+    }
+
+    // ── Format label tests ─────────────────────────────────────
 
     #[test]
     fn format_clippy_label_in_header() {
