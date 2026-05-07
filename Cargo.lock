@@ -1316,6 +1316,7 @@ dependencies = [
  "rho-core",
  "rho-highlight",
  "rho-test-helpers",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",

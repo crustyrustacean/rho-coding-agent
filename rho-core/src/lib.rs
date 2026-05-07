@@ -70,6 +70,7 @@ pub mod config;
 pub mod context;
 pub mod context_files;
 pub mod conversation;
+pub mod diagnostic;
 pub mod error;
 pub mod message;
 pub mod newtypes;
@@ -97,6 +98,9 @@ pub use config::{
 pub use context::{ContextManager, SlidingWindowContextManager, TokenBudget};
 pub use context_files::{ContextFile, ContextScanner, TrustStore, compose_system_prompt};
 pub use conversation::AssistantResponse;
+pub use diagnostic::{
+    Diagnostic, DiagnosticLevel, DiagnosticSpan, DiagnosticSuggestion, SuggestionApplicability,
+};
 pub use error::{Result, RhoError};
 pub use message::{ChatMessage, ContentBlock, ModelToolCall, ToolCallFunction};
 pub use newtypes::{DiagnosticCode, EntryId, FilePath, SessionId, ToolCallId, ToolName};

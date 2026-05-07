@@ -43,9 +43,9 @@ pub enum ToolRisk {
 /// can read `details` to access richer information than what the LLM sees.
 ///
 /// Phase 2.5 ships [`None`](ToolResultDetails::None) and
-/// [`FullOutput`](ToolResultDetails::FullOutput); Phase 3 will grow the
-/// enum with variants like `Diagnostics(Vec<Diagnostic>)` and
-/// `FileSnapshot { … }`.
+/// [`FullOutput`](ToolResultDetails::FullOutput). Phase 3 adds
+/// [`Diagnostics`](ToolResultDetails::Diagnostics) for structured
+/// compiler output from `cargo check` / `cargo clippy`.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum ToolResultDetails {
     /// No structured detail attached (the default).
@@ -59,6 +59,14 @@ pub enum ToolResultDetails {
         /// The complete, un-truncated content.
         content: String,
     },
+    /// Structured compiler diagnostics from `cargo check` or `cargo clippy`.
+    ///
+    /// The `Vec` contains only workspace-local diagnostics (dependency noise
+    /// is filtered out). Each [`Diagnostic`] carries the error code, message,
+    /// source spans, and machine-applicable suggestions.
+    ///
+    /// [`Diagnostic`]: crate::Diagnostic
+    Diagnostics(Vec<crate::diagnostic::Diagnostic>),
 }
 
 /// The immediate result of a tool execution.

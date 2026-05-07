@@ -1051,8 +1051,10 @@ impl Session {
             EntryResolution::Full,
         );
 
-        // Store full content in the details store for later retrieval
-        if matches!(details, ToolResultDetails::FullOutput { .. }) {
+        // Store structured details in the details store for later retrieval.
+        // Both FullOutput (truncated results) and Diagnostics (compiler output)
+        // are preserved — only None is skipped.
+        if !matches!(details, ToolResultDetails::None) {
             self.details_store.insert(id.clone(), details.clone());
         }
 
