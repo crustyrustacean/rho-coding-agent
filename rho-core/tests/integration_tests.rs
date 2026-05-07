@@ -11,7 +11,7 @@ use rho_core::{
     tool::{CancellationToken, Tool},
 };
 use rho_test_helpers::{
-    AutoApproveGate, FixedResponseTool, MockChatClient, fixed_registry, load_fixture,
+    AutoApproveGate, FailingTool, FixedResponseTool, MockChatClient, fixed_registry, load_fixture,
     multi_tool_call_response, text_response, tool_call_response,
 };
 
@@ -1401,4 +1401,57 @@ async fn egress_no_config_allows_any_host() {
         );
     }
     // Acceptable — the request went through or timed out.
+}
+
+#[tokio::test]
+async fn tool_execution_error_still_appends_tool_result() {
+    // When a tool execution fails, the agent loop must still append a
+    // tool result entry to the session. Without this, the conversation
+    // history has an orphaned assistant tool_call message with no matching
+    // tool result, violating the API contract on the next request.
+    let client = MockChatClient::new(vec![tool_call_response(
+        "call_1",
+        "fail_tool",
+        r#"{"path":"test"}"#,
+    )]);
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Box::new(FailingTool {
+        name: "fail_tool",
+        error_message: "something went wrong".into(),
+    }));
+
+    let config = AgentConfig::default();
+    let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
+
+    let result = run_loop(
+        &mut session,
+        "trigger the failing tool",
+        &client,
+        &registry,
+        &config,
+        CancellationToken::new(),
+        &AutoApproveGate,
+    )
+    .await;
+
+    // The loop should have returned an error from the failing tool.
+    assert!(
+        result.is_err(),
+        "expected error from failing tool, got: {result:?}"
+    );
+
+    // Verify a tool result entry exists in the session (even though
+    // the tool failed). Every assistant tool_call must have a matching
+    // tool result in the conversation history.
+    let messages = session.path_messages();
+    let tool_results: Vec<_> = messages
+        .iter()
+        .filter(|m| matches!(m, ChatMessage::Tool { .. }))
+        .collect();
+    assert_eq!(
+        tool_results.len(),
+        1,
+        "expected 1 tool result entry even on tool execution failure"
+    );
 }

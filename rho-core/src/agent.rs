@@ -191,7 +191,7 @@ impl AgentConfig {
 ///
 /// The current imperative structure is correct and sufficient for Phase 2.
 #[tracing::instrument(skip_all, fields(input_len = message.len()))]
-#[allow(unused_variables, unused_assignments)]
+#[allow(unused_variables, unused_assignments, clippy::too_many_lines)]
 pub async fn run_loop(
     session: &mut Session,
     message: &str,
@@ -283,7 +283,19 @@ pub async fn run_loop(
 
                     // ── ExecutingTool ─────────────────────────────────────────
                     state = AgentState::ExecutingTool;
-                    let result = registry.execute(&call, cancel.clone()).await?;
+                    let result = match registry.execute(&call, cancel.clone()).await {
+                        Ok(r) => r,
+                        Err(e) => {
+                            // Persist the error as a tool result so the
+                            // conversation history stays valid (every
+                            // assistant tool_call must have a matching
+                            // tool result). The ? propagation happens
+                            // after we write the error to the session.
+                            let _ = session
+                                .append_tool_result(call_id, &ToolResult::error(format!("{e}")));
+                            return Err(e);
+                        }
+                    };
 
                     // ── Stuck-loop detection ──────────────────────────────────
                     if config.stuck_loop_threshold > 0 {

@@ -233,6 +233,43 @@ pub fn fixed_registry(name: &'static str, response: String, risk: ToolRisk) -> T
     reg
 }
 
+/// A tool that always returns an error. Used to test error handling
+/// in the agent loop (e.g., tool execution failure mid-batch).
+pub struct FailingTool {
+    pub name: &'static str,
+    pub error_message: String,
+}
+
+#[async_trait]
+impl Tool for FailingTool {
+    fn name(&self) -> ToolName {
+        ToolName::from(self.name)
+    }
+
+    fn description(&self) -> &str {
+        "failing tool"
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object", "properties": {}})
+    }
+
+    fn risk(&self) -> ToolRisk {
+        ToolRisk::Read
+    }
+
+    async fn execute(
+        &self,
+        _arguments: serde_json::Value,
+        _cancel: CancellationToken,
+    ) -> rho_core::Result<ToolOutcome> {
+        Err(rho_core::RhoError::Unexpected(anyhow::anyhow!(
+            "{}",
+            self.error_message
+        )))
+    }
+}
+
 // ── Response builders ─────────────────────────────────────────────────────────
 
 /// Build a minimal [`ModelResponse`] that returns a text message.
