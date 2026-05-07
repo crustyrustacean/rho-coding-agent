@@ -338,6 +338,7 @@ pub struct EditFile {
 }
 
 #[async_trait]
+#[allow(clippy::too_many_lines)]
 impl Tool for EditFile {
     fn name(&self) -> ToolName {
         ToolName::from("edit_file")
@@ -496,6 +497,17 @@ impl Tool for EditFile {
             }
         }
 
+        // Node-splitting validation: warn if an edit boundary falls inside
+        // a syntax node. Only performed for Rust files.
+        let node_split_warnings = if std::path::Path::new(path_str)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("rs"))
+        {
+            check_node_splitting(&content, &match_ranges)
+        } else {
+            Vec::new()
+        };
+
         // Apply edits from last to first so earlier positions remain valid.
         let mut modified = content;
         for (start, end, edit) in match_ranges.into_iter().rev() {
@@ -509,14 +521,146 @@ impl Tool for EditFile {
             ))));
         }
 
-        Ok(ToolOutcome::Immediate(ToolResult::success(format!(
-            "applied {} edit(s) to {path_str}",
-            edits.len()
-        ))))
+        let mut output = format!("applied {} edit(s) to {path_str}", edits.len());
+        for warning in &node_split_warnings {
+            output.push_str("\n[warning] ");
+            output.push_str(warning);
+        }
+
+        Ok(ToolOutcome::Immediate(ToolResult::success(output)))
     }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Check whether any edit boundary falls inside a tree-sitter syntax node.
+///
+/// Returns a list of warning strings for edits that split a node. For example,
+/// if an edit's `old_text` starts in the middle of a string literal, this
+/// emits a warning like "edit splits a `string_content` node".
+///
+/// This is best-effort: if the file can't be parsed, or if tree-sitter returns
+/// an error node, the warning is suppressed (the edit proceeds regardless).
+fn check_node_splitting(source: &str, match_ranges: &[(usize, usize, &Edit)]) -> Vec<String> {
+    let Ok(tree) = rho_highlight::parse(source, rho_highlight::Language::Rust) else {
+        return Vec::new();
+    };
+
+    let mut warnings = Vec::new();
+
+    for &(start, end, _) in match_ranges {
+        // Check both boundaries using node_at via line/col conversion.
+        if let Some(warning) = check_boundary_at_byte(&tree, source, start, "start") {
+            warnings.push(warning);
+        }
+        if let Some(warning) = check_boundary_at_byte(&tree, source, end, "end") {
+            warnings.push(warning);
+        }
+    }
+
+    warnings
+}
+
+/// Convert a byte offset to (line, column) then use `node_at` to check if
+/// the position falls strictly inside a leaf syntax node.
+fn check_boundary_at_byte(
+    tree: &tree_sitter::Tree,
+    source: &str,
+    byte_pos: usize,
+    boundary_label: &str,
+) -> Option<String> {
+    // Convert byte offset to (line, col) — both 0-based.
+    let (line, col) = byte_offset_to_line_col(source, byte_pos)?;
+
+    let info = rho_highlight::node_at(tree, source, line, col).ok()?;
+
+    // Skip error nodes.
+    if info.is_error {
+        return None;
+    }
+
+    // If the position is at the start or end of the node, it's a clean boundary.
+    if byte_pos == info.start_byte || byte_pos == info.end_byte {
+        return None;
+    }
+
+    // Only warn for token-level nodes — identifiers, literals, keywords,
+    // operators, etc. Structural nodes (blocks, items, statements) are
+    // expected to be partially matched by edits.
+    if is_structural_node(&info.kind) {
+        return None;
+    }
+
+    let node_text = &info.text;
+    let preview = if node_text.len() > 40 {
+        format!("{}...", &node_text[..40])
+    } else {
+        node_text.to_owned()
+    };
+
+    Some(format!(
+        "edit {boundary_label} splits a `{}` node: {:?}",
+        info.kind, preview
+    ))
+}
+
+/// Returns `true` for tree-sitter node kinds that represent structural
+/// containers (blocks, items, statements, declarations). Splitting these
+/// is expected and should not trigger a warning.
+fn is_structural_node(kind: &str) -> bool {
+    matches!(
+        kind,
+        "source_file"
+            | "block"
+            | "function_item"
+            | "impl_item"
+            | "struct_item"
+            | "enum_item"
+            | "trait_item"
+            | "mod_item"
+            | "use_declaration"
+            | "let_declaration"
+            | "expression_statement"
+            | "if_expression"
+            | "match_expression"
+            | "match_arm"
+            | "for_expression"
+            | "while_expression"
+            | "loop_expression"
+            | "return_expression"
+            | "call_expression"
+            | "method_call_expression"
+            | "field_expression"
+            | "index_expression"
+            | "binary_expression"
+            | "unary_expression"
+            | "reference_expression"
+            | "assignment_expression"
+            | "closure_expression"
+            | "tuple_expression"
+            | "array_expression"
+            | "parameters"
+            | "arguments"
+            | "type_parameters"
+            | "where_clause"
+            | "field_declaration_list"
+            | "enum_variant_list"
+            | "attribute_item"
+            | "token_tree"
+    )
+}
+
+/// Convert a byte offset to 0-based `(line, column)` in bytes.
+fn byte_offset_to_line_col(source: &str, byte_pos: usize) -> Option<(usize, usize)> {
+    if byte_pos > source.len() {
+        return None;
+    }
+    let before = &source[..byte_pos];
+    let line = before.matches('\n').count();
+    let last_newline = before.rfind('\n').map_or(0, |pos| pos + 1);
+    let col = byte_pos - last_newline;
+    Some((line, col))
+}
 
 /// Detect common regex metacharacter patterns in `old_text`.
 ///
@@ -711,5 +855,72 @@ mod tests {
         // Count occurrences of \s* in the output.
         let count = found.matches(r"\s*").count();
         assert_eq!(count, 1, "\\s* should appear exactly once, got: {found}");
+    }
+
+    // ── Node-splitting validation ───────────────────────────────
+
+    #[test]
+    fn node_splitting_warns_on_split_string_literal() {
+        // Edit that splits the string "hello" by matching only "hel"
+        let source = r#"fn main() { let x = "hello"; }"#;
+        let edit = Edit {
+            old_text: "hel".to_owned(),
+            new_text: "HEL".to_owned(),
+        };
+        // Find where "hel" starts in the source.
+        let start = source.find("hel").unwrap();
+        let end = start + edit.old_text.len();
+        let ranges = vec![(start, end, &edit)];
+
+        let warnings = check_node_splitting(source, &ranges);
+        assert!(
+            !warnings.is_empty(),
+            "should warn about splitting a string node"
+        );
+        // The warning should mention the node kind.
+        assert!(
+            warnings[0].contains("string_content") || warnings[0].contains("string_literal"),
+            "warning should mention the split node kind: {}",
+            warnings[0]
+        );
+    }
+
+    #[test]
+    fn node_splitting_no_warning_on_clean_boundary() {
+        // Replace entire let binding — clean node boundaries.
+        let source = "fn main() {\n    let x = 42;\n    let y = 10;\n}";
+        let old = "let x = 42;";
+        let edit = Edit {
+            old_text: old.to_owned(),
+            new_text: "let x = 99;".to_owned(),
+        };
+        let start = source.find(old).unwrap();
+        let end = start + edit.old_text.len();
+        let ranges = vec![(start, end, &edit)];
+
+        let warnings = check_node_splitting(source, &ranges);
+        assert!(
+            warnings.is_empty(),
+            "clean boundary edit should not warn: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn node_splitting_no_warning_for_non_rust_files() {
+        // check_node_splitting is only called for .rs files;
+        // this test verifies the function itself handles parse failure.
+        let source = "this is not valid rust at all {{{{";
+        let edit = Edit {
+            old_text: "not".to_owned(),
+            new_text: "NOT".to_owned(),
+        };
+        let start = source.find("not").unwrap();
+        let end = start + edit.old_text.len();
+        let ranges = vec![(start, end, &edit)];
+
+        // Even with invalid source, check_node_splitting should not panic.
+        let warnings = check_node_splitting(source, &ranges);
+        // Warnings may or may not be emitted for invalid source — no panic is the requirement.
+        let _ = warnings;
     }
 }
