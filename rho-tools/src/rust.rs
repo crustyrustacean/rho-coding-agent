@@ -791,6 +791,54 @@ impl Tool for CargoFix {
     }
 }
 
+// ── AST-enriched diagnostics (Task 8) ────────────────────────────────────
+
+/// Annotate a diagnostic span with the enclosing AST node kind.
+///
+/// Uses `rho_highlight::node_at` to map the span's `(line, column)` to the
+/// smallest containing tree-sitter node. Returns the node's `kind` and its
+/// ancestor chain, or `None` if the source can't be parsed or the position
+/// is out of range.
+///
+/// The compiler reports 1-based lines and columns, while tree-sitter uses
+/// 0-based. This function handles the conversion.
+pub fn ast_context_for_span(
+    source: &str,
+    span: &DiagnosticSpan,
+) -> Option<rho_highlight::NodeInfo> {
+    // Parse the source as Rust.
+    let tree = rho_highlight::parse(source, rho_highlight::Language::Rust).ok()?;
+
+    // Convert 1-based compiler coordinates to 0-based tree-sitter coordinates.
+    let line = span.line_start.checked_sub(1)?;
+    let column = span.column_start.checked_sub(1)?;
+
+    rho_highlight::node_at(&tree, source, line, column).ok()
+}
+
+/// Format AST context as a human-readable annotation for the model.
+///
+/// Returns a string like `"inside function_item > block > let_declaration"`
+/// or `None` if no context is available.
+pub fn format_ast_context(info: &rho_highlight::NodeInfo) -> String {
+    if info.ancestor_kinds.len() <= 1 {
+        return format!("at {} node", info.kind);
+    }
+    // Show the ancestor chain from outermost significant node to the target.
+    // Skip "source_file" as it's always the root.
+    let chain: Vec<&str> = info
+        .ancestor_kinds
+        .iter()
+        .filter(|k| k.as_str() != "source_file")
+        .map(String::as_str)
+        .collect();
+    if chain.is_empty() {
+        format!("at {} node", info.kind)
+    } else {
+        format!("inside {}", chain.join(" > "))
+    }
+}
+
 // ── Shared execution helper ───────────────────────────────────────────────────
 
 /// Shared logic for `CargoCheck` and `CargoClippy`: parse NDJSON, format, and
@@ -1570,6 +1618,131 @@ mod tests {
             }
             ToolOutcome::Streamed(_) => panic!("expected immediate result"),
         }
+    }
+
+    // ── AST context tests ──────────────────────────────────────
+
+    #[test]
+    fn ast_context_for_identifier_in_function() {
+        let source = "fn main() {\n    let x = 42;\n}";
+        let span = DiagnosticSpan {
+            file_name: "src/main.rs".to_owned(),
+            line_start: 2,
+            line_end: 2,
+            column_start: 9,
+            column_end: 10,
+            is_primary: true,
+            label: None,
+            suggestion: None,
+        };
+
+        let info = ast_context_for_span(source, &span).expect("should find node");
+        assert_eq!(info.kind, "identifier");
+        assert!(
+            info.ancestor_kinds.contains(&"function_item".to_owned()),
+            "ancestor chain should include function_item: {:?}",
+            info.ancestor_kinds
+        );
+    }
+
+    #[test]
+    fn ast_context_for_out_of_range_returns_none() {
+        let source = "fn main() {}";
+        let span = DiagnosticSpan {
+            file_name: "src/main.rs".to_owned(),
+            line_start: 99,
+            line_end: 99,
+            column_start: 1,
+            column_end: 2,
+            is_primary: true,
+            label: None,
+            suggestion: None,
+        };
+
+        assert!(ast_context_for_span(source, &span).is_none());
+    }
+
+    #[test]
+    fn ast_context_for_zero_line_returns_none() {
+        let source = "fn main() {}";
+        let span = DiagnosticSpan {
+            file_name: "src/main.rs".to_owned(),
+            line_start: 0,
+            line_end: 0,
+            column_start: 1,
+            column_end: 2,
+            is_primary: true,
+            label: None,
+            suggestion: None,
+        };
+
+        assert!(ast_context_for_span(source, &span).is_none());
+    }
+
+    #[test]
+    fn format_ast_context_shows_ancestor_chain() {
+        let info = rho_highlight::NodeInfo {
+            kind: "identifier".to_owned(),
+            is_error: false,
+            start_byte: 0,
+            end_byte: 1,
+            start_row: 0,
+            start_column: 0,
+            end_row: 0,
+            end_column: 1,
+            text: "x".to_owned(),
+            ancestor_kinds: vec![
+                "source_file".to_owned(),
+                "function_item".to_owned(),
+                "block".to_owned(),
+                "let_declaration".to_owned(),
+                "identifier".to_owned(),
+            ],
+        };
+
+        let output = format_ast_context(&info);
+        assert_eq!(
+            output,
+            "inside function_item > block > let_declaration > identifier"
+        );
+    }
+
+    #[test]
+    fn format_ast_context_at_root_level() {
+        let info = rho_highlight::NodeInfo {
+            kind: "function_item".to_owned(),
+            is_error: false,
+            start_byte: 0,
+            end_byte: 10,
+            start_row: 0,
+            start_column: 0,
+            end_row: 0,
+            end_column: 10,
+            text: "fn main()".to_owned(),
+            ancestor_kinds: vec!["source_file".to_owned(), "function_item".to_owned()],
+        };
+
+        let output = format_ast_context(&info);
+        assert_eq!(output, "inside function_item");
+    }
+
+    #[test]
+    fn format_ast_context_source_file_only() {
+        let info = rho_highlight::NodeInfo {
+            kind: "source_file".to_owned(),
+            is_error: false,
+            start_byte: 0,
+            end_byte: 10,
+            start_row: 0,
+            start_column: 0,
+            end_row: 0,
+            end_column: 10,
+            text: "fn main()".to_owned(),
+            ancestor_kinds: vec!["source_file".to_owned()],
+        };
+
+        let output = format_ast_context(&info);
+        assert_eq!(output, "at source_file node");
     }
 
     // ── CargoFix tool tests ───────────────────────────────────
