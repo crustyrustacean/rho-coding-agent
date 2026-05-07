@@ -1,0 +1,1 @@
+Run cargo_clippy to check for lint warnings. If there are unused imports, use cargo_fix with the clippy option to automatically remove them. Then run cargo_clippy again to confirm all warnings are resolved.

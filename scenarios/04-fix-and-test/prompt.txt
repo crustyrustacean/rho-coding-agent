@@ -1,0 +1,1 @@
+Run cargo_check to find compilation errors. Fix them. Then run cargo_test to make sure all tests pass.
