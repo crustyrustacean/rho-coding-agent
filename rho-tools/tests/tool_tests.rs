@@ -1176,3 +1176,109 @@ fn denylist_from_config_case_insensitive() {
     assert!(denylist.check("stop-process notepad").is_some());
     assert!(denylist.check("Stop-Process notepad").is_some());
 }
+
+// ── CargoCheck → EditFile → CargoCheck integration test ───────────────────────
+
+/// Simulates the agent workflow: `CargoCheck` finds an error, `EditFile` fixes
+/// it, `CargoCheck` confirms the fix. Uses mocked shell output for
+/// `CargoCheck` and real file operations for `EditFile`.
+#[tokio::test]
+async fn cargo_check_edit_file_cargo_check_loop() {
+    use rho_test_helpers::{FileTestEnv, MockShellExecutor};
+    use rho_tools::{CargoCheck, EditFile};
+
+    let env = FileTestEnv::new();
+    let root_path = env.root().to_string_lossy().replace('\\', "/");
+
+    // Create a Rust file with a type error.
+    env.write_file("src/lib.rs", "fn greet() -> String {\n    42\n}\n");
+
+    // Step 1: CargoCheck returns an error diagnostic.
+    let check_error_ndjson = format!(
+        r#"{{"reason":"compiler-message","package_id":"test","manifest_path":"test","target":{{"kind":["lib"],"crate_types":["lib"],"name":"mylib","src_path":"{root_path}/src/lib.rs","edition":"2021","doc":true,"doctest":true,"test":true}},"message":{{"message":"mismatched types","code":{{"code":"E0308"}},"level":"error","spans":[{{"file_name":"src/lib.rs","byte_start":23,"byte_end":25,"line_start":2,"line_end":2,"column_start":5,"column_end":7,"is_primary":true,"text":[],"label":"expected `String`, found integer","suggested_replacement":null,"suggestion_applicability":null,"expansion":null}}],"children":[],"rendered":"error[E0308]: mismatched types\n"}}}}"#
+    );
+    let mock1 = MockShellExecutor::new(vec![ShellOutput::new(
+        check_error_ndjson,
+        String::new(),
+        101,
+    )]);
+
+    let check_tool = CargoCheck {
+        root: env.sandbox().clone(),
+        executor: Box::new(mock1),
+    };
+
+    let cancel = CancellationToken::new();
+    let result1 = check_tool
+        .execute(serde_json::json!({}), cancel.clone())
+        .await
+        .unwrap();
+
+    match &result1 {
+        ToolOutcome::Immediate(r) => {
+            assert!(r.is_error, "first check should report error");
+            assert!(r.output.contains("E0308"));
+        }
+        ToolOutcome::Streamed(_) => panic!("expected immediate"),
+    }
+
+    // Step 2: EditFile fixes the error.
+    let edit_tool = EditFile {
+        root: env.sandbox().clone(),
+    };
+
+    let lib_path = env.root().join("src").join("lib.rs");
+    let edit_result = edit_tool
+        .execute(
+            serde_json::json!({
+                "path": lib_path.to_str().unwrap(),
+                "edits": [{
+                    "old_text": "    42",
+                    "new_text": "    String::from(\"hello\")"
+                }]
+            }),
+            cancel.clone(),
+        )
+        .await
+        .unwrap();
+
+    match &edit_result {
+        ToolOutcome::Immediate(r) => {
+            assert!(!r.is_error, "edit should succeed: {}", r.output);
+            assert!(r.output.contains("applied 1 edit(s)"));
+        }
+        ToolOutcome::Streamed(_) => panic!("expected immediate"),
+    }
+
+    // Verify the file was actually modified.
+    let fixed_content = env.read_file("src/lib.rs");
+    assert!(
+        fixed_content.contains("String::from"),
+        "file should contain the fix"
+    );
+
+    // Step 3: CargoCheck now returns clean.
+    let mock2 = MockShellExecutor::new(vec![ShellOutput::new(
+        r#"{"reason":"build-finished","success":true}"#.to_owned(),
+        String::new(),
+        0,
+    )]);
+
+    let check_tool2 = CargoCheck {
+        root: env.sandbox().clone(),
+        executor: Box::new(mock2),
+    };
+
+    let result2 = check_tool2
+        .execute(serde_json::json!({}), cancel)
+        .await
+        .unwrap();
+
+    match &result2 {
+        ToolOutcome::Immediate(r) => {
+            assert!(!r.is_error, "second check should be clean");
+            assert!(r.output.contains("no errors or warnings"));
+        }
+        ToolOutcome::Streamed(_) => panic!("expected immediate"),
+    }
+}
