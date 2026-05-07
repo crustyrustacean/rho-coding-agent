@@ -437,6 +437,20 @@ fn load_system_prompt(sandbox: &SandboxRoot, cli: &Cli) -> String {
            full relative path from the project root in every command."
     ));
 
+    // Append Rust tooling guidance when Rust tools are available.
+    prompt.push_str(
+        "\n\n# Rust Tooling\n\n\
+         - You have access to structured Rust compiler diagnostics via `cargo_check` and `cargo_clippy`.\n\
+         - When code fails to compile, use `cargo_check` before attempting manual fixes.\n\
+         - Trust machine-applicable suggestions from the compiler — apply them with `cargo_fix` or by\n\
+           using the suggested replacement text in `edit_file`.\n\
+         - Use `cargo_clippy` for code-quality lints beyond compilation errors.\n\
+         - Use `rustc_explain` to look up detailed explanations for error codes (e.g. E0308).\n\
+         - Use `cargo_test` to verify fixes — run the relevant tests after each change.\n\
+         - Prefer the structured diagnostic tools over `run_command` with raw `cargo check` —\n\
+           the tools parse JSON output and surface only actionable workspace diagnostics.",
+    );
+
     prompt
 }
 
