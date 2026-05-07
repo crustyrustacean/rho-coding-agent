@@ -2093,4 +2093,42 @@ mod tests {
             ToolOutcome::Streamed(_) => panic!("expected immediate result"),
         }
     }
+
+    // ── Fixture-based parsing tests ────────────────────────────
+
+    #[test]
+    fn fixture_cargo_check_error_parses_correctly() {
+        let fixture = rho_test_helpers::load_fixture("tests/fixtures/cargo_check_error.json");
+        let diagnostics = parse_cargo_diagnostics(&fixture, Path::new("C:/project"));
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code.as_deref(), Some("E0308"));
+        assert_eq!(diagnostics[0].level, DiagnosticLevel::Error);
+        assert_eq!(diagnostics[0].message, "mismatched types");
+        assert!(diagnostics[0].rendered.is_some());
+    }
+
+    #[test]
+    fn fixture_cargo_check_warning_with_suggestion_parses_correctly() {
+        let fixture = rho_test_helpers::load_fixture(
+            "tests/fixtures/cargo_check_warning_with_suggestion.json",
+        );
+        let diagnostics = parse_cargo_diagnostics(&fixture, Path::new("C:/project"));
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].level, DiagnosticLevel::Warning);
+        assert_eq!(diagnostics[0].children.len(), 1);
+        let child = &diagnostics[0].children[0];
+        assert_eq!(child.level, DiagnosticLevel::Help);
+        assert!(child.spans[0].suggestion.is_some());
+        assert_eq!(
+            child.spans[0].suggestion.as_ref().unwrap().applicability,
+            SuggestionApplicability::MachineApplicable
+        );
+    }
+
+    #[test]
+    fn fixture_cargo_check_clean_returns_empty() {
+        let fixture = rho_test_helpers::load_fixture("tests/fixtures/cargo_check_clean.json");
+        let diagnostics = parse_cargo_diagnostics(&fixture, Path::new("C:/project"));
+        assert!(diagnostics.is_empty());
+    }
 }
