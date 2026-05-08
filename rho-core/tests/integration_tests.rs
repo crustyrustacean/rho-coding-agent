@@ -12,7 +12,8 @@ use rho_core::{
 };
 use rho_test_helpers::{
     AutoApproveGate, FailingTool, FixedResponseTool, MockChatClient, assert_no_orphan_tool_results,
-    fixed_registry, load_fixture, multi_tool_call_response, text_response, tool_call_response,
+    fixed_registry, length_truncated_response, load_fixture, multi_tool_call_response,
+    text_response, tool_call_response,
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -1409,4 +1410,238 @@ async fn tool_execution_error_still_appends_tool_result() {
         1,
         "expected 1 tool result entry even on tool execution failure"
     );
+}
+
+// ── Length truncation recovery ────────────────────────────────────────────────
+
+/// When the model returns `finish_reason=length` with empty content and
+/// non-empty `reasoning_content`, the agent loop should attempt compaction
+/// and retry. If compaction fails (too few entries), it returns a user-
+/// facing explanation instead of silently returning empty text.
+#[tokio::test]
+async fn length_truncated_empty_content_returns_explanation() {
+    // The exact scenario from the bug report: reasoning model spent all
+    // completion tokens on chain-of-thought, produced no content.
+    let client = MockChatClient::new(vec![length_truncated_response(
+        "",
+        "Now I have a thorough understanding of the codebase. Let me summarize.",
+    )]);
+
+    let registry = ToolRegistry::new();
+    let config = AgentConfig::default();
+    let mut session = Session::in_memory("mock", None, vec![], "/tmp");
+
+    let result = run_loop(
+        &mut session,
+        "design streaming support",
+        &client,
+        &registry,
+        &config,
+        CancellationToken::new(),
+        &AutoApproveGate,
+    )
+    .await
+    .unwrap();
+
+    // Must NOT be empty — the old bug returned Ok("").
+    assert!(
+        !result.is_empty(),
+        "expected a non-empty explanation, got empty string (the bug!)"
+    );
+    // Must mention the core problem.
+    assert!(
+        result.contains("ran out of tokens"),
+        "expected 'ran out of tokens' in explanation, got: {result}"
+    );
+    // Must mention reasoning/thinking since reasoning_content was non-empty.
+    assert!(
+        result.contains("thinking"),
+        "expected 'thinking' in explanation (reasoning_content was non-empty), got: {result}"
+    );
+}
+
+/// When `finish_reason=length` with non-empty content, the explanation
+/// should include the partial output.
+#[tokio::test]
+async fn length_truncated_with_partial_content_shows_it() {
+    let client = MockChatClient::new(vec![length_truncated_response(
+        "The implementation involves several steps. First, you need to",
+        "",
+    )]);
+
+    let registry = ToolRegistry::new();
+    let config = AgentConfig::default();
+    let mut session = Session::in_memory("mock", None, vec![], "/tmp");
+
+    let result = run_loop(
+        &mut session,
+        "explain something",
+        &client,
+        &registry,
+        &config,
+        CancellationToken::new(),
+        &AutoApproveGate,
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        !result.is_empty(),
+        "expected a non-empty explanation, got empty string"
+    );
+    assert!(
+        result.contains("ran out of tokens"),
+        "expected 'ran out of tokens' in explanation, got: {result}"
+    );
+    assert!(
+        result.contains("Partial output (truncated)"),
+        "expected 'Partial output (truncated)' in explanation, got: {result}"
+    );
+    assert!(
+        result.contains("The implementation involves several steps"),
+        "expected the partial content in the explanation, got: {result}"
+    );
+}
+
+/// When `finish_reason=length` with empty content AND empty reasoning,
+/// the explanation should use the "no output" variant.
+#[tokio::test]
+async fn length_truncated_empty_everything_shows_no_output() {
+    let client = MockChatClient::new(vec![length_truncated_response("", "")]);
+
+    let registry = ToolRegistry::new();
+    let config = AgentConfig::default();
+    let mut session = Session::in_memory("mock", None, vec![], "/tmp");
+
+    let result = run_loop(
+        &mut session,
+        "hello",
+        &client,
+        &registry,
+        &config,
+        CancellationToken::new(),
+        &AutoApproveGate,
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        !result.is_empty(),
+        "expected a non-empty explanation, got empty string"
+    );
+    assert!(
+        result.contains("No output was produced"),
+        "expected 'No output was produced' in explanation, got: {result}"
+    );
+}
+
+/// The truncated assistant message is persisted in the session so the
+/// conversation history stays valid.
+#[tokio::test]
+async fn length_truncated_message_persisted_in_session() {
+    let client = MockChatClient::new(vec![length_truncated_response(
+        "some partial text",
+        "reasoning here",
+    )]);
+
+    let registry = ToolRegistry::new();
+    let config = AgentConfig::default();
+    let mut session = Session::in_memory("mock", None, vec![], "/tmp");
+
+    let _ = run_loop(
+        &mut session,
+        "test",
+        &client,
+        &registry,
+        &config,
+        CancellationToken::new(),
+        &AutoApproveGate,
+    )
+    .await;
+
+    // The session should contain an assistant message with the partial text.
+    let msgs = session.path_messages();
+    let has_assistant_with_partial = msgs.iter().any(|m| {
+        matches!(m, ChatMessage::Assistant { content, .. } if content.iter().any(
+            |b| matches!(b, ContentBlock::Text { text } if text == "some partial text")
+        ))
+    });
+    assert!(
+        has_assistant_with_partial,
+        "expected the truncated assistant message to be persisted in the session"
+    );
+}
+
+/// When compaction succeeds after a length truncation, the loop retries
+/// and the model gets a second chance with a compacted context.
+#[tokio::test]
+async fn length_truncated_compacts_and_retries() {
+    // First: length-truncated response (model ran out of tokens).
+    // Second: successful text response after compaction freed space.
+    let client = MockChatClient::new(vec![
+        length_truncated_response("", "still thinking..."),
+        text_response("Here is the full answer you asked for."),
+    ]);
+
+    let registry = ToolRegistry::new();
+    let config = AgentConfig::default();
+    // Use a short system prompt so the session doesn't consume too much
+    // of the token budget, leaving room for the user message to be
+    // compacted.
+    let mut session = Session::in_memory("mock", Some("sys"), vec![], "/tmp");
+
+    // Build up enough history before the length truncation for compaction
+    // to succeed. We need the user message to exceed the compaction threshold.
+    // The threshold is message_budget / 4. With a short system prompt and
+    // no tools, message_budget ≈ 32K. We need a user message that's big
+    // enough that its estimated tokens exceed 32K/4 = 8K. The heuristic
+    // estimator uses chars/4, so we need ~32K chars.
+    let long_message = "A".repeat(40_000);
+    session.append_user_message(&long_message);
+
+    // Now run the loop with a second user message (the one that triggers
+    // the length-truncated response). We bypass `run_loop` and use
+    // `send_current` directly to set up the truncated response, then
+    // verify the retry behavior. Actually, `run_loop` appends the message
+    // itself, so let's use a short message.
+    let result = run_loop(
+        &mut session,
+        "short follow-up",
+        &client,
+        &registry,
+        &config,
+        CancellationToken::new(),
+        &AutoApproveGate,
+    )
+    .await
+    .unwrap();
+
+    // After compaction + retry, the model should have produced its answer.
+    assert_eq!(
+        result, "Here is the full answer you asked for.",
+        "expected the model's successful response after compaction + retry"
+    );
+
+    // The mock should have been called twice: once (truncated), then once (retry).
+    let requests = client.requests();
+    assert_eq!(
+        requests.len(),
+        2,
+        "expected 2 requests (1 truncated + 1 retry after compaction), got {}",
+        requests.len()
+    );
+}
+
+/// The `finish_reason_length_empty` fixture round-trips correctly.
+#[test]
+fn fixture_finish_reason_length_empty_deserializes() {
+    let json = load_fixture("tests/fixtures/responses/finish_reason_length_empty.json");
+    let response: rho_core::ModelResponse = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(
+        response.choices[0].finish_reason,
+        rho_core::FinishReason::Length
+    );
+    assert!(response.choices[0].message.content.is_empty());
+    assert!(!response.choices[0].message.reasoning_content.is_empty());
 }

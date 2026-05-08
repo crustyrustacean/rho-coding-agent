@@ -1,0 +1,29 @@
+{
+  "id": "chatcmpl-finish-length-empty",
+  "object": "chat.completion",
+  "created": 1778210915,
+  "model": "qwen/qwen3.6-27b",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "",
+        "reasoning_content": "Now I have a thorough understanding of the codebase. Let me summarize the key design parameters for adding SSE/streaming support.",
+        "tool_calls": []
+      },
+      "logprobs": null,
+      "finish_reason": "length"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 32635,
+    "completion_tokens": 133,
+    "total_tokens": 32768,
+    "completion_tokens_details": {
+      "reasoning_tokens": 132
+    }
+  },
+  "stats": {},
+  "system_fingerprint": "qwen/qwen3.6-27b"
+}

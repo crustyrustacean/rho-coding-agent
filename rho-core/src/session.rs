@@ -923,26 +923,41 @@ impl Session {
                 .calibrate(&self.model, estimated_tokens, usage.prompt_tokens);
         }
 
-        if let FinishReason::ToolCalls = choice.finish_reason {
-            let tool_calls = choice.message.tool_calls.clone();
-            // Persist assistant message with tool_calls BEFORE returning.
-            self.append_assistant_message(ChatMessage::Assistant {
-                content: if choice.message.content.is_empty() {
-                    vec![]
-                } else {
-                    vec![crate::message::ContentBlock::Text {
-                        text: choice.message.content.clone(),
-                    }]
-                },
-                tool_calls: tool_calls.clone(),
-            });
-            Ok(crate::conversation::AssistantResponse::ToolCalls(
-                tool_calls,
-            ))
-        } else {
-            let text = choice.message.content.clone();
-            self.append_assistant_message(ChatMessage::assistant_text(&text));
-            Ok(crate::conversation::AssistantResponse::Message(text))
+        match &choice.finish_reason {
+            FinishReason::ToolCalls => {
+                let tool_calls = choice.message.tool_calls.clone();
+                // Persist assistant message with tool_calls BEFORE returning.
+                self.append_assistant_message(ChatMessage::Assistant {
+                    content: if choice.message.content.is_empty() {
+                        vec![]
+                    } else {
+                        vec![crate::message::ContentBlock::Text {
+                            text: choice.message.content.clone(),
+                        }]
+                    },
+                    tool_calls: tool_calls.clone(),
+                });
+                Ok(crate::conversation::AssistantResponse::ToolCalls(
+                    tool_calls,
+                ))
+            }
+            FinishReason::Length => {
+                // The model hit the token limit. Persist the (possibly empty)
+                // response as an assistant message so the conversation history
+                // stays valid, then signal the agent loop to handle recovery.
+                let content = choice.message.content.clone();
+                let reasoning_content = choice.message.reasoning_content.clone();
+                self.append_assistant_message(ChatMessage::assistant_text(&content));
+                Ok(crate::conversation::AssistantResponse::LengthTruncated {
+                    content,
+                    reasoning_content,
+                })
+            }
+            _ => {
+                let text = choice.message.content.clone();
+                self.append_assistant_message(ChatMessage::assistant_text(&text));
+                Ok(crate::conversation::AssistantResponse::Message(text))
+            }
         }
     }
 

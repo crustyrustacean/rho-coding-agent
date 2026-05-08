@@ -244,6 +244,69 @@ pub async fn run_loop(
                 return Ok(text);
             }
 
+            // ── Length-truncated recovery ────────────────────────────────────
+            AssistantResponse::LengthTruncated {
+                content,
+                reasoning_content,
+            } => {
+                info!(
+                    content_len = content.len(),
+                    reasoning_len = reasoning_content.len(),
+                    "model hit token limit (finish_reason=length)"
+                );
+                state = AgentState::Thinking;
+
+                // Attempt compaction to free context space, then retry.
+                // If compaction fails (too few entries, or nothing to compact),
+                // return a user-facing explanation.
+                let strategy = crate::session::MechanicalCompactionStrategy::new();
+                let budget = session.message_budget();
+                let compact_threshold = budget / 4;
+
+                match session
+                    .compact_older_than(compact_threshold, &strategy)
+                    .await
+                {
+                    Ok(_compaction_id) => {
+                        info!(
+                            freed_tokens = compact_threshold,
+                            "compacted context after length truncation, retrying"
+                        );
+                        // Retry: loop back to send with compacted context.
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "compaction failed after length truncation");
+                        // Build a user-facing message explaining what happened.
+                        let mut explanation = String::from(
+                            "The model ran out of tokens before completing its response. \
+                             This usually means the conversation grew too large for the \
+                             context window. \
+                             \n\n",
+                        );
+                        if !reasoning_content.is_empty() {
+                            explanation.push_str(
+                                "The model was still thinking (chain-of-thought) and did not \
+                                 produce any output before being cut off. Try one of:\
+                                 \n  1. Use `/compact` to summarize the conversation and free space\n                                 \n  2. Start a fresh session with `/reset`\n                                 \n  3. Increase the context window in your model server\n",
+                            );
+                        } else if content.is_empty() {
+                            explanation.push_str(
+                                "No output was produced. Try `/compact` or `/reset` to continue.\n",
+                            );
+                        } else {
+                            use std::fmt::Write;
+                            let _ = write!(
+                                explanation,
+                                "Partial output (truncated):\n\n{content}\n\n\
+                                 Use `/compact` or `/reset` to get a complete response.\n"
+                            );
+                        }
+                        state = AgentState::Idle;
+                        return Ok(explanation);
+                    }
+                }
+            }
+
             AssistantResponse::ToolCalls(calls) => {
                 info!(tool_count = calls.len());
                 if calls.is_empty() {

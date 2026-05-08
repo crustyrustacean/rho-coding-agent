@@ -404,6 +404,46 @@ pub fn multi_tool_call_response(
     serde_json::from_value(json).expect("multi_tool_call_response: invalid fixture")
 }
 
+/// Build a [`ModelResponse`] with `finish_reason: "length"` and the given content.
+///
+/// Both `content` and `reasoning_content` default to `""` if not provided.
+/// This models a reasoning model that ran out of tokens (e.g. spent everything
+/// on chain-of-thought with no content output).
+///
+/// # Panics
+///
+/// Panics if the internal fixture JSON is malformed (should never happen).
+pub fn length_truncated_response(
+    content: impl Into<String>,
+    reasoning_content: impl Into<String>,
+) -> ModelResponse {
+    let json = serde_json::json!({
+        "id": "mock-id",
+        "object": "chat.completion",
+        "created": 0,
+        "model": "mock-model",
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": content.into(),
+                "reasoning_content": reasoning_content.into(),
+                "tool_calls": []
+            },
+            "logprobs": null,
+            "finish_reason": "length"
+        }],
+        "usage": {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0
+        },
+        "stats": {},
+        "system_fingerprint": ""
+    });
+    serde_json::from_value(json).expect("length_truncated_response: invalid fixture")
+}
+
 // ── Fixture loader ────────────────────────────────────────────────────────────
 
 /// Load a fixture file relative to the calling crate's `tests/fixtures/` directory.
