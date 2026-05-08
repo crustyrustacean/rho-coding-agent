@@ -11,8 +11,8 @@ use rho_core::{
     tool::{CancellationToken, Tool},
 };
 use rho_test_helpers::{
-    AutoApproveGate, FailingTool, FixedResponseTool, MockChatClient, fixed_registry, load_fixture,
-    multi_tool_call_response, text_response, tool_call_response,
+    AutoApproveGate, FailingTool, FixedResponseTool, MockChatClient, assert_no_orphan_tool_results,
+    fixed_registry, load_fixture, multi_tool_call_response, text_response, tool_call_response,
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -217,31 +217,7 @@ async fn assistant_tool_call_message_persisted_before_tool_result() {
 
     // Structural invariant: every Tool message is preceded by an Assistant
     // message containing the matching tool_call_id.
-    let mut prev_was_assistant_with_call = false;
-    let mut prev_call_ids: Vec<&str> = Vec::new();
-    for msg in msgs {
-        match msg {
-            ChatMessage::Assistant { tool_calls, .. } if !tool_calls.is_empty() => {
-                prev_was_assistant_with_call = true;
-                prev_call_ids = tool_calls.iter().map(|c| c.id.as_ref()).collect();
-            }
-            ChatMessage::Tool { tool_call_id, .. } => {
-                assert!(
-                    prev_was_assistant_with_call,
-                    "Tool message with call_id '{tool_call_id}' has no preceding Assistant message with tool_calls"
-                );
-                assert!(
-                    prev_call_ids.contains(&tool_call_id.as_ref()),
-                    "Tool message with call_id '{tool_call_id}' does not match any preceding tool_call_id: {prev_call_ids:?}"
-                );
-            }
-            ChatMessage::Assistant { .. } => {
-                prev_was_assistant_with_call = false;
-                prev_call_ids.clear();
-            }
-            _ => {}
-        }
-    }
+    assert_no_orphan_tool_results(msgs);
 }
 
 // ── Task 5: multi-tool-call handling ─────────────────────────────────────────
@@ -359,32 +335,11 @@ async fn multi_tool_call_persistence_invariant() {
     let second = &requests[1];
     let msgs = &second.messages;
 
-    // Collect all tool_call_ids from the assistant message(s).
-    let mut prev_was_assistant_with_call = false;
-    let mut prev_call_ids: Vec<&str> = Vec::new();
-    for msg in msgs {
-        match msg {
-            ChatMessage::Assistant { tool_calls, .. } if !tool_calls.is_empty() => {
-                prev_was_assistant_with_call = true;
-                prev_call_ids = tool_calls.iter().map(|c| c.id.as_ref()).collect();
-            }
-            ChatMessage::Tool { tool_call_id, .. } => {
-                assert!(
-                    prev_was_assistant_with_call,
-                    "Tool message with call_id '{tool_call_id}' has no preceding Assistant message with tool_calls"
-                );
-                assert!(
-                    prev_call_ids.contains(&tool_call_id.as_ref()),
-                    "Tool message with call_id '{tool_call_id}' does not match any preceding tool_call_id: {prev_call_ids:?}"
-                );
-            }
-            ChatMessage::Assistant { .. } => {
-                prev_was_assistant_with_call = false;
-                prev_call_ids.clear();
-            }
-            _ => {}
-        }
-    }
+    // Structural invariant: every Tool message must be preceded by an
+    // Assistant message containing the matching tool_call_id.
+    // With multiple tool calls in one response, all tool results must
+    // reference IDs from the same assistant message.
+    assert_no_orphan_tool_results(msgs);
 }
 
 #[tokio::test]

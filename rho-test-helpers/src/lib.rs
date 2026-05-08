@@ -14,6 +14,8 @@
 //! - [`detect_shell`] — detect the available PowerShell executable (`pwsh` or
 //!   `powershell`), returning `None` if neither is on `PATH`.
 //! - [`load_fixture`] — load a JSON fixture file from `tests/fixtures/`.
+//! - [`assert_no_orphan_tool_results`] — assert every `Tool` message has a
+//!   matching preceding `Assistant` tool call.
 //!
 //! Add this crate as a `dev-dependency`; it is never published.
 //!
@@ -25,9 +27,9 @@
 
 use async_trait::async_trait;
 use rho_core::{
-    CancellationToken, ChatClient, ChatRequest, ModelResponse, RhoError, SandboxRoot, Session,
-    ShellExecutor, ShellOutput, Tool, ToolName, ToolOutcome, ToolRegistry, ToolResult, TrustStore,
-    approval::ApprovalGate, message::ModelToolCall, tool::ToolRisk,
+    CancellationToken, ChatClient, ChatMessage, ChatRequest, ModelResponse, RhoError, SandboxRoot,
+    Session, ShellExecutor, ShellOutput, Tool, ToolName, ToolOutcome, ToolRegistry, ToolResult,
+    TrustStore, approval::ApprovalGate, message::ModelToolCall, tool::ToolRisk,
 };
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -634,4 +636,46 @@ fn which_exists(name: &str) -> bool {
 pub fn in_memory_session(system_prompt: Option<&str>, tools: Vec<rho_core::ToolSchema>) -> Session {
     let prompt = system_prompt.unwrap_or("you are a test assistant");
     Session::in_memory("mock", Some(prompt), tools, "/tmp")
+}
+
+// ── Assertion helpers ─────────────────────────────────────────────────────────
+
+/// Assert that no `Tool` message exists without a preceding `Assistant` message
+/// containing the matching `tool_call_id`.
+///
+/// This is the structural invariant that the agent loop must uphold:
+/// every tool result in the conversation must reference a tool call from
+/// the immediately preceding assistant message.
+///
+/// # Panics
+///
+/// Panics with a descriptive message if any `Tool` message is an "orphan"
+/// (no matching assistant tool call before it).
+pub fn assert_no_orphan_tool_results(messages: &[ChatMessage]) {
+    let mut prev_was_assistant_with_calls = false;
+    let mut prev_call_ids: Vec<&str> = Vec::new();
+
+    for msg in messages {
+        match msg {
+            ChatMessage::Assistant { tool_calls, .. } if !tool_calls.is_empty() => {
+                prev_was_assistant_with_calls = true;
+                prev_call_ids = tool_calls.iter().map(|c| c.id.as_ref()).collect();
+            }
+            ChatMessage::Tool { tool_call_id, .. } => {
+                assert!(
+                    prev_was_assistant_with_calls,
+                    "orphan Tool message with call_id '{tool_call_id}'"
+                );
+                assert!(
+                    prev_call_ids.contains(&tool_call_id.as_ref()),
+                    "Tool call_id mismatch: '{tool_call_id}' not in {prev_call_ids:?}"
+                );
+            }
+            ChatMessage::Assistant { .. } => {
+                prev_was_assistant_with_calls = false;
+                prev_call_ids.clear();
+            }
+            ChatMessage::System { .. } | ChatMessage::User { .. } => {}
+        }
+    }
 }

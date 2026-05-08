@@ -27,8 +27,8 @@ use rho_core::{
     tool::CancellationToken,
 };
 use rho_test_helpers::{
-    AutoApproveGate, MockChatClient, fixed_registry, in_memory_session, text_response,
-    tool_call_response,
+    AutoApproveGate, MockChatClient, assert_no_orphan_tool_results, fixed_registry,
+    in_memory_session, text_response, tool_call_response,
 };
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -115,36 +115,6 @@ async fn single_tool_turn(
     )
     .await
     .unwrap();
-}
-
-/// Verify no orphan tool results in a message list.
-fn assert_no_orphan_tool_results(messages: &[ChatMessage]) {
-    let mut prev_was_assistant_with_calls = false;
-    let mut prev_call_ids: Vec<&str> = Vec::new();
-
-    for msg in messages {
-        match msg {
-            ChatMessage::Assistant { tool_calls, .. } if !tool_calls.is_empty() => {
-                prev_was_assistant_with_calls = true;
-                prev_call_ids = tool_calls.iter().map(|c| c.id.as_ref()).collect();
-            }
-            ChatMessage::Tool { tool_call_id, .. } => {
-                assert!(
-                    prev_was_assistant_with_calls,
-                    "orphan Tool message with call_id '{tool_call_id}'"
-                );
-                assert!(
-                    prev_call_ids.contains(&tool_call_id.as_ref()),
-                    "Tool call_id mismatch: '{tool_call_id}' not in {prev_call_ids:?}"
-                );
-            }
-            ChatMessage::Assistant { .. } => {
-                prev_was_assistant_with_calls = false;
-                prev_call_ids.clear();
-            }
-            ChatMessage::System { .. } | ChatMessage::User { .. } => {}
-        }
-    }
 }
 
 // ── Task 16: Phase 2.5–specific tests ─────────────────────────────────────────
