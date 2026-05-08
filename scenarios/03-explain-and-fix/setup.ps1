@@ -19,5 +19,9 @@ pub fn debug_config(cfg: &Config) {
 }
 "@
 
+# Copy the auto-approval config into the temp project so rho runs non-interactively
+New-Item -ItemType Directory -Force -Path "$dir/.rho" | Out-Null
+Copy-Item -Path "$PSScriptRoot/.rho/config.toml" -Destination "$dir/.rho/config.toml"
+
 Write-Host "Scenario 03 created at: $dir"
 Write-Host "Config struct is missing #[derive(Debug)] needed by println!({:?})."

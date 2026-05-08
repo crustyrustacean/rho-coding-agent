@@ -1,13 +1,14 @@
+#!/usr/bin/env bash
 # Scenario 05: Multiple errors requiring iterative fix cycle
 # Creates a Rust project with 3 different compilation errors.
+set -euo pipefail
 
-$ErrorActionPreference = "Stop"
-$dir = "$env:TEMP/rho-scenario-05"
+DIR="${TMPDIR:-/tmp}rho-scenario-05"
 
-if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
+rm -rf "$DIR"
+cargo init --lib "$DIR"
 
-cargo init --lib $dir
-Set-Content -Path "$dir/src/lib.rs" -Value @"
+cat > "$DIR/src/lib.rs" << 'EOF'
 use std::collections::HashMap;
 
 /// A simple key-value store.
@@ -38,14 +39,14 @@ impl Store {
         self.data.len()
     }
 }
-"@
+EOF
 
 # Copy the auto-approval config into the temp project so rho runs non-interactively
-New-Item -ItemType Directory -Force -Path "$dir/.rho" | Out-Null
-Copy-Item -Path "$PSScriptRoot/.rho/config.toml" -Destination "$dir/.rho/config.toml"
+mkdir -p "$DIR/.rho"
+cp "$(dirname "$0")/.rho/config.toml" "$DIR/.rho/config.toml"
 
-Write-Host "Scenario 05 created at: $dir"
-Write-Host "Three errors:"
-Write-Host "  1. insert() takes &self but needs &mut self"
-Write-Host "  2. get() returns HashMap's Option<&String> but declares -> String"
-Write-Host "  3. len() without is_empty() will trigger a clippy warning"
+echo "Scenario 05 created at: $DIR"
+echo "Three errors:"
+echo "  1. insert() takes &self but needs &mut self"
+echo "  2. get() returns HashMap's Option<&String> but declares -> String"
+echo "  3. len() without is_empty() will trigger a clippy warning"

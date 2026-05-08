@@ -1,6 +1,17 @@
-# Phase 3 Tasks
+# Phase 3 Tasks ✅ ALL COMPLETE
 
-1. **Create the `rho-highlight` crate:**
+**Completed:** 2026-05-07 | **Version:** 0.28.0 | **Commit:** `4a23178`
+
+**Scenario validation (all 5 pass against `qwen/qwen3.6-27b`):**
+- 01: Fix E0308 type mismatch — `cargo_check`, `edit_file` ✅
+- 02: Remove unused imports — `cargo_clippy`, `cargo_fix` ✅
+- 03: Explain error and fix — `cargo_check`, `rustc_explain`, `edit_file` ✅
+- 04: Fix and verify with tests — `cargo_check`, `edit_file`, `cargo_test` ✅
+- 05: Multi-error iterative fix — `cargo_check`, `edit_file`, `cargo_clippy` ✅
+
+---
+
+1. **Create the `rho-highlight` crate:** ✅
    - Add `tree-sitter` and `tree-sitter-rust` as dependencies.
    - Implement a `parse(source: &str) -> Tree` function that returns a tree-sitter `Tree`.
    - Implement a `highlight(source: &str) -> Vec<HighlightSpan>` function that produces classified spans for Rust source. Theme/colour mapping (ANSI, ratatui style) is a Phase 4 concern; Phase 3 produces the classified spans only.
@@ -8,29 +19,29 @@
    - Cargo features defined now: `rust` as default, with `powershell`, `toml`, `json`, `markdown` as opt-in features (Phase 4 evaluates and may add the additional grammars).
    - Document the C-toolchain build dependency in the crate README.
 
-2. **Add `CargoCheck` tool:**
+2. **Add `CargoCheck` tool:** ✅
    - Run `cargo check --message-format=json`.
    - Parse the NDJSON stream into structured `Diagnostic` types.
    - Return: error code, message, file, line, column, suggested replacements.
    - Filter to the relevant crate/project (not dependency noise).
 
-3. **Add `CargoClippy` tool:**
+3. **Add `CargoClippy` tool:** ✅
    - Same as `CargoCheck` but with `cargo clippy --message-format=json`.
    - Include lint name and severity.
 
-4. **Add `RustcExplain` tool:**
+4. **Add `RustcExplain` tool:** ✅
    - Run `rustc --explain E0XXX`.
    - Return the formatted explanation text.
 
-5. **Add `CargoTest` tool:**
+5. **Add `CargoTest` tool:** ✅
    - Run `cargo test --message-format=json`.
    - Parse test results: which passed, which failed, failure output.
 
-6. **Add `CargoFix` tool:**
+6. **Add `CargoFix` tool:** ✅
    - Run `cargo fix --allow-dirty` for machine-applicable suggestions.
    - Or: apply individual `MachineApplicable` suggestions from check/clippy output directly (more surgical).
 
-7. **Define `rho-tools::rust` types** — these are part of the data model and should be designed with the same care as `rho-core` types:
+7. **Define `rho-tools::rust` types** ✅ — these are part of the data model and should be designed with the same care as `rho-core` types:
    - `Diagnostic` — a structured compiler diagnostic.
    - `DiagnosticSpan` — file, line range, column range.
    - `DiagnosticSuggestion` — suggested replacement text for a span.
@@ -38,24 +49,24 @@
    - All types round-trip through serde, use newtypes where appropriate.
    - Add a `ToolResultDetails::Diagnostics(Vec<Diagnostic>)` variant (Phase 2.5 already declared `ToolResultDetails` as an extensible enum with `None` and `FullOutput`; this grows it).
 
-8. **Use `rho-highlight` to map diagnostic spans to AST nodes:**
+8. **Use `rho-highlight` to map diagnostic spans to AST nodes:** ✅
    - When a diagnostic points to a span, query the tree-sitter tree for the enclosing syntax node.
    - Include the enclosing node type in the tool result (e.g., "this error is inside a `fn` item").
    - This gives the model richer context than raw line/column numbers.
 
-9. **Add tree-sitter node-splitting validation to `EditFile`** (deferred from Phase 2):
+9. **Add tree-sitter node-splitting validation to `EditFile`** ✅ (deferred from Phase 2):
    - Warn if a replacement would split a syntax node (e.g., replacing half a string literal).
    - Now that `rho-highlight` exists with structural queries, the validation can be integrated cleanly.
    - Ensure `EditFile` tests cover: syntax-node-splitting warning, split across node boundaries.
 
-10. **Compose a Rust-aware system prompt extension:**
+10. **Compose a Rust-aware system prompt extension:** ✅
     - "You have access to structured Rust compiler diagnostics."
     - "When code fails to compile, use CargoCheck before attempting fixes."
     - "Trust machine-applicable suggestions from the compiler."
 
-11. **Add a `CargoCheck` → `EditFile` → `CargoCheck` integration test loop.**
+11. **Add a `CargoCheck` → `EditFile` → `CargoCheck` integration test loop.** ✅
 
-12. **Create the `rho-eval` behavioural benchmark suite:**
+12. **Create the `rho-eval` behavioural benchmark suite:** ✅
     - Define 10–20 canonical coding tasks (fix this compile error, refactor this function, add this test) with known correct outcomes.
     - Implement automated scoring: run each task, compare the agent's result against the expected outcome, produce a pass/fail report.
     - This provides a quantitative measure of agent quality that persists across phases.
@@ -70,7 +81,7 @@
       ```
     - **Regression gate:** CI fails when `pass_rate / total` drops by more than a configurable threshold (default: 2 tasks) versus the previous run on the same eval set.
 
-13. **Test suite audit:**
+13. **Test suite audit:** ✅
     - Promote `cargo * --message-format=json` output parsing into shared test helpers in `rho-test-helpers`.
     - Extract compiler message JSON fixtures (check, clippy, test) into `tests/fixtures/`.
     - Ensure `Diagnostic` / `DiagnosticSpan` / `DiagnosticSuggestion` types have round-trip serde tests.

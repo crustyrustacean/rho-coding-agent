@@ -24,5 +24,9 @@ pub fn double(x: i32) -> i32 {
 }
 "@
 
+# Copy the auto-approval config into the temp project so rho runs non-interactively
+New-Item -ItemType Directory -Force -Path "$dir/.rho" | Out-Null
+Copy-Item -Path "$PSScriptRoot/.rho/config.toml" -Destination "$dir/.rho/config.toml"
+
 Write-Host "Scenario 02 created at: $dir"
 Write-Host "The file has 4 unused imports that should be removed."

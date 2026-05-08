@@ -1,13 +1,14 @@
+#!/usr/bin/env bash
 # Scenario 04: Fix compilation error and verify tests pass
 # Creates a Rust project with a mutability error and existing tests.
+set -euo pipefail
 
-$ErrorActionPreference = "Stop"
-$dir = "$env:TEMP/rho-scenario-04"
+DIR="${TMPDIR:-/tmp}rho-scenario-04"
 
-if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
+rm -rf "$DIR"
+cargo init --lib "$DIR"
 
-cargo init --lib $dir
-Set-Content -Path "$dir/src/lib.rs" -Value @"
+cat > "$DIR/src/lib.rs" << 'EOF'
 /// Collects even numbers from a range into a vector.
 pub fn collect_evens(max: i32) -> Vec<i32> {
     let result = Vec::new();
@@ -38,11 +39,11 @@ mod tests {
         assert_eq!(collect_evens(0), vec![]);
     }
 }
-"@
+EOF
 
 # Copy the auto-approval config into the temp project so rho runs non-interactively
-New-Item -ItemType Directory -Force -Path "$dir/.rho" | Out-Null
-Copy-Item -Path "$PSScriptRoot/.rho/config.toml" -Destination "$dir/.rho/config.toml"
+mkdir -p "$DIR/.rho"
+cp "$(dirname "$0")/.rho/config.toml" "$DIR/.rho/config.toml"
 
-Write-Host "Scenario 04 created at: $dir"
-Write-Host "The variable 'result' needs to be mutable. Tests exist to verify the fix."
+echo "Scenario 04 created at: $DIR"
+echo "The variable 'result' needs to be mutable. Tests exist to verify the fix."

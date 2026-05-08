@@ -19,5 +19,9 @@ pub fn farewell(name: &str) -> String {
 }
 "@
 
+# Copy the auto-approval config into the temp project so rho runs non-interactively
+New-Item -ItemType Directory -Force -Path "$dir/.rho" | Out-Null
+Copy-Item -Path "$PSScriptRoot/.rho/config.toml" -Destination "$dir/.rho/config.toml"
+
 Write-Host "Scenario 01 created at: $dir"
 Write-Host "The function 'greet' returns an integer but should return a String."

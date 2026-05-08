@@ -8,18 +8,18 @@
 | 1b: Security Surface | ✅ Complete | Approval gate, file sandbox, context-file trust, secret redaction, untrusted-data framing |
 | 2: PowerShell, File Tools & Cross-Platform | ✅ Complete | PowerShell-native shell, `ListDir`/`EditFile`/`WriteFile` tools, config loader (two-tier TOML), command denylist, egress allowlist, cross-platform support (Windows/macOS/Linux), auto-detection (project root, model), compact prompt, `RhoError::HttpError` for retry classification |
 | 2.5: Adaptive-Resolution Context | ✅ Complete | Session tree, resolution levels, calibrated budget, tool-result bounding, amnesia fix, JSONL persistence, extension entries, compaction strategy |
-| 3: Rust Tooling and Tree-Sitter | 🔜 Next | `rho-highlight`, structured diagnostics, Cargo integration |
-| 4: Terminal UI | Planned | Rich TUI replacing the bare REPL |
+| 3: Rust Tooling and Tree-Sitter | ✅ Complete | `rho-highlight` crate, structured diagnostics, `CargoCheck`/`CargoClippy`/`CargoTest`/`CargoFix`/`RustcExplain` tools, AST span mapping, `EditFile` node-splitting validation, Rust-aware system prompt, `rho-eval` benchmark suite, test suite audit, 5 prompt scenarios validated end-to-end |
+| 4: Terminal UI | 🔜 Next | Rich TUI replacing the bare REPL |
 | 5: Extensions and Polish | Planned | Custom tools, prompt composition with budget awareness |
 | 6: LSP | Deferred | rust-analyzer integration |
 
-**Workspace version:** 0.22.0
+**Workspace version:** 0.28.0
 
 **Platform support:** Windows, macOS, Linux. PowerShell 7+ (`pwsh`) is the primary shell on all platforms; Windows PowerShell 5.1 (`powershell`) is the fallback on Windows only.
 
 **Existing crates:** `rho` (binary), `rho-core`, `rho-tools`, `rho-test-helpers`, `xtask`
 
-**Not yet created:** `rho-highlight`, `rho-tui`, `rho-ext`, `rho-eval`
+**Not yet created:** `rho-tui`, `rho-ext`
 
 ## Architecture Overview
 
@@ -242,8 +242,8 @@ Each phase produces a runnable agent. No phase requires a rewrite of the previou
 | 1b: Security Surface | [`phases/phase-1b-COMPLETE/`](phases/phase-1b-COMPLETE/) | Approval gate, sandbox, context-file trust, redaction, untrusted-data framing. ✅ **Complete** |
 | 2: PowerShell, File Tools, and Cross-Platform Support | [`phases/phase-2-COMPLETE/`](phases/phase-2-COMPLETE/) | PowerShell-native assistant, file system navigation, config loader, denylist, egress allowlist, cross-platform (Windows/macOS/Linux). ✅ **Complete** |
 | 2.5: Adaptive-Resolution Context | [`phases/phase-2.5-COMPLETE/`](phases/phase-2.5-COMPLETE/) | Session tree, resolution levels, calibrated budget, tool-result bounding, amnesia fix, JSONL persistence, extension entries, compaction strategy. ✅ **Complete** |
-| 3: Rust Tooling and Tree-Sitter | [`phases/phase-3/`](phases/phase-3/) | `rho-highlight` scaffolding, structured compiler diagnostics, Cargo integration. 🔜 **Next** |
-| 4: Terminal UI | [`phases/phase-4/`](phases/phase-4/) | Rich TUI with approval prompts, streaming, session navigation |
+| 3: Rust Tooling and Tree-Sitter | [`phases/phase-3-COMPLETE/`](phases/phase-3-COMPLETE/) | `rho-highlight` crate, structured diagnostics, all Cargo tools, AST span mapping, `EditFile` validation, `rho-eval`, test suite audit, 5 prompt scenarios. ✅ **Complete** |
+| 4: Terminal UI | [`phases/phase-4/`](phases/phase-4/) | Rich TUI with approval prompts, streaming, session navigation. 🔜 **Next** |
 | 5: Extensions and Polish | [`phases/phase-5/`](phases/phase-5/) | Custom tools, config, prompt composition |
 | 6: LSP (Future) | [`phases/phase-6/`](phases/phase-6/) | rust-analyzer LSP integration (deferred) |
 
