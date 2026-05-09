@@ -238,10 +238,23 @@ pub async fn run_loop(
 
         match response {
             // ── Idle (terminal) ───────────────────────────────────────────────
-            AssistantResponse::Message(text) => {
+            AssistantResponse::Message {
+                text,
+                reasoning_content,
+            } => {
                 info!(reply_len = text.len());
+                if !reasoning_content.is_empty() {
+                    info!(
+                        reasoning_len = reasoning_content.len(),
+                        "model returned reasoning content with stop finish_reason"
+                    );
+                }
                 state = AgentState::Idle;
-                return Ok(text);
+                return Ok(if reasoning_content.is_empty() {
+                    text
+                } else {
+                    format!("<thinking>\n{reasoning_content}\n</thinking>\n\n{text}")
+                });
             }
 
             // ── Length-truncated recovery ────────────────────────────────────

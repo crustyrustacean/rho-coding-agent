@@ -976,7 +976,10 @@ impl Session {
                 }
 
                 self.append_assistant_message(ChatMessage::assistant_text(&text));
-                Ok(crate::conversation::AssistantResponse::Message(text))
+                Ok(crate::conversation::AssistantResponse::Message {
+                    text,
+                    reasoning_content,
+                })
             }
         }
     }

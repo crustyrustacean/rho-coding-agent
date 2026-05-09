@@ -12,7 +12,15 @@ use crate::message::ModelToolCall;
 #[derive(Debug)]
 pub enum AssistantResponse {
     /// The model completed with a text reply.
-    Message(String),
+    ///
+    /// `reasoning_content` carries chain-of-thought reasoning from reasoning
+    /// models (DeepSeek-R1, Qwen3, etc.). Empty for non-reasoning models.
+    Message {
+        /// The model's final text output.
+        text: String,
+        /// Chain-of-thought reasoning content, if the model emitted any.
+        reasoning_content: String,
+    },
     /// The model requested one or more tool invocations.
     ///
     /// The agent loop executes the tools and feeds results back into the

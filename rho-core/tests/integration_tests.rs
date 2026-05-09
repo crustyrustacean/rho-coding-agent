@@ -1682,8 +1682,8 @@ async fn empty_content_filter_is_not_treated_as_length_truncated() {
 
     let result = session.send_current(&client).await.unwrap();
     assert!(
-        matches!(result, AssistantResponse::Message(_)),
-        "expected Message for empty content_filter, got: {result:?}"
+        matches!(result, AssistantResponse::Message { ref text, .. } if text.is_empty()),
+        "expected Message with empty text for empty content_filter, got: {result:?}"
     );
 }
 
@@ -1700,7 +1700,7 @@ async fn nonempty_stop_remains_message() {
 
     let result = session.send_current(&client).await.unwrap();
     assert!(
-        matches!(result, AssistantResponse::Message(ref text) if text == "all good"),
-        "expected Message(\"all good\"), got: {result:?}"
+        matches!(result, AssistantResponse::Message { ref text, .. } if text == "all good"),
+        "expected Message {{ text: \"all good\", .. }}, got: {result:?}"
     );
 }
