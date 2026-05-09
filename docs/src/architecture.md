@@ -18,7 +18,7 @@ rho is organized as a layered workspace where dependencies flow downward only.
 └─────────────────────────────────────────────────┘
 ```
 
-The rule is simple: a crate may only depend on crates below it in the stack. `rho-core` depends on nothing but external libraries.
+The rule is simple: a crate may only depend on crates below it in the stack. `rho-core` and `rho-highlight` depend on nothing but external libraries.
 
 See also:
 

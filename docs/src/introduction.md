@@ -1,14 +1,27 @@
 # Introduction
 
-**rho** is a Rust coding agent that runs against local LLMs on Windows.
+**rho** is a Rust coding agent that runs against local LLMs.
 
-It connects to OpenAI-compatible endpoints (LM Studio, Ollama) on `localhost`, gives the model access to tools for reading and writing files and executing PowerShell commands, and runs an autonomous agent loop that the user supervises through an approval gate.
+It connects to OpenAI-compatible endpoints (LM Studio, Ollama) on `localhost`, gives the model access to tools for reading and writing files, executing shell commands, and running Rust tooling — then runs an autonomous agent loop that the user supervises through an approval gate.
 
 Design priorities:
 
 - **Local first** — your code stays on your machine by default
 - **Safe by default** — destructive actions require your approval
-- **Rust-native** — structured compiler diagnostics, not text scraping
-- **Extensible** — custom tools via config, provider-agnostic core
+- **Rust-native** — structured compiler diagnostics, tree-sitter syntax analysis, not text scraping
+- **Extensible** — custom tools via extensions, provider-agnostic core
+
+## Platform support
+
+rho runs on Windows, macOS, and Linux. PowerShell 7+ (`pwsh`) is the primary shell on all platforms; Windows PowerShell 5.1 (`powershell`) is the fallback on Windows only.
+
+## What can rho do?
+
+- Read, write, and edit files within a sandboxed project directory
+- Execute shell commands with a safety denylist
+- Run `cargo check`, `cargo clippy`, `cargo test`, `cargo fix`, and `rustc --explain` with structured output
+- Detect syntax node splits during edits via tree-sitter
+- Manage conversation state across sessions with tree-structured persistence
+- Compact old conversation turns to stay within context limits
 
 This book documents the architecture, security model, configuration, and development of rho.

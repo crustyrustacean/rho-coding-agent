@@ -53,7 +53,7 @@ A `CancellationToken` is checked at the top of each loop iteration and between t
 
 ## Iteration guard
 
-The loop terminates after `config.max_iterations` tool-call rounds (default: 100). This prevents infinite loops from misbehaving models. Returns `RhoError::MaxIterationsExceeded`.
+The loop terminates after `config.max_iterations` tool-call rounds (default: 32). This prevents infinite loops from misbehaving models. Returns `RhoError::MaxIterationsExceeded`.
 
 ## Session persistence
 

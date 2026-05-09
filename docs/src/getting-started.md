@@ -21,9 +21,12 @@ rho --ephemeral       # in-memory mode, no session file
 
 On startup, rho:
 
-1. Connects to the model server and auto-detects the loaded model (unless `--model` is specified).
-2. Creates a session (persisted to `~/.rho/sessions/` by default, or in-memory with `--ephemeral`).
-3. Enters the REPL. Type your request, and the agent loop runs until the model produces a final text reply.
+1. Auto-detects the project root by walking up from the current directory looking for markers.
+2. Loads configuration from `~/.rho/config.toml` and `.rho/config.toml`.
+3. Scans for project context files (`AGENTS.md`, etc.) and prompts for trust on first encounter.
+4. Connects to the model server and auto-detects the loaded model (unless `--model` is specified).
+5. Creates a session (persisted to `~/.rho/sessions/` by default, or in-memory with `--ephemeral`).
+6. Enters the REPL. Type your request, and the agent loop runs until the model produces a final text reply.
 
 ## CLI flags
 

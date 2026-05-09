@@ -71,11 +71,16 @@ Each entry in the tree has a `payload` that describes what it represents:
 
 | Payload | Description |
 |---|---|
-| `Message` | A chat message (system, user, or assistant) |
-| `ToolCall` | A tool invocation requested by the model |
-| `ToolResult` | The output of a tool execution |
+| `Message` | A chat message (system, user, assistant, or tool result) |
 | `Compaction` | A summary replacing older entries |
-| `Custom` | Extension data (see [Extensions](../extensions.md)) |
+| `BranchSummary` | A summary created when branching |
+| `CustomMessage` | Extension message (sent to model as synthetic user message) |
+| `Custom` | Extension state (never sent to model) |
+| `Label` | Branch checkpoint label |
+| `LeafMoved` | Record of a leaf movement |
+| `ModelChange` | Record of a model switch |
+| `SessionInfo` | Session metadata |
+| `SessionEnded` | Clean shutdown trailer |
 
 ## Resolution levels
 

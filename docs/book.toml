@@ -3,7 +3,7 @@ title = "rho"
 authors = ["crustyrustacean"]
 language = "en"
 src = "src"
-description = "A Rust coding agent for local LLMs on Windows"
+description = "A Rust coding agent for local LLMs"
 
 [build]
 build-dir = "book"
