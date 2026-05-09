@@ -444,6 +444,84 @@ pub fn length_truncated_response(
     serde_json::from_value(json).expect("length_truncated_response: invalid fixture")
 }
 
+/// Build a [`ModelResponse`] where the model claims `finish_reason: "stop"`
+/// but returns empty content.
+///
+/// This models the llama.cpp behaviour where the server reports "stop"
+/// instead of "length" when the model exhausts its completion budget.
+/// Build a [`ModelResponse`] where the model claims `finish_reason: "stop"`
+/// but returns empty content.
+///
+/// This models the llama.cpp behaviour where the server reports "stop"
+/// instead of "length" when the model exhausts its completion budget.
+///
+/// # Panics
+///
+/// Panics if the internal fixture JSON is malformed (should never happen).
+pub fn empty_stop_response() -> ModelResponse {
+    let json = serde_json::json!({
+        "id": "mock-id",
+        "object": "chat.completion",
+        "created": 0,
+        "model": "mock-model",
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": "",
+                "reasoning_content": "",
+                "tool_calls": []
+            },
+            "logprobs": null,
+            "finish_reason": "stop"
+        }],
+        "usage": {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0
+        },
+        "stats": {},
+        "system_fingerprint": ""
+    });
+    serde_json::from_value(json).expect("empty_stop_response: invalid fixture")
+}
+
+/// Build a [`ModelResponse`] with `finish_reason: "content_filter"` and
+/// empty content.
+/// Build a [`ModelResponse`] with `finish_reason: "content_filter"` and
+/// empty content.
+///
+/// # Panics
+///
+/// Panics if the internal fixture JSON is malformed (should never happen).
+pub fn empty_content_filter_response() -> ModelResponse {
+    let json = serde_json::json!({
+        "id": "mock-id",
+        "object": "chat.completion",
+        "created": 0,
+        "model": "mock-model",
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": "",
+                "reasoning_content": "",
+                "tool_calls": []
+            },
+            "logprobs": null,
+            "finish_reason": "content_filter"
+        }],
+        "usage": {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0
+        },
+        "stats": {},
+        "system_fingerprint": ""
+    });
+    serde_json::from_value(json).expect("empty_content_filter_response: invalid fixture")
+}
+
 // ── Fixture loader ────────────────────────────────────────────────────────────
 
 /// Load a fixture file relative to the calling crate's `tests/fixtures/` directory.

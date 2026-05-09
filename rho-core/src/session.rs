@@ -955,6 +955,26 @@ impl Session {
             }
             _ => {
                 let text = choice.message.content.clone();
+                let reasoning_content = choice.message.reasoning_content.clone();
+
+                // llama.cpp sometimes reports "stop" instead of "length"
+                // when the model exhausts its completion budget and produces
+                // nothing. Route to LengthTruncated so the agent loop can
+                // attempt compaction and retry. ContentFilter is excluded
+                // because retrying a filtered response is futile.
+                if text.is_empty() && !matches!(&choice.finish_reason, FinishReason::ContentFilter)
+                {
+                    warn!(
+                        finish_reason = ?choice.finish_reason,
+                        "model returned empty content — treating as length truncation"
+                    );
+                    self.append_assistant_message(ChatMessage::assistant_text(&text));
+                    return Ok(crate::conversation::AssistantResponse::LengthTruncated {
+                        content: text,
+                        reasoning_content,
+                    });
+                }
+
                 self.append_assistant_message(ChatMessage::assistant_text(&text));
                 Ok(crate::conversation::AssistantResponse::Message(text))
             }

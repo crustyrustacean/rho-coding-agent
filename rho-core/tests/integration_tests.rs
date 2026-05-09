@@ -12,8 +12,8 @@ use rho_core::{
 };
 use rho_test_helpers::{
     AutoApproveGate, FailingTool, FixedResponseTool, MockChatClient, assert_no_orphan_tool_results,
-    fixed_registry, length_truncated_response, load_fixture, multi_tool_call_response,
-    text_response, tool_call_response,
+    empty_content_filter_response, empty_stop_response, fixed_registry, length_truncated_response,
+    load_fixture, multi_tool_call_response, text_response, tool_call_response,
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -1644,4 +1644,63 @@ fn fixture_finish_reason_length_empty_deserializes() {
     );
     assert!(response.choices[0].message.content.is_empty());
     assert!(!response.choices[0].message.reasoning_content.is_empty());
+}
+
+// ── Empty stop → LengthTruncated (llama.cpp misreporting) ─────────────────────
+
+/// When the model returns `finish_reason: "stop"` with empty content,
+/// `send_current` should treat it as `LengthTruncated`, not a successful
+/// `Message("")`. This guards against llama.cpp reporting "stop" instead
+/// of "length" when the model exhausts its completion budget.
+#[tokio::test]
+async fn empty_stop_is_treated_as_length_truncated() {
+    use rho_core::conversation::AssistantResponse;
+
+    let mut session = Session::in_memory("mock-model", Some("you are rho"), vec![], "/tmp");
+    session.append_user_message("hello");
+
+    let client = MockChatClient::new(vec![empty_stop_response()]);
+
+    let result = session.send_current(&client).await.unwrap();
+    assert!(
+        matches!(result, AssistantResponse::LengthTruncated { .. }),
+        "expected LengthTruncated for empty stop, got: {result:?}"
+    );
+}
+
+/// When the model returns `finish_reason: "content_filter"` with empty
+/// content, `send_current` should **not** route to `LengthTruncated`.
+/// Content-filter blocks are not recoverable via compaction.
+#[tokio::test]
+async fn empty_content_filter_is_not_treated_as_length_truncated() {
+    use rho_core::conversation::AssistantResponse;
+
+    let mut session = Session::in_memory("mock-model", Some("you are rho"), vec![], "/tmp");
+    session.append_user_message("hello");
+
+    let client = MockChatClient::new(vec![empty_content_filter_response()]);
+
+    let result = session.send_current(&client).await.unwrap();
+    assert!(
+        matches!(result, AssistantResponse::Message(_)),
+        "expected Message for empty content_filter, got: {result:?}"
+    );
+}
+
+/// A non-empty stop response is unaffected — it should still return
+/// `Message` as before.
+#[tokio::test]
+async fn nonempty_stop_remains_message() {
+    use rho_core::conversation::AssistantResponse;
+
+    let mut session = Session::in_memory("mock-model", Some("you are rho"), vec![], "/tmp");
+    session.append_user_message("hello");
+
+    let client = MockChatClient::new(vec![text_response("all good")]);
+
+    let result = session.send_current(&client).await.unwrap();
+    assert!(
+        matches!(result, AssistantResponse::Message(ref text) if text == "all good"),
+        "expected Message(\"all good\"), got: {result:?}"
+    );
 }

@@ -420,7 +420,6 @@ impl ContextManager for SlidingWindowContextManager {
 
         let total: usize = turn_tokens.iter().sum();
         let mut excess = total.saturating_sub(available);
-        let mut drop = 0;
 
         // Invariant 1: never evict the most recent turn. The last turn is the
         // one the model is currently operating on — evicting it causes
@@ -433,7 +432,17 @@ impl ContextManager for SlidingWindowContextManager {
         // forgets what it was asked to do. (This is the amnesia bug that
         // Phase 2.5's CompactionSummary::original_request solves structurally;
         // in the linear model, pinning is the fix.)
+        //
+        // Invariant 3: never evict the last user turn. This preserves the
+        // model's current task context even when earlier turns are evicted.
+        // Without this, the model loses track of what it was most recently
+        // asked to do. User turns between the first and last are evictable
+        // because compaction summaries preserve their essence.
         let first_user_turn = turns.iter().position(|t| {
+            t.first()
+                .is_some_and(|m| matches!(m, ChatMessage::User { .. }))
+        });
+        let last_user_turn = turns.iter().rposition(|t| {
             t.first()
                 .is_some_and(|m| matches!(m, ChatMessage::User { .. }))
         });
@@ -444,6 +453,8 @@ impl ContextManager for SlidingWindowContextManager {
         let mut dropped_assistant = 0usize;
         let mut dropped_tool = 0usize;
         let mut tokens_freed: usize = 0;
+        let mut drop = 0;
+        let mut evict = vec![false; turns.len()];
 
         for (idx, &t) in turn_tokens.iter().enumerate() {
             if excess == 0 {
@@ -454,25 +465,33 @@ impl ContextManager for SlidingWindowContextManager {
                 // user request or in-flight tool call.
                 break;
             }
-            if first_user_turn == Some(idx) {
-                // Don't evict the first user turn — it contains the
-                // original request; losing it causes amnesia.
-                break;
+            if first_user_turn == Some(idx) || last_user_turn == Some(idx) {
+                // Don't evict anchor user turns — skip but continue
+                // evicting later turns.  Use `continue` (not `break`)
+                // so that turns between the anchors can still be evicted.
+                continue;
             }
             // Classify messages in the evicted turn by role.
-            for msg in &turns[drop] {
+            for msg in &turns[idx] {
                 match MessageRole::classify(msg) {
                     MessageRole::User => dropped_user += 1,
                     MessageRole::Assistant => dropped_assistant += 1,
                     MessageRole::Tool => dropped_tool += 1,
                 }
             }
+            evict[idx] = true;
             tokens_freed += t;
             drop += 1;
             excess = excess.saturating_sub(t);
         }
 
-        turns.drain(0..drop);
+        // Remove evicted turns in reverse index order so that earlier
+        // indices remain valid as we shrink the vec.
+        for idx in (0..turns.len()).rev() {
+            if evict[idx] {
+                turns.remove(idx);
+            }
+        }
 
         let mut result = Vec::new();
         if let Some(sys) = system {
@@ -690,6 +709,102 @@ mod tests {
             has_secret,
             "first user turn (containing the secret) must survive eviction"
         );
+    }
+
+    #[test]
+    fn turns_between_user_anchors_are_evicted() {
+        // Turns between the first and last user turns should be evictable
+        // when the budget is tight.  Only the two user anchor turns survive.
+        let messages = vec![
+            ChatMessage::system_text("sys"),
+            ChatMessage::user_text("original request"),
+            ChatMessage::assistant_text("ok, step one"),
+            ChatMessage::user_text("follow-up"),
+            ChatMessage::assistant_text("ok, step two"),
+            ChatMessage::user_text("current question"),
+        ];
+        // Turns: [User0, Asst, User1, Asst, User2]
+        // first_user = 0, last_user = 4 (= last turn too)
+        // Evictable: 1, 2, 3
+        let cm = SlidingWindowContextManager::new();
+        let fitted = cm.fit(&messages, TokenBudget::new(1));
+
+        // First user message preserved
+        let has_original = fitted.iter().any(|m| {
+            if let ChatMessage::User { content } = m {
+                content.iter().any(|b| {
+                    let ContentBlock::Text { text } = b;
+                    text.contains("original request")
+                })
+            } else {
+                false
+            }
+        });
+        assert!(has_original, "first user turn must survive");
+
+        // Last user message preserved
+        let has_current = fitted.iter().any(|m| {
+            if let ChatMessage::User { content } = m {
+                content.iter().any(|b| {
+                    let ContentBlock::Text { text } = b;
+                    text.contains("current question")
+                })
+            } else {
+                false
+            }
+        });
+        assert!(has_current, "last user turn must survive");
+
+        // Middle assistant messages should be evicted
+        let has_step_one = fitted.iter().any(|m| {
+            if let ChatMessage::Assistant { content, .. } = m {
+                content.iter().any(|b| {
+                    let ContentBlock::Text { text } = b;
+                    text.contains("step one")
+                })
+            } else {
+                false
+            }
+        });
+        assert!(!has_step_one, "middle turns should be evicted");
+
+        let has_step_two = fitted.iter().any(|m| {
+            if let ChatMessage::Assistant { content, .. } = m {
+                content.iter().any(|b| {
+                    let ContentBlock::Text { text } = b;
+                    text.contains("step two")
+                })
+            } else {
+                false
+            }
+        });
+        assert!(!has_step_two, "middle turns should be evicted");
+    }
+
+    #[test]
+    fn tool_results_in_evictable_turns_are_dropped() {
+        // When a turn with a large tool result sits between user anchors,
+        // the entire turn (including the tool result) should be evicted.
+        let messages = vec![
+            ChatMessage::system_text("sys"),
+            ChatMessage::user_text("do it"),
+            ChatMessage::assistant_text("reading file..."),
+            ChatMessage::tool_result(ToolCallId::from("call_1"), "x".repeat(5000)),
+            ChatMessage::user_text("what next?"),
+        ];
+        let cm = SlidingWindowContextManager::new();
+        let fitted = cm.fit(&messages, TokenBudget::new(100));
+
+        // The large tool result should be gone
+        let has_tool = fitted.iter().any(|m| matches!(m, ChatMessage::Tool { .. }));
+        assert!(!has_tool, "evicted turn's tool result should be dropped");
+
+        // Both user messages should survive
+        let user_count = fitted
+            .iter()
+            .filter(|m| matches!(m, ChatMessage::User { .. }))
+            .count();
+        assert_eq!(user_count, 2, "both user turns should survive");
     }
 
     // ── fit_path tests (Task 8) ──────────────────────────────────────────
