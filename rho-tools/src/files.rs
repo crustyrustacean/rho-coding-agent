@@ -64,7 +64,9 @@ impl Tool for ReadFile {
             .ok_or_else(|| anyhow::anyhow!("read_file: missing required argument `path`"))?;
 
         // Validate path is within the sandbox root.
-        let safe_path = self.root.validate(path_str)?;
+        // Resolve relative paths against the sandbox root before validation.
+        let candidate = self.root.path().join(path_str);
+        let safe_path = self.root.validate(&candidate)?;
 
         if cancel.is_cancelled() {
             return Ok(ToolOutcome::Immediate(ToolResult::error("cancelled")));
@@ -148,7 +150,9 @@ impl Tool for WriteFile {
             .ok_or_else(|| anyhow::anyhow!("write_file: missing required argument `content`"))?;
 
         // Use the write-variant validator that handles not-yet-existing paths.
-        let safe_path = self.root.validate_for_write(path_str)?;
+        // Resolve relative paths against the sandbox root before validation.
+        let candidate = self.root.path().join(path_str);
+        let safe_path = self.root.validate_for_write(&candidate)?;
 
         if cancel.is_cancelled() {
             return Ok(ToolOutcome::Immediate(ToolResult::error("cancelled")));
@@ -424,7 +428,9 @@ impl Tool for EditFile {
         }
 
         // Validate path is within the sandbox root.
-        let safe_path = self.root.validate(path_str)?;
+        // Resolve relative paths against the sandbox root before validation.
+        let candidate = self.root.path().join(path_str);
+        let safe_path = self.root.validate(&candidate)?;
 
         if cancel.is_cancelled() {
             return Ok(ToolOutcome::Immediate(ToolResult::error("cancelled")));
