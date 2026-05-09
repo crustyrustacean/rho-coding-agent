@@ -88,6 +88,9 @@ pub struct AgentConfig {
     /// may repeat before the agent injects a stuck-loop nudge into the
     /// conversation. Set to 0 to disable stuck-loop detection.
     pub stuck_loop_threshold: u32,
+    /// Whether to display full chain-of-thought reasoning in the output.
+    /// When `false`, shows a one-line summary instead.
+    pub show_reasoning: bool,
 }
 
 impl std::fmt::Debug for AgentConfig {
@@ -98,6 +101,7 @@ impl std::fmt::Debug for AgentConfig {
             .field("initial_backoff_ms", &self.initial_backoff_ms)
             .field("approval_policy", &"<dyn ApprovalPolicy>")
             .field("stuck_loop_threshold", &self.stuck_loop_threshold)
+            .field("show_reasoning", &self.show_reasoning)
             .finish()
     }
 }
@@ -110,6 +114,7 @@ impl Default for AgentConfig {
             initial_backoff_ms: 500,
             approval_policy: Box::new(DefaultApprovalPolicy),
             stuck_loop_threshold: 3,
+            show_reasoning: false,
         }
     }
 }
@@ -131,6 +136,7 @@ impl AgentConfig {
             initial_backoff_ms: config.agent.initial_backoff_ms,
             approval_policy: Box::new(ConfigApprovalPolicy::new(config)),
             stuck_loop_threshold: config.agent.stuck_loop_threshold,
+            show_reasoning: config.agent.show_reasoning,
         }
     }
 }
@@ -252,8 +258,11 @@ pub async fn run_loop(
                 state = AgentState::Idle;
                 return Ok(if reasoning_content.is_empty() {
                     text
-                } else {
+                } else if config.show_reasoning {
                     format!("<thinking>\n{reasoning_content}\n</thinking>\n\n{text}")
+                } else {
+                    let reasoning_tokens = reasoning_content.len() / 4;
+                    format!("[reasoning: ~{reasoning_tokens} tokens]\n\n{text}")
                 });
             }
 

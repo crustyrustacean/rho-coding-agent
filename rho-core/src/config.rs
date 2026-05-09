@@ -103,6 +103,16 @@ pub struct AgentLoopConfig {
     /// Set to 0 to disable. Defaults to 3.
     #[serde(default = "default_stuck_loop_threshold")]
     pub stuck_loop_threshold: u32,
+    /// Whether to display chain-of-thought reasoning from reasoning models
+    /// (DeepSeek-R1, Qwen3, etc.) in the REPL output.
+    ///
+    /// - `false` (default): show a one-line summary with the reasoning
+    ///   length (e.g. `[reasoning: ~2k tokens]`). The full content is
+    ///   available in `tracing` logs at `info` level.
+    /// - `true`: show the full reasoning wrapped in `<thinking>` tags
+    ///   before the final output.
+    #[serde(default = "default_show_reasoning")]
+    pub show_reasoning: bool,
 }
 
 impl Default for AgentLoopConfig {
@@ -114,6 +124,7 @@ impl Default for AgentLoopConfig {
             initial_backoff_ms: default_initial_backoff_ms(),
             token_budget: default_token_budget(),
             stuck_loop_threshold: default_stuck_loop_threshold(),
+            show_reasoning: default_show_reasoning(),
         }
     }
 }
@@ -140,6 +151,10 @@ fn default_token_budget() -> u32 {
 /// Default value for `stuck_loop_threshold`.
 fn default_stuck_loop_threshold() -> u32 {
     3
+}
+/// Default value for `show_reasoning`.
+fn default_show_reasoning() -> bool {
+    false
 }
 
 // ── ProviderConfig ────────────────────────────────────────────────────────────
@@ -381,6 +396,9 @@ struct WireAgentLoopConfig {
     /// Stuck-loop detection threshold.
     #[serde(default)]
     stuck_loop_threshold: Option<u32>,
+    /// Whether to display full reasoning content.
+    #[serde(default)]
+    show_reasoning: Option<bool>,
 }
 
 // ── ConfigLoader ──────────────────────────────────────────────────────────────
@@ -460,6 +478,10 @@ impl ConfigLoader {
                     .stuck_loop_threshold
                     .or(user_agent.stuck_loop_threshold)
                     .unwrap_or(default_stuck_loop_threshold()),
+                show_reasoning: project_agent
+                    .show_reasoning
+                    .or(user_agent.show_reasoning)
+                    .unwrap_or(default_show_reasoning()),
             },
             provider: {
                 let up = user.provider.unwrap_or_default();
