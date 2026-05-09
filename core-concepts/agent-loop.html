@@ -8,7 +8,7 @@
 
         <!-- Custom HTML head -->
         
-        <meta name="description" content="A Rust coding agent for local LLMs on Windows">
+        <meta name="description" content="A Rust coding agent for local LLMs">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
@@ -226,7 +226,7 @@ Idle (done)
 <h2 id="cancellation"><a class="header" href="#cancellation">Cancellation</a></h2>
 <p>A <code>CancellationToken</code> is checked at the top of each loop iteration and between tool calls in a batch. When cancelled, <code>run_loop</code> returns <code>RhoError::Cancelled</code> immediately — no pending tool execution is aborted mid-flight, but no new ones are started.</p>
 <h2 id="iteration-guard"><a class="header" href="#iteration-guard">Iteration guard</a></h2>
-<p>The loop terminates after <code>config.max_iterations</code> tool-call rounds (default: 100). This prevents infinite loops from misbehaving models. Returns <code>RhoError::MaxIterationsExceeded</code>.</p>
+<p>The loop terminates after <code>config.max_iterations</code> tool-call rounds (default: 32). This prevents infinite loops from misbehaving models. Returns <code>RhoError::MaxIterationsExceeded</code>.</p>
 <h2 id="session-persistence"><a class="header" href="#session-persistence">Session persistence</a></h2>
 <p>Since <code>run_loop</code> operates on a <code>Session</code>, all appends (user messages, tool results) are automatically flushed to the JSONL session file if persistence is enabled. If the process crashes mid-loop, the session file contains everything up to the last successful append — at most one entry is lost.</p>
 

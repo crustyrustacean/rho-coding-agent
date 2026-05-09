@@ -8,7 +8,7 @@
 
         <!-- Custom HTML head -->
         
-        <meta name="description" content="A Rust coding agent for local LLMs on Windows">
+        <meta name="description" content="A Rust coding agent for local LLMs">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
@@ -180,7 +180,43 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="roadmap"><a class="header" href="#roadmap">Roadmap</a></h1>
-<!-- TODO: Fill in with phase summary table and links to .plans/phases/ -->
+<p>rho is developed in phases, each building on the last. The current version is <strong>0.31.1</strong>.</p>
+<h2 id="phase-summary"><a class="header" href="#phase-summary">Phase summary</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Phase</th><th>Status</th><th>Summary</th></tr></thead><tbody>
+<tr><td>1a: The Agent Loop</td><td>✅ Complete</td><td>Agent loop, tool registry, <code>ChatClient</code> trait, conversation management</td></tr>
+<tr><td>1b: Security Surface</td><td>✅ Complete</td><td>Approval gate, file sandbox, context-file trust, secret redaction, untrusted-data framing</td></tr>
+<tr><td>2: Shell, File Tools &amp; Cross-Platform</td><td>✅ Complete</td><td>PowerShell-native shell, file tools, config loader, command denylist, egress allowlist, cross-platform</td></tr>
+<tr><td>2.5: Adaptive-Resolution Context</td><td>✅ Complete</td><td>Session tree, resolution levels, calibrated budget, tool-result bounding, amnesia fix, JSONL persistence</td></tr>
+<tr><td>3: Rust Tooling and Tree-Sitter</td><td>✅ Complete</td><td><code>rho-highlight</code>, structured diagnostics, <code>CargoCheck</code>/<code>Clippy</code>/<code>Test</code>/<code>Fix</code>/<code>RustcExplain</code>, node-splitting validation, <code>rho-eval</code> benchmark suite</td></tr>
+<tr><td>3.5: Rust Standard Library Reference</td><td>📋 Planned</td><td>Local rustdoc lookup tool for stdlib API docs</td></tr>
+<tr><td>3.6: crates.io Research</td><td>📋 Planned</td><td>Crate metadata lookup, search, version history, dependency inspection</td></tr>
+<tr><td>4: Terminal UI</td><td>🔜 Next</td><td>Rich TUI replacing the bare REPL</td></tr>
+<tr><td>5: Extensions and Polish</td><td>Planned</td><td>Custom tools, prompt composition with budget awareness</td></tr>
+<tr><td>6: LSP</td><td>Deferred</td><td>rust-analyzer integration</td></tr>
+</tbody></table>
+</div>
+<h2 id="completed-phases"><a class="header" href="#completed-phases">Completed phases</a></h2>
+<h3 id="phase-1a--the-agent-loop"><a class="header" href="#phase-1a--the-agent-loop">Phase 1a — The Agent Loop</a></h3>
+<p>The foundation: <code>Tool</code> trait, <code>ToolRegistry</code>, <code>ChatClient</code> trait, <code>Conversation</code>, and the <code>run_loop</code> state machine. The agent can send messages to a model, receive tool calls, execute them, and feed results back.</p>
+<h3 id="phase-1b--security-surface"><a class="header" href="#phase-1b--security-surface">Phase 1b — Security Surface</a></h3>
+<p>Defense-in-depth: file sandbox, approval gate (per-tool, risk-based), secret redaction, untrusted-data framing with <code>&lt;context&gt;</code> tags, and project context file trust with SHA-256 hash verification.</p>
+<h3 id="phase-2--shell-file-tools--cross-platform"><a class="header" href="#phase-2--shell-file-tools--cross-platform">Phase 2 — Shell, File Tools &amp; Cross-Platform</a></h3>
+<p>PowerShell-native execution on all platforms, <code>ReadFile</code>/<code>WriteFile</code>/<code>ListDir</code>/<code>EditFile</code> tools, two-tier TOML config, command denylist, egress allowlist, compact prompt for small-context models, and full cross-platform support (Windows/macOS/Linux).</p>
+<h3 id="phase-25--adaptive-resolution-context"><a class="header" href="#phase-25--adaptive-resolution-context">Phase 2.5 — Adaptive-Resolution Context</a></h3>
+<p>Session tree (replacing flat <code>Conversation</code>), resolution levels (<code>Full</code>/<code>Compacted</code>/<code>Attached</code>), calibrated token estimation with exponential moving average, tool-result bounding to prevent single-output context overflow, and JSONL persistence with auto-flush.</p>
+<h3 id="phase-3--rust-tooling-and-tree-sitter"><a class="header" href="#phase-3--rust-tooling-and-tree-sitter">Phase 3 — Rust Tooling and Tree-Sitter</a></h3>
+<p><code>rho-highlight</code> crate with tree-sitter parsing, <code>node_at()</code> position lookup, and token classification. Structured compiler diagnostics (<code>CargoCheck</code>, <code>CargoClippy</code>, <code>CargoTest</code>, <code>CargoFix</code>, <code>RustcExplain</code>). <code>EditFile</code> node-splitting validation. <code>rho-eval</code> benchmark suite with 5 validated end-to-end scenarios.</p>
+<h2 id="upcoming-phases"><a class="header" href="#upcoming-phases">Upcoming phases</a></h2>
+<h3 id="phase-35--rust-standard-library-reference"><a class="header" href="#phase-35--rust-standard-library-reference">Phase 3.5 — Rust Standard Library Reference</a></h3>
+<p>A <code>RustdocLookup</code> tool that reads locally installed rustdoc HTML via <code>rustup doc --path</code>. Zero network dependency. Supports type, method, trait, and function lookups. See <a href="../../../1.%20Planning/Phase%203.5/Phase%203.5%20%E2%80%94%20Rust%20Standard%20Library%20Reference.html">Phase 3.5 planning note</a>.</p>
+<h3 id="phase-36--cratesio-research"><a class="header" href="#phase-36--cratesio-research">Phase 3.6 — crates.io Research</a></h3>
+<p>A <code>CratesIoLookup</code> tool for crate metadata, search, version history, and dependency tree inspection. Requires egress allowlist opt-in. Dedicated Rust HTTP client (not a shell escape). See <a href="../../../1.%20Planning/Phase%203.6/Phase%203.6%20%E2%80%94%20crates.io%20Registry%20Research.html">Phase 3.6 planning note</a>.</p>
+<h3 id="phase-4--terminal-ui"><a class="header" href="#phase-4--terminal-ui">Phase 4 — Terminal UI</a></h3>
+<p>Rich TUI replacing the bare REPL. Streaming output, approval prompts with rich previews, diagnostic panels, syntax highlighting. Built on <code>ratatui</code>/<code>crossterm</code>. See <a href="../../../1.%20Planning/Phase%204/Phase%204%20Readiness%20Assessment.html">Phase 4 readiness assessment</a>.</p>
+<h3 id="phase-5--extensions-and-polish"><a class="header" href="#phase-5--extensions-and-polish">Phase 5 — Extensions and Polish</a></h3>
+<p>Custom tools via TOML definitions, extension API (<code>rho-ext</code> crate), prompt composition with budget awareness, and custom slash commands.</p>
+<h3 id="phase-6--lsp"><a class="header" href="#phase-6--lsp">Phase 6 — LSP</a></h3>
+<p><code>rust-analyzer</code> integration for real-time diagnostics, go-to-definition, and refactoring support. Deferred until after the TUI is stable.</p>
 
                     </main>
 

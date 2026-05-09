@@ -8,7 +8,7 @@
 
         <!-- Custom HTML head -->
         
-        <meta name="description" content="A Rust coding agent for local LLMs on Windows">
+        <meta name="description" content="A Rust coding agent for local LLMs">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
@@ -180,7 +180,43 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="project-context-files"><a class="header" href="#project-context-files">Project Context Files</a></h1>
-<!-- TODO: Fill in with scan list, trust model, prompt composition, precedence -->
+<p>rho scans for project-level instruction files and injects them into the system prompt. This lets projects tell the agent how to work with their codebase — without modifying rho itself.</p>
+<h2 id="scan-list"><a class="header" href="#scan-list">Scan list</a></h2>
+<p>rho looks for the following files in the project root (sandbox root), in priority order:</p>
+<div class="table-wrapper"><table><thead><tr><th>File</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>AGENTS.md</code></td><td>Instructions for AI assistants (rho-specific)</td></tr>
+<tr><td><code>.agents.md</code></td><td>Hidden variant of <code>AGENTS.md</code></td></tr>
+<tr><td><code>CLAUDE.md</code></td><td>Instructions for Claude-compatible agents</td></tr>
+<tr><td><code>.cursorrules</code></td><td>Cursor editor rules</td></tr>
+<tr><td><code>.rho/prompt.md</code></td><td>rho-specific project prompt</td></tr>
+</tbody></table>
+</div>
+<p>The scan list can be overridden in config:</p>
+<pre><code class="language-toml">[context]
+scan_list = ["AGENTS.md", "CLAUDE.md"]
+</code></pre>
+<h2 id="trust-model"><a class="header" href="#trust-model">Trust model</a></h2>
+<p>Project context files are a prompt injection vector — anyone with write access to the repository can modify them. rho addresses this with a trust store:</p>
+<ol>
+<li><strong>First encounter:</strong> rho prompts the user to review the file contents and confirm trust.</li>
+<li><strong>Trust stored:</strong> the SHA-256 hash of the accepted file is stored in <code>~/.rho/trusted_projects.toml</code>.</li>
+<li><strong>Subsequent loads:</strong> if the hash matches, the file is loaded silently. If it changed since the last trust decision, rho prompts the user again.</li>
+</ol>
+<p>This ensures:</p>
+<ul>
+<li>A malicious PR that silently modifies <code>AGENTS.md</code> will trigger a re-review prompt.</li>
+<li>Legitimate updates (new project instructions) are confirmed once, then loaded automatically.</li>
+<li>The user can always audit what's in <code>trusted_projects.toml</code>.</li>
+</ul>
+<h2 id="prompt-composition"><a class="header" href="#prompt-composition">Prompt composition</a></h2>
+<p>Context files are appended to the system prompt after the base prompt, in scan-list order. The final system prompt structure is:</p>
+<pre><code class="language-text">[base prompt]           ← prompts/base.md (or compact prompt)
+[project context files] ← AGENTS.md, CLAUDE.md, etc.
+[environment block]     ← working directory, shell info
+[Rust tooling block]    ← cargo check/clippy/test guidance
+</code></pre>
+<h2 id="in-practice"><a class="header" href="#in-practice">In practice</a></h2>
+<p>The file you're reading right now (<code>AGENTS.md</code>) is a context file. It tells rho about the project layout, conventions, testing approach, and commit format. Without it, rho would still work — but it wouldn't know about <code>cargo xtask ci</code>, the conventional commit format, or the <code>forbid(unsafe_code)</code> lint.</p>
 
                     </main>
 

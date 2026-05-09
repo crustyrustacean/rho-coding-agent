@@ -9,7 +9,7 @@
 
         <!-- Custom HTML head -->
         
-        <meta name="description" content="A Rust coding agent for local LLMs on Windows">
+        <meta name="description" content="A Rust coding agent for local LLMs">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
@@ -178,14 +178,25 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="introduction"><a class="header" href="#introduction">Introduction</a></h1>
-<p><strong>rho</strong> is a Rust coding agent that runs against local LLMs on Windows.</p>
-<p>It connects to OpenAI-compatible endpoints (LM Studio, Ollama) on <code>localhost</code>, gives the model access to tools for reading and writing files and executing PowerShell commands, and runs an autonomous agent loop that the user supervises through an approval gate.</p>
+<p><strong>rho</strong> is a Rust coding agent that runs against local LLMs.</p>
+<p>It connects to OpenAI-compatible endpoints (LM Studio, Ollama) on <code>localhost</code>, gives the model access to tools for reading and writing files, executing shell commands, and running Rust tooling — then runs an autonomous agent loop that the user supervises through an approval gate.</p>
 <p>Design priorities:</p>
 <ul>
 <li><strong>Local first</strong> — your code stays on your machine by default</li>
 <li><strong>Safe by default</strong> — destructive actions require your approval</li>
-<li><strong>Rust-native</strong> — structured compiler diagnostics, not text scraping</li>
-<li><strong>Extensible</strong> — custom tools via config, provider-agnostic core</li>
+<li><strong>Rust-native</strong> — structured compiler diagnostics, tree-sitter syntax analysis, not text scraping</li>
+<li><strong>Extensible</strong> — custom tools via extensions, provider-agnostic core</li>
+</ul>
+<h2 id="platform-support"><a class="header" href="#platform-support">Platform support</a></h2>
+<p>rho runs on Windows, macOS, and Linux. PowerShell 7+ (<code>pwsh</code>) is the primary shell on all platforms; Windows PowerShell 5.1 (<code>powershell</code>) is the fallback on Windows only.</p>
+<h2 id="what-can-rho-do"><a class="header" href="#what-can-rho-do">What can rho do?</a></h2>
+<ul>
+<li>Read, write, and edit files within a sandboxed project directory</li>
+<li>Execute shell commands with a safety denylist</li>
+<li>Run <code>cargo check</code>, <code>cargo clippy</code>, <code>cargo test</code>, <code>cargo fix</code>, and <code>rustc --explain</code> with structured output</li>
+<li>Detect syntax node splits during edits via tree-sitter</li>
+<li>Manage conversation state across sessions with tree-structured persistence</li>
+<li>Compact old conversation turns to stay within context limits</li>
 </ul>
 <p>This book documents the architecture, security model, configuration, and development of rho.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="getting-started"><a class="header" href="#getting-started">Getting Started</a></h1>
@@ -204,6 +215,9 @@ rho --ephemeral       # in-memory mode, no session file
 </code></pre>
 <p>On startup, rho:</p>
 <ol>
+<li>Auto-detects the project root by walking up from the current directory looking for markers.</li>
+<li>Loads configuration from <code>~/.rho/config.toml</code> and <code>.rho/config.toml</code>.</li>
+<li>Scans for project context files (<code>AGENTS.md</code>, etc.) and prompts for trust on first encounter.</li>
 <li>Connects to the model server and auto-detects the loaded model (unless <code>--model</code> is specified).</li>
 <li>Creates a session (persisted to <code>~/.rho/sessions/</code> by default, or in-memory with <code>--ephemeral</code>).</li>
 <li>Enters the REPL. Type your request, and the agent loop runs until the model produces a final text reply.</li>
@@ -253,7 +267,7 @@ rho --ephemeral       # in-memory mode, no session file
 │                   rho-core                       │
 └─────────────────────────────────────────────────┘
 </code></pre>
-<p>The rule is simple: a crate may only depend on crates below it in the stack. <code>rho-core</code> depends on nothing but external libraries.</p>
+<p>The rule is simple: a crate may only depend on crates below it in the stack. <code>rho-core</code> and <code>rho-highlight</code> depend on nothing but external libraries.</p>
 <p>See also:</p>
 <ul>
 <li><a href="./architecture/workspace-layout.html">Workspace Layout</a></li>
@@ -261,19 +275,128 @@ rho --ephemeral       # in-memory mode, no session file
 <li><a href="./architecture/dependency-flow.html">Dependency Flow</a></li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="workspace-layout"><a class="header" href="#workspace-layout">Workspace Layout</a></h1>
-<!-- TODO: Fill in with directory tree and descriptions -->
+<pre><code>rho-coding-agent/
+├── Cargo.toml              # Workspace root — version, edition, lints
+├── CHANGELOG.md             # Generated via git-cliff
+├── cliff.toml               # git-cliff configuration
+├── AGENTS.md                # Project instructions for AI assistants
+├── docs/                    # This book (mdBook)
+├── rho/                     # Binary entry point (`rho` CLI)
+│   └── src/main.rs          # REPL loop, tool wiring, CLI dispatch
+├── rho-core/                # Agent kernel
+│   └── src/
+│       ├── lib.rs           # Module declarations, convenience re-exports
+│       ├── agent.rs         # Agent loop state machine, `run_loop`
+│       ├── approval.rs      # `ApprovalPolicy`, `ApprovalGate` traits
+│       ├── client.rs        # `ChatClient` trait, `LocalChatClient`
+│       ├── config.rs        # `RhoConfig`, `ConfigLoader`, two-tier TOML loading
+│       ├── context.rs       # `ContextManager`, `SlidingWindowContextManager`, `TokenBudget`
+│       ├── context_files.rs # Project context file scanner, `TrustStore`, prompt composition
+│       ├── conversation.rs  # `Conversation`, `AssistantResponse`
+│       ├── diagnostic.rs    # Structured compiler diagnostic types
+│       ├── error.rs         # `RhoError` and `Result`
+│       ├── message.rs       # `ChatMessage`, `ContentBlock`, `ModelToolCall`
+│       ├── newtypes.rs      # `FilePath`, `ToolName`, `ToolCallId`, `EntryId`, `DiagnosticCode`
+│       ├── prompts.rs       # `base_prompt()`, `compact_prompt()` (embedded from `prompts/`)
+│       ├── redact.rs        # `Redactor` — secret pattern matching
+│       ├── request.rs       # `ChatRequest`
+│       ├── response.rs      # `ModelResponse`, `FinishReason`, `ModelUsage`
+│       ├── sandbox.rs       # `SandboxRoot` — file sandbox validation
+│       ├── schema.rs        # `ToolSchema` — wire-format tool definitions
+│       ├── session.rs       # `Session`, `Entry`, tree persistence, compaction
+│       └── shell.rs         # `ShellExecutor` trait, `ShellOutput`
+├── rho-highlight/           # Tree-sitter syntax analysis
+│   └── src/
+│       ├── lib.rs           # Re-exports
+│       ├── lang.rs          # `Language` enum
+│       ├── parse.rs         # Tree-sitter parsing
+│       ├── highlight.rs     # Token classification and highlighting
+│       └── query.rs         # `node_at()` — AST node lookup by position
+├── rho-tools/               # Built-in tool implementations
+│   └── src/
+│       ├── lib.rs           # `register_all()`
+│       ├── files.rs         # `ReadFile`, `WriteFile`, `ListDir`, `EditFile`
+│       ├── shell.rs         # `RunCommand`, `PowerShellExecutor`, `CommandDenylist`
+│       └── rust.rs          # `CargoCheck`, `CargoClippy`, `CargoTest`, `CargoFix`, `RustcExplain`
+├── rho-test-helpers/        # Shared test infrastructure (dev-only)
+│   └── src/lib.rs
+├── rho-eval/                # Behavioural benchmarks (dev-only)
+│   └── src/
+│       ├── lib.rs
+│       ├── task.rs          # Coding task definitions
+│       └── report.rs        # Evaluation results, regression gating
+└── xtask/                   # Dev task runner
+    └── src/main.rs          # `cargo xtask ci`, `cargo xtask test`, `cargo xtask changelog`
+</code></pre>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="crate-responsibilities"><a class="header" href="#crate-responsibilities">Crate Responsibilities</a></h1>
 <h2 id="rho-binary"><a class="header" href="#rho-binary"><code>rho</code> (binary)</a></h2>
-<p>The REPL loop, CLI argument parsing, and tool wiring. Constructs a <code>Session</code>, connects to the model via <code>LocalChatClient</code>, and drives the agent loop.</p>
+<p>The REPL loop, CLI argument parsing, tool wiring, and system prompt assembly. Constructs a <code>Session</code>, connects to the model via <code>LocalChatClient</code>, and drives the agent loop. Handles CLI dispatch (REPL mode, prompt-file mode, session resume, ephemeral mode).</p>
+<p>Key responsibilities: provider consent check, model resolution, startup budget diagnostics, shell-specific prompt extensions.</p>
 <h2 id="rho-core"><a class="header" href="#rho-core"><code>rho-core</code></a></h2>
-<p>The kernel: agent loop, session management, context building, tool registry, approval gates, secret redaction, file sandbox, and model client trait. Every other crate depends on this.</p>
-<p>Key types: <code>Session</code>, <code>AgentConfig</code>, <code>ToolRegistry</code>, <code>ChatClient</code>, <code>ContextManager</code>, <code>SandboxRoot</code>, <code>Redactor</code>.</p>
+<p>The kernel: agent loop state machine, session management (tree persistence, compaction, branching), context window management (sliding window, token estimation), tool registry and traits, approval gates, secret redaction, file sandbox, model client trait, configuration loading, and all shared types.</p>
+<p>Key types: <code>Session</code>, <code>AgentConfig</code>, <code>ToolRegistry</code>, <code>Tool</code>, <code>ChatClient</code>, <code>ContextManager</code>, <code>TokenBudget</code>, <code>SandboxRoot</code>, <code>Redactor</code>, <code>RhoConfig</code>.</p>
+<h2 id="rho-highlight"><a class="header" href="#rho-highlight"><code>rho-highlight</code></a></h2>
+<p>Tree-sitter-based syntax analysis. Provides <code>parse()</code>, <code>highlight()</code>, and <code>node_at()</code> for Rust source code. Used by <code>EditFile</code> for node-splitting validation and by the TUI (Phase 4) for syntax highlighting.</p>
+<p>Key types: <code>Language</code>, <code>Highlight</code>, <code>NodeInfo</code>.</p>
 <h2 id="rho-tools"><a class="header" href="#rho-tools"><code>rho-tools</code></a></h2>
-<p>Built-in tool implementations: <code>ReadFile</code>, <code>WriteFile</code>, <code>ListDir</code>, <code>EditFile</code>, <code>RunCommand</code>. Each implements the <code>Tool</code> trait from <code>rho-core</code>.</p>
+<p>Built-in tool implementations:</p>
+<ul>
+<li><strong>File tools:</strong> <code>ReadFile</code>, <code>WriteFile</code>, <code>ListDir</code>, <code>EditFile</code></li>
+<li><strong>Shell tools:</strong> <code>RunCommand</code>, <code>PowerShellExecutor</code>, <code>CommandDenylist</code></li>
+<li><strong>Rust tools:</strong> <code>CargoCheck</code>, <code>CargoClippy</code>, <code>CargoTest</code>, <code>CargoFix</code>, <code>RustcExplain</code></li>
+</ul>
+<p>Each implements the <code>Tool</code> trait from <code>rho-core</code>.</p>
 <h2 id="rho-test-helpers"><a class="header" href="#rho-test-helpers"><code>rho-test-helpers</code></a></h2>
-<p>Shared test infrastructure (dev-only): <code>MockChatClient</code>, <code>MockShellExecutor</code>, <code>AutoApproveGate</code>, <code>FileTestEnv</code>, <code>in_memory_session</code>. Never published.</p>
+<p>Shared test infrastructure (dev-only): <code>MockChatClient</code>, <code>MockShellExecutor</code>, <code>AutoApproveGate</code>, <code>AutoDenyGate</code>, <code>FixedResponseTool</code>, <code>FileTestEnv</code>, <code>in_memory_session</code>, <code>empty_trust_store</code>, <code>detect_shell</code>, <code>tempdir_with_sandbox</code>, <code>assert_no_orphan_tool_results</code>. Never published.</p>
+<h2 id="rho-eval"><a class="header" href="#rho-eval"><code>rho-eval</code></a></h2>
+<p>Behavioural benchmark suite (dev-only): canonical coding tasks, automated scoring, prompt SHA-256 tracking, regression gating. Used to validate end-to-end agent behaviour across model releases.</p>
+<h2 id="xtask"><a class="header" href="#xtask"><code>xtask</code></a></h2>
+<p>Dev task runner: <code>cargo xtask ci</code> (fmt → lint → build → test), <code>cargo xtask test</code>, <code>cargo xtask changelog</code>.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="dependency-flow"><a class="header" href="#dependency-flow">Dependency Flow</a></h1>
-<!-- TODO: Fill in with dependency graph and rules -->
+<p>Dependencies flow downward only. A crate may depend on crates below it in the stack but never above.</p>
+<pre><code>rho (binary) ──────────────────────────────────────────
+    │
+    ├── rho-tools ─────────────────────────────────────
+    │       │
+    │       └── rho-highlight (via EditFile node-splitting)
+    │
+    └── rho-core ─────────────────────────────────────
+            │
+rho-test-helpers ── rho-core ────────────────────────
+rho-eval ────────── rho-core ────────────────────────
+xtask ──────────────────────────────────────────────
+</code></pre>
+<div class="table-wrapper"><table><thead><tr><th>Crate</th><th>Depends on</th><th>Notes</th></tr></thead><tbody>
+<tr><td><code>rho</code></td><td><code>rho-core</code>, <code>rho-tools</code></td><td>Binary entry point — wires everything together</td></tr>
+<tr><td><code>rho-tools</code></td><td><code>rho-core</code>, <code>rho-highlight</code></td><td>Tool implementations use core types and highlight for node-splitting</td></tr>
+<tr><td><code>rho-highlight</code></td><td>none (external only)</td><td>Tree-sitter grammar — standalone, no rho dependencies</td></tr>
+<tr><td><code>rho-core</code></td><td>none (external only)</td><td>Kernel — the foundation everything else builds on</td></tr>
+<tr><td><code>rho-test-helpers</code></td><td><code>rho-core</code></td><td>Dev-only — provides mocks and fixtures for testing</td></tr>
+<tr><td><code>rho-eval</code></td><td><code>rho-core</code></td><td>Dev-only — benchmark suite</td></tr>
+<tr><td><code>xtask</code></td><td>none (cargo integration)</td><td>Dev-only — task runner, no rho crate dependencies</td></tr>
+</tbody></table>
+</div>
+<h2 id="key-external-dependencies"><a class="header" href="#key-external-dependencies">Key external dependencies</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Dependency</th><th>Used by</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>reqwest</code></td><td><code>rho-core</code></td><td>HTTP client for model API</td></tr>
+<tr><td><code>tokio</code></td><td><code>rho-core</code>, <code>rho-tools</code></td><td>Async runtime</td></tr>
+<tr><td><code>serde</code> / <code>serde_json</code></td><td>everywhere</td><td>Serialization</td></tr>
+<tr><td><code>toml</code></td><td><code>rho-core</code></td><td>Configuration parsing</td></tr>
+<tr><td><code>tree-sitter</code> + grammars</td><td><code>rho-highlight</code></td><td>Syntax analysis</td></tr>
+<tr><td><code>ignore</code></td><td><code>rho-tools</code></td><td><code>.gitignore</code>-aware directory listing</td></tr>
+<tr><td><code>clap</code></td><td><code>rho</code></td><td>CLI argument parsing</td></tr>
+<tr><td><code>tracing</code></td><td><code>rho-core</code></td><td>Structured logging</td></tr>
+<tr><td><code>anyhow</code></td><td><code>rho-core</code></td><td>Error handling</td></tr>
+<tr><td><code>thiserror</code></td><td><code>rho-core</code></td><td>Error type derivation</td></tr>
+</tbody></table>
+</div>
+<h2 id="what-this-buys-you"><a class="header" href="#what-this-buys-you">What this buys you</a></h2>
+<p>The layered structure means:</p>
+<ul>
+<li><strong><code>rho-core</code> is UI-agnostic</strong> — no shell, no filesystem, no terminal. The TUI (Phase 4) and REPL both consume it through the same traits.</li>
+<li><strong>Tools are pluggable</strong> — <code>ToolRegistry</code> stores <code>Box&lt;dyn Tool&gt;</code>, so adding a tool is <code>registry.register(Box::new(MyTool))</code>.</li>
+<li><strong>Testing is isolated</strong> — <code>rho-test-helpers</code> mocks the core traits (<code>ChatClient</code>, <code>ShellExecutor</code>, <code>ApprovalGate</code>) so tool and agent loop tests run without a model server.</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="core-concepts"><a class="header" href="#core-concepts">Core Concepts</a></h1>
 <p>The agent kernel in <code>rho-core</code> is built on a small set of interlocking concepts.</p>
 <ul>
@@ -332,15 +455,181 @@ Idle (done)
 <h2 id="cancellation"><a class="header" href="#cancellation">Cancellation</a></h2>
 <p>A <code>CancellationToken</code> is checked at the top of each loop iteration and between tool calls in a batch. When cancelled, <code>run_loop</code> returns <code>RhoError::Cancelled</code> immediately — no pending tool execution is aborted mid-flight, but no new ones are started.</p>
 <h2 id="iteration-guard"><a class="header" href="#iteration-guard">Iteration guard</a></h2>
-<p>The loop terminates after <code>config.max_iterations</code> tool-call rounds (default: 100). This prevents infinite loops from misbehaving models. Returns <code>RhoError::MaxIterationsExceeded</code>.</p>
+<p>The loop terminates after <code>config.max_iterations</code> tool-call rounds (default: 32). This prevents infinite loops from misbehaving models. Returns <code>RhoError::MaxIterationsExceeded</code>.</p>
 <h2 id="session-persistence-1"><a class="header" href="#session-persistence-1">Session persistence</a></h2>
 <p>Since <code>run_loop</code> operates on a <code>Session</code>, all appends (user messages, tool results) are automatically flushed to the JSONL session file if persistence is enabled. If the process crashes mid-loop, the session file contains everything up to the last successful append — at most one entry is lost.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="tool-trait"><a class="header" href="#tool-trait">Tool Trait</a></h1>
-<!-- TODO: Fill in with Tool trait definition, ToolResult, ToolRegistry, risk levels -->
-<div style="break-before: page; page-break-before: always;"></div><h1 id="chatclient-provider-trait"><a class="header" href="#chatclient-provider-trait">ChatClient Provider Trait</a></h1>
-<!-- TODO: Fill in with ChatClient trait, LocalChatClient, provider selection -->
+<p>The <code>Tool</code> trait is the interface every tool implements. It defines a name, description, JSON Schema for parameters, risk classification, and an async <code>execute</code> method.</p>
+<h2 id="definition"><a class="header" href="#definition">Definition</a></h2>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>#[async_trait]
+pub trait Tool: Send + Sync {
+    /// The tool's registered name (used by the model to invoke it).
+    fn name(&amp;self) -&gt; ToolName;
+
+    /// Human-readable description shown to the model.
+    fn description(&amp;self) -&gt; &amp;str;
+
+    /// JSON Schema object describing this tool's parameters.
+    fn parameters_schema(&amp;self) -&gt; serde_json::Value;
+
+    /// Risk classification, used by the approval policy.
+    fn risk(&amp;self) -&gt; ToolRisk;
+
+    /// Execute the tool. Check `cancel.is_cancelled()` at I/O boundaries.
+    async fn execute(
+        &amp;self,
+        arguments: serde_json::Value,
+        cancel: CancellationToken,
+    ) -&gt; Result&lt;ToolOutcome&gt;;
+}
+<span class="boring">}</span></code></pre></pre>
+<h2 id="risk-levels"><a class="header" href="#risk-levels">Risk levels</a></h2>
+<p>Every tool has a <code>ToolRisk</code> that determines whether it needs human approval:</p>
+<div class="table-wrapper"><table><thead><tr><th>Risk</th><th>Meaning</th><th>Approval</th><th>Examples</th></tr></thead><tbody>
+<tr><td><code>Read</code></td><td>Cannot modify state</td><td>Auto-approved</td><td><code>ReadFile</code>, <code>ListDir</code>, <code>CargoCheck</code></td></tr>
+<tr><td><code>Write</code></td><td>May create or modify files</td><td>Requires approval</td><td><code>WriteFile</code>, <code>EditFile</code>, <code>CargoFix</code></td></tr>
+<tr><td><code>Destructive</code></td><td>May cause irreversible effects</td><td>Requires approval</td><td><code>RunCommand</code></td></tr>
+</tbody></table>
+</div>
+<p>The approval policy can override these defaults per-tool via config.</p>
+<h2 id="tool-result"><a class="header" href="#tool-result">Tool result</a></h2>
+<p><code>execute</code> returns <code>ToolOutcome::Immediate(ToolResult)</code> containing:</p>
+<ul>
+<li><code>output: String</code> — the text result (sent to the model and session)</li>
+<li><code>is_error: bool</code> — whether the tool reported an error (e.g., non-zero exit code)</li>
+<li><code>details: ToolResultDetails</code> — structured data <em>not</em> sent to the model</li>
+</ul>
+<p>The <code>details</code> field carries richer information for tools and extensions:</p>
+<div class="table-wrapper"><table><thead><tr><th>Variant</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>None</code></td><td>No structured detail (default)</td></tr>
+<tr><td><code>FullOutput</code></td><td>Preserves un-truncated output when the model-facing text is truncated</td></tr>
+<tr><td><code>Diagnostics</code></td><td>Structured compiler diagnostics from <code>CargoCheck</code> / <code>CargoClippy</code></td></tr>
+</tbody></table>
+</div>
+<h2 id="tool-registry"><a class="header" href="#tool-registry">Tool registry</a></h2>
+<p><code>ToolRegistry</code> maps tool names to <code>Box&lt;dyn Tool&gt;</code> implementations:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>let mut registry = ToolRegistry::new();
+registry.register(Box::new(ReadFile { root: root.clone() }));
+registry.register(Box::new(WriteFile { root: root.clone() }));
+
+// Execute a model-issued tool call
+let result = registry.execute(&amp;call, cancel).await?;
+<span class="boring">}</span></code></pre></pre>
+<p>Duplicate tool names panic at registration (fast-fail, programming error). Execution returns <code>RhoError::ToolNotFound</code> if the model requests an unregistered tool.</p>
+<h2 id="built-in-tools"><a class="header" href="#built-in-tools">Built-in tools</a></h2>
+<p>rho ships with 11 built-in tools, all registered in <code>rho-tools::register_all()</code>:</p>
+<div class="table-wrapper"><table><thead><tr><th>Tool</th><th>Risk</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>read_file</code></td><td>Read</td><td>Read file contents, wrapped in <code>&lt;context&gt;</code> framing</td></tr>
+<tr><td><code>write_file</code></td><td>Write</td><td>Create or overwrite files within the sandbox</td></tr>
+<tr><td><code>list_dir</code></td><td>Read</td><td><code>.gitignore</code>-aware directory listing</td></tr>
+<tr><td><code>edit_file</code></td><td>Write</td><td>Exact-match replacements with node-splitting validation</td></tr>
+<tr><td><code>run_command</code></td><td>Destructive</td><td>Execute shell commands with denylist enforcement</td></tr>
+<tr><td><code>cargo_check</code></td><td>Read</td><td>Structured compiler diagnostics</td></tr>
+<tr><td><code>cargo_clippy</code></td><td>Read</td><td>Structured lint diagnostics</td></tr>
+<tr><td><code>cargo_test</code></td><td>Read</td><td>Structured test pass/fail results</td></tr>
+<tr><td><code>cargo_fix</code></td><td>Write</td><td>Apply machine-applicable compiler/clippy suggestions</td></tr>
+<tr><td><code>rustc_explain</code></td><td>Read</td><td>Look up detailed explanations for error codes</td></tr>
+</tbody></table>
+</div><div style="break-before: page; page-break-before: always;"></div><h1 id="chatclient-provider-trait"><a class="header" href="#chatclient-provider-trait">ChatClient Provider Trait</a></h1>
+<p>The <code>ChatClient</code> trait abstracts the model API. It defines how rho talks to LLMs — any OpenAI-compatible endpoint can be plugged in.</p>
+<h2 id="definition-1"><a class="header" href="#definition-1">Definition</a></h2>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>#[async_trait]
+pub trait ChatClient: Send + Sync {
+    /// Send a chat completion request and return the model's response.
+    async fn chat(&amp;self, request: ChatRequest) -&gt; Result&lt;ModelResponse&gt;;
+
+    /// List available models from the /v1/models endpoint.
+    async fn list_models(&amp;self) -&gt; Result&lt;ModelList&gt;;
+}
+<span class="boring">}</span></code></pre></pre>
+<h2 id="localchatclient"><a class="header" href="#localchatclient"><code>LocalChatClient</code></a></h2>
+<p>The default implementation targets <code>localhost:1234</code> (LM Studio / Ollama):</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// Default: localhost with no egress enforcement
+let client = LocalChatClient::new();
+
+// Custom endpoint with egress allowlist
+let client = LocalChatClient::with_endpoint_and_egress(
+    "http://localhost:1234/v1/chat/completions",
+    egress_config,
+);
+<span class="boring">}</span></code></pre></pre>
+<h3 id="egress-enforcement"><a class="header" href="#egress-enforcement">Egress enforcement</a></h3>
+<p>When constructed with <code>with_endpoint_and_egress</code>, the client checks the resolved host of the endpoint URL against the egress allowlist before every request. Requests to non-allowed hosts are refused with <code>RhoError::EgressBlocked</code>.</p>
+<p><code>localhost</code>, <code>127.0.0.1</code>, and <code>::1</code> are always allowed without configuration. Any other host must appear in <code>allowed_hosts</code> in the egress config.</p>
+<h3 id="provider-consent"><a class="header" href="#provider-consent">Provider consent</a></h3>
+<p>The binary (<code>rho</code>) checks whether the configured endpoint is local before connecting. Non-local endpoints (e.g., <code>api.openai.com</code>) trigger an interactive consent warning. Use <code>--accept-external-provider</code> to skip this in automated workflows.</p>
+<h2 id="model-resolution"><a class="header" href="#model-resolution">Model resolution</a></h2>
+<p>The model identifier is resolved in priority order:</p>
+<ol>
+<li><strong>Config</strong> — <code>agent.model</code> in <code>.rho/config.toml</code> or <code>~/.rho/config.toml</code></li>
+<li><strong>CLI flag</strong> — <code>--model &lt;name&gt;</code></li>
+<li><strong>Auto-detect</strong> — query the server's <code>/v1/models</code> endpoint, use the first loaded model</li>
+</ol>
+<p>Auto-detection fails with a clear error if the server is unreachable or has no models loaded.</p>
+<h2 id="request--response"><a class="header" href="#request--response">Request / response</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Type</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>ChatRequest</code></td><td><code>model</code>, <code>messages</code>, <code>tools</code> — the full API request body</td></tr>
+<tr><td><code>ModelResponse</code></td><td>Parsed API response with choices, finish reason, usage</td></tr>
+<tr><td><code>FinishReason</code></td><td><code>Stop</code> (text reply), <code>ToolCalls</code>, <code>Length</code> (truncated), <code>ContentFilter</code></td></tr>
+<tr><td><code>ModelUsage</code></td><td><code>prompt_tokens</code>, <code>completion_tokens</code>, <code>total_tokens</code></td></tr>
+</tbody></table>
+</div>
+<h2 id="streaming"><a class="header" href="#streaming">Streaming</a></h2>
+<p><code>ToolOutcome::Streamed</code> is declared for future streaming support (Phase 4). The current implementation uses synchronous request → full response.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="approval-policy"><a class="header" href="#approval-policy">Approval Policy</a></h1>
-<!-- TODO: Fill in with ApprovalPolicy trait, default policy, per-tool config, UX -->
+<p>The approval policy sits between the model's tool call and its execution. It decides whether a tool call needs human confirmation, and the approval gate presents that decision to the user.</p>
+<h2 id="two-part-system"><a class="header" href="#two-part-system">Two-part system</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Component</th><th>Role</th></tr></thead><tbody>
+<tr><td><code>ApprovalPolicy</code></td><td>Decides <em>whether</em> approval is needed (configurable logic)</td></tr>
+<tr><td><code>ApprovalGate</code></td><td>Asks the user for confirmation at runtime (UI integration point)</td></tr>
+</tbody></table>
+</div>
+<h2 id="policy-configapprovalpolicy"><a class="header" href="#policy-configapprovalpolicy">Policy: <code>ConfigApprovalPolicy</code></a></h2>
+<p>The default policy uses per-tool overrides from config, falling back to risk-based defaults:</p>
+<pre><code class="language-toml">[approval.per_tool]
+read_file = "auto"    # never ask
+write_file = "ask"    # always ask
+run_command = "ask"   # always ask
+</code></pre>
+<div class="table-wrapper"><table><thead><tr><th>Action</th><th>Behaviour</th></tr></thead><tbody>
+<tr><td><code>Auto</code></td><td>Execute without asking</td></tr>
+<tr><td><code>Ask</code></td><td>Require human confirmation</td></tr>
+<tr><td><code>Deny</code></td><td>Refuse to execute (returns a denial error to the model)</td></tr>
+</tbody></table>
+</div>
+<p>When a tool is not listed in config, the risk-based default applies:</p>
+<div class="table-wrapper"><table><thead><tr><th>ToolRisk</th><th>Default</th></tr></thead><tbody>
+<tr><td><code>Read</code></td><td>Auto</td></tr>
+<tr><td><code>Write</code></td><td>Ask</td></tr>
+<tr><td><code>Destructive</code></td><td>Ask</td></tr>
+</tbody></table>
+</div>
+<h2 id="gate-replapprovalgate"><a class="header" href="#gate-replapprovalgate">Gate: <code>ReplApprovalGate</code></a></h2>
+<p>The REPL implementation presents a preview and reads <code>y/N</code> from stdin:</p>
+<pre><code class="language-text">  Tool     : write_file
+  Risk     : write
+  Arguments: {"path":"src/main.rs","content":"..."}
+  Execute? [y/n] 
+</code></pre>
+<p>On denial, a synthetic error result is fed back to the model as if the tool had failed. The model can then adjust its approach — it does not crash or get stuck.</p>
+<h2 id="custom-gates"><a class="header" href="#custom-gates">Custom gates</a></h2>
+<p>The <code>ApprovalGate</code> trait is async, so any UI can implement it:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>#[async_trait]
+pub trait ApprovalGate: Send + Sync {
+    async fn request_approval(&amp;self, call: &amp;ModelToolCall, risk: ToolRisk) -&gt; bool;
+}
+<span class="boring">}</span></code></pre></pre>
+<p>The TUI (Phase 4) will implement this with an in-terminal prompt that shows rich previews (syntax-highlighted diffs, command inspection) rather than the plain-text REPL format.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="context-management"><a class="header" href="#context-management">Context Management</a></h1>
 <p>The context manager is responsible for fitting the conversation within the model's context window. It decides which messages to keep, which to evict, and how to render compacted entries.</p>
 <h2 id="the-problem"><a class="header" href="#the-problem">The problem</a></h2>
@@ -430,11 +719,16 @@ Idle (done)
 <h2 id="entry-types"><a class="header" href="#entry-types">Entry types</a></h2>
 <p>Each entry in the tree has a <code>payload</code> that describes what it represents:</p>
 <div class="table-wrapper"><table><thead><tr><th>Payload</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>Message</code></td><td>A chat message (system, user, or assistant)</td></tr>
-<tr><td><code>ToolCall</code></td><td>A tool invocation requested by the model</td></tr>
-<tr><td><code>ToolResult</code></td><td>The output of a tool execution</td></tr>
+<tr><td><code>Message</code></td><td>A chat message (system, user, assistant, or tool result)</td></tr>
 <tr><td><code>Compaction</code></td><td>A summary replacing older entries</td></tr>
-<tr><td><code>Custom</code></td><td>Extension data (see <a href="core-concepts/../extensions.html">Extensions</a>)</td></tr>
+<tr><td><code>BranchSummary</code></td><td>A summary created when branching</td></tr>
+<tr><td><code>CustomMessage</code></td><td>Extension message (sent to model as synthetic user message)</td></tr>
+<tr><td><code>Custom</code></td><td>Extension state (never sent to model)</td></tr>
+<tr><td><code>Label</code></td><td>Branch checkpoint label</td></tr>
+<tr><td><code>LeafMoved</code></td><td>Record of a leaf movement</td></tr>
+<tr><td><code>ModelChange</code></td><td>Record of a model switch</td></tr>
+<tr><td><code>SessionInfo</code></td><td>Session metadata</td></tr>
+<tr><td><code>SessionEnded</code></td><td>Clean shutdown trailer</td></tr>
 </tbody></table>
 </div>
 <h2 id="resolution-levels"><a class="header" href="#resolution-levels">Resolution levels</a></h2>
@@ -467,7 +761,43 @@ Idle (done)
 <li><strong>Persistence</strong>: <code>save_path()</code>, <code>flush()</code></li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="project-context-files"><a class="header" href="#project-context-files">Project Context Files</a></h1>
-<!-- TODO: Fill in with scan list, trust model, prompt composition, precedence -->
+<p>rho scans for project-level instruction files and injects them into the system prompt. This lets projects tell the agent how to work with their codebase — without modifying rho itself.</p>
+<h2 id="scan-list"><a class="header" href="#scan-list">Scan list</a></h2>
+<p>rho looks for the following files in the project root (sandbox root), in priority order:</p>
+<div class="table-wrapper"><table><thead><tr><th>File</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>AGENTS.md</code></td><td>Instructions for AI assistants (rho-specific)</td></tr>
+<tr><td><code>.agents.md</code></td><td>Hidden variant of <code>AGENTS.md</code></td></tr>
+<tr><td><code>CLAUDE.md</code></td><td>Instructions for Claude-compatible agents</td></tr>
+<tr><td><code>.cursorrules</code></td><td>Cursor editor rules</td></tr>
+<tr><td><code>.rho/prompt.md</code></td><td>rho-specific project prompt</td></tr>
+</tbody></table>
+</div>
+<p>The scan list can be overridden in config:</p>
+<pre><code class="language-toml">[context]
+scan_list = ["AGENTS.md", "CLAUDE.md"]
+</code></pre>
+<h2 id="trust-model"><a class="header" href="#trust-model">Trust model</a></h2>
+<p>Project context files are a prompt injection vector — anyone with write access to the repository can modify them. rho addresses this with a trust store:</p>
+<ol>
+<li><strong>First encounter:</strong> rho prompts the user to review the file contents and confirm trust.</li>
+<li><strong>Trust stored:</strong> the SHA-256 hash of the accepted file is stored in <code>~/.rho/trusted_projects.toml</code>.</li>
+<li><strong>Subsequent loads:</strong> if the hash matches, the file is loaded silently. If it changed since the last trust decision, rho prompts the user again.</li>
+</ol>
+<p>This ensures:</p>
+<ul>
+<li>A malicious PR that silently modifies <code>AGENTS.md</code> will trigger a re-review prompt.</li>
+<li>Legitimate updates (new project instructions) are confirmed once, then loaded automatically.</li>
+<li>The user can always audit what's in <code>trusted_projects.toml</code>.</li>
+</ul>
+<h2 id="prompt-composition"><a class="header" href="#prompt-composition">Prompt composition</a></h2>
+<p>Context files are appended to the system prompt after the base prompt, in scan-list order. The final system prompt structure is:</p>
+<pre><code class="language-text">[base prompt]           ← prompts/base.md (or compact prompt)
+[project context files] ← AGENTS.md, CLAUDE.md, etc.
+[environment block]     ← working directory, shell info
+[Rust tooling block]    ← cargo check/clippy/test guidance
+</code></pre>
+<h2 id="in-practice"><a class="header" href="#in-practice">In practice</a></h2>
+<p>The file you're reading right now (<code>AGENTS.md</code>) is a context file. It tells rho about the project layout, conventions, testing approach, and commit format. Without it, rho would still work — but it wouldn't know about <code>cargo xtask ci</code>, the conventional commit format, or the <code>forbid(unsafe_code)</code> lint.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="security"><a class="header" href="#security">Security</a></h1>
 <p>rho takes untrusted input (LLM output), interprets it as instructions, and executes those instructions with the full privileges of the user. The security model is defense-in-depth — no single layer is sufficient, but each layer raises the bar.</p>
 <p>See also:</p>
@@ -479,19 +809,310 @@ Idle (done)
 <li><a href="./security/prompt-injection-defense.html">Prompt Injection Defense</a></li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="threat-model"><a class="header" href="#threat-model">Threat Model</a></h1>
-<!-- TODO: Fill in with the 10-threat table from roadmap -->
+<p>rho takes untrusted input (LLM output), interprets it as instructions, and executes those instructions with the full privileges of the user. The security model is defense-in-depth — no single layer is sufficient, but each layer raises the bar.</p>
+<h2 id="threats-and-defenses"><a class="header" href="#threats-and-defenses">Threats and defenses</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Threat</th><th>Primary Defense</th><th>Secondary</th></tr></thead><tbody>
+<tr><td>Destructive command execution</td><td>Command denylist</td><td>Approval gate</td></tr>
+<tr><td>Data exfiltration via shell</td><td>Approval gate</td><td>Denylist + egress allowlist</td></tr>
+<tr><td>Data exfiltration via provider</td><td>Provider consent warning</td><td>Egress allowlist</td></tr>
+<tr><td>Path traversal via file tools</td><td>File sandbox (canonicalised)</td><td>Approval gate</td></tr>
+<tr><td>Secret exposure in tool output</td><td>Best-effort redaction</td><td>Approval gate</td></tr>
+<tr><td>Prompt injection via file content</td><td>Untrusted-data framing (<code>&lt;context&gt;</code> / <code>&lt;context:end&gt;</code>)</td><td>Approval gate</td></tr>
+<tr><td>Supply-chain prompt attack</td><td>Project context file trust (SHA-256 hash)</td><td>User confirmation on first load</td></tr>
+<tr><td>Extension command injection</td><td>Structured argument substitution</td><td>Approval gate</td></tr>
+<tr><td>Runaway tool-call loop</td><td>Max iteration guard (default: 32)</td><td>Stuck-loop detection</td></tr>
+<tr><td>Credential at rest</td><td>Env var references (no plaintext in config)</td><td>Optional credential store (future)</td></tr>
+</tbody></table>
+</div>
+<h2 id="scope-and-limitations"><a class="header" href="#scope-and-limitations">Scope and limitations</a></h2>
+<ul>
+<li><strong>Trusted user:</strong> The human at the keyboard is trusted. Approval gates protect against <em>model</em>-initiated actions, not user-initiated ones.</li>
+<li><strong>No OS-level isolation:</strong> Tools execute as the same user/process as rho. The sandbox validates paths but cannot prevent a determined model from exploiting a zero-day in a dependency.</li>
+<li><strong>Best-effort redaction:</strong> The <code>Redactor</code> matches known secret patterns (API keys, tokens, passwords). It cannot detect secrets that don't match its patterns.</li>
+<li><strong>Command denylist coverage:</strong> The denylist catches common exfiltration vectors (PowerShell networking cmdlets, <code>curl</code>, <code>wget</code>, .NET HTTP). A creative model can construct network requests using .NET APIs that aren't in the substring list. The approval gate is the primary defense.</li>
+</ul>
+<p>See the individual pages for detailed design of each defense layer:</p>
+<ul>
+<li><a href="security/./file-sandbox.html">File Sandbox</a></li>
+<li><a href="security/./secret-redaction.html">Secret Redaction</a></li>
+<li><a href="security/./egress-control.html">Egress Control</a></li>
+<li><a href="security/./prompt-injection-defense.html">Prompt Injection Defense</a></li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="file-sandbox"><a class="header" href="#file-sandbox">File Sandbox</a></h1>
-<!-- TODO: Fill in with FilePath, canonicalisation, sandbox root, opt-out -->
+<p>All file tools (<code>ReadFile</code>, <code>WriteFile</code>, <code>ListDir</code>, <code>EditFile</code>) operate within a sandbox root — a canonical directory that no tool operation can escape.</p>
+<h2 id="sandboxroot"><a class="header" href="#sandboxroot">SandboxRoot</a></h2>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>let root = SandboxRoot::new("/home/user/project")?;
+root.validate("src/main.rs")?;       // Ok — within sandbox
+root.validate("../../etc/passwd")?;  // Err — escapes sandbox
+<span class="boring">}</span></code></pre></pre>
+<p>The sandbox root is the project root by default, auto-detected by walking up from the current directory looking for markers (<code>.rho/config.toml</code>, <code>.git/</code>, <code>Cargo.toml</code>, <code>package.json</code>, etc.). It can be overridden with <code>--root &lt;path&gt;</code>.</p>
+<h2 id="validation-strategies"><a class="header" href="#validation-strategies">Validation strategies</a></h2>
+<h3 id="existing-paths"><a class="header" href="#existing-paths">Existing paths</a></h3>
+<p><code>validate()</code> resolves symlinks and <code>..</code> components via <code>std::fs::canonicalize</code>, then checks the canonical path starts with the canonical root. This prevents path traversal through symlinks or directory climbing.</p>
+<h3 id="not-yet-existing-paths"><a class="header" href="#not-yet-existing-paths">Not-yet-existing paths</a></h3>
+<p><code>validate_for_write()</code> handles new files (where <code>canonicalize</code> would fail). It:</p>
+<ol>
+<li>Walks up from the path until it finds an existing ancestor.</li>
+<li>Canonicalises that ancestor.</li>
+<li>Re-appends the remaining components.</li>
+<li>Rejects any <code>..</code> component in the not-yet-existing suffix immediately.</li>
+<li>Verifies the resolved path stays within the sandbox root.</li>
+</ol>
+<p>This allows <code>WriteFile</code> to create new files within the project while still preventing escapes like <code>new_dir/../../../etc/passwd</code>.</p>
+<h2 id="opt-out"><a class="header" href="#opt-out">Opt-out</a></h2>
+<p>The sandbox can be disabled in config (not recommended):</p>
+<pre><code class="language-toml">[sandbox]
+enabled = false
+</code></pre>
+<p>When disabled, all file tools still resolve paths but skip the containment check. This is intended only for environments where the user explicitly wants to operate outside the project directory.</p>
+<h2 id="toctou-note"><a class="header" href="#toctou-note">TOCTOU note</a></h2>
+<p>There is a theoretical time-of-check-time-of-use race between <code>validate_for_write</code> and the subsequent <code>create_dir_all</code> + <code>write</code>. This is accepted because:</p>
+<ul>
+<li>The threat model does not include concurrent adversarial filesystem modification.</li>
+<li>If the model has shell access, it can write directly via the shell — the sandbox only constrains the <em>tool</em> interface.</li>
+<li>The approval gate is the primary defense against model-initiated writes.</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="secret-redaction"><a class="header" href="#secret-redaction">Secret Redaction</a></h1>
-<!-- TODO: Fill in with redaction patterns, tool result filtering, custom patterns -->
+<p>The <code>Redactor</code> scans tool output for known secret patterns and replaces matches with <code>[REDACTED]</code>. This prevents the model from seeing (and potentially leaking) secrets that appear in file contents, command output, or configuration files.</p>
+<h2 id="how-it-works"><a class="header" href="#how-it-works">How it works</a></h2>
+<p>Redaction is applied to tool results before they enter the conversation history. The model never sees the original secret — only <code>[REDACTED]</code>.</p>
+<h2 id="built-in-patterns"><a class="header" href="#built-in-patterns">Built-in patterns</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Pattern</th><th>Example matches</th></tr></thead><tbody>
+<tr><td>AWS access key IDs</td><td><code>AKIA...</code></td></tr>
+<tr><td>AWS secret access keys</td><td>40-char base64 strings following <code>AKIA</code> keys</td></tr>
+<tr><td>GitHub personal access tokens</td><td><code>ghp_...</code>, <code>github_pat_...</code></td></tr>
+<tr><td>OpenAI API keys</td><td><code>sk-...</code></td></tr>
+<tr><td>Slack tokens</td><td><code>xoxb-...</code>, <code>xoxp-...</code></td></tr>
+<tr><td>Bearer tokens</td><td><code>Bearer &lt;opaque-string&gt;</code></td></tr>
+<tr><td>Generic password assignments</td><td><code>password = "..."</code>, <code>password: '...'</code></td></tr>
+</tbody></table>
+</div>
+<h2 id="custom-patterns"><a class="header" href="#custom-patterns">Custom patterns</a></h2>
+<p>Additional regex patterns can be added in config:</p>
+<pre><code class="language-toml">[redaction]
+enabled = true
+custom_patterns = [
+    "my-service-key-[a-zA-Z0-9]{32}",
+    "token: \\S+",
+]
+</code></pre>
+<p>Custom patterns are applied after the built-in patterns. Invalid regex patterns are silently ignored (a warning is printed to stderr at startup).</p>
+<h2 id="vec-replacement-semantics"><a class="header" href="#vec-replacement-semantics">Vec replacement semantics</a></h2>
+<p>Custom patterns follow the same replacement rule as all Vec fields: the project-level list <strong>replaces</strong> the user-level list (not appended). This avoids surprising composition effects.</p>
+<h2 id="configuration"><a class="header" href="#configuration">Configuration</a></h2>
+<p>Redaction is enabled by default. It can be disabled in config:</p>
+<pre><code class="language-toml">[redaction]
+enabled = false
+</code></pre>
+<h2 id="limitations"><a class="header" href="#limitations">Limitations</a></h2>
+<ul>
+<li><strong>Best-effort:</strong> The redactor matches known patterns. It cannot detect secrets that don't match any pattern (e.g., a novel token format).</li>
+<li><strong>No reconstruction:</strong> Redaction is one-way — the original value is discarded. Tool result details (<code>ToolResultDetails::FullOutput</code>) preserve the un-redacted content for tools that need it, but the model-facing text is always redacted.</li>
+<li><strong>Pattern overlap:</strong> A string matching multiple patterns is replaced once. The <code>[REDACTED]</code> sentinel is not itself matched by subsequent patterns.</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="egress-control"><a class="header" href="#egress-control">Egress Control</a></h1>
-<!-- TODO: Fill in with allowlist, LocalChatClient default, provider switch warning -->
+<p>Egress control restricts which hosts the agent can contact over the network. It prevents the model from exfiltrating data to arbitrary internet endpoints.</p>
+<h2 id="allowlist"><a class="header" href="#allowlist">Allowlist</a></h2>
+<p>The egress allowlist is configured in <code>EgressConfig</code>:</p>
+<pre><code class="language-toml">[egress]
+allowed_hosts = ["api.openai.com"]
+</code></pre>
+<p>Three hosts are always allowed without configuration:</p>
+<div class="table-wrapper"><table><thead><tr><th>Host</th><th>Reason</th></tr></thead><tbody>
+<tr><td><code>localhost</code></td><td>Local model servers (LM Studio, Ollama)</td></tr>
+<tr><td><code>127.0.0.1</code></td><td>Loopback IPv4</td></tr>
+<tr><td><code>::1</code></td><td>Loopback IPv6</td></tr>
+</tbody></table>
+</div>
+<p>Any other host must appear in <code>allowed_hosts</code>. Requests to non-allowed hosts are refused with <code>RhoError::EgressBlocked</code>.</p>
+<h2 id="where-its-enforced"><a class="header" href="#where-its-enforced">Where it's enforced</a></h2>
+<h3 id="localchatclient-1"><a class="header" href="#localchatclient-1"><code>LocalChatClient</code></a></h3>
+<p>The model API client checks the egress allowlist before every <code>chat()</code> and <code>list_models()</code> call. This prevents the model provider from being switched to an unauthorized endpoint.</p>
+<h3 id="provider-consent-binary-level"><a class="header" href="#provider-consent-binary-level">Provider consent (binary level)</a></h3>
+<p>The binary (<code>rho</code>) checks whether the configured endpoint is local before connecting. Non-local endpoints trigger an interactive consent warning:</p>
+<pre><code class="language-text">  ⚠  External provider detected
+      Endpoint: https://api.openai.com/v1/chat/completions
+
+      Your prompts and code will be sent to an external server.
+      Continue? [y/N]
+</code></pre>
+<p>Use <code>--accept-external-provider</code> to skip this in automated workflows.</p>
+<h3 id="shell-denylist-complementary"><a class="header" href="#shell-denylist-complementary">Shell denylist (complementary)</a></h3>
+<p>The command denylist in <code>RunCommand</code> blocks common exfiltration tools (<code>curl</code>, <code>wget</code>, <code>Invoke-WebRequest</code>, <code>Invoke-RestMethod</code>, etc.) regardless of the egress config. This is a separate defense layer — the denylist catches shell-level attempts, the egress allowlist catches API-level attempts.</p>
+<h2 id="adding-new-outbound-tools"><a class="header" href="#adding-new-outbound-tools">Adding new outbound tools</a></h2>
+<p>When adding a tool that makes HTTP requests (e.g., a crates.io lookup), the tool must check the egress allowlist before every request. The <code>EgressConfig::is_host_allowed()</code> method provides this check:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>if !config.is_host_allowed("crates.io") {
+    return Err(RhoError::EgressBlocked { host: "crates.io".into() });
+}
+<span class="boring">}</span></code></pre></pre>
+<p>The user must add the target host to their <code>allowed_hosts</code> config before the tool will work.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="prompt-injection-defense"><a class="header" href="#prompt-injection-defense">Prompt Injection Defense</a></h1>
-<!-- TODO: Fill in with Role::Context, trust model, system prompt primacy -->
-<div style="break-before: page; page-break-before: always;"></div><h1 id="configuration"><a class="header" href="#configuration">Configuration</a></h1>
-<!-- TODO: Fill in with .rho/config.toml, ~/.rho/config.toml, env var credentials -->
-<div style="break-before: page; page-break-before: always;"></div><h1 id="extensions"><a class="header" href="#extensions">Extensions</a></h1>
-<!-- TODO: Fill in with ExtTool, TOML tool definitions, custom slash commands -->
+<p>File contents are untrusted data. When the model reads a file, the contents could contain instructions designed to manipulate the model's behaviour. rho mitigates this with framing.</p>
+<h2 id="the-context--contextend-convention"><a class="header" href="#the-context--contextend-convention">The <code>&lt;context&gt;</code> / <code>&lt;context:end&gt;</code> convention</a></h2>
+<p>File contents returned by <code>ReadFile</code> are wrapped in framing tags:</p>
+<pre><code class="language-text">&lt;context&gt;
+[actual file contents here]
+&lt;context:end&gt;
+</code></pre>
+<p>The system prompt instructs the model that content between <code>&lt;context&gt;</code> and <code>&lt;context:end&gt;</code> is data to be processed, not instructions to be followed. This is a form of <em>role-based compartmentalisation</em> — the model is told to adopt a different role when reading framed content.</p>
+<h3 id="why-contextend-and-not-context"><a class="header" href="#why-contextend-and-not-context">Why <code>&lt;context:end&gt;</code> and not <code>&lt;/context&gt;</code>?</a></h3>
+<p>The original closing tag <code>&lt;/context&gt;</code> was ambiguous — it could appear in legitimate file contents (e.g., XML files, HTML comments). The <code>&lt;context:end&gt;</code> sentinel is a unique string that will not appear naturally in source code, making it a reliable boundary marker.</p>
+<h2 id="where-framing-is-applied"><a class="header" href="#where-framing-is-applied">Where framing is applied</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Tool</th><th>Framing</th></tr></thead><tbody>
+<tr><td><code>ReadFile</code></td><td>Output wrapped in <code>&lt;context&gt;</code> / <code>&lt;context:end&gt;</code></td></tr>
+<tr><td><code>RunCommand</code></td><td>Output wrapped in <code>&lt;context&gt;</code> / <code>&lt;context:end&gt;</code></td></tr>
+<tr><td><code>CargoCheck</code>, <code>CargoClippy</code></td><td>Structured diagnostic output (not framed — parsed, not raw)</td></tr>
+<tr><td><code>CargoTest</code></td><td>Structured test output (not framed — parsed, not raw)</td></tr>
+<tr><td><code>RustcExplain</code></td><td>Plain text (not framed — short, known source)</td></tr>
+<tr><td><code>WriteFile</code>, <code>EditFile</code></td><td>Input is tool arguments, not file reads — not framed</td></tr>
+</tbody></table>
+</div>
+<h2 id="system-prompt-primacy"><a class="header" href="#system-prompt-primacy">System prompt primacy</a></h2>
+<p>The system prompt is loaded before any user interaction and is never evicted from the context window (it's pinned by the context manager). This means the framing instructions persist even if the conversation grows long.</p>
+<h2 id="limitations-1"><a class="header" href="#limitations-1">Limitations</a></h2>
+<ul>
+<li><strong>Framing is advisory, not enforced.</strong> The model <em>could</em> choose to ignore the <code>&lt;context&gt;</code> tags and follow injected instructions. The framing relies on the model's instruction-following behaviour, not a technical barrier.</li>
+<li><strong>No content scanning.</strong> rho does not scan file contents for injection patterns. The framing is applied uniformly regardless of content.</li>
+<li><strong>Approval gate is the real defense.</strong> If the model attempts to execute a destructive action based on injected instructions, the approval gate catches it. Framing is a defense-in-depth layer, not a substitute for human oversight.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="configuration-1"><a class="header" href="#configuration-1">Configuration</a></h1>
+<p>rho reads configuration from two TOML files, merged with project-level overrides taking precedence over user-level defaults.</p>
+<h2 id="file-locations"><a class="header" href="#file-locations">File locations</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Tier</th><th>Path</th><th>Purpose</th></tr></thead><tbody>
+<tr><td>User-level</td><td><code>~/.rho/config.toml</code></td><td>Global defaults: model, API endpoint, provider, egress</td></tr>
+<tr><td>Project-level</td><td><code>.rho/config.toml</code> (relative to sandbox root)</td><td>Per-project: model, approval policies, command denylist, sandbox, context files</td></tr>
+</tbody></table>
+</div>
+<p>Both files are optional. Missing files are silently skipped; all fields have sensible defaults.</p>
+<h2 id="merging-strategy"><a class="header" href="#merging-strategy">Merging strategy</a></h2>
+<p>Project-level config overrides user-level config on a per-field basis. For struct fields: if the project sets a field, it wins; if not, the user-level value applies; if neither sets it, the hardcoded default applies.</p>
+<p>For <code>Vec</code> fields (denylist commands, egress hosts, context scan list, custom redaction patterns): the project-level list <strong>replaces</strong> the user-level list. It does not append. This avoids surprising composition effects.</p>
+<h2 id="full-configuration-reference"><a class="header" href="#full-configuration-reference">Full configuration reference</a></h2>
+<pre><code class="language-toml">[agent]
+# Model identifier (overrides auto-detection)
+model = "qwen3-8b"
+
+# Maximum model-tool-model round trips before the loop fails (default: 32)
+max_iterations = 32
+
+# Maximum retry attempts on transient errors (default: 4)
+retry_budget = 4
+
+# Base backoff in milliseconds (default: 500)
+initial_backoff_ms = 500
+
+# Context window token budget (default: 32768)
+token_budget = 32768
+
+# Stuck-loop detection: consecutive identical outputs before nudge (default: 3, 0 = off)
+stuck_loop_threshold = 3
+
+# Show full chain-of-thought reasoning in output (default: false)
+show_reasoning = false
+
+[provider]
+# Provider type: "local" (default), "openai", "anthropic", etc.
+type = "local"
+
+# API endpoint URL (default: http://localhost:1234/v1/chat/completions)
+endpoint = "http://localhost:1234/v1/chat/completions"
+
+# Environment variable holding the API key (never stored in plaintext)
+api_key_env = "OPENAI_API_KEY"
+
+[approval.per_tool]
+# Per-tool approval overrides: "auto", "ask", "deny"
+read_file = "auto"
+write_file = "ask"
+edit_file = "ask"
+run_command = "ask"
+
+[shell]
+# Additional commands to deny (appended to the built-in denylist)
+denied_commands = ["Remove-Item", "Invoke-WebRequest"]
+
+# Additional denied flag combinations (all flags must be present to deny)
+denied_flag_combos = [["-Quiet", "-Force"]]
+
+[sandbox]
+# File sandbox toggle (default: true)
+enabled = true
+
+[context]
+# Override the default context file scan list
+scan_list = ["AGENTS.md", "CLAUDE.md"]
+
+[egress]
+# Hostnames allowed in addition to localhost (default: empty)
+allowed_hosts = ["api.openai.com"]
+
+[redaction]
+# Secret redaction toggle (default: true)
+enabled = true
+
+# Additional regex patterns to redact
+custom_patterns = ["my-key-[a-zA-Z0-9]{32}"]
+
+[system_prompt]
+# Additional prompt fragments appended after the base prompt
+extensions = ["Always use Rust idioms."]
+</code></pre>
+<h2 id="api-key-handling"><a class="header" href="#api-key-handling">API key handling</a></h2>
+<p>API keys are <strong>never</strong> stored in plaintext in config files. Instead, config references environment variable names:</p>
+<pre><code class="language-toml">[provider]
+api_key_env = "OPENAI_API_KEY"
+</code></pre>
+<p>The provider reads the key from the environment variable at runtime. If the variable is not set, the provider reports an error at connection time.</p>
+<h2 id="cli-overrides"><a class="header" href="#cli-overrides">CLI overrides</a></h2>
+<p>All config values can be overridden by CLI flags. CLI flags take highest priority:</p>
+<div class="table-wrapper"><table><thead><tr><th>Config field</th><th>CLI flag</th></tr></thead><tbody>
+<tr><td><code>agent.model</code></td><td><code>--model</code></td></tr>
+<tr><td><code>agent.token_budget</code></td><td><code>--token-budget</code></td></tr>
+<tr><td><code>provider.endpoint</code></td><td><code>--root</code> (indirectly)</td></tr>
+<tr><td>System prompt</td><td><code>--system</code></td></tr>
+<tr><td>Compact prompt</td><td><code>--compact</code></td></tr>
+<tr><td>Provider consent</td><td><code>--accept-external-provider</code></td></tr>
+</tbody></table>
+</div><div style="break-before: page; page-break-before: always;"></div><h1 id="extensions"><a class="header" href="#extensions">Extensions</a></h1>
+<blockquote>
+<p>Extensions are planned for Phase 5. This page describes the architecture and the foundation that's already in place.</p>
+</blockquote>
+<h2 id="extension-entries"><a class="header" href="#extension-entries">Extension entries</a></h2>
+<p>rho's session tree supports typed extension entries that are versioned and schema-skew-safe. This is the mechanism that future extensions will build on.</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// Write a typed state entry (never sent to the model)
+session.write_custom_state("rho.diagnostics.v1", &amp;json!({ "errors": 3 }))?;
+
+// Write a custom message entry (sent to the model as a synthetic user message)
+session.write_custom_message("rho.diagnostics.v1", vec![
+    ContentBlock::Text { text: "3 compilation errors found".into() },
+])?;
+
+// Read back a custom state entry
+if let Some(state) = session.read_custom_state("rho.diagnostics.v1")? {
+    println!("errors: {}", state["errors"]);
+}
+<span class="boring">}</span></code></pre></pre>
+<h2 id="kind-versioning"><a class="header" href="#kind-versioning">Kind versioning</a></h2>
+<p>Extension entry kinds use the format <code>&lt;author&gt;.&lt;feature&gt;.v&lt;n&gt;</code>. When rho encounters an entry with an unknown kind version, it returns <code>None</code> (graceful degradation) rather than panicking. This allows extensions to evolve their schema without breaking older rho versions.</p>
+<h2 id="current-uses"><a class="header" href="#current-uses">Current uses</a></h2>
+<p>Extension entries are currently used by:</p>
+<ul>
+<li><strong>Diagnostic extensions</strong> — <code>ToolResultDetails::Diagnostics</code> carries structured compiler output</li>
+<li><strong>Custom messages</strong> — the system can inject synthetic messages into the conversation</li>
+<li><strong>Custom state</strong> — tools and extensions can persist opaque state in the session tree</li>
+</ul>
+<h2 id="planned-phase-5"><a class="header" href="#planned-phase-5">Planned (Phase 5)</a></h2>
+<ul>
+<li><strong>Custom tools via TOML</strong> — define tools declaratively in <code>.rho/tools.toml</code></li>
+<li><strong>Custom slash commands</strong> — user-defined REPL commands</li>
+<li><strong>Extension API</strong> — a crate (<code>rho-ext</code>) providing a stable interface for third-party extensions</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="development"><a class="header" href="#development">Development</a></h1>
 <p>How to build, test, and extend rho.</p>
 <ul>
@@ -500,11 +1121,146 @@ Idle (done)
 <li><a href="./development/roadmap.html">Roadmap</a> — phase-by-phase development plan</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="testing"><a class="header" href="#testing">Testing</a></h1>
-<!-- TODO: Fill in with TDD approach, fixture conventions, test naming, rho-test-helpers -->
-<div style="break-before: page; page-break-before: always;"></div><h1 id="dependency-philosophy"><a class="header" href="#dependency-philosophy">Dependency Philosophy</a></h1>
-<!-- TODO: Fill in with the 4-question decision framework from roadmap -->
-<div style="break-before: page; page-break-before: always;"></div><h1 id="roadmap"><a class="header" href="#roadmap">Roadmap</a></h1>
-<!-- TODO: Fill in with phase summary table and links to .plans/phases/ -->
+<p>rho uses a layered test strategy: unit tests within each source file, integration tests at the crate level, and end-to-end scenario tests that exercise the full agent loop.</p>
+<h2 id="running-tests"><a class="header" href="#running-tests">Running tests</a></h2>
+<pre><code class="language-sh">cargo xtask ci        # Full CI pipeline: fmt → lint → build → test
+cargo xtask test      # All tests with stdout visible
+cargo xtask test -p rho-core -- --nocapture  # Single crate
+</code></pre>
+<h2 id="test-structure"><a class="header" href="#test-structure">Test structure</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Layer</th><th>Location</th><th>What it tests</th></tr></thead><tbody>
+<tr><td>Unit tests</td><td><code>#[cfg(test)] mod tests</code> inside each source file</td><td>Individual functions, types, edge cases</td></tr>
+<tr><td>Integration tests</td><td><code>rho-core/tests/integration_tests.rs</code></td><td>Agent loop, approval flow, context management</td></tr>
+<tr><td>Tool integration tests</td><td><code>rho-tools/tests/tool_tests.rs</code></td><td>Tool execution, sandbox enforcement, denylist</td></tr>
+<tr><td>Scenario tests</td><td><code>rho-eval/scenarios/</code></td><td>Full agent loop with real model</td></tr>
+</tbody></table>
+</div>
+<h2 id="test-helpers-rho-test-helpers"><a class="header" href="#test-helpers-rho-test-helpers">Test helpers (<code>rho-test-helpers</code>)</a></h2>
+<p><code>rho-test-helpers</code> provides the shared infrastructure that all test layers use:</p>
+<h3 id="mocks"><a class="header" href="#mocks">Mocks</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Helper</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>MockChatClient</code></td><td>Pre-programmed model responses for deterministic agent loop tests</td></tr>
+<tr><td><code>MockShellExecutor</code></td><td>Pre-programmed command output for tool tests</td></tr>
+<tr><td><code>AutoApproveGate</code></td><td>Approves all tool calls automatically</td></tr>
+<tr><td><code>AutoDenyGate</code></td><td>Denies all tool calls automatically</td></tr>
+</tbody></table>
+</div>
+<h3 id="builders"><a class="header" href="#builders">Builders</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Helper</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>text_response(text)</code></td><td>Create a simple text model response</td></tr>
+<tr><td><code>tool_call_response(name, args)</code></td><td>Create a tool call model response</td></tr>
+<tr><td><code>multi_tool_call_response(calls)</code></td><td>Create a response with multiple tool calls</td></tr>
+<tr><td><code>FixedResponseTool</code></td><td>A tool that always returns the same output</td></tr>
+</tbody></table>
+</div>
+<h3 id="fixtures-and-utilities"><a class="header" href="#fixtures-and-utilities">Fixtures and utilities</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Helper</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>FileTestEnv</code></td><td>Temporary directory with file-system operations for sandbox tests</td></tr>
+<tr><td><code>in_memory_session(prompt)</code></td><td>Create a session without disk persistence</td></tr>
+<tr><td><code>empty_trust_store()</code></td><td>Trust store with no trusted files</td></tr>
+<tr><td><code>detect_shell()</code></td><td>Find the available PowerShell on the test system</td></tr>
+<tr><td><code>tempdir_with_sandbox()</code></td><td>Create a temp directory with a <code>SandboxRoot</code></td></tr>
+<tr><td><code>assert_no_orphan_tool_results()</code></td><td>Verify every tool call has a matching result in the session</td></tr>
+</tbody></table>
+</div>
+<h2 id="naming-conventions"><a class="header" href="#naming-conventions">Naming conventions</a></h2>
+<ul>
+<li>Test functions: <code>descriptive_snake_case</code> — e.g., <code>system_message_is_always_retained</code></li>
+<li>Test modules: match the function under test — e.g., <code>tests::tool_result_success_has_no_details</code></li>
+<li>Fixtures: <code>tests/fixtures/*.json</code> — externalised test data for deserialization tests</li>
+</ul>
+<h2 id="coverage-priorities"><a class="header" href="#coverage-priorities">Coverage priorities</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Area</th><th>Coverage</th><th>Notes</th></tr></thead><tbody>
+<tr><td>Error handling</td><td>High</td><td>Every <code>RhoError</code> variant has a test</td></tr>
+<tr><td>Deserialization</td><td>High</td><td>Every JSON fixture has a round-trip test</td></tr>
+<tr><td>Edge cases</td><td>High</td><td>Empty inputs, oversized inputs, invalid inputs</td></tr>
+<tr><td>Sandbox</td><td>High</td><td>Path traversal, symlinks, non-existent paths</td></tr>
+<tr><td>Denylist</td><td>High</td><td>Each denied command and substring pattern</td></tr>
+<tr><td>Context management</td><td>High</td><td>Eviction, pinning, compaction rendering</td></tr>
+<tr><td>Integration</td><td>Medium</td><td>Agent loop with realistic message sequences</td></tr>
+<tr><td>Scenarios</td><td>Low (5)</td><td>End-to-end validation against real model</td></tr>
+</tbody></table>
+</div><div style="break-before: page; page-break-before: always;"></div><h1 id="dependency-philosophy"><a class="header" href="#dependency-philosophy">Dependency Philosophy</a></h1>
+<p>rho is conservative about adding external dependencies. Every new dependency is a supply-chain commitment that affects build times, binary size, audit surface, and maintenance burden.</p>
+<h2 id="decision-framework"><a class="header" href="#decision-framework">Decision framework</a></h2>
+<p>Before adding a dependency, answer these questions:</p>
+<ol>
+<li>
+<p><strong>Can we write it ourselves in &lt; 100 lines?</strong> → Write it. rho prefers small, purpose-built implementations over pulling in a crate for something trivial.</p>
+</li>
+<li>
+<p><strong>Is it already a transitive dependency?</strong> → If <code>reqwest</code> already pulls in <code>serde_urlencoded</code>, we can use it directly without adding a new top-level dependency.</p>
+</li>
+<li>
+<p><strong>Is it the de-facto standard for the problem?</strong> → <code>serde</code>, <code>tokio</code>, <code>clap</code>, <code>tracing</code> are widely adopted, well-maintained, and unlikely to cause issues. Standard choices are preferred over novel alternatives.</p>
+</li>
+<li>
+<p><strong>Is the maintenance track record good?</strong> → Check last release date, open issues, contributor count. A crate that hasn't been updated in 2 years is a risk.</p>
+</li>
+</ol>
+<h2 id="current-dependencies"><a class="header" href="#current-dependencies">Current dependencies</a></h2>
+<p>rho's direct (non-transitive) dependencies are:</p>
+<div class="table-wrapper"><table><thead><tr><th>Crate</th><th>Purpose</th><th>Rationale</th></tr></thead><tbody>
+<tr><td><code>reqwest</code></td><td>HTTP client</td><td>De-facto standard; needed for model API</td></tr>
+<tr><td><code>tokio</code></td><td>Async runtime</td><td>De-facto standard; needed for async I/O</td></tr>
+<tr><td><code>serde</code> + <code>serde_json</code></td><td>Serialization</td><td>Essential; no practical alternative</td></tr>
+<tr><td><code>toml</code></td><td>Config parsing</td><td>Standard for TOML in Rust</td></tr>
+<tr><td><code>clap</code></td><td>CLI parsing</td><td>De-facto standard; derives-based API</td></tr>
+<tr><td><code>tracing</code></td><td>Structured logging</td><td>De-facto standard; <code>log</code>-compatible</td></tr>
+<tr><td><code>anyhow</code></td><td>Error handling</td><td>Ergonomic error type for application code</td></tr>
+<tr><td><code>thiserror</code></td><td>Error derive macros</td><td>Clean <code>RhoError</code> definition</td></tr>
+<tr><td><code>async-trait</code></td><td>Async trait support</td><td>Required for <code>Box&lt;dyn Tool&gt;</code></td></tr>
+<tr><td><code>ignore</code></td><td><code>.gitignore</code> walking</td><td>From ripgrep; mature, well-maintained</td></tr>
+<tr><td><code>tree-sitter</code> + grammars</td><td>Syntax analysis</td><td>Standard for tree-sitter in Rust</td></tr>
+<tr><td><code>which</code></td><td>Executable detection</td><td>Small, focused, no replacement needed</td></tr>
+</tbody></table>
+</div>
+<h2 id="what-we-dont-depend-on"><a class="header" href="#what-we-dont-depend-on">What we don't depend on</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Avoided</th><th>Why</th></tr></thead><tbody>
+<tr><td><code>scraper</code> (HTML parsing)</td><td>Not yet needed; regex-based extraction suffices for now</td></tr>
+<tr><td><code>ureq</code> (minimal HTTP)</td><td><code>reqwest</code> already in tree; adding a second HTTP client is fragmentation</td></tr>
+<tr><td><code>chrono</code></td><td><code>std::time::SystemTime</code> is sufficient for session timestamps</td></tr>
+<tr><td><code>rand</code></td><td>UUID generation uses <code>uuid</code> crate only in test helpers (dev-only)</td></tr>
+<tr><td><code>clap-cargo</code></td><td>Manual <code>cargo_metadata</code> integration avoided; <code>--version</code> from <code>clap</code> derive</td></tr>
+</tbody></table>
+</div><div style="break-before: page; page-break-before: always;"></div><h1 id="roadmap"><a class="header" href="#roadmap">Roadmap</a></h1>
+<p>rho is developed in phases, each building on the last. The current version is <strong>0.31.1</strong>.</p>
+<h2 id="phase-summary"><a class="header" href="#phase-summary">Phase summary</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Phase</th><th>Status</th><th>Summary</th></tr></thead><tbody>
+<tr><td>1a: The Agent Loop</td><td>✅ Complete</td><td>Agent loop, tool registry, <code>ChatClient</code> trait, conversation management</td></tr>
+<tr><td>1b: Security Surface</td><td>✅ Complete</td><td>Approval gate, file sandbox, context-file trust, secret redaction, untrusted-data framing</td></tr>
+<tr><td>2: Shell, File Tools &amp; Cross-Platform</td><td>✅ Complete</td><td>PowerShell-native shell, file tools, config loader, command denylist, egress allowlist, cross-platform</td></tr>
+<tr><td>2.5: Adaptive-Resolution Context</td><td>✅ Complete</td><td>Session tree, resolution levels, calibrated budget, tool-result bounding, amnesia fix, JSONL persistence</td></tr>
+<tr><td>3: Rust Tooling and Tree-Sitter</td><td>✅ Complete</td><td><code>rho-highlight</code>, structured diagnostics, <code>CargoCheck</code>/<code>Clippy</code>/<code>Test</code>/<code>Fix</code>/<code>RustcExplain</code>, node-splitting validation, <code>rho-eval</code> benchmark suite</td></tr>
+<tr><td>3.5: Rust Standard Library Reference</td><td>📋 Planned</td><td>Local rustdoc lookup tool for stdlib API docs</td></tr>
+<tr><td>3.6: crates.io Research</td><td>📋 Planned</td><td>Crate metadata lookup, search, version history, dependency inspection</td></tr>
+<tr><td>4: Terminal UI</td><td>🔜 Next</td><td>Rich TUI replacing the bare REPL</td></tr>
+<tr><td>5: Extensions and Polish</td><td>Planned</td><td>Custom tools, prompt composition with budget awareness</td></tr>
+<tr><td>6: LSP</td><td>Deferred</td><td>rust-analyzer integration</td></tr>
+</tbody></table>
+</div>
+<h2 id="completed-phases"><a class="header" href="#completed-phases">Completed phases</a></h2>
+<h3 id="phase-1a--the-agent-loop"><a class="header" href="#phase-1a--the-agent-loop">Phase 1a — The Agent Loop</a></h3>
+<p>The foundation: <code>Tool</code> trait, <code>ToolRegistry</code>, <code>ChatClient</code> trait, <code>Conversation</code>, and the <code>run_loop</code> state machine. The agent can send messages to a model, receive tool calls, execute them, and feed results back.</p>
+<h3 id="phase-1b--security-surface"><a class="header" href="#phase-1b--security-surface">Phase 1b — Security Surface</a></h3>
+<p>Defense-in-depth: file sandbox, approval gate (per-tool, risk-based), secret redaction, untrusted-data framing with <code>&lt;context&gt;</code> tags, and project context file trust with SHA-256 hash verification.</p>
+<h3 id="phase-2--shell-file-tools--cross-platform"><a class="header" href="#phase-2--shell-file-tools--cross-platform">Phase 2 — Shell, File Tools &amp; Cross-Platform</a></h3>
+<p>PowerShell-native execution on all platforms, <code>ReadFile</code>/<code>WriteFile</code>/<code>ListDir</code>/<code>EditFile</code> tools, two-tier TOML config, command denylist, egress allowlist, compact prompt for small-context models, and full cross-platform support (Windows/macOS/Linux).</p>
+<h3 id="phase-25--adaptive-resolution-context"><a class="header" href="#phase-25--adaptive-resolution-context">Phase 2.5 — Adaptive-Resolution Context</a></h3>
+<p>Session tree (replacing flat <code>Conversation</code>), resolution levels (<code>Full</code>/<code>Compacted</code>/<code>Attached</code>), calibrated token estimation with exponential moving average, tool-result bounding to prevent single-output context overflow, and JSONL persistence with auto-flush.</p>
+<h3 id="phase-3--rust-tooling-and-tree-sitter"><a class="header" href="#phase-3--rust-tooling-and-tree-sitter">Phase 3 — Rust Tooling and Tree-Sitter</a></h3>
+<p><code>rho-highlight</code> crate with tree-sitter parsing, <code>node_at()</code> position lookup, and token classification. Structured compiler diagnostics (<code>CargoCheck</code>, <code>CargoClippy</code>, <code>CargoTest</code>, <code>CargoFix</code>, <code>RustcExplain</code>). <code>EditFile</code> node-splitting validation. <code>rho-eval</code> benchmark suite with 5 validated end-to-end scenarios.</p>
+<h2 id="upcoming-phases"><a class="header" href="#upcoming-phases">Upcoming phases</a></h2>
+<h3 id="phase-35--rust-standard-library-reference"><a class="header" href="#phase-35--rust-standard-library-reference">Phase 3.5 — Rust Standard Library Reference</a></h3>
+<p>A <code>RustdocLookup</code> tool that reads locally installed rustdoc HTML via <code>rustup doc --path</code>. Zero network dependency. Supports type, method, trait, and function lookups. See <a href="development/../../../1.%20Planning/Phase%203.5/Phase%203.5%20%E2%80%94%20Rust%20Standard%20Library%20Reference.html">Phase 3.5 planning note</a>.</p>
+<h3 id="phase-36--cratesio-research"><a class="header" href="#phase-36--cratesio-research">Phase 3.6 — crates.io Research</a></h3>
+<p>A <code>CratesIoLookup</code> tool for crate metadata, search, version history, and dependency tree inspection. Requires egress allowlist opt-in. Dedicated Rust HTTP client (not a shell escape). See <a href="development/../../../1.%20Planning/Phase%203.6/Phase%203.6%20%E2%80%94%20crates.io%20Registry%20Research.html">Phase 3.6 planning note</a>.</p>
+<h3 id="phase-4--terminal-ui"><a class="header" href="#phase-4--terminal-ui">Phase 4 — Terminal UI</a></h3>
+<p>Rich TUI replacing the bare REPL. Streaming output, approval prompts with rich previews, diagnostic panels, syntax highlighting. Built on <code>ratatui</code>/<code>crossterm</code>. See <a href="development/../../../1.%20Planning/Phase%204/Phase%204%20Readiness%20Assessment.html">Phase 4 readiness assessment</a>.</p>
+<h3 id="phase-5--extensions-and-polish"><a class="header" href="#phase-5--extensions-and-polish">Phase 5 — Extensions and Polish</a></h3>
+<p>Custom tools via TOML definitions, extension API (<code>rho-ext</code> crate), prompt composition with budget awareness, and custom slash commands.</p>
+<h3 id="phase-6--lsp"><a class="header" href="#phase-6--lsp">Phase 6 — LSP</a></h3>
+<p><code>rust-analyzer</code> integration for real-time diagnostics, go-to-definition, and refactoring support. Deferred until after the TUI is stable.</p>
 
                     </main>
 

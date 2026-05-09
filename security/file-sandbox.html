@@ -8,7 +8,7 @@
 
         <!-- Custom HTML head -->
         
-        <meta name="description" content="A Rust coding agent for local LLMs on Windows">
+        <meta name="description" content="A Rust coding agent for local LLMs">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
@@ -180,7 +180,41 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="file-sandbox"><a class="header" href="#file-sandbox">File Sandbox</a></h1>
-<!-- TODO: Fill in with FilePath, canonicalisation, sandbox root, opt-out -->
+<p>All file tools (<code>ReadFile</code>, <code>WriteFile</code>, <code>ListDir</code>, <code>EditFile</code>) operate within a sandbox root — a canonical directory that no tool operation can escape.</p>
+<h2 id="sandboxroot"><a class="header" href="#sandboxroot">SandboxRoot</a></h2>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>let root = SandboxRoot::new("/home/user/project")?;
+root.validate("src/main.rs")?;       // Ok — within sandbox
+root.validate("../../etc/passwd")?;  // Err — escapes sandbox
+<span class="boring">}</span></code></pre></pre>
+<p>The sandbox root is the project root by default, auto-detected by walking up from the current directory looking for markers (<code>.rho/config.toml</code>, <code>.git/</code>, <code>Cargo.toml</code>, <code>package.json</code>, etc.). It can be overridden with <code>--root &lt;path&gt;</code>.</p>
+<h2 id="validation-strategies"><a class="header" href="#validation-strategies">Validation strategies</a></h2>
+<h3 id="existing-paths"><a class="header" href="#existing-paths">Existing paths</a></h3>
+<p><code>validate()</code> resolves symlinks and <code>..</code> components via <code>std::fs::canonicalize</code>, then checks the canonical path starts with the canonical root. This prevents path traversal through symlinks or directory climbing.</p>
+<h3 id="not-yet-existing-paths"><a class="header" href="#not-yet-existing-paths">Not-yet-existing paths</a></h3>
+<p><code>validate_for_write()</code> handles new files (where <code>canonicalize</code> would fail). It:</p>
+<ol>
+<li>Walks up from the path until it finds an existing ancestor.</li>
+<li>Canonicalises that ancestor.</li>
+<li>Re-appends the remaining components.</li>
+<li>Rejects any <code>..</code> component in the not-yet-existing suffix immediately.</li>
+<li>Verifies the resolved path stays within the sandbox root.</li>
+</ol>
+<p>This allows <code>WriteFile</code> to create new files within the project while still preventing escapes like <code>new_dir/../../../etc/passwd</code>.</p>
+<h2 id="opt-out"><a class="header" href="#opt-out">Opt-out</a></h2>
+<p>The sandbox can be disabled in config (not recommended):</p>
+<pre><code class="language-toml">[sandbox]
+enabled = false
+</code></pre>
+<p>When disabled, all file tools still resolve paths but skip the containment check. This is intended only for environments where the user explicitly wants to operate outside the project directory.</p>
+<h2 id="toctou-note"><a class="header" href="#toctou-note">TOCTOU note</a></h2>
+<p>There is a theoretical time-of-check-time-of-use race between <code>validate_for_write</code> and the subsequent <code>create_dir_all</code> + <code>write</code>. This is accepted because:</p>
+<ul>
+<li>The threat model does not include concurrent adversarial filesystem modification.</li>
+<li>If the model has shell access, it can write directly via the shell — the sandbox only constrains the <em>tool</em> interface.</li>
+<li>The approval gate is the primary defense against model-initiated writes.</li>
+</ul>
 
                     </main>
 

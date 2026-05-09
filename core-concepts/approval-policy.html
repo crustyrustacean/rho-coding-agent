@@ -8,7 +8,7 @@
 
         <!-- Custom HTML head -->
         
-        <meta name="description" content="A Rust coding agent for local LLMs on Windows">
+        <meta name="description" content="A Rust coding agent for local LLMs">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
@@ -180,7 +180,51 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="approval-policy"><a class="header" href="#approval-policy">Approval Policy</a></h1>
-<!-- TODO: Fill in with ApprovalPolicy trait, default policy, per-tool config, UX -->
+<p>The approval policy sits between the model's tool call and its execution. It decides whether a tool call needs human confirmation, and the approval gate presents that decision to the user.</p>
+<h2 id="two-part-system"><a class="header" href="#two-part-system">Two-part system</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Component</th><th>Role</th></tr></thead><tbody>
+<tr><td><code>ApprovalPolicy</code></td><td>Decides <em>whether</em> approval is needed (configurable logic)</td></tr>
+<tr><td><code>ApprovalGate</code></td><td>Asks the user for confirmation at runtime (UI integration point)</td></tr>
+</tbody></table>
+</div>
+<h2 id="policy-configapprovalpolicy"><a class="header" href="#policy-configapprovalpolicy">Policy: <code>ConfigApprovalPolicy</code></a></h2>
+<p>The default policy uses per-tool overrides from config, falling back to risk-based defaults:</p>
+<pre><code class="language-toml">[approval.per_tool]
+read_file = "auto"    # never ask
+write_file = "ask"    # always ask
+run_command = "ask"   # always ask
+</code></pre>
+<div class="table-wrapper"><table><thead><tr><th>Action</th><th>Behaviour</th></tr></thead><tbody>
+<tr><td><code>Auto</code></td><td>Execute without asking</td></tr>
+<tr><td><code>Ask</code></td><td>Require human confirmation</td></tr>
+<tr><td><code>Deny</code></td><td>Refuse to execute (returns a denial error to the model)</td></tr>
+</tbody></table>
+</div>
+<p>When a tool is not listed in config, the risk-based default applies:</p>
+<div class="table-wrapper"><table><thead><tr><th>ToolRisk</th><th>Default</th></tr></thead><tbody>
+<tr><td><code>Read</code></td><td>Auto</td></tr>
+<tr><td><code>Write</code></td><td>Ask</td></tr>
+<tr><td><code>Destructive</code></td><td>Ask</td></tr>
+</tbody></table>
+</div>
+<h2 id="gate-replapprovalgate"><a class="header" href="#gate-replapprovalgate">Gate: <code>ReplApprovalGate</code></a></h2>
+<p>The REPL implementation presents a preview and reads <code>y/N</code> from stdin:</p>
+<pre><code class="language-text">  Tool     : write_file
+  Risk     : write
+  Arguments: {"path":"src/main.rs","content":"..."}
+  Execute? [y/n] 
+</code></pre>
+<p>On denial, a synthetic error result is fed back to the model as if the tool had failed. The model can then adjust its approach — it does not crash or get stuck.</p>
+<h2 id="custom-gates"><a class="header" href="#custom-gates">Custom gates</a></h2>
+<p>The <code>ApprovalGate</code> trait is async, so any UI can implement it:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>#[async_trait]
+pub trait ApprovalGate: Send + Sync {
+    async fn request_approval(&amp;self, call: &amp;ModelToolCall, risk: ToolRisk) -&gt; bool;
+}
+<span class="boring">}</span></code></pre></pre>
+<p>The TUI (Phase 4) will implement this with an in-terminal prompt that shows rich previews (syntax-highlighted diffs, command inspection) rather than the plain-text REPL format.</p>
 
                     </main>
 

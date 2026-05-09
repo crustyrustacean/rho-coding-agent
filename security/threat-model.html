@@ -8,7 +8,7 @@
 
         <!-- Custom HTML head -->
         
-        <meta name="description" content="A Rust coding agent for local LLMs on Windows">
+        <meta name="description" content="A Rust coding agent for local LLMs">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
@@ -180,7 +180,35 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="threat-model"><a class="header" href="#threat-model">Threat Model</a></h1>
-<!-- TODO: Fill in with the 10-threat table from roadmap -->
+<p>rho takes untrusted input (LLM output), interprets it as instructions, and executes those instructions with the full privileges of the user. The security model is defense-in-depth — no single layer is sufficient, but each layer raises the bar.</p>
+<h2 id="threats-and-defenses"><a class="header" href="#threats-and-defenses">Threats and defenses</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Threat</th><th>Primary Defense</th><th>Secondary</th></tr></thead><tbody>
+<tr><td>Destructive command execution</td><td>Command denylist</td><td>Approval gate</td></tr>
+<tr><td>Data exfiltration via shell</td><td>Approval gate</td><td>Denylist + egress allowlist</td></tr>
+<tr><td>Data exfiltration via provider</td><td>Provider consent warning</td><td>Egress allowlist</td></tr>
+<tr><td>Path traversal via file tools</td><td>File sandbox (canonicalised)</td><td>Approval gate</td></tr>
+<tr><td>Secret exposure in tool output</td><td>Best-effort redaction</td><td>Approval gate</td></tr>
+<tr><td>Prompt injection via file content</td><td>Untrusted-data framing (<code>&lt;context&gt;</code> / <code>&lt;context:end&gt;</code>)</td><td>Approval gate</td></tr>
+<tr><td>Supply-chain prompt attack</td><td>Project context file trust (SHA-256 hash)</td><td>User confirmation on first load</td></tr>
+<tr><td>Extension command injection</td><td>Structured argument substitution</td><td>Approval gate</td></tr>
+<tr><td>Runaway tool-call loop</td><td>Max iteration guard (default: 32)</td><td>Stuck-loop detection</td></tr>
+<tr><td>Credential at rest</td><td>Env var references (no plaintext in config)</td><td>Optional credential store (future)</td></tr>
+</tbody></table>
+</div>
+<h2 id="scope-and-limitations"><a class="header" href="#scope-and-limitations">Scope and limitations</a></h2>
+<ul>
+<li><strong>Trusted user:</strong> The human at the keyboard is trusted. Approval gates protect against <em>model</em>-initiated actions, not user-initiated ones.</li>
+<li><strong>No OS-level isolation:</strong> Tools execute as the same user/process as rho. The sandbox validates paths but cannot prevent a determined model from exploiting a zero-day in a dependency.</li>
+<li><strong>Best-effort redaction:</strong> The <code>Redactor</code> matches known secret patterns (API keys, tokens, passwords). It cannot detect secrets that don't match its patterns.</li>
+<li><strong>Command denylist coverage:</strong> The denylist catches common exfiltration vectors (PowerShell networking cmdlets, <code>curl</code>, <code>wget</code>, .NET HTTP). A creative model can construct network requests using .NET APIs that aren't in the substring list. The approval gate is the primary defense.</li>
+</ul>
+<p>See the individual pages for detailed design of each defense layer:</p>
+<ul>
+<li><a href="./file-sandbox.html">File Sandbox</a></li>
+<li><a href="./secret-redaction.html">Secret Redaction</a></li>
+<li><a href="./egress-control.html">Egress Control</a></li>
+<li><a href="./prompt-injection-defense.html">Prompt Injection Defense</a></li>
+</ul>
 
                     </main>
 

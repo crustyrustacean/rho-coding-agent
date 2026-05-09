@@ -8,7 +8,7 @@
 
         <!-- Custom HTML head -->
         
-        <meta name="description" content="A Rust coding agent for local LLMs on Windows">
+        <meta name="description" content="A Rust coding agent for local LLMs">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
@@ -195,7 +195,7 @@
 │                   rho-core                       │
 └─────────────────────────────────────────────────┘
 </code></pre>
-<p>The rule is simple: a crate may only depend on crates below it in the stack. <code>rho-core</code> depends on nothing but external libraries.</p>
+<p>The rule is simple: a crate may only depend on crates below it in the stack. <code>rho-core</code> and <code>rho-highlight</code> depend on nothing but external libraries.</p>
 <p>See also:</p>
 <ul>
 <li><a href="./architecture/workspace-layout.html">Workspace Layout</a></li>

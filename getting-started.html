@@ -8,7 +8,7 @@
 
         <!-- Custom HTML head -->
         
-        <meta name="description" content="A Rust coding agent for local LLMs on Windows">
+        <meta name="description" content="A Rust coding agent for local LLMs">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
@@ -195,6 +195,9 @@ rho --ephemeral       # in-memory mode, no session file
 </code></pre>
 <p>On startup, rho:</p>
 <ol>
+<li>Auto-detects the project root by walking up from the current directory looking for markers.</li>
+<li>Loads configuration from <code>~/.rho/config.toml</code> and <code>.rho/config.toml</code>.</li>
+<li>Scans for project context files (<code>AGENTS.md</code>, etc.) and prompts for trust on first encounter.</li>
 <li>Connects to the model server and auto-detects the loaded model (unless <code>--model</code> is specified).</li>
 <li>Creates a session (persisted to <code>~/.rho/sessions/</code> by default, or in-memory with <code>--ephemeral</code>).</li>
 <li>Enters the REPL. Type your request, and the agent loop runs until the model produces a final text reply.</li>

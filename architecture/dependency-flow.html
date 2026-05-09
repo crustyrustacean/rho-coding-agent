@@ -8,7 +8,7 @@
 
         <!-- Custom HTML head -->
         
-        <meta name="description" content="A Rust coding agent for local LLMs on Windows">
+        <meta name="description" content="A Rust coding agent for local LLMs">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
@@ -180,7 +180,50 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="dependency-flow"><a class="header" href="#dependency-flow">Dependency Flow</a></h1>
-<!-- TODO: Fill in with dependency graph and rules -->
+<p>Dependencies flow downward only. A crate may depend on crates below it in the stack but never above.</p>
+<pre><code>rho (binary) ──────────────────────────────────────────
+    │
+    ├── rho-tools ─────────────────────────────────────
+    │       │
+    │       └── rho-highlight (via EditFile node-splitting)
+    │
+    └── rho-core ─────────────────────────────────────
+            │
+rho-test-helpers ── rho-core ────────────────────────
+rho-eval ────────── rho-core ────────────────────────
+xtask ──────────────────────────────────────────────
+</code></pre>
+<div class="table-wrapper"><table><thead><tr><th>Crate</th><th>Depends on</th><th>Notes</th></tr></thead><tbody>
+<tr><td><code>rho</code></td><td><code>rho-core</code>, <code>rho-tools</code></td><td>Binary entry point — wires everything together</td></tr>
+<tr><td><code>rho-tools</code></td><td><code>rho-core</code>, <code>rho-highlight</code></td><td>Tool implementations use core types and highlight for node-splitting</td></tr>
+<tr><td><code>rho-highlight</code></td><td>none (external only)</td><td>Tree-sitter grammar — standalone, no rho dependencies</td></tr>
+<tr><td><code>rho-core</code></td><td>none (external only)</td><td>Kernel — the foundation everything else builds on</td></tr>
+<tr><td><code>rho-test-helpers</code></td><td><code>rho-core</code></td><td>Dev-only — provides mocks and fixtures for testing</td></tr>
+<tr><td><code>rho-eval</code></td><td><code>rho-core</code></td><td>Dev-only — benchmark suite</td></tr>
+<tr><td><code>xtask</code></td><td>none (cargo integration)</td><td>Dev-only — task runner, no rho crate dependencies</td></tr>
+</tbody></table>
+</div>
+<h2 id="key-external-dependencies"><a class="header" href="#key-external-dependencies">Key external dependencies</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Dependency</th><th>Used by</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>reqwest</code></td><td><code>rho-core</code></td><td>HTTP client for model API</td></tr>
+<tr><td><code>tokio</code></td><td><code>rho-core</code>, <code>rho-tools</code></td><td>Async runtime</td></tr>
+<tr><td><code>serde</code> / <code>serde_json</code></td><td>everywhere</td><td>Serialization</td></tr>
+<tr><td><code>toml</code></td><td><code>rho-core</code></td><td>Configuration parsing</td></tr>
+<tr><td><code>tree-sitter</code> + grammars</td><td><code>rho-highlight</code></td><td>Syntax analysis</td></tr>
+<tr><td><code>ignore</code></td><td><code>rho-tools</code></td><td><code>.gitignore</code>-aware directory listing</td></tr>
+<tr><td><code>clap</code></td><td><code>rho</code></td><td>CLI argument parsing</td></tr>
+<tr><td><code>tracing</code></td><td><code>rho-core</code></td><td>Structured logging</td></tr>
+<tr><td><code>anyhow</code></td><td><code>rho-core</code></td><td>Error handling</td></tr>
+<tr><td><code>thiserror</code></td><td><code>rho-core</code></td><td>Error type derivation</td></tr>
+</tbody></table>
+</div>
+<h2 id="what-this-buys-you"><a class="header" href="#what-this-buys-you">What this buys you</a></h2>
+<p>The layered structure means:</p>
+<ul>
+<li><strong><code>rho-core</code> is UI-agnostic</strong> — no shell, no filesystem, no terminal. The TUI (Phase 4) and REPL both consume it through the same traits.</li>
+<li><strong>Tools are pluggable</strong> — <code>ToolRegistry</code> stores <code>Box&lt;dyn Tool&gt;</code>, so adding a tool is <code>registry.register(Box::new(MyTool))</code>.</li>
+<li><strong>Testing is isolated</strong> — <code>rho-test-helpers</code> mocks the core traits (<code>ChatClient</code>, <code>ShellExecutor</code>, <code>ApprovalGate</code>) so tool and agent loop tests run without a model server.</li>
+</ul>
 
                     </main>
 

@@ -8,7 +8,7 @@
 
         <!-- Custom HTML head -->
         
-        <meta name="description" content="A Rust coding agent for local LLMs on Windows">
+        <meta name="description" content="A Rust coding agent for local LLMs">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
@@ -180,8 +180,82 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="tool-trait"><a class="header" href="#tool-trait">Tool Trait</a></h1>
-<!-- TODO: Fill in with Tool trait definition, ToolResult, ToolRegistry, risk levels -->
+<p>The <code>Tool</code> trait is the interface every tool implements. It defines a name, description, JSON Schema for parameters, risk classification, and an async <code>execute</code> method.</p>
+<h2 id="definition"><a class="header" href="#definition">Definition</a></h2>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>#[async_trait]
+pub trait Tool: Send + Sync {
+    /// The tool's registered name (used by the model to invoke it).
+    fn name(&amp;self) -&gt; ToolName;
 
+    /// Human-readable description shown to the model.
+    fn description(&amp;self) -&gt; &amp;str;
+
+    /// JSON Schema object describing this tool's parameters.
+    fn parameters_schema(&amp;self) -&gt; serde_json::Value;
+
+    /// Risk classification, used by the approval policy.
+    fn risk(&amp;self) -&gt; ToolRisk;
+
+    /// Execute the tool. Check `cancel.is_cancelled()` at I/O boundaries.
+    async fn execute(
+        &amp;self,
+        arguments: serde_json::Value,
+        cancel: CancellationToken,
+    ) -&gt; Result&lt;ToolOutcome&gt;;
+}
+<span class="boring">}</span></code></pre></pre>
+<h2 id="risk-levels"><a class="header" href="#risk-levels">Risk levels</a></h2>
+<p>Every tool has a <code>ToolRisk</code> that determines whether it needs human approval:</p>
+<div class="table-wrapper"><table><thead><tr><th>Risk</th><th>Meaning</th><th>Approval</th><th>Examples</th></tr></thead><tbody>
+<tr><td><code>Read</code></td><td>Cannot modify state</td><td>Auto-approved</td><td><code>ReadFile</code>, <code>ListDir</code>, <code>CargoCheck</code></td></tr>
+<tr><td><code>Write</code></td><td>May create or modify files</td><td>Requires approval</td><td><code>WriteFile</code>, <code>EditFile</code>, <code>CargoFix</code></td></tr>
+<tr><td><code>Destructive</code></td><td>May cause irreversible effects</td><td>Requires approval</td><td><code>RunCommand</code></td></tr>
+</tbody></table>
+</div>
+<p>The approval policy can override these defaults per-tool via config.</p>
+<h2 id="tool-result"><a class="header" href="#tool-result">Tool result</a></h2>
+<p><code>execute</code> returns <code>ToolOutcome::Immediate(ToolResult)</code> containing:</p>
+<ul>
+<li><code>output: String</code> — the text result (sent to the model and session)</li>
+<li><code>is_error: bool</code> — whether the tool reported an error (e.g., non-zero exit code)</li>
+<li><code>details: ToolResultDetails</code> — structured data <em>not</em> sent to the model</li>
+</ul>
+<p>The <code>details</code> field carries richer information for tools and extensions:</p>
+<div class="table-wrapper"><table><thead><tr><th>Variant</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>None</code></td><td>No structured detail (default)</td></tr>
+<tr><td><code>FullOutput</code></td><td>Preserves un-truncated output when the model-facing text is truncated</td></tr>
+<tr><td><code>Diagnostics</code></td><td>Structured compiler diagnostics from <code>CargoCheck</code> / <code>CargoClippy</code></td></tr>
+</tbody></table>
+</div>
+<h2 id="tool-registry"><a class="header" href="#tool-registry">Tool registry</a></h2>
+<p><code>ToolRegistry</code> maps tool names to <code>Box&lt;dyn Tool&gt;</code> implementations:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>let mut registry = ToolRegistry::new();
+registry.register(Box::new(ReadFile { root: root.clone() }));
+registry.register(Box::new(WriteFile { root: root.clone() }));
+
+// Execute a model-issued tool call
+let result = registry.execute(&amp;call, cancel).await?;
+<span class="boring">}</span></code></pre></pre>
+<p>Duplicate tool names panic at registration (fast-fail, programming error). Execution returns <code>RhoError::ToolNotFound</code> if the model requests an unregistered tool.</p>
+<h2 id="built-in-tools"><a class="header" href="#built-in-tools">Built-in tools</a></h2>
+<p>rho ships with 11 built-in tools, all registered in <code>rho-tools::register_all()</code>:</p>
+<div class="table-wrapper"><table><thead><tr><th>Tool</th><th>Risk</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>read_file</code></td><td>Read</td><td>Read file contents, wrapped in <code>&lt;context&gt;</code> framing</td></tr>
+<tr><td><code>write_file</code></td><td>Write</td><td>Create or overwrite files within the sandbox</td></tr>
+<tr><td><code>list_dir</code></td><td>Read</td><td><code>.gitignore</code>-aware directory listing</td></tr>
+<tr><td><code>edit_file</code></td><td>Write</td><td>Exact-match replacements with node-splitting validation</td></tr>
+<tr><td><code>run_command</code></td><td>Destructive</td><td>Execute shell commands with denylist enforcement</td></tr>
+<tr><td><code>cargo_check</code></td><td>Read</td><td>Structured compiler diagnostics</td></tr>
+<tr><td><code>cargo_clippy</code></td><td>Read</td><td>Structured lint diagnostics</td></tr>
+<tr><td><code>cargo_test</code></td><td>Read</td><td>Structured test pass/fail results</td></tr>
+<tr><td><code>cargo_fix</code></td><td>Write</td><td>Apply machine-applicable compiler/clippy suggestions</td></tr>
+<tr><td><code>rustc_explain</code></td><td>Read</td><td>Look up detailed explanations for error codes</td></tr>
+</tbody></table>
+</div>
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">

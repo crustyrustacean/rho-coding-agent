@@ -8,7 +8,7 @@
 
         <!-- Custom HTML head -->
         
-        <meta name="description" content="A Rust coding agent for local LLMs on Windows">
+        <meta name="description" content="A Rust coding agent for local LLMs">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
@@ -180,8 +180,104 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="configuration"><a class="header" href="#configuration">Configuration</a></h1>
-<!-- TODO: Fill in with .rho/config.toml, ~/.rho/config.toml, env var credentials -->
+<p>rho reads configuration from two TOML files, merged with project-level overrides taking precedence over user-level defaults.</p>
+<h2 id="file-locations"><a class="header" href="#file-locations">File locations</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Tier</th><th>Path</th><th>Purpose</th></tr></thead><tbody>
+<tr><td>User-level</td><td><code>~/.rho/config.toml</code></td><td>Global defaults: model, API endpoint, provider, egress</td></tr>
+<tr><td>Project-level</td><td><code>.rho/config.toml</code> (relative to sandbox root)</td><td>Per-project: model, approval policies, command denylist, sandbox, context files</td></tr>
+</tbody></table>
+</div>
+<p>Both files are optional. Missing files are silently skipped; all fields have sensible defaults.</p>
+<h2 id="merging-strategy"><a class="header" href="#merging-strategy">Merging strategy</a></h2>
+<p>Project-level config overrides user-level config on a per-field basis. For struct fields: if the project sets a field, it wins; if not, the user-level value applies; if neither sets it, the hardcoded default applies.</p>
+<p>For <code>Vec</code> fields (denylist commands, egress hosts, context scan list, custom redaction patterns): the project-level list <strong>replaces</strong> the user-level list. It does not append. This avoids surprising composition effects.</p>
+<h2 id="full-configuration-reference"><a class="header" href="#full-configuration-reference">Full configuration reference</a></h2>
+<pre><code class="language-toml">[agent]
+# Model identifier (overrides auto-detection)
+model = "qwen3-8b"
 
+# Maximum model-tool-model round trips before the loop fails (default: 32)
+max_iterations = 32
+
+# Maximum retry attempts on transient errors (default: 4)
+retry_budget = 4
+
+# Base backoff in milliseconds (default: 500)
+initial_backoff_ms = 500
+
+# Context window token budget (default: 32768)
+token_budget = 32768
+
+# Stuck-loop detection: consecutive identical outputs before nudge (default: 3, 0 = off)
+stuck_loop_threshold = 3
+
+# Show full chain-of-thought reasoning in output (default: false)
+show_reasoning = false
+
+[provider]
+# Provider type: "local" (default), "openai", "anthropic", etc.
+type = "local"
+
+# API endpoint URL (default: http://localhost:1234/v1/chat/completions)
+endpoint = "http://localhost:1234/v1/chat/completions"
+
+# Environment variable holding the API key (never stored in plaintext)
+api_key_env = "OPENAI_API_KEY"
+
+[approval.per_tool]
+# Per-tool approval overrides: "auto", "ask", "deny"
+read_file = "auto"
+write_file = "ask"
+edit_file = "ask"
+run_command = "ask"
+
+[shell]
+# Additional commands to deny (appended to the built-in denylist)
+denied_commands = ["Remove-Item", "Invoke-WebRequest"]
+
+# Additional denied flag combinations (all flags must be present to deny)
+denied_flag_combos = [["-Quiet", "-Force"]]
+
+[sandbox]
+# File sandbox toggle (default: true)
+enabled = true
+
+[context]
+# Override the default context file scan list
+scan_list = ["AGENTS.md", "CLAUDE.md"]
+
+[egress]
+# Hostnames allowed in addition to localhost (default: empty)
+allowed_hosts = ["api.openai.com"]
+
+[redaction]
+# Secret redaction toggle (default: true)
+enabled = true
+
+# Additional regex patterns to redact
+custom_patterns = ["my-key-[a-zA-Z0-9]{32}"]
+
+[system_prompt]
+# Additional prompt fragments appended after the base prompt
+extensions = ["Always use Rust idioms."]
+</code></pre>
+<h2 id="api-key-handling"><a class="header" href="#api-key-handling">API key handling</a></h2>
+<p>API keys are <strong>never</strong> stored in plaintext in config files. Instead, config references environment variable names:</p>
+<pre><code class="language-toml">[provider]
+api_key_env = "OPENAI_API_KEY"
+</code></pre>
+<p>The provider reads the key from the environment variable at runtime. If the variable is not set, the provider reports an error at connection time.</p>
+<h2 id="cli-overrides"><a class="header" href="#cli-overrides">CLI overrides</a></h2>
+<p>All config values can be overridden by CLI flags. CLI flags take highest priority:</p>
+<div class="table-wrapper"><table><thead><tr><th>Config field</th><th>CLI flag</th></tr></thead><tbody>
+<tr><td><code>agent.model</code></td><td><code>--model</code></td></tr>
+<tr><td><code>agent.token_budget</code></td><td><code>--token-budget</code></td></tr>
+<tr><td><code>provider.endpoint</code></td><td><code>--root</code> (indirectly)</td></tr>
+<tr><td>System prompt</td><td><code>--system</code></td></tr>
+<tr><td>Compact prompt</td><td><code>--compact</code></td></tr>
+<tr><td>Provider consent</td><td><code>--accept-external-provider</code></td></tr>
+</tbody></table>
+</div>
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">

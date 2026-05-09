@@ -8,7 +8,7 @@
 
         <!-- Custom HTML head -->
         
-        <meta name="description" content="A Rust coding agent for local LLMs on Windows">
+        <meta name="description" content="A Rust coding agent for local LLMs">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
@@ -225,11 +225,16 @@
 <h2 id="entry-types"><a class="header" href="#entry-types">Entry types</a></h2>
 <p>Each entry in the tree has a <code>payload</code> that describes what it represents:</p>
 <div class="table-wrapper"><table><thead><tr><th>Payload</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>Message</code></td><td>A chat message (system, user, or assistant)</td></tr>
-<tr><td><code>ToolCall</code></td><td>A tool invocation requested by the model</td></tr>
-<tr><td><code>ToolResult</code></td><td>The output of a tool execution</td></tr>
+<tr><td><code>Message</code></td><td>A chat message (system, user, assistant, or tool result)</td></tr>
 <tr><td><code>Compaction</code></td><td>A summary replacing older entries</td></tr>
-<tr><td><code>Custom</code></td><td>Extension data (see <a href="../extensions.html">Extensions</a>)</td></tr>
+<tr><td><code>BranchSummary</code></td><td>A summary created when branching</td></tr>
+<tr><td><code>CustomMessage</code></td><td>Extension message (sent to model as synthetic user message)</td></tr>
+<tr><td><code>Custom</code></td><td>Extension state (never sent to model)</td></tr>
+<tr><td><code>Label</code></td><td>Branch checkpoint label</td></tr>
+<tr><td><code>LeafMoved</code></td><td>Record of a leaf movement</td></tr>
+<tr><td><code>ModelChange</code></td><td>Record of a model switch</td></tr>
+<tr><td><code>SessionInfo</code></td><td>Session metadata</td></tr>
+<tr><td><code>SessionEnded</code></td><td>Clean shutdown trailer</td></tr>
 </tbody></table>
 </div>
 <h2 id="resolution-levels"><a class="header" href="#resolution-levels">Resolution levels</a></h2>

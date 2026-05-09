@@ -8,7 +8,7 @@
 
         <!-- Custom HTML head -->
         
-        <meta name="description" content="A Rust coding agent for local LLMs on Windows">
+        <meta name="description" content="A Rust coding agent for local LLMs">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
@@ -180,7 +180,41 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="extensions"><a class="header" href="#extensions">Extensions</a></h1>
-<!-- TODO: Fill in with ExtTool, TOML tool definitions, custom slash commands -->
+<blockquote>
+<p>Extensions are planned for Phase 5. This page describes the architecture and the foundation that's already in place.</p>
+</blockquote>
+<h2 id="extension-entries"><a class="header" href="#extension-entries">Extension entries</a></h2>
+<p>rho's session tree supports typed extension entries that are versioned and schema-skew-safe. This is the mechanism that future extensions will build on.</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// Write a typed state entry (never sent to the model)
+session.write_custom_state("rho.diagnostics.v1", &amp;json!({ "errors": 3 }))?;
+
+// Write a custom message entry (sent to the model as a synthetic user message)
+session.write_custom_message("rho.diagnostics.v1", vec![
+    ContentBlock::Text { text: "3 compilation errors found".into() },
+])?;
+
+// Read back a custom state entry
+if let Some(state) = session.read_custom_state("rho.diagnostics.v1")? {
+    println!("errors: {}", state["errors"]);
+}
+<span class="boring">}</span></code></pre></pre>
+<h2 id="kind-versioning"><a class="header" href="#kind-versioning">Kind versioning</a></h2>
+<p>Extension entry kinds use the format <code>&lt;author&gt;.&lt;feature&gt;.v&lt;n&gt;</code>. When rho encounters an entry with an unknown kind version, it returns <code>None</code> (graceful degradation) rather than panicking. This allows extensions to evolve their schema without breaking older rho versions.</p>
+<h2 id="current-uses"><a class="header" href="#current-uses">Current uses</a></h2>
+<p>Extension entries are currently used by:</p>
+<ul>
+<li><strong>Diagnostic extensions</strong> — <code>ToolResultDetails::Diagnostics</code> carries structured compiler output</li>
+<li><strong>Custom messages</strong> — the system can inject synthetic messages into the conversation</li>
+<li><strong>Custom state</strong> — tools and extensions can persist opaque state in the session tree</li>
+</ul>
+<h2 id="planned-phase-5"><a class="header" href="#planned-phase-5">Planned (Phase 5)</a></h2>
+<ul>
+<li><strong>Custom tools via TOML</strong> — define tools declaratively in <code>.rho/tools.toml</code></li>
+<li><strong>Custom slash commands</strong> — user-defined REPL commands</li>
+<li><strong>Extension API</strong> — a crate (<code>rho-ext</code>) providing a stable interface for third-party extensions</li>
+</ul>
 
                     </main>
 

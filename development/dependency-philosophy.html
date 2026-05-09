@@ -8,7 +8,7 @@
 
         <!-- Custom HTML head -->
         
-        <meta name="description" content="A Rust coding agent for local LLMs on Windows">
+        <meta name="description" content="A Rust coding agent for local LLMs">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
@@ -180,8 +180,49 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="dependency-philosophy"><a class="header" href="#dependency-philosophy">Dependency Philosophy</a></h1>
-<!-- TODO: Fill in with the 4-question decision framework from roadmap -->
-
+<p>rho is conservative about adding external dependencies. Every new dependency is a supply-chain commitment that affects build times, binary size, audit surface, and maintenance burden.</p>
+<h2 id="decision-framework"><a class="header" href="#decision-framework">Decision framework</a></h2>
+<p>Before adding a dependency, answer these questions:</p>
+<ol>
+<li>
+<p><strong>Can we write it ourselves in &lt; 100 lines?</strong> → Write it. rho prefers small, purpose-built implementations over pulling in a crate for something trivial.</p>
+</li>
+<li>
+<p><strong>Is it already a transitive dependency?</strong> → If <code>reqwest</code> already pulls in <code>serde_urlencoded</code>, we can use it directly without adding a new top-level dependency.</p>
+</li>
+<li>
+<p><strong>Is it the de-facto standard for the problem?</strong> → <code>serde</code>, <code>tokio</code>, <code>clap</code>, <code>tracing</code> are widely adopted, well-maintained, and unlikely to cause issues. Standard choices are preferred over novel alternatives.</p>
+</li>
+<li>
+<p><strong>Is the maintenance track record good?</strong> → Check last release date, open issues, contributor count. A crate that hasn't been updated in 2 years is a risk.</p>
+</li>
+</ol>
+<h2 id="current-dependencies"><a class="header" href="#current-dependencies">Current dependencies</a></h2>
+<p>rho's direct (non-transitive) dependencies are:</p>
+<div class="table-wrapper"><table><thead><tr><th>Crate</th><th>Purpose</th><th>Rationale</th></tr></thead><tbody>
+<tr><td><code>reqwest</code></td><td>HTTP client</td><td>De-facto standard; needed for model API</td></tr>
+<tr><td><code>tokio</code></td><td>Async runtime</td><td>De-facto standard; needed for async I/O</td></tr>
+<tr><td><code>serde</code> + <code>serde_json</code></td><td>Serialization</td><td>Essential; no practical alternative</td></tr>
+<tr><td><code>toml</code></td><td>Config parsing</td><td>Standard for TOML in Rust</td></tr>
+<tr><td><code>clap</code></td><td>CLI parsing</td><td>De-facto standard; derives-based API</td></tr>
+<tr><td><code>tracing</code></td><td>Structured logging</td><td>De-facto standard; <code>log</code>-compatible</td></tr>
+<tr><td><code>anyhow</code></td><td>Error handling</td><td>Ergonomic error type for application code</td></tr>
+<tr><td><code>thiserror</code></td><td>Error derive macros</td><td>Clean <code>RhoError</code> definition</td></tr>
+<tr><td><code>async-trait</code></td><td>Async trait support</td><td>Required for <code>Box&lt;dyn Tool&gt;</code></td></tr>
+<tr><td><code>ignore</code></td><td><code>.gitignore</code> walking</td><td>From ripgrep; mature, well-maintained</td></tr>
+<tr><td><code>tree-sitter</code> + grammars</td><td>Syntax analysis</td><td>Standard for tree-sitter in Rust</td></tr>
+<tr><td><code>which</code></td><td>Executable detection</td><td>Small, focused, no replacement needed</td></tr>
+</tbody></table>
+</div>
+<h2 id="what-we-dont-depend-on"><a class="header" href="#what-we-dont-depend-on">What we don't depend on</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Avoided</th><th>Why</th></tr></thead><tbody>
+<tr><td><code>scraper</code> (HTML parsing)</td><td>Not yet needed; regex-based extraction suffices for now</td></tr>
+<tr><td><code>ureq</code> (minimal HTTP)</td><td><code>reqwest</code> already in tree; adding a second HTTP client is fragmentation</td></tr>
+<tr><td><code>chrono</code></td><td><code>std::time::SystemTime</code> is sufficient for session timestamps</td></tr>
+<tr><td><code>rand</code></td><td>UUID generation uses <code>uuid</code> crate only in test helpers (dev-only)</td></tr>
+<tr><td><code>clap-cargo</code></td><td>Manual <code>cargo_metadata</code> integration avoided; <code>--version</code> from <code>clap</code> derive</td></tr>
+</tbody></table>
+</div>
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">

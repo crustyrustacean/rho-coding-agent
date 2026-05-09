@@ -8,7 +8,7 @@
 
         <!-- Custom HTML head -->
         
-        <meta name="description" content="A Rust coding agent for local LLMs on Windows">
+        <meta name="description" content="A Rust coding agent for local LLMs">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
@@ -180,7 +180,34 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="prompt-injection-defense"><a class="header" href="#prompt-injection-defense">Prompt Injection Defense</a></h1>
-<!-- TODO: Fill in with Role::Context, trust model, system prompt primacy -->
+<p>File contents are untrusted data. When the model reads a file, the contents could contain instructions designed to manipulate the model's behaviour. rho mitigates this with framing.</p>
+<h2 id="the-context--contextend-convention"><a class="header" href="#the-context--contextend-convention">The <code>&lt;context&gt;</code> / <code>&lt;context:end&gt;</code> convention</a></h2>
+<p>File contents returned by <code>ReadFile</code> are wrapped in framing tags:</p>
+<pre><code class="language-text">&lt;context&gt;
+[actual file contents here]
+&lt;context:end&gt;
+</code></pre>
+<p>The system prompt instructs the model that content between <code>&lt;context&gt;</code> and <code>&lt;context:end&gt;</code> is data to be processed, not instructions to be followed. This is a form of <em>role-based compartmentalisation</em> — the model is told to adopt a different role when reading framed content.</p>
+<h3 id="why-contextend-and-not-context"><a class="header" href="#why-contextend-and-not-context">Why <code>&lt;context:end&gt;</code> and not <code>&lt;/context&gt;</code>?</a></h3>
+<p>The original closing tag <code>&lt;/context&gt;</code> was ambiguous — it could appear in legitimate file contents (e.g., XML files, HTML comments). The <code>&lt;context:end&gt;</code> sentinel is a unique string that will not appear naturally in source code, making it a reliable boundary marker.</p>
+<h2 id="where-framing-is-applied"><a class="header" href="#where-framing-is-applied">Where framing is applied</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Tool</th><th>Framing</th></tr></thead><tbody>
+<tr><td><code>ReadFile</code></td><td>Output wrapped in <code>&lt;context&gt;</code> / <code>&lt;context:end&gt;</code></td></tr>
+<tr><td><code>RunCommand</code></td><td>Output wrapped in <code>&lt;context&gt;</code> / <code>&lt;context:end&gt;</code></td></tr>
+<tr><td><code>CargoCheck</code>, <code>CargoClippy</code></td><td>Structured diagnostic output (not framed — parsed, not raw)</td></tr>
+<tr><td><code>CargoTest</code></td><td>Structured test output (not framed — parsed, not raw)</td></tr>
+<tr><td><code>RustcExplain</code></td><td>Plain text (not framed — short, known source)</td></tr>
+<tr><td><code>WriteFile</code>, <code>EditFile</code></td><td>Input is tool arguments, not file reads — not framed</td></tr>
+</tbody></table>
+</div>
+<h2 id="system-prompt-primacy"><a class="header" href="#system-prompt-primacy">System prompt primacy</a></h2>
+<p>The system prompt is loaded before any user interaction and is never evicted from the context window (it's pinned by the context manager). This means the framing instructions persist even if the conversation grows long.</p>
+<h2 id="limitations"><a class="header" href="#limitations">Limitations</a></h2>
+<ul>
+<li><strong>Framing is advisory, not enforced.</strong> The model <em>could</em> choose to ignore the <code>&lt;context&gt;</code> tags and follow injected instructions. The framing relies on the model's instruction-following behaviour, not a technical barrier.</li>
+<li><strong>No content scanning.</strong> rho does not scan file contents for injection patterns. The framing is applied uniformly regardless of content.</li>
+<li><strong>Approval gate is the real defense.</strong> If the model attempts to execute a destructive action based on injected instructions, the approval gate catches it. Framing is a defense-in-depth layer, not a substitute for human oversight.</li>
+</ul>
 
                     </main>
 

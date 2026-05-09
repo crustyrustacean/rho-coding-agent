@@ -8,7 +8,7 @@
 
         <!-- Custom HTML head -->
         
-        <meta name="description" content="A Rust coding agent for local LLMs on Windows">
+        <meta name="description" content="A Rust coding agent for local LLMs">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
@@ -180,7 +180,43 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="egress-control"><a class="header" href="#egress-control">Egress Control</a></h1>
-<!-- TODO: Fill in with allowlist, LocalChatClient default, provider switch warning -->
+<p>Egress control restricts which hosts the agent can contact over the network. It prevents the model from exfiltrating data to arbitrary internet endpoints.</p>
+<h2 id="allowlist"><a class="header" href="#allowlist">Allowlist</a></h2>
+<p>The egress allowlist is configured in <code>EgressConfig</code>:</p>
+<pre><code class="language-toml">[egress]
+allowed_hosts = ["api.openai.com"]
+</code></pre>
+<p>Three hosts are always allowed without configuration:</p>
+<div class="table-wrapper"><table><thead><tr><th>Host</th><th>Reason</th></tr></thead><tbody>
+<tr><td><code>localhost</code></td><td>Local model servers (LM Studio, Ollama)</td></tr>
+<tr><td><code>127.0.0.1</code></td><td>Loopback IPv4</td></tr>
+<tr><td><code>::1</code></td><td>Loopback IPv6</td></tr>
+</tbody></table>
+</div>
+<p>Any other host must appear in <code>allowed_hosts</code>. Requests to non-allowed hosts are refused with <code>RhoError::EgressBlocked</code>.</p>
+<h2 id="where-its-enforced"><a class="header" href="#where-its-enforced">Where it's enforced</a></h2>
+<h3 id="localchatclient"><a class="header" href="#localchatclient"><code>LocalChatClient</code></a></h3>
+<p>The model API client checks the egress allowlist before every <code>chat()</code> and <code>list_models()</code> call. This prevents the model provider from being switched to an unauthorized endpoint.</p>
+<h3 id="provider-consent-binary-level"><a class="header" href="#provider-consent-binary-level">Provider consent (binary level)</a></h3>
+<p>The binary (<code>rho</code>) checks whether the configured endpoint is local before connecting. Non-local endpoints trigger an interactive consent warning:</p>
+<pre><code class="language-text">  ⚠  External provider detected
+      Endpoint: https://api.openai.com/v1/chat/completions
+
+      Your prompts and code will be sent to an external server.
+      Continue? [y/N]
+</code></pre>
+<p>Use <code>--accept-external-provider</code> to skip this in automated workflows.</p>
+<h3 id="shell-denylist-complementary"><a class="header" href="#shell-denylist-complementary">Shell denylist (complementary)</a></h3>
+<p>The command denylist in <code>RunCommand</code> blocks common exfiltration tools (<code>curl</code>, <code>wget</code>, <code>Invoke-WebRequest</code>, <code>Invoke-RestMethod</code>, etc.) regardless of the egress config. This is a separate defense layer — the denylist catches shell-level attempts, the egress allowlist catches API-level attempts.</p>
+<h2 id="adding-new-outbound-tools"><a class="header" href="#adding-new-outbound-tools">Adding new outbound tools</a></h2>
+<p>When adding a tool that makes HTTP requests (e.g., a crates.io lookup), the tool must check the egress allowlist before every request. The <code>EgressConfig::is_host_allowed()</code> method provides this check:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>if !config.is_host_allowed("crates.io") {
+    return Err(RhoError::EgressBlocked { host: "crates.io".into() });
+}
+<span class="boring">}</span></code></pre></pre>
+<p>The user must add the target host to their <code>allowed_hosts</code> config before the tool will work.</p>
 
                     </main>
 

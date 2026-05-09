@@ -8,7 +8,7 @@
 
         <!-- Custom HTML head -->
         
-        <meta name="description" content="A Rust coding agent for local LLMs on Windows">
+        <meta name="description" content="A Rust coding agent for local LLMs">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
@@ -180,14 +180,25 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="introduction"><a class="header" href="#introduction">Introduction</a></h1>
-<p><strong>rho</strong> is a Rust coding agent that runs against local LLMs on Windows.</p>
-<p>It connects to OpenAI-compatible endpoints (LM Studio, Ollama) on <code>localhost</code>, gives the model access to tools for reading and writing files and executing PowerShell commands, and runs an autonomous agent loop that the user supervises through an approval gate.</p>
+<p><strong>rho</strong> is a Rust coding agent that runs against local LLMs.</p>
+<p>It connects to OpenAI-compatible endpoints (LM Studio, Ollama) on <code>localhost</code>, gives the model access to tools for reading and writing files, executing shell commands, and running Rust tooling — then runs an autonomous agent loop that the user supervises through an approval gate.</p>
 <p>Design priorities:</p>
 <ul>
 <li><strong>Local first</strong> — your code stays on your machine by default</li>
 <li><strong>Safe by default</strong> — destructive actions require your approval</li>
-<li><strong>Rust-native</strong> — structured compiler diagnostics, not text scraping</li>
-<li><strong>Extensible</strong> — custom tools via config, provider-agnostic core</li>
+<li><strong>Rust-native</strong> — structured compiler diagnostics, tree-sitter syntax analysis, not text scraping</li>
+<li><strong>Extensible</strong> — custom tools via extensions, provider-agnostic core</li>
+</ul>
+<h2 id="platform-support"><a class="header" href="#platform-support">Platform support</a></h2>
+<p>rho runs on Windows, macOS, and Linux. PowerShell 7+ (<code>pwsh</code>) is the primary shell on all platforms; Windows PowerShell 5.1 (<code>powershell</code>) is the fallback on Windows only.</p>
+<h2 id="what-can-rho-do"><a class="header" href="#what-can-rho-do">What can rho do?</a></h2>
+<ul>
+<li>Read, write, and edit files within a sandboxed project directory</li>
+<li>Execute shell commands with a safety denylist</li>
+<li>Run <code>cargo check</code>, <code>cargo clippy</code>, <code>cargo test</code>, <code>cargo fix</code>, and <code>rustc --explain</code> with structured output</li>
+<li>Detect syntax node splits during edits via tree-sitter</li>
+<li>Manage conversation state across sessions with tree-structured persistence</li>
+<li>Compact old conversation turns to stay within context limits</li>
 </ul>
 <p>This book documents the architecture, security model, configuration, and development of rho.</p>
 

@@ -8,7 +8,7 @@
 
         <!-- Custom HTML head -->
         
-        <meta name="description" content="A Rust coding agent for local LLMs on Windows">
+        <meta name="description" content="A Rust coding agent for local LLMs">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
@@ -180,7 +180,55 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="chatclient-provider-trait"><a class="header" href="#chatclient-provider-trait">ChatClient Provider Trait</a></h1>
-<!-- TODO: Fill in with ChatClient trait, LocalChatClient, provider selection -->
+<p>The <code>ChatClient</code> trait abstracts the model API. It defines how rho talks to LLMs — any OpenAI-compatible endpoint can be plugged in.</p>
+<h2 id="definition"><a class="header" href="#definition">Definition</a></h2>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>#[async_trait]
+pub trait ChatClient: Send + Sync {
+    /// Send a chat completion request and return the model's response.
+    async fn chat(&amp;self, request: ChatRequest) -&gt; Result&lt;ModelResponse&gt;;
+
+    /// List available models from the /v1/models endpoint.
+    async fn list_models(&amp;self) -&gt; Result&lt;ModelList&gt;;
+}
+<span class="boring">}</span></code></pre></pre>
+<h2 id="localchatclient"><a class="header" href="#localchatclient"><code>LocalChatClient</code></a></h2>
+<p>The default implementation targets <code>localhost:1234</code> (LM Studio / Ollama):</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// Default: localhost with no egress enforcement
+let client = LocalChatClient::new();
+
+// Custom endpoint with egress allowlist
+let client = LocalChatClient::with_endpoint_and_egress(
+    "http://localhost:1234/v1/chat/completions",
+    egress_config,
+);
+<span class="boring">}</span></code></pre></pre>
+<h3 id="egress-enforcement"><a class="header" href="#egress-enforcement">Egress enforcement</a></h3>
+<p>When constructed with <code>with_endpoint_and_egress</code>, the client checks the resolved host of the endpoint URL against the egress allowlist before every request. Requests to non-allowed hosts are refused with <code>RhoError::EgressBlocked</code>.</p>
+<p><code>localhost</code>, <code>127.0.0.1</code>, and <code>::1</code> are always allowed without configuration. Any other host must appear in <code>allowed_hosts</code> in the egress config.</p>
+<h3 id="provider-consent"><a class="header" href="#provider-consent">Provider consent</a></h3>
+<p>The binary (<code>rho</code>) checks whether the configured endpoint is local before connecting. Non-local endpoints (e.g., <code>api.openai.com</code>) trigger an interactive consent warning. Use <code>--accept-external-provider</code> to skip this in automated workflows.</p>
+<h2 id="model-resolution"><a class="header" href="#model-resolution">Model resolution</a></h2>
+<p>The model identifier is resolved in priority order:</p>
+<ol>
+<li><strong>Config</strong> — <code>agent.model</code> in <code>.rho/config.toml</code> or <code>~/.rho/config.toml</code></li>
+<li><strong>CLI flag</strong> — <code>--model &lt;name&gt;</code></li>
+<li><strong>Auto-detect</strong> — query the server's <code>/v1/models</code> endpoint, use the first loaded model</li>
+</ol>
+<p>Auto-detection fails with a clear error if the server is unreachable or has no models loaded.</p>
+<h2 id="request--response"><a class="header" href="#request--response">Request / response</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Type</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>ChatRequest</code></td><td><code>model</code>, <code>messages</code>, <code>tools</code> — the full API request body</td></tr>
+<tr><td><code>ModelResponse</code></td><td>Parsed API response with choices, finish reason, usage</td></tr>
+<tr><td><code>FinishReason</code></td><td><code>Stop</code> (text reply), <code>ToolCalls</code>, <code>Length</code> (truncated), <code>ContentFilter</code></td></tr>
+<tr><td><code>ModelUsage</code></td><td><code>prompt_tokens</code>, <code>completion_tokens</code>, <code>total_tokens</code></td></tr>
+</tbody></table>
+</div>
+<h2 id="streaming"><a class="header" href="#streaming">Streaming</a></h2>
+<p><code>ToolOutcome::Streamed</code> is declared for future streaming support (Phase 4). The current implementation uses synchronous request → full response.</p>
 
                     </main>
 
