@@ -42,6 +42,19 @@ rho-tools/          # Built-in tool implementations
     lib.rs          # `register_all()`
     files.rs        # `ReadFile`, `WriteFile`, `ListDir`, `EditFile`
     shell.rs        # `PowerShellExecutor`, `RunCommand` (delegates to `ShellExecutor` trait)
+    rust.rs         # `CargoCheck`, `CargoClippy`, `CargoTest`, `CargoFix`, `RustcExplain`
+rho-eval/           # Behavioural benchmark definitions (dev-only)
+  src/
+    lib.rs          # `EvalTask`, `TaskOutcome`, `TaskMetrics`, `EvalRun`
+    task.rs         # `EvalTask` trait, `TaskVerdict`, `TaskMetrics`, `TaskOutcome`
+    report.rs       # `EvalRun`, `EvalReport` — prompt hashes, regression gating
+    tasks.rs        # 5 built-in task definitions
+rho-bench/          # Benchmark harness binary (dev-only)
+  src/
+    main.rs         # CLI: --models, --tasks, --repeats, --output
+    harness.rs      # CountingClient, BenchApprovalGate, per-task execution
+    comparison.rs   # Terminal table and multi-model breakdown display
+    persistence.rs  # JSON result files (latest.json + timestamped)
 rho-test-helpers/   # Shared test infrastructure (dev-only)
   src/
     lib.rs          # `MockChatClient`, response builders, sandbox/trust helpers
@@ -61,6 +74,9 @@ The workspace is layered — dependencies flow downward only:
 
 ```
 rho (binary) → rho-tools → rho-core
+                  ↓
+rho-bench → rho-eval → rho-core
+               rho-tools → rho-core
                   ↓
              rho-test-helpers → rho-core
 ```
@@ -144,6 +160,12 @@ The agent uses multiple defense-in-depth layers:
 | `DiagnosticCode` | Newtype for Rust compiler diagnostic codes (`Deref<Target = str>`) |
 | `RhoError` | Error enum: `Http`, `HttpError`, `Json`, `ToolNotFound`, `MaxIterationsExceeded`, `RetryBudgetExhausted(u32, Box<RhoError>)`, `Unexpected` |
 | `Result` | `std::result::Result<T, RhoError>` |
+| `EvalTask` | Trait: benchmark task with initial files, user prompt, and verification (lives in `rho-eval`) |
+| `TaskVerdict` | Eval result: `Pass`, `Fail`, `Error` (lives in `rho-eval`) |
+| `TaskOutcome` | Eval outcome with verdict, explanation, and performance metrics (lives in `rho-eval`) |
+| `TaskMetrics` | Wall time, token usage, agent iterations for a single task run (lives in `rho-eval`) |
+| `EvalRun` | A collection of `TaskOutcome`s with model ID, timestamp, and prompt hashes (lives in `rho-eval`) |
+| `EvalReport` | Wraps an `EvalRun` with regression detection against a previous run (lives in `rho-eval`) |
 
 ## Coding Conventions
 
@@ -164,6 +186,8 @@ cargo xtask test -- --nocapture # Run with stdout visible
 - Integration tests live in `rho-core/tests/integration_tests.rs`.
 - Tool integration tests live in `rho-tools/tests/tool_tests.rs`.
 - `rho-test-helpers` provides `MockChatClient`, `MockShellExecutor`, response builders (`text_response`, `tool_call_response`, `multi_tool_call_response`), approval gates (`AutoApproveGate`, `AutoDenyGate`), file-system test environment (`FileTestEnv`), shell detection (`detect_shell`), sandbox helpers (`tempdir_with_sandbox`), and trust-store helpers (`empty_trust_store`).
+- `rho-eval` defines canonical coding tasks and scoring logic used by `rho-bench`.
+- `rho-bench` runs eval tasks against local models with timing and token metrics. Run with `cargo run -p rho-bench -- --models <id>`.
 - When adding new deserialization logic, add a JSON fixture test.
 - For `Conversation` branching logic, prefer the trait-abstraction pattern over coupling to `LocalChatClient`.
 

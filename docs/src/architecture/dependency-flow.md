@@ -11,8 +11,8 @@ rho (binary) ──────────────────────�
     │
     └── rho-core ─────────────────────────────────────
             │
+rho-bench ──────── rho-eval ── rho-core ─────────────
 rho-test-helpers ── rho-core ────────────────────────
-rho-eval ────────── rho-core ────────────────────────
 xtask ──────────────────────────────────────────────
 ```
 
@@ -23,7 +23,8 @@ xtask ────────────────────────�
 | `rho-highlight` | none (external only) | Tree-sitter grammar — standalone, no rho dependencies |
 | `rho-core` | none (external only) | Kernel — the foundation everything else builds on |
 | `rho-test-helpers` | `rho-core` | Dev-only — provides mocks and fixtures for testing |
-| `rho-eval` | `rho-core` | Dev-only — benchmark suite |
+| `rho-eval` | `rho-core` | Dev-only — benchmark task definitions and scoring |
+| `rho-bench` | `rho-core`, `rho-eval`, `rho-tools` | Dev-only — benchmark harness binary for multi-model evaluation |
 | `xtask` | none (cargo integration) | Dev-only — task runner, no rho crate dependencies |
 
 ## Key external dependencies
@@ -36,8 +37,9 @@ xtask ────────────────────────�
 | `toml` | `rho-core` | Configuration parsing |
 | `tree-sitter` + grammars | `rho-highlight` | Syntax analysis |
 | `ignore` | `rho-tools` | `.gitignore`-aware directory listing |
-| `clap` | `rho` | CLI argument parsing |
-| `tracing` | `rho-core` | Structured logging |
+| `clap` | `rho`, `rho-bench` | CLI argument parsing |
+| `tracing` | `rho-core`, `rho-bench` | Structured logging |
+| `chrono` | `rho-bench`, `rho-eval` | ISO 8601 timestamps in results |
 | `anyhow` | `rho-core` | Error handling |
 | `thiserror` | `rho-core` | Error type derivation |
 

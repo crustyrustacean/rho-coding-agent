@@ -17,4 +17,4 @@ pub mod task;
 pub mod tasks;
 
 pub use report::{EvalReport, EvalRun};
-pub use task::{EvalTask, TaskOutcome, TaskVerdict};
+pub use task::{EvalTask, TaskMetrics, TaskOutcome, TaskVerdict};

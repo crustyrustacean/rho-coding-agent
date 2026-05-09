@@ -46,11 +46,18 @@ rho-coding-agent/
 │       └── rust.rs          # `CargoCheck`, `CargoClippy`, `CargoTest`, `CargoFix`, `RustcExplain`
 ├── rho-test-helpers/        # Shared test infrastructure (dev-only)
 │   └── src/lib.rs
+├── rho-bench/               # Benchmark harness for multi-model evaluation
+│   └── src/
+│       ├── main.rs          # CLI: --models, --tasks, --repeats, --output
+│       ├── harness.rs       # Task execution via run_loop, CountingClient
+│       ├── comparison.rs    # Terminal table and per-task breakdown display
+│       └── persistence.rs   # JSON result files (latest.json + timestamped)
 ├── rho-eval/                # Behavioural benchmarks (dev-only)
 │   └── src/
 │       ├── lib.rs
-│       ├── task.rs          # Coding task definitions
-│       └── report.rs        # Evaluation results, regression gating
+│       ├── task.rs          # EvalTask trait, TaskOutcome, TaskMetrics
+│       ├── report.rs        # EvalRun, EvalReport — results + regression gating
+│       └── tasks.rs         # 5 built-in task definitions
 └── xtask/                   # Dev task runner
     └── src/main.rs          # `cargo xtask ci`, `cargo xtask test`, `cargo xtask changelog`
 ```

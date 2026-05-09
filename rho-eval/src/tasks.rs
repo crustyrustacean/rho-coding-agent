@@ -51,27 +51,27 @@ impl EvalTask for FixE0308TypeMismatch {
                     || content.contains("format!")
                     || content.contains(".to_owned()");
                 if has_string_return && !content.contains("42") {
-                    TaskOutcome {
-                        task_id: self.id().to_owned(),
-                        task_name: self.name().to_owned(),
-                        verdict: TaskVerdict::Pass,
-                        explanation: "function now returns a String".to_owned(),
-                    }
+                    TaskOutcome::new(
+                        self.id(),
+                        self.name(),
+                        TaskVerdict::Pass,
+                        "function now returns a String",
+                    )
                 } else {
-                    TaskOutcome {
-                        task_id: self.id().to_owned(),
-                        task_name: self.name().to_owned(),
-                        verdict: TaskVerdict::Fail,
-                        explanation: format!("expected String return, got: {content}"),
-                    }
+                    TaskOutcome::new(
+                        self.id(),
+                        self.name(),
+                        TaskVerdict::Fail,
+                        format!("expected String return, got: {content}"),
+                    )
                 }
             }
-            None => TaskOutcome {
-                task_id: self.id().to_owned(),
-                task_name: self.name().to_owned(),
-                verdict: TaskVerdict::Error,
-                explanation: "src/lib.rs not found in output".to_owned(),
-            },
+            None => TaskOutcome::new(
+                self.id(),
+                self.name(),
+                TaskVerdict::Error,
+                "src/lib.rs not found in output",
+            ),
         }
     }
 }
@@ -110,27 +110,27 @@ impl EvalTask for FixE0425UnresolvedName {
         match lib {
             Some((_, content)) => {
                 if content.contains("fn add_one") {
-                    TaskOutcome {
-                        task_id: self.id().to_owned(),
-                        task_name: self.name().to_owned(),
-                        verdict: TaskVerdict::Pass,
-                        explanation: "add_one function defined".to_owned(),
-                    }
+                    TaskOutcome::new(
+                        self.id(),
+                        self.name(),
+                        TaskVerdict::Pass,
+                        "add_one function defined",
+                    )
                 } else {
-                    TaskOutcome {
-                        task_id: self.id().to_owned(),
-                        task_name: self.name().to_owned(),
-                        verdict: TaskVerdict::Fail,
-                        explanation: "add_one function not found".to_owned(),
-                    }
+                    TaskOutcome::new(
+                        self.id(),
+                        self.name(),
+                        TaskVerdict::Fail,
+                        "add_one function not found",
+                    )
                 }
             }
-            None => TaskOutcome {
-                task_id: self.id().to_owned(),
-                task_name: self.name().to_owned(),
-                verdict: TaskVerdict::Error,
-                explanation: "src/lib.rs not found".to_owned(),
-            },
+            None => TaskOutcome::new(
+                self.id(),
+                self.name(),
+                TaskVerdict::Error,
+                "src/lib.rs not found",
+            ),
         }
     }
 }
@@ -169,34 +169,34 @@ impl EvalTask for FixUnusedImport {
         match lib {
             Some((_, content)) => {
                 if content.contains("use std::io") {
-                    TaskOutcome {
-                        task_id: self.id().to_owned(),
-                        task_name: self.name().to_owned(),
-                        verdict: TaskVerdict::Fail,
-                        explanation: "unused import still present".to_owned(),
-                    }
+                    TaskOutcome::new(
+                        self.id(),
+                        self.name(),
+                        TaskVerdict::Fail,
+                        "unused import still present",
+                    )
                 } else if content.contains("fn hello") {
-                    TaskOutcome {
-                        task_id: self.id().to_owned(),
-                        task_name: self.name().to_owned(),
-                        verdict: TaskVerdict::Pass,
-                        explanation: "unused import removed".to_owned(),
-                    }
+                    TaskOutcome::new(
+                        self.id(),
+                        self.name(),
+                        TaskVerdict::Pass,
+                        "unused import removed",
+                    )
                 } else {
-                    TaskOutcome {
-                        task_id: self.id().to_owned(),
-                        task_name: self.name().to_owned(),
-                        verdict: TaskVerdict::Fail,
-                        explanation: "function hello not found after edit".to_owned(),
-                    }
+                    TaskOutcome::new(
+                        self.id(),
+                        self.name(),
+                        TaskVerdict::Fail,
+                        "function hello not found after edit",
+                    )
                 }
             }
-            None => TaskOutcome {
-                task_id: self.id().to_owned(),
-                task_name: self.name().to_owned(),
-                verdict: TaskVerdict::Error,
-                explanation: "src/lib.rs not found".to_owned(),
-            },
+            None => TaskOutcome::new(
+                self.id(),
+                self.name(),
+                TaskVerdict::Error,
+                "src/lib.rs not found",
+            ),
         }
     }
 }
@@ -235,27 +235,27 @@ impl EvalTask for AddMissingDerive {
         match lib {
             Some((_, content)) => {
                 if content.contains("derive") && content.contains("Debug") {
-                    TaskOutcome {
-                        task_id: self.id().to_owned(),
-                        task_name: self.name().to_owned(),
-                        verdict: TaskVerdict::Pass,
-                        explanation: "#[derive(Debug)] added".to_owned(),
-                    }
+                    TaskOutcome::new(
+                        self.id(),
+                        self.name(),
+                        TaskVerdict::Pass,
+                        "#[derive(Debug)] added",
+                    )
                 } else {
-                    TaskOutcome {
-                        task_id: self.id().to_owned(),
-                        task_name: self.name().to_owned(),
-                        verdict: TaskVerdict::Fail,
-                        explanation: "derive(Debug) not found".to_owned(),
-                    }
+                    TaskOutcome::new(
+                        self.id(),
+                        self.name(),
+                        TaskVerdict::Fail,
+                        "derive(Debug) not found",
+                    )
                 }
             }
-            None => TaskOutcome {
-                task_id: self.id().to_owned(),
-                task_name: self.name().to_owned(),
-                verdict: TaskVerdict::Error,
-                explanation: "src/lib.rs not found".to_owned(),
-            },
+            None => TaskOutcome::new(
+                self.id(),
+                self.name(),
+                TaskVerdict::Error,
+                "src/lib.rs not found",
+            ),
         }
     }
 }
@@ -294,27 +294,27 @@ impl EvalTask for FixMutableBorrow {
         match lib {
             Some((_, content)) => {
                 if content.contains("let mut items") || content.contains("let mut items") {
-                    TaskOutcome {
-                        task_id: self.id().to_owned(),
-                        task_name: self.name().to_owned(),
-                        verdict: TaskVerdict::Pass,
-                        explanation: "variable declared as mutable".to_owned(),
-                    }
+                    TaskOutcome::new(
+                        self.id(),
+                        self.name(),
+                        TaskVerdict::Pass,
+                        "variable declared as mutable",
+                    )
                 } else {
-                    TaskOutcome {
-                        task_id: self.id().to_owned(),
-                        task_name: self.name().to_owned(),
-                        verdict: TaskVerdict::Fail,
-                        explanation: "let mut not found".to_owned(),
-                    }
+                    TaskOutcome::new(
+                        self.id(),
+                        self.name(),
+                        TaskVerdict::Fail,
+                        "let mut not found",
+                    )
                 }
             }
-            None => TaskOutcome {
-                task_id: self.id().to_owned(),
-                task_name: self.name().to_owned(),
-                verdict: TaskVerdict::Error,
-                explanation: "src/lib.rs not found".to_owned(),
-            },
+            None => TaskOutcome::new(
+                self.id(),
+                self.name(),
+                TaskVerdict::Error,
+                "src/lib.rs not found",
+            ),
         }
     }
 }

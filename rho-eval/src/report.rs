@@ -7,6 +7,12 @@ use sha2::{Digest, Sha256};
 /// A single eval run: a collection of task outcomes with metadata.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EvalRun {
+    /// The model identifier used for this run.
+    #[serde(default)]
+    pub model_id: String,
+    /// ISO 8601 timestamp when the run started.
+    #[serde(default)]
+    pub timestamp: String,
     /// SHA-256 hash of the base prompt used for this run.
     pub prompt_base_sha256: String,
     /// SHA-256 hash of the full assembled system prompt.
@@ -19,10 +25,18 @@ impl EvalRun {
     /// Create a new eval run.
     pub fn new(prompt_base: &str, prompt_composition: &str) -> Self {
         Self {
+            model_id: String::new(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
             prompt_base_sha256: sha256_hex(prompt_base),
             prompt_composition_sha256: sha256_hex(prompt_composition),
             outcomes: Vec::new(),
         }
+    }
+
+    /// Set the model identifier.
+    pub fn with_model(mut self, model_id: impl Into<String>) -> Self {
+        self.model_id = model_id.into();
+        self
     }
 
     /// Add a task outcome.
@@ -60,6 +74,26 @@ impl EvalRun {
         {
             self.pass_count() as f64 / self.total() as f64
         }
+    }
+
+    /// Total wall-clock time across all tasks in milliseconds.
+    pub fn total_duration_ms(&self) -> u64 {
+        self.outcomes.iter().map(|o| o.metrics.duration_ms).sum()
+    }
+
+    /// Total prompt (input) tokens across all tasks.
+    pub fn total_token_input(&self) -> u32 {
+        self.outcomes.iter().map(|o| o.metrics.token_input).sum()
+    }
+
+    /// Total completion (output) tokens across all tasks.
+    pub fn total_token_output(&self) -> u32 {
+        self.outcomes.iter().map(|o| o.metrics.token_output).sum()
+    }
+
+    /// Total agent loop iterations across all tasks.
+    pub fn total_agent_iterations(&self) -> u32 {
+        self.outcomes.iter().map(|o| o.metrics.agent_iterations).sum()
     }
 }
 
@@ -113,12 +147,7 @@ mod tests {
     use crate::task::TaskOutcome;
 
     fn sample_outcome(id: &str, verdict: TaskVerdict) -> TaskOutcome {
-        TaskOutcome {
-            task_id: id.to_owned(),
-            task_name: format!("Task {id}"),
-            verdict,
-            explanation: String::new(),
-        }
+        TaskOutcome::new(id, format!("Task {id}"), verdict, "")
     }
 
     #[test]

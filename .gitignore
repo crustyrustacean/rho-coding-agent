@@ -2,4 +2,5 @@
 /docs/book/
 logs/
 runs/
+bench-results/
 .DS_Store

@@ -17,7 +17,8 @@ cargo xtask test -p rho-core -- --nocapture  # Single crate
 | Unit tests | `#[cfg(test)] mod tests` inside each source file | Individual functions, types, edge cases |
 | Integration tests | `rho-core/tests/integration_tests.rs` | Agent loop, approval flow, context management |
 | Tool integration tests | `rho-tools/tests/tool_tests.rs` | Tool execution, sandbox enforcement, denylist |
-| Scenario tests | `rho-eval/scenarios/` | Full agent loop with real model |
+| Eval unit tests | `rho-eval/src/tasks.rs` | Task verification logic (pass/fail/error) |
+| Bench unit tests | `rho-bench/src/*.rs` | Harness config, display formatting, persistence |
 
 ## Test helpers (`rho-test-helpers`)
 
@@ -69,4 +70,4 @@ cargo xtask test -p rho-core -- --nocapture  # Single crate
 | Denylist | High | Each denied command and substring pattern |
 | Context management | High | Eviction, pinning, compaction rendering |
 | Integration | Medium | Agent loop with realistic message sequences |
-| Scenarios | Low (5) | End-to-end validation against real model |
+| Scenarios | Low (5) | End-to-end validation against real model — driven via `rho-bench` |

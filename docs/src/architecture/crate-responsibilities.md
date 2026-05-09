@@ -34,7 +34,11 @@ Shared test infrastructure (dev-only): `MockChatClient`, `MockShellExecutor`, `A
 
 ## `rho-eval`
 
-Behavioural benchmark suite (dev-only): canonical coding tasks, automated scoring, prompt SHA-256 tracking, regression gating. Used to validate end-to-end agent behaviour across model releases.
+Behavioural benchmark suite (dev-only): canonical coding tasks via the `EvalTask` trait, automated pass/fail scoring with `TaskOutcome`, performance metrics (`TaskMetrics`: wall time, token usage, agent iterations), prompt SHA-256 tracking, and regression gating. Used by `rho-bench` to drive end-to-end evaluation against real models.
+
+## `rho-bench`
+
+Benchmark harness binary (dev-only): runs `rho-eval` tasks against one or more local models and produces structured comparison reports. Creates isolated temp Cargo projects per task, drives `run_loop` with a `CountingClient` wrapper for token tracking, and persists results as JSON. Supports multi-model sweeps, repeat runs for statistical reliability, compact prompts for small-context models, and both terminal table and JSON output formats.
 
 ## `xtask`
 

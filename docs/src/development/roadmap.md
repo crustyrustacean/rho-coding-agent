@@ -10,7 +10,7 @@ rho is developed in phases, each building on the last. The current version is **
 | 1b: Security Surface | ✅ Complete | Approval gate, file sandbox, context-file trust, secret redaction, untrusted-data framing |
 | 2: Shell, File Tools & Cross-Platform | ✅ Complete | PowerShell-native shell, file tools, config loader, command denylist, egress allowlist, cross-platform |
 | 2.5: Adaptive-Resolution Context | ✅ Complete | Session tree, resolution levels, calibrated budget, tool-result bounding, amnesia fix, JSONL persistence |
-| 3: Rust Tooling and Tree-Sitter | ✅ Complete | `rho-highlight`, structured diagnostics, `CargoCheck`/`Clippy`/`Test`/`Fix`/`RustcExplain`, node-splitting validation, `rho-eval` benchmark suite |
+| 3: Rust Tooling and Tree-Sitter | ✅ Complete | `rho-highlight`, structured diagnostics, `CargoCheck`/`Clippy`/`Test`/`Fix`/`RustcExplain`, node-splitting validation, `rho-eval` benchmark suite, `rho-bench` multi-model harness |
 | 3.5: Rust Standard Library Reference | 📋 Planned | Local rustdoc lookup tool for stdlib API docs |
 | 3.6: crates.io Research | 📋 Planned | Crate metadata lookup, search, version history, dependency inspection |
 | 4: Terminal UI | 🔜 Next | Rich TUI replacing the bare REPL |
@@ -37,7 +37,7 @@ Session tree (replacing flat `Conversation`), resolution levels (`Full`/`Compact
 
 ### Phase 3 — Rust Tooling and Tree-Sitter
 
-`rho-highlight` crate with tree-sitter parsing, `node_at()` position lookup, and token classification. Structured compiler diagnostics (`CargoCheck`, `CargoClippy`, `CargoTest`, `CargoFix`, `RustcExplain`). `EditFile` node-splitting validation. `rho-eval` benchmark suite with 5 validated end-to-end scenarios.
+`rho-highlight` crate with tree-sitter parsing, `node_at()` position lookup, and token classification. Structured compiler diagnostics (`CargoCheck`, `CargoClippy`, `CargoTest`, `CargoFix`, `CargoExplain`). `EditFile` node-splitting validation. `rho-eval` benchmark suite with 5 validated end-to-end scenarios. `rho-bench` harness for multi-model comparison with token usage, wall time, and JSON result persistence.
 
 ## Upcoming phases
 
