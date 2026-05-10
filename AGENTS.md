@@ -151,14 +151,14 @@ The agent uses multiple defense-in-depth layers:
 | `ShellConfig` | Command denylist extensions from config |
 | `SandboxConfig` | Sandbox on/off toggle |
 | `ContextConfig` | Project context file scan list override |
-| `EgressConfig` | Network egress allowlist |
+| `ProviderConfig` | Model provider selection and connection settings |
 | `RedactionConfig` | Secret redaction on/off toggle |
 | `SystemPromptConfig` | System prompt extension fragments |
 | `FilePath` | Newtype for sandboxed file paths (`Deref<Target = Path>`) |
 | `ToolName` | Newtype for tool names (`Deref<Target = str>`) |
 | `ToolCallId` | Newtype for model-issued tool call IDs (`Deref<Target = str>`) |
 | `DiagnosticCode` | Newtype for Rust compiler diagnostic codes (`Deref<Target = str>`) |
-| `RhoError` | Error enum: `Http`, `HttpError`, `Json`, `ToolNotFound`, `MaxIterationsExceeded`, `RetryBudgetExhausted(u32, Box<RhoError>)`, `Unexpected` |
+| `RhoError` | Error enum: `Http`, `HttpError`, `Json`, `ToolNotFound`, `MaxIterationsExceeded`, `RetryBudgetExhausted(u32, Box<RhoError>)`, `Cancelled`, `ProtocolViolation`, `EntryNotFound`, `Unexpected` |
 | `Result` | `std::result::Result<T, RhoError>` |
 | `EvalTask` | Trait: benchmark task with initial files, user prompt, and verification (lives in `rho-eval`) |
 | `TaskVerdict` | Eval result: `Pass`, `Fail`, `Error` (lives in `rho-eval`) |

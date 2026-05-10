@@ -11,7 +11,7 @@ No configuration needed — just start a local server on `localhost:1234` and ru
 
 ### External provider
 
-Create `.rho/config.toml` in your project root with the endpoint, API key env var, and egress allowlist. See [External Providers](./providers.md) for worked examples.
+Create `.rho/config.toml` in your project root with the endpoint and API key env var. See [External Providers](./providers.md) for worked examples.
 
 ## Build
 

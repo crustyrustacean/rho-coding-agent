@@ -18,7 +18,6 @@
   - [Threat Model](./security/threat-model.md)
   - [File Sandbox](./security/file-sandbox.md)
   - [Secret Redaction](./security/secret-redaction.md)
-  - [Egress Control](./security/egress-control.md)
   - [Prompt Injection Defense](./security/prompt-injection-defense.md)
 - [Configuration](./configuration.md)
 - [External Providers](./providers.md)

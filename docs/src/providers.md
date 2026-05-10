@@ -40,7 +40,6 @@ These providers use their own API format and **cannot be used with rho** without
 | Anthropic | `/v1/messages` | Uses the Messages API, not Chat Completions |
 | Google Gemini | `/v1beta/models/...:generateContent` | Uses GenerateContent, not Chat Completions |
 | AWS Bedrock | `/model/.../converse` | Uses the Converse API |
-| Mistral (direct) | `/v1/chat` | Different response schema |
 | Cohere | `/v2/chat` | Different request/response format |
 
 **To use models from these providers**, you need an [OpenAI-compatible proxy](https://github.com/BerriAI/litellm) that translates between their native API and the OpenAI wire format. For example, LiteLLM or OpenRouter can proxy Claude models behind an OpenAI-compatible endpoint.
@@ -49,25 +48,31 @@ rho detects common misconfigurations at startup and prints a warning if the endp
 
 ## Prerequisites
 
-To use an external provider you need three things:
+To use an external provider you need two things:
 
 1. **An API key** from the provider
 2. **The provider's endpoint URL** (must be OpenAI-compatible)
-3. **An egress allowlist entry** so rho's network guard permits the connection
+
+That's it. Configure via config file or CLI flags — see below.
 
 ## Quick start: OpenAI
 
+### Via CLI flags
+
 ```sh
-# Set your API key as an environment variable
 export OPENAI_API_KEY="sk-..."
 
-# Run rho against OpenAI (consent prompt appears on first use)
-rho --model gpt-4o --accept-external-provider
+rho --endpoint https://api.openai.com/v1/chat/completions \
+    --api-key-env OPENAI_API_KEY \
+    --model gpt-4o
 ```
 
-The corresponding config (`.rho/config.toml` or `~/.rho/config.toml`):
+`--endpoint` implies consent (the consent prompt is skipped since you explicitly chose the target).
+
+### Via config
 
 ```toml
+# ~/.rho/config.toml
 [agent]
 model = "gpt-4o"
 token_budget = 131072
@@ -75,27 +80,60 @@ token_budget = 131072
 [provider]
 endpoint = "https://api.openai.com/v1/chat/completions"
 api_key_env = "OPENAI_API_KEY"
-
-[egress]
-allowed_hosts = ["api.openai.com"]
 ```
 
-## The two-gate requirement
+```sh
+export OPENAI_API_KEY="sk-..."
+rho --accept-external-provider
+```
 
-External providers must pass **both** gates before any request is sent:
+## Provider consent
 
-| Gate | What it does | How to satisfy |
+When connecting to a non-local endpoint, rho displays an interactive consent warning before any data leaves your machine:
+
+```text
+  ⚠  External provider detected
+      Endpoint: https://api.openai.com/v1/chat/completions
+
+      Your prompts and code will be sent to an external server.
+      Continue? [y/N]
+```
+
+This prompt fires automatically for config-driven external endpoints. It is **skipped** when you use `--endpoint` on the CLI (explicit endpoint implies consent) or `--accept-external-provider`.
+
+## Specifying the model
+
+There are three ways to set the model, in priority order:
+
+1. **CLI flag** — `--model gpt-4o` (highest priority)
+2. **Config** — `[agent] model = "gpt-4o"`
+3. **Auto-detection** — query the server's `/v1/models` endpoint and use the first loaded model
+
+Auto-detection works for local servers (LM Studio, Ollama) where `/v1/models` is reliable. For external providers, **always specify the model explicitly** with `--model` or in config.
+
+## CLI flags for provider configuration
+
+| Flag | Config override | Description |
 |---|---|---|
-| **Egress allowlist** | Blocks requests to hosts not in `allowed_hosts` | Add the hostname to `[egress] allowed_hosts` |
-| **Provider consent** | Interactive warning that data will leave your machine | Type `y` at the prompt, or use `--accept-external-provider` |
+| `--endpoint <URL>` | `provider.endpoint` | API endpoint URL |
+| `--api-key-env <VAR>` | `provider.api_key_env` | Environment variable holding the API key |
+| `--model <MODEL>` | `agent.model` | Model identifier |
+| `--accept-external-provider` | — | Skip consent prompt for non-local endpoints |
 
-If you consent but the host isn't in the allowlist, the request is silently blocked with `RhoError::EgressBlocked`. **Both must be configured.** If you see egress errors after consenting, check that the hostname matches exactly.
-
-`localhost`, `127.0.0.1`, and `::1` are always allowed and never trigger consent.
+Priority: CLI flag → project config → user config → hardcoded default.
 
 ## Provider examples
 
 ### OpenAI
+
+```sh
+export OPENAI_API_KEY="sk-..."
+rho --endpoint https://api.openai.com/v1/chat/completions \
+    --api-key-env OPENAI_API_KEY \
+    --model gpt-4o
+```
+
+Or via config:
 
 ```toml
 [agent]
@@ -104,19 +142,20 @@ model = "gpt-4o"
 [provider]
 endpoint = "https://api.openai.com/v1/chat/completions"
 api_key_env = "OPENAI_API_KEY"
-
-[egress]
-allowed_hosts = ["api.openai.com"]
-```
-
-```sh
-export OPENAI_API_KEY="sk-..."
-rho --model gpt-4o --accept-external-provider
 ```
 
 ### OpenRouter
 
 OpenRouter proxies many models behind a single endpoint. Model names include the provider prefix (e.g. `anthropic/claude-sonnet-4-20250514`).
+
+```sh
+export OPENROUTER_API_KEY="sk-or-..."
+rho --endpoint https://openrouter.ai/api/v1/chat/completions \
+    --api-key-env OPENROUTER_API_KEY \
+    --model anthropic/claude-sonnet-4-20250514
+```
+
+Or via config:
 
 ```toml
 [agent]
@@ -125,67 +164,33 @@ model = "anthropic/claude-sonnet-4-20250514"
 [provider]
 endpoint = "https://openrouter.ai/api/v1/chat/completions"
 api_key_env = "OPENROUTER_API_KEY"
-
-[egress]
-allowed_hosts = ["openrouter.ai"]
-```
-
-```sh
-export OPENROUTER_API_KEY="sk-or-..."
-rho --model anthropic/claude-sonnet-4-20250514 --accept-external-provider
 ```
 
 ### Groq
 
-```toml
-[agent]
-model = "llama-3.3-70b-versatile"
-
-[provider]
-endpoint = "https://api.groq.com/openai/v1/chat/completions"
-api_key_env = "GROQ_API_KEY"
-
-[egress]
-allowed_hosts = ["api.groq.com"]
-```
-
 ```sh
 export GROQ_API_KEY="gsk_..."
-rho --model llama-3.3-70b-versatile --accept-external-provider
+rho --endpoint https://api.groq.com/openai/v1/chat/completions \
+    --api-key-env GROQ_API_KEY \
+    --model llama-3.3-70b-versatile
 ```
 
 ### DeepInfra
 
-```toml
-[agent]
-model = "meta-llama/Llama-3.3-70B-Instruct"
-
-[provider]
-endpoint = "https://api.deepinfra.com/v1/openai/chat/completions"
-api_key_env = "DEEPINFRA_API_KEY"
-
-[egress]
-allowed_hosts = ["api.deepinfra.com"]
-```
-
 ```sh
 export DEEPINFRA_API_KEY="di-..."
-rho --model meta-llama/Llama-3.3-70B-Instruct --accept-external-provider
+rho --endpoint https://api.deepinfra.com/v1/openai/chat/completions \
+    --api-key-env DEEPINFRA_API_KEY \
+    --model meta-llama/Llama-3.3-70B-Instruct
 ```
 
 ### Ollama (remote)
 
 If you run Ollama on a different machine, point the endpoint at it:
 
-```toml
-[provider]
-endpoint = "http://192.168.1.100:11434/v1/chat/completions"
-
-[egress]
-allowed_hosts = ["192.168.1.100"]
+```sh
+rho --endpoint http://192.168.1.100:11434/v1/chat/completions --model llama3
 ```
-
-No `api_key_env` is needed for Ollama. No consent prompt fires because the host isn't `localhost` but is in the allowlist — however, rho's consent check only fires for *non-local* endpoints (anything not `localhost`/`127.0.0.1`/`::1`), so a LAN IP will trigger the consent warning. Use `--accept-external-provider` to skip it.
 
 ## API key handling
 
@@ -224,16 +229,16 @@ External models often have much larger context windows than local 8K models:
 | DeepInfra | Llama 3.3 70B | 128K tokens |
 | Local | Qwen3 8B | Varies (often 32K) |
 
-See [What "OpenAI-compatible" means](#what-openai-compatible-means) above — models from Anthropic, Google, AWS Bedrock, and others can only be used through an OpenAI-compatible proxy.
-
-rho defaults to `token_budget = 32768`. For models with larger windows, increase it to take advantage of the extra space:
+rho defaults to `token_budget = 32768`. For models with larger windows, increase it:
 
 ```toml
 [agent]
 token_budget = 131072
 ```
 
-The budget is split into a **prompt budget** (conversation + system prompt + tool schemas) and a **completion reserve** (room for the model's reply). The default reserve is 4096 tokens. Set the budget high enough that the system prompt (~4,700 tokens) plus tool schemas (~2,000 tokens) plus a few tool-call rounds still fit comfortably.
+Or via CLI: `--token-budget 131072`.
+
+The budget is split into a **prompt budget** (conversation + system prompt + tool schemas) and a **completion reserve** (room for the model's reply). The default reserve is 4096 tokens.
 
 Run rho with `RUST_LOG=info` to see budget diagnostics at startup:
 
@@ -252,22 +257,10 @@ api_key_env = "OPENAI_API_KEY"
 # type is optional — set it for your own bookkeeping or omit it
 ```
 
-You can set `type` to any string for your own bookkeeping (e.g. `"openrouter"`, `"groq"`, `"production"`), or omit it entirely. Rho does not validate it against the endpoint.
-
-**However**, if you set `type` to a known non-OpenAI-compatible provider name (e.g. `"anthropic"`, `"google"`, `"bedrock"`), rho will print a warning at startup reminding you that only OpenAI-compatible endpoints are supported. This is a safety net — the real check is that your endpoint accepts and returns the OpenAI Chat Completions format.
-
-## Specifying the model
-
-There are three ways to set the model, in priority order:
-
-1. **CLI flag** — `--model gpt-4o` (highest priority)
-2. **Config** — `[agent] model = "gpt-4o"`
-3. **Auto-detection** — query the server's `/v1/models` endpoint and use the first loaded model
-
-Auto-detection works for local servers (LM Studio, Ollama) where `/v1/models` is reliable. For external providers, **always specify the model explicitly** with `--model` or in config. External providers may return large model lists or use non-standard `/v1/models` responses, which can cause auto-detection to pick an unexpected model or fail.
+**However**, if you set `type` to a known non-OpenAI-compatible provider name (e.g. `"anthropic"`, `"google"`, `"bedrock"`), rho will print a warning at startup. This is a safety net — the real check is that your endpoint accepts and returns the OpenAI Chat Completions format.
 
 ## Privacy considerations
 
 When you use an external provider, **your entire conversation** — including file contents read by the agent, shell command output, and your instructions — is sent to the provider's servers. Review the provider's privacy policy before use.
 
-The consent prompt reminds you of this on every startup (unless you use `--accept-external-provider`). The egress allowlist ensures that only hosts you've explicitly approved are contacted.
+The consent prompt reminds you of this on every startup for config-driven external endpoints.

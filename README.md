@@ -12,7 +12,7 @@ A local coding agent written in Rust. rho runs in your terminal, talks to a mode
 - 💻 **Cross-platform** — runs on Windows, macOS, and Linux
 - 🐚 **PowerShell-native** — the shell is PowerShell (via `pwsh`); the model generates PowerShell commands, not bash
 - 📂 **Project-aware** — auto-detects project root, loads context files (`AGENTS.md`, `CLAUDE.md`, `.cursorrules`, etc.) with hash-verified trust
-- ⚙️ **Configurable** — two-tier TOML config (user-level `~/.rho/config.toml` + project-level `.rho/config.toml`), per-tool approval policies, command denylist, egress allowlist
+- ⚙️ **Configurable** — two-tier TOML config (user-level `~/.rho/config.toml` + project-level `.rho/config.toml`), per-tool approval policies, command denylist
 - 🧠 **Local and remote models** — targets OpenAI-compatible endpoints (LM Studio, Ollama, OpenAI, Groq, OpenRouter, DeepInfra, and more)
 
 ## Quick Start
@@ -53,9 +53,6 @@ A local coding agent written in Rust. rho runs in your terminal, talks to a mode
    [provider]
    endpoint = "https://api.openai.com/v1/chat/completions"
    api_key_env = "OPENAI_API_KEY"
-
-   [egress]
-   allowed_hosts = ["api.openai.com"]
    ```
 
 3. **Run:**
@@ -80,7 +77,10 @@ Options:
   -s, --system <SYSTEM>                  Override the system prompt
       --compact                          Use a compact prompt for small-context models (~100 tokens)
       --root <ROOT>                      Project/sandbox root (auto-detected if omitted)
-      --accept-external-provider         Skip consent warning for external endpoints
+      --endpoint <URL>                    API endpoint URL (overrides config)
+      --api-key-env <VAR>                 Environment variable holding the API key
+      --max-iterations <N>                Maximum agent loop iterations
+      --accept-external-provider         Skip consent warning for external endpoints (also implied by --endpoint)
       --token-budget <TOKEN_BUDGET>      Context window token budget (default: 32768)
       --prompt-file <FILE>               Read a prompt from a file, then exit
       --session <PATH>                   Resume a previous session from a JSONL file
@@ -100,7 +100,7 @@ rho loads config from two TOML files, with project-level overrides taking preced
 
 | Source | Path | Purpose |
 |---|---|---|
-| User-level | `~/.rho/config.toml` | Global defaults: default model, API endpoint, egress allowlist |
+| User-level | `~/.rho/config.toml` | Global defaults: default model, API endpoint |
 | Project-level | `.rho/config.toml` | Per-project: model, approval policies, command denylist, sandbox toggle |
 
 Example `.rho/config.toml` (local model):
@@ -124,9 +124,6 @@ denied_commands = ["Stop-Process"]
 [sandbox]
 enabled = true
 
-[egress]
-allowed_hosts = []
-
 [redaction]
 enabled = true
 ```
@@ -141,9 +138,6 @@ token_budget = 131072
 [provider]
 endpoint = "https://api.openai.com/v1/chat/completions"
 api_key_env = "OPENAI_API_KEY"
-
-[egress]
-allowed_hosts = ["api.openai.com"]
 ```
 
 API keys are **never** stored in config. Reference environment variables instead:
@@ -165,7 +159,6 @@ rho treats model output as untrusted and applies defense-in-depth:
 | **Secret redaction** | API keys and tokens in tool output are replaced with `[REDACTED]` |
 | **Untrusted-data framing** | File contents are wrapped in `<context>` tags so the model treats them as data, not instructions |
 | **Context-file trust** | Project instruction files (`AGENTS.md`, etc.) are hash-verified; changed files require re-confirmation |
-| **Egress allowlist** | The agent only contacts `localhost` unless you add external hosts |
 | **Provider consent** | Connecting to an external API triggers a warning before any data leaves your machine |
 
 ## Architecture

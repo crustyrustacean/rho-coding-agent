@@ -7,8 +7,8 @@ rho takes untrusted input (LLM output), interprets it as instructions, and execu
 | Threat | Primary Defense | Secondary |
 |---|---|---|
 | Destructive command execution | Command denylist | Approval gate |
-| Data exfiltration via shell | Approval gate | Denylist + egress allowlist |
-| Data exfiltration via provider | Provider consent warning | Egress allowlist |
+| Data exfiltration via shell | Approval gate | Denylist |
+| Data exfiltration via provider | Provider consent warning | Command denylist |
 | Path traversal via file tools | File sandbox (canonicalised) | Approval gate |
 | Secret exposure in tool output | Best-effort redaction | Approval gate |
 | Prompt injection via file content | Untrusted-data framing (`<context>` / `<context:end>`) | Approval gate |
@@ -28,5 +28,5 @@ See the individual pages for detailed design of each defense layer:
 
 - [File Sandbox](./file-sandbox.md)
 - [Secret Redaction](./secret-redaction.md)
-- [Egress Control](./egress-control.md)
 - [Prompt Injection Defense](./prompt-injection-defense.md)
+- [Egress Control](./egress-control.md) (historical — removed in v0.33.3)

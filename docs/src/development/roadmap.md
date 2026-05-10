@@ -8,7 +8,7 @@ rho is developed in phases, each building on the last. The current version is **
 |---|---|---|
 | 1a: The Agent Loop | ✅ Complete | Agent loop, tool registry, `ChatClient` trait, conversation management |
 | 1b: Security Surface | ✅ Complete | Approval gate, file sandbox, context-file trust, secret redaction, untrusted-data framing |
-| 2: Shell, File Tools & Cross-Platform | ✅ Complete | PowerShell-native shell, file tools, config loader, command denylist, egress allowlist, cross-platform |
+| 2: Shell, File Tools & Cross-Platform | ✅ Complete | PowerShell-native shell, file tools, config loader, command denylist, cross-platform |
 | 2.5: Adaptive-Resolution Context | ✅ Complete | Session tree, resolution levels, calibrated budget, tool-result bounding, amnesia fix, JSONL persistence |
 | 3: Rust Tooling and Tree-Sitter | ✅ Complete | `rho-highlight`, structured diagnostics, `CargoCheck`/`Clippy`/`Test`/`Fix`/`RustcExplain`, node-splitting validation, `rho-eval` benchmark suite, `rho-bench` multi-model harness |
 | 3.5: Rust Standard Library Reference | 📋 Planned | Local rustdoc lookup tool for stdlib API docs |
@@ -29,7 +29,7 @@ Defense-in-depth: file sandbox, approval gate (per-tool, risk-based), secret red
 
 ### Phase 2 — Shell, File Tools & Cross-Platform
 
-PowerShell-native execution on all platforms, `ReadFile`/`WriteFile`/`ListDir`/`EditFile` tools, two-tier TOML config, command denylist, egress allowlist, compact prompt for small-context models, and full cross-platform support (Windows/macOS/Linux).
+PowerShell-native execution on all platforms, `ReadFile`/`WriteFile`/`ListDir`/`EditFile` tools, two-tier TOML config, command denylist, compact prompt for small-context models, and full cross-platform support (Windows/macOS/Linux).
 
 ### Phase 2.5 — Adaptive-Resolution Context
 
@@ -47,7 +47,7 @@ A `RustdocLookup` tool that reads locally installed rustdoc HTML via `rustup doc
 
 ### Phase 3.6 — crates.io Research
 
-A `CratesIoLookup` tool for crate metadata, search, version history, and dependency tree inspection. Requires egress allowlist opt-in. Dedicated Rust HTTP client (not a shell escape). See [Phase 3.6 planning note](../../../1.%20Planning/Phase%203.6/Phase%203.6%20—%20crates.io%20Registry%20Research.md).
+A `CratesIoLookup` tool for crate metadata, search, version history, and dependency tree inspection. Dedicated Rust HTTP client (not a shell escape). See [Phase 3.6 planning note](../../../1.%20Planning/Phase%203.6/Phase%203.6%20—%20crates.io%20Registry%20Research.md).
 
 ### Phase 4 — Terminal UI
 

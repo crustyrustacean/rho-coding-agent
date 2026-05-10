@@ -6,7 +6,7 @@ rho reads configuration from two TOML files, merged with project-level overrides
 
 | Tier | Path | Purpose |
 |---|---|---|
-| User-level | `~/.rho/config.toml` | Global defaults: model, API endpoint, provider, egress |
+| User-level | `~/.rho/config.toml` | Global defaults: model, API endpoint, provider |
 | Project-level | `.rho/config.toml` (relative to sandbox root) | Per-project: model, approval policies, command denylist, sandbox, context files |
 
 Both files are optional. Missing files are silently skipped; all fields have sensible defaults.
@@ -15,7 +15,7 @@ Both files are optional. Missing files are silently skipped; all fields have sen
 
 Project-level config overrides user-level config on a per-field basis. For struct fields: if the project sets a field, it wins; if not, the user-level value applies; if neither sets it, the hardcoded default applies.
 
-For `Vec` fields (denylist commands, egress hosts, context scan list, custom redaction patterns): the project-level list **replaces** the user-level list. It does not append. This avoids surprising composition effects.
+For `Vec` fields (denylist commands, context scan list, custom redaction patterns): the project-level list **replaces** the user-level list. It does not append. This avoids surprising composition effects.
 
 ## Full configuration reference
 
@@ -76,10 +76,6 @@ enabled = true
 # Override the default context file scan list
 scan_list = ["AGENTS.md", "CLAUDE.md"]
 
-[egress]
-# Hostnames allowed in addition to localhost (default: empty)
-allowed_hosts = ["api.openai.com"]
-
 [redaction]
 # Secret redaction toggle (default: true)
 enabled = true
@@ -105,7 +101,7 @@ The provider reads the key from the environment variable at runtime. If the vari
 
 ## External providers
 
-rho can connect to any OpenAI-compatible endpoint (OpenAI, Groq, OpenRouter, DeepInfra, etc.). External providers require **both** an egress allowlist entry and provider consent. See the [External Providers](./providers.md) page for worked examples and setup instructions.
+rho can connect to any OpenAI-compatible endpoint (OpenAI, Groq, OpenRouter, DeepInfra, etc.). See the [External Providers](./providers.md) page for setup instructions.
 
 ## CLI overrides
 
@@ -115,7 +111,9 @@ All config values can be overridden by CLI flags. CLI flags take highest priorit
 |---|---|
 | `agent.model` | `--model` |
 | `agent.token_budget` | `--token-budget` |
-| `provider.endpoint` | `--root` (indirectly) |
+| `provider.endpoint` | `--endpoint` |
+| `provider.api_key_env` | `--api-key-env` |
+| `agent.max_iterations` | `--max-iterations` |
 | System prompt | `--system` |
 | Compact prompt | `--compact` |
 | Provider consent | `--accept-external-provider` |

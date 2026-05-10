@@ -1,71 +1,25 @@
 # Egress Control
 
-Egress control restricts which hosts the agent can contact over the network. It prevents the model from exfiltrating data to arbitrary internet endpoints.
+> **Removed in v0.33.3.** Egress enforcement was removed because it only gated one HTTP client (`LocalChatClient`) while shell commands had unrestricted network access via `curl`, `Invoke-WebRequest`, etc. The provider consent warning is the real defense for external providers.
 
-## When egress matters
+## What was removed
 
-Local model servers (LM Studio, Ollama) on `localhost` don't need any egress configuration — they're always allowed. Egress becomes relevant when you use an **external provider** (OpenAI, Groq, OpenRouter, etc.), where you must explicitly allow the provider's hostname.
+- `EgressConfig` struct and `[egress]` config section
+- `RhoError::EgressBlocked` error variant
+- `check_egress()` method on `LocalChatClient`
+- `with_endpoint_and_egress()` and `with_endpoint_egress_and_key()` constructors
+- Egress allowlist checks before every `chat()` and `list_models()` call
 
-## Two-gate requirement for external providers
+## Why it was removed
 
-External providers must pass **two independent gates** before any request is sent:
+The egress allowlist created a false sense of security:
 
-1. **Provider consent** — an interactive warning that your data will leave the machine (`--accept-external-provider` to skip)
-2. **Egress allowlist** — the hostname must appear in `allowed_hosts` in `[egress]` config
+1. **Shell bypass:** The model (or a prompt injection attack) could exfiltrate data via shell commands (`curl`, `Invoke-WebRequest`, etc.) regardless of the egress config.
+2. **Limited scope:** Egress only gated `LocalChatClient` HTTP requests. It did not cover any other network access path.
+3. **The consent warning already covers this:** When connecting to a non-local endpoint, rho displays an interactive consent prompt warning that data will leave the machine. This is the meaningful defense — the user explicitly approves where their data goes.
 
-If either gate blocks, the request is refused. See [External Providers](./providers.md) for a full walkthrough.
+## What remains
 
-## Allowlist
+The **command denylist** in `RunCommand` blocks common exfiltration tools (`curl`, `wget`, `Invoke-WebRequest`, `Invoke-RestMethod`, etc.). This is still active and provides practical protection against the most common exfiltration vectors.
 
-The egress allowlist is configured in `EgressConfig`:
-
-```toml
-[egress]
-allowed_hosts = ["api.openai.com"]
-```
-
-Three hosts are always allowed without configuration:
-
-| Host | Reason |
-|---|---|
-| `localhost` | Local model servers (LM Studio, Ollama) |
-| `127.0.0.1` | Loopback IPv4 |
-| `::1` | Loopback IPv6 |
-
-Any other host must appear in `allowed_hosts`. Requests to non-allowed hosts are refused with `RhoError::EgressBlocked`.
-
-## Where it's enforced
-
-### `LocalChatClient`
-
-The model API client checks the egress allowlist before every `chat()` and `list_models()` call. This prevents the model provider from being switched to an unauthorized endpoint.
-
-### Provider consent (binary level)
-
-The binary (`rho`) checks whether the configured endpoint is local before connecting. Non-local endpoints trigger an interactive consent warning:
-
-```text
-  ⚠  External provider detected
-      Endpoint: https://api.openai.com/v1/chat/completions
-
-      Your prompts and code will be sent to an external server.
-      Continue? [y/N]
-```
-
-Use `--accept-external-provider` to skip this in automated workflows.
-
-### Shell denylist (complementary)
-
-The command denylist in `RunCommand` blocks common exfiltration tools (`curl`, `wget`, `Invoke-WebRequest`, `Invoke-RestMethod`, etc.) regardless of the egress config. This is a separate defense layer — the denylist catches shell-level attempts, the egress allowlist catches API-level attempts.
-
-## Adding new outbound tools
-
-When adding a tool that makes HTTP requests (e.g., a crates.io lookup), the tool must check the egress allowlist before every request. The `EgressConfig::is_host_allowed()` method provides this check:
-
-```rust
-if !config.is_host_allowed("crates.io") {
-    return Err(RhoError::EgressBlocked { host: "crates.io".into() });
-}
-```
-
-The user must add the target host to their `allowed_hosts` config before the tool will work.
+The **provider consent warning** fires before any connection to a non-local endpoint. Use `--accept-external-provider` to skip it in automated workflows, or `--endpoint` (which implies consent since the user explicitly chose the target).

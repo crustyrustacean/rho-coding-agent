@@ -7,7 +7,7 @@ It connects to OpenAI-compatible endpoints (LM Studio, Ollama, OpenAI, Groq, Ope
 Design priorities:
 
 - **Local first** — your code stays on your machine by default
-- **Remote ready** — external providers (OpenAI, Groq, etc.) with egress control and consent
+- **Remote ready** — external providers (OpenAI, Groq, etc.) with consent warnings
 - **Safe by default** — destructive actions require your approval
 - **Rust-native** — structured compiler diagnostics, tree-sitter syntax analysis, not text scraping
 - **Extensible** — custom tools via extensions, provider-agnostic core
