@@ -236,16 +236,23 @@ async fn main() -> Result<()> {
     // --- Project context files ---
     let system_prompt = load_system_prompt(&sandbox, &cli);
 
-    let client = resolve_api_key(&rho_config, cli.api_key_env.as_deref()).map_or_else(
-        || LocalChatClient::with_endpoint_and_egress(endpoint, rho_config.egress.clone()),
-        |key| {
-            LocalChatClient::with_endpoint_egress_and_key(
-                endpoint,
-                rho_config.egress.clone(),
-                Some(key),
-            )
-        },
-    );
+    // When --endpoint is set via CLI, the user explicitly chose the
+    // target. Ensure the host is permitted by egress — don't block a
+    // request to a host the user typed on the command line.
+    let mut egress = rho_config.egress.clone();
+    if cli.endpoint.is_some()
+        && let Some(host) = url::Url::parse(endpoint)
+            .ok()
+            .and_then(|u| u.host_str().map(String::from))
+        && !egress.allowed_hosts.iter().any(|h| h == &host)
+    {
+        egress.allowed_hosts.push(host);
+    }
+
+    let client = match resolve_api_key(&rho_config, cli.api_key_env.as_deref()) {
+        Some(key) => LocalChatClient::with_endpoint_egress_and_key(endpoint, egress, Some(key)),
+        None => LocalChatClient::with_endpoint_and_egress(endpoint, egress),
+    };
 
     // --- Session ---
     let model = resolve_model(&rho_config, cli.model.as_ref(), &client).await?;
