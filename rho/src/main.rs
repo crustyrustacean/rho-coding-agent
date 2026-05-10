@@ -182,21 +182,19 @@ async fn main() -> Result<()> {
             .any(|t| provider_type.eq_ignore_ascii_case(t))
         {
             eprintln!(
-                "warning: provider type \"{}\" was set, but rho only supports \
+                "warning: provider type \"{provider_type}\" was set, but rho only supports \
                  OpenAI-compatible endpoints (the Chat Completions API wire format). \
-                 {}",
-                provider_type, endpoint
+                 {endpoint}"
             );
         }
     }
     if !endpoint.contains("/chat/completions") && !is_local_endpoint(endpoint) {
         eprintln!(
-            "warning: endpoint \"{}\" does not end with /chat/completions, \
+            "warning: endpoint \"{endpoint}\" does not end with /chat/completions, \
              which is the standard OpenAI-compatible path. rho sends requests in \
              the OpenAI Chat Completions format. If this endpoint uses a different \
              API format (e.g. Anthropic Messages, Google GenerateContent), \
-             requests will fail. Use an OpenAI-compatible proxy or verify the endpoint.",
-            endpoint
+             requests will fail. Use an OpenAI-compatible proxy or verify the endpoint."
         );
     }
     // --- Client (with provider consent check) ---

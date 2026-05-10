@@ -1339,7 +1339,7 @@ dependencies = [
 
 [[package]]
 name = "rho"
-version = "0.33.1"
+version = "0.33.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1354,7 +1354,7 @@ dependencies = [
 
 [[package]]
 name = "rho-bench"
-version = "0.33.1"
+version = "0.33.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1374,7 +1374,7 @@ dependencies = [
 
 [[package]]
 name = "rho-core"
-version = "0.33.1"
+version = "0.33.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1384,6 +1384,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "temp-env",
  "tempfile",
  "thiserror",
  "tokio",
@@ -1395,7 +1396,7 @@ dependencies = [
 
 [[package]]
 name = "rho-eval"
-version = "0.33.1"
+version = "0.33.3"
 dependencies = [
  "chrono",
  "rho-core",
@@ -1407,7 +1408,7 @@ dependencies = [
 
 [[package]]
 name = "rho-highlight"
-version = "0.33.1"
+version = "0.33.3"
 dependencies = [
  "rho-core",
  "rho-test-helpers",
@@ -1418,7 +1419,7 @@ dependencies = [
 
 [[package]]
 name = "rho-test-helpers"
-version = "0.33.1"
+version = "0.33.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1431,7 +1432,7 @@ dependencies = [
 
 [[package]]
 name = "rho-tools"
-version = "0.33.1"
+version = "0.33.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1831,6 +1832,15 @@ checksum = "8e1d1b10ced5ca923a1fcb8d03e96b8d3268065d724548c0211415ff6ac6bac4"
 dependencies = [
  "core-foundation-sys",
  "libc",
+]
+
+[[package]]
+name = "temp-env"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96374855068f47402c3121c6eed88d29cb1de8f3ab27090e273e420bdabcf050"
+dependencies = [
+ "parking_lot",
 ]
 
 [[package]]
@@ -2774,7 +2784,7 @@ checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 
 [[package]]
 name = "xtask"
-version = "0.33.1"
+version = "0.33.3"
 dependencies = [
  "anyhow",
  "clap",

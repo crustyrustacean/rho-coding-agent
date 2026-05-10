@@ -16,6 +16,7 @@ workspace = true
 [dev-dependencies]
 rho-test-helpers = { path = "../rho-test-helpers" }
 anyhow = "1.0.102"
+temp-env = "0.3"
 tempfile = "3"
 
 [dependencies]

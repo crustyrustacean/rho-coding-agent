@@ -625,24 +625,34 @@ mod tests {
     #[test]
     fn load_with_no_files_returns_defaults() {
         let dir = TempDir::new().unwrap();
-        let config = ConfigLoader::load(dir.path()).unwrap();
+        // Isolate from the user's real ~/.rho/config.toml.
+        temp_env::with_vars(
+            [
+                ("HOME", Some(dir.path().to_path_buf())),
+                ("USERPROFILE", Some(dir.path().to_path_buf())),
+                ("XDG_CONFIG_HOME", Some(dir.path().to_path_buf())),
+            ],
+            || {
+                let config = ConfigLoader::load(dir.path()).unwrap();
 
-        assert!(config.agent.model.is_none());
-        assert_eq!(config.agent.max_iterations, 32);
-        assert_eq!(config.agent.retry_budget, 4);
-        assert_eq!(config.agent.initial_backoff_ms, 500);
-        assert_eq!(config.agent.token_budget, 32_768);
-        assert!(config.provider.r#type.is_none());
-        assert!(config.provider.endpoint.is_none());
-        assert!(config.provider.api_key_env.is_none());
-        assert!(config.approval.per_tool.is_empty());
-        assert!(config.shell.denied_commands.is_empty());
-        assert!(config.sandbox.enabled);
-        assert!(config.context.scan_list.is_none());
-        assert!(config.egress.allowed_hosts.is_empty());
-        assert!(config.redaction.enabled);
-        assert!(config.redaction.custom_patterns.is_empty());
-        assert!(config.system_prompt.extensions.is_empty());
+                assert!(config.agent.model.is_none());
+                assert_eq!(config.agent.max_iterations, 32);
+                assert_eq!(config.agent.retry_budget, 4);
+                assert_eq!(config.agent.initial_backoff_ms, 500);
+                assert_eq!(config.agent.token_budget, 32_768);
+                assert!(config.provider.r#type.is_none());
+                assert!(config.provider.endpoint.is_none());
+                assert!(config.provider.api_key_env.is_none());
+                assert!(config.approval.per_tool.is_empty());
+                assert!(config.shell.denied_commands.is_empty());
+                assert!(config.sandbox.enabled);
+                assert!(config.context.scan_list.is_none());
+                assert!(config.egress.allowed_hosts.is_empty());
+                assert!(config.redaction.enabled);
+                assert!(config.redaction.custom_patterns.is_empty());
+                assert!(config.system_prompt.extensions.is_empty());
+            },
+        );
     }
 
     #[test]
