@@ -80,6 +80,15 @@ struct Cli {
     #[arg(long)]
     root: Option<std::path::PathBuf>,
 
+    /// Model API endpoint URL.
+    ///
+    /// Overrides the `[provider] endpoint` config value.
+    /// When set to a non-local host, the external provider consent
+    /// warning is automatically skipped (equivalent to
+    /// `--accept-external-provider`).
+    #[arg(long)]
+    endpoint: Option<String>,
+
     /// Skip the provider consent warning for external endpoints.
     ///
     /// By default, rho displays a consent prompt before connecting to a
@@ -87,6 +96,20 @@ struct Cli {
     /// automated workflows where consent has been pre-authorized.
     #[arg(long)]
     accept_external_provider: bool,
+
+    /// Environment variable containing the API key for bearer authentication.
+    ///
+    /// Overrides the `[provider] api_key_env` config value.
+    /// Ignored for local endpoints.
+    #[arg(long)]
+    api_key_env: Option<String>,
+
+    /// Maximum agent loop iterations before terminating.
+    ///
+    /// Overrides the `[agent] max_iterations` config value.
+    /// Defaults to 32.
+    #[arg(long)]
+    max_iterations: Option<u32>,
 
     /// Context window token budget.
     ///
@@ -158,11 +181,17 @@ async fn main() -> Result<()> {
     // Warn if the configured endpoint looks like a non-OpenAI-compatible API
     // (Anthropic Messages API, Google Gemini, etc.) — these require a proxy
     // that translates to OpenAI format.
-    let endpoint = rho_config
-        .provider
-        .endpoint
-        .as_deref()
-        .unwrap_or("http://localhost:1234/v1/chat/completions");
+    //
+    // CLI `--endpoint` overrides config `provider.endpoint`.
+    // When the user explicitly sets an endpoint via CLI, external provider
+    // consent is implied (they've already chosen where to connect).
+    let endpoint = cli.endpoint.as_deref().unwrap_or_else(|| {
+        rho_config
+            .provider
+            .endpoint
+            .as_deref()
+            .unwrap_or("http://localhost:1234/v1/chat/completions")
+    });
 
     if let Some(ref provider_type) = rho_config.provider.r#type {
         let non_openai = [
@@ -170,8 +199,6 @@ async fn main() -> Result<()> {
             "google",
             "gemini",
             "cohere",
-            "mistral",
-            "together",
             "anyscale",
             "perplexity",
             "bedrock",
@@ -209,7 +236,7 @@ async fn main() -> Result<()> {
     // --- Project context files ---
     let system_prompt = load_system_prompt(&sandbox, &cli);
 
-    let client = resolve_api_key(&rho_config).map_or_else(
+    let client = resolve_api_key(&rho_config, cli.api_key_env.as_deref()).map_or_else(
         || LocalChatClient::with_endpoint_and_egress(endpoint, rho_config.egress.clone()),
         |key| {
             LocalChatClient::with_endpoint_egress_and_key(
@@ -222,7 +249,10 @@ async fn main() -> Result<()> {
 
     // --- Session ---
     let model = resolve_model(&rho_config, cli.model.as_ref(), &client).await?;
-    let config = AgentConfig::from_config(&rho_config);
+    let mut config = AgentConfig::from_config(&rho_config);
+    if let Some(max_iterations) = cli.max_iterations {
+        config.max_iterations = max_iterations;
+    }
 
     // --- Secret redaction ---
     let redactor = rho_core::Redactor::from_config(
@@ -414,7 +444,7 @@ fn log_budget_diagnostics(session: &rho_core::Session) {
 
 /// Resolve the model identifier.
 ///
-/// Priority: config `agent.model` → CLI `--model` → auto-detect via `/v1/models`.
+/// Priority: CLI `--model` → config `agent.model` → auto-detect via `/v1/models`.
 ///
 /// Returns an error if auto-detection is needed but the server is unreachable
 /// or has no models loaded.
@@ -423,14 +453,14 @@ async fn resolve_model(
     cli_model: Option<&String>,
     client: &LocalChatClient,
 ) -> Result<String> {
-    // 1. Config takes highest priority.
-    if let Some(model) = config.agent.model.as_deref() {
-        eprintln!("using model from config: {model}");
-        return Ok(model.to_owned());
-    }
-    // 2. CLI flag.
+    // 1. CLI flag takes highest priority.
     if let Some(model) = cli_model {
         eprintln!("using model from --model: {model}");
+        return Ok(model.to_owned());
+    }
+    // 2. Config.
+    if let Some(model) = config.agent.model.as_deref() {
+        eprintln!("using model from config: {model}");
         return Ok(model.to_owned());
     }
     // 3. Auto-detect from the server.
@@ -522,10 +552,11 @@ fn load_system_prompt(sandbox: &SandboxRoot, cli: &Cli) -> String {
 /// Display a consent warning and read confirmation for external providers.
 ///
 /// Returns `Ok(())` if the user consents or if the provider is local.
-/// Returns `Ok(())` without prompting if `--accept-external-provider` is set.
-/// Prints a message and returns `Err` if the user declines.
+/// Returns `Ok(())` without prompting if `--accept-external-provider` is set
+/// or if `--endpoint` was explicitly provided via CLI (explicit endpoint
+/// implies consent). Prints a message and returns `Err` if the user declines.
 fn check_provider_consent(endpoint: &str, cli: &Cli) -> Result<()> {
-    if is_local_endpoint(endpoint) || cli.accept_external_provider {
+    if is_local_endpoint(endpoint) || cli.accept_external_provider || cli.endpoint.is_some() {
         return Ok(());
     }
     eprintln!();
@@ -553,11 +584,11 @@ fn check_provider_consent(endpoint: &str, cli: &Cli) -> Result<()> {
 
 /// Resolve the API key from the provider configuration.
 ///
-/// Reads the environment variable named in `provider.api_key_env` and returns
-/// the value. Returns `None` if no env var is configured or the variable is
-/// not set.
-fn resolve_api_key(rho_config: &RhoConfig) -> Option<String> {
-    let env_var = rho_config.provider.api_key_env.as_deref()?;
+/// CLI `--api-key-env` takes priority over config `provider.api_key_env`.
+/// Reads the named environment variable and returns the value.
+/// Returns `None` if no env var is configured or the variable is not set.
+fn resolve_api_key(rho_config: &RhoConfig, cli_api_key_env: Option<&str>) -> Option<String> {
+    let env_var = cli_api_key_env.or(rho_config.provider.api_key_env.as_deref())?;
     let key = std::env::var(env_var).ok()?;
     if key.is_empty() { None } else { Some(key) }
 }
