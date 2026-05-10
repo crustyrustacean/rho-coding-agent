@@ -27,7 +27,7 @@ struct Cli {
 
     /// Task IDs to run (comma-separated). If omitted, all tasks are run.
     ///
-    /// Example: --tasks fix_e0308_type_mismatch,fix_unused_import
+    /// Example: --tasks `fix_e0308_type_mismatch,fix_unused_import`
     #[arg(short = 't', long)]
     tasks: Option<String>,
 
@@ -68,8 +68,9 @@ async fn main() -> anyhow::Result<()> {
     // --- Tracing ---
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,rustls=warn,hyper=warn,reqwest=warn")),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                tracing_subscriber::EnvFilter::new("info,rustls=warn,hyper=warn,reqwest=warn")
+            }),
         )
         .with_writer(std::io::stderr)
         .init();
@@ -81,11 +82,10 @@ async fn main() -> anyhow::Result<()> {
 
     // --- Resolve tasks ---
     let all_tasks = all_tasks();
-    let task_ids: Vec<String> = cli
-        .tasks
-        .as_deref()
-        .map(|s| s.split(',').map(str::trim).map(String::from).collect())
-        .unwrap_or_else(|| all_tasks.iter().map(|t| t.id().to_string()).collect());
+    let task_ids: Vec<String> = cli.tasks.as_deref().map_or_else(
+        || all_tasks.iter().map(|t| t.id().to_string()).collect(),
+        |s| s.split(',').map(str::trim).map(String::from).collect(),
+    );
     let tasks: Vec<_> = all_tasks
         .into_iter()
         .filter(|t| task_ids.iter().any(|id| id == t.id()))
@@ -126,7 +126,7 @@ async fn main() -> anyhow::Result<()> {
             let json = serde_json::to_string_pretty(&runs)?;
             println!("{json}");
         }
-        "table" | _ => {
+        _ => {
             comparison::print_table(&runs);
         }
     }
@@ -167,6 +167,7 @@ async fn resolve_models(cli: &Cli) -> anyhow::Result<Vec<String>> {
     Ok(ids)
 }
 
+/// Build a comma-separated string of all available task IDs.
 fn all_task_ids_csv() -> String {
     rho_eval::tasks::all_tasks()
         .iter()

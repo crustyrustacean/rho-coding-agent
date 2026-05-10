@@ -8,8 +8,8 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use rho_core::{
     AgentConfig, ApprovalGate, AutoApprovePolicy, ChatClient, ChatRequest, LocalChatClient,
-    ModelResponse, ModelToolCall, RhoConfig, SandboxRoot, Session, TokenBudget, ToolRisk,
-    ToolRegistry, base_prompt, compact_prompt, run_loop,
+    ModelResponse, ModelToolCall, RhoConfig, SandboxRoot, Session, TokenBudget, ToolRegistry,
+    ToolRisk, base_prompt, compact_prompt, run_loop,
 };
 use rho_eval::{EvalRun, EvalTask, TaskMetrics, TaskOutcome};
 use rho_tools::register_all;
@@ -26,13 +26,18 @@ impl ApprovalGate for BenchApprovalGate {
 
 /// A `ChatClient` wrapper that counts token usage across all requests.
 struct CountingClient {
+    /// The underlying model client.
     inner: LocalChatClient,
+    /// Cumulative prompt tokens across all requests.
     prompt_tokens: AtomicU32,
+    /// Cumulative completion tokens across all requests.
     completion_tokens: AtomicU32,
+    /// Total number of API requests made.
     request_count: AtomicU32,
 }
 
 impl CountingClient {
+    /// Create a new counting client wrapping the given inner client.
     fn new(inner: LocalChatClient) -> Self {
         Self {
             inner,
@@ -42,6 +47,8 @@ impl CountingClient {
         }
     }
 
+    /// Snapshot the current token and request counts.
+    #[must_use]
     fn snapshot(&self) -> (u32, u32, u32) {
         (
             self.prompt_tokens.load(Ordering::Relaxed),
@@ -55,14 +62,17 @@ impl CountingClient {
 impl ChatClient for CountingClient {
     async fn chat(&self, request: ChatRequest) -> rho_core::error::Result<ModelResponse> {
         let response = self.inner.chat(request).await?;
-        self.prompt_tokens
-            .fetch_add(response.usage.prompt_tokens as u32, Ordering::Relaxed);
-        self.completion_tokens
-            .fetch_add(response.usage.completion_tokens as u32, Ordering::Relaxed);
+        self.prompt_tokens.fetch_add(
+            u32::try_from(response.usage.prompt_tokens).unwrap_or(u32::MAX),
+            Ordering::Relaxed,
+        );
+        self.completion_tokens.fetch_add(
+            u32::try_from(response.usage.completion_tokens).unwrap_or(u32::MAX),
+            Ordering::Relaxed,
+        );
         self.request_count.fetch_add(1, Ordering::Relaxed);
         Ok(response)
     }
-
 }
 
 /// Run all (model × task × repeat) combinations and collect eval runs.
@@ -87,7 +97,7 @@ pub async fn run_benchmarks(
 
     for model_id in model_ids {
         eprintln!("━━━ Model: {model_id} ━━━");
-        let mut run = EvalRun::new(&prompt_base, &prompt_base).with_model(model_id);
+        let mut run = EvalRun::new(prompt_base, prompt_base).with_model(model_id);
         let client = LocalChatClient::with_endpoint(endpoint);
 
         for task in tasks {
@@ -140,11 +150,7 @@ pub async fn run_benchmarks(
             }
         }
 
-        eprintln!(
-            "  Result: {}/{} passed",
-            run.pass_count(),
-            run.total()
-        );
+        eprintln!("  Result: {}/{} passed", run.pass_count(), run.total());
         eprintln!();
         runs.push(run);
     }
@@ -168,10 +174,9 @@ async fn run_single_task(
 ) -> Result<TaskOutcome> {
     // Create a temp directory for this task run.
     let project_dir =
-        create_task_project(task).await.context("failed to create task project directory")?;
+        create_task_project(task).context("failed to create task project directory")?;
 
-    let sandbox =
-        SandboxRoot::new(&project_dir).context("failed to create sandbox root")?;
+    let sandbox = SandboxRoot::new(&project_dir).context("failed to create sandbox root")?;
 
     // Load a minimal rho config with all tools set to auto.
     let rho_config = bench_config(max_iterations, token_budget);
@@ -257,7 +262,7 @@ async fn run_single_task(
     let agent_iterations = count_assistant_entries(&session);
 
     let metrics = TaskMetrics {
-        duration_ms: elapsed.as_millis() as u64,
+        duration_ms: u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
         token_input,
         token_output,
         agent_iterations,
@@ -265,8 +270,12 @@ async fn run_single_task(
     };
 
     // Read back the files from disk and verify.
-    let final_files_owned = read_project_files(&project_dir, task.initial_files().iter().map(|(p, _)| *p));
-    let final_refs: Vec<(&str, &str)> = final_files_owned.iter().map(|(p, c)| (p.as_str(), c.as_str())).collect();
+    let final_files_owned =
+        read_project_files(&project_dir, task.initial_files().iter().map(|(p, _)| *p));
+    let final_refs: Vec<(&str, &str)> = final_files_owned
+        .iter()
+        .map(|(p, c)| (p.as_str(), c.as_str()))
+        .collect();
     let mut outcome = task.verify(&final_refs);
     outcome.metrics = metrics;
 
@@ -299,7 +308,7 @@ fn count_assistant_entries(session: &Session) -> u32 {
 }
 
 /// Create a temporary Cargo project directory with the task's initial files.
-async fn create_task_project(task: &dyn EvalTask) -> Result<PathBuf> {
+fn create_task_project(task: &dyn EvalTask) -> Result<PathBuf> {
     let dir = std::env::temp_dir().join(format!("rho-bench-{}", task.id()));
 
     // Remove any previous run.
@@ -318,10 +327,10 @@ async fn create_task_project(task: &dyn EvalTask) -> Result<PathBuf> {
         let full_path = dir.join(rel_path);
         if let Some(parent) = full_path.parent() {
             std::fs::create_dir_all(parent)
-                .with_context(|| format!("cannot create directory {parent:?}"))?;
+                .with_context(|| format!("cannot create directory {}", parent.display()))?;
         }
         std::fs::write(&full_path, content)
-            .with_context(|| format!("cannot write {full_path:?}"))?;
+            .with_context(|| format!("cannot write {}", full_path.display()))?;
     }
 
     Ok(dir)
@@ -333,11 +342,18 @@ async fn create_task_project(task: &dyn EvalTask) -> Result<PathBuf> {
 fn bench_config(max_iterations: u32, token_budget: Option<u32>) -> RhoConfig {
     use rho_core::config::{AgentLoopConfig, ApprovalAction, ApprovalConfig};
 
-    let mut agent = AgentLoopConfig::default();
-    agent.max_iterations = max_iterations;
-    if let Some(budget) = token_budget {
-        agent.token_budget = budget;
-    }
+    let agent = if let Some(budget) = token_budget {
+        AgentLoopConfig {
+            max_iterations,
+            token_budget: budget,
+            ..AgentLoopConfig::default()
+        }
+    } else {
+        AgentLoopConfig {
+            max_iterations,
+            ..AgentLoopConfig::default()
+        }
+    };
 
     let mut per_tool = std::collections::HashMap::new();
     for name in [
@@ -371,7 +387,9 @@ fn read_project_files<'a>(
     rel_paths
         .filter_map(|rel| {
             let full = project_dir.join(rel);
-            std::fs::read_to_string(&full).ok().map(|content| (rel.to_string(), content))
+            std::fs::read_to_string(&full)
+                .ok()
+                .map(|content| (rel.to_string(), content))
         })
         .collect()
 }

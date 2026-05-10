@@ -34,6 +34,7 @@ impl EvalRun {
     }
 
     /// Set the model identifier.
+    #[must_use]
     pub fn with_model(mut self, model_id: impl Into<String>) -> Self {
         self.model_id = model_id.into();
         self
@@ -93,7 +94,10 @@ impl EvalRun {
 
     /// Total agent loop iterations across all tasks.
     pub fn total_agent_iterations(&self) -> u32 {
-        self.outcomes.iter().map(|o| o.metrics.agent_iterations).sum()
+        self.outcomes
+            .iter()
+            .map(|o| o.metrics.agent_iterations)
+            .sum()
     }
 }
 

@@ -41,8 +41,7 @@ pub fn print_table(runs: &[EvalRun]) {
         let total = run.total();
 
         println!(
-            "{:<28} {passed:>2}/{total:<4} {failed:>2}/{total:<4} {errored:>2}/{total:<4} {:>8} {:>10}",
-            label, time_str, token_str,
+            "{label:<28} {passed:>2}/{total:<4} {failed:>2}/{total:<4} {errored:>2}/{total:<4} {time_str:>8} {token_str:>10}",
         );
     }
 
@@ -71,14 +70,10 @@ fn print_task_breakdown(runs: &[EvalRun]) {
     let mut header = format!("{:<30}", "Task");
     for run in runs {
         let label = truncate_model(&run.model_id, model_width - 1);
-        write!(header, " {:>model_width$}", label).unwrap();
+        write!(header, " {label:>model_width$}").unwrap();
     }
     println!("{header}");
-    println!(
-        "{:-<30}{}",
-        "",
-        "─".repeat(model_width * runs.len())
-    );
+    println!("{:-<30}{}", "", "─".repeat(model_width * runs.len()));
 
     for task_id in &task_ids {
         let mut row = format!("{:<30}", truncate_task(task_id, 30));
@@ -98,7 +93,7 @@ fn print_task_breakdown(runs: &[EvalRun]) {
                 },
                 None => "  —      ".to_string(),
             };
-            write!(row, " {:>model_width$}", cell).unwrap();
+            write!(row, " {cell:>model_width$}").unwrap();
         }
         println!("{row}");
     }
@@ -138,6 +133,7 @@ fn format_duration(ms: u64) -> String {
     if ms < 1000 {
         format!("{ms}ms")
     } else {
+        #[allow(clippy::cast_precision_loss)]
         let secs = ms as f64 / 1000.0;
         format!("{secs:.1}s")
     }
@@ -148,7 +144,7 @@ fn format_tokens(tokens: u32) -> String {
     if tokens < 1000 {
         format!("{tokens}")
     } else {
-        format!("{:.1}k", tokens as f64 / 1000.0)
+        format!("{:.1}k", f64::from(tokens) / 1000.0)
     }
 }
 

@@ -34,7 +34,7 @@ pub struct TaskMetrics {
     pub token_output: u32,
     /// Number of agent loop iterations (tool-call rounds).
     pub agent_iterations: u32,
-    /// Why the model stopped generating (e.g. "stop", "tool_calls", "length").
+    /// Why the model stopped generating (e.g. "stop", "`tool_calls`", "length").
     pub finish_reason: Option<String>,
 }
 
