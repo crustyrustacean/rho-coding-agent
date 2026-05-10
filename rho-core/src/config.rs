@@ -5,7 +5,7 @@
 //!
 //! | Source | Path | Purpose |
 //! |---|---|---|
-//! | User-level | `~/.rho/config.toml` | Global defaults: default model, API endpoint, provider, egress allowlist |
+//! | User-level | `~/.rho/config.toml` | Global defaults: default model, API endpoint, provider, provider settings |
 //! | Project-level | `.rho/config.toml` (relative to sandbox root) | Per-project: model, approval policies, command denylist, sandbox, context files |
 //!
 //! # API key handling
@@ -27,7 +27,7 @@
 //! For struct fields: if the project sets a field, it wins; if not, the
 //! user-level value applies; if neither sets it, the hardcoded default applies.
 //!
-//! For `Vec` fields (denylist commands, egress hosts, context scan list):
+//! For `Vec` fields (denylist commands, context scan list):
 //! the project-level list **replaces** the user-level list, it does not
 //! append. This avoids surprising composition effects and keeps overrides
 //! predictable.
@@ -56,8 +56,6 @@ pub struct RhoConfig {
     pub sandbox: SandboxConfig,
     /// Project context file settings.
     pub context: ContextConfig,
-    /// Network egress control.
-    pub egress: EgressConfig,
     /// Secret redaction settings.
     pub redaction: RedactionConfig,
     /// System prompt extensions.
@@ -262,35 +260,6 @@ pub struct ContextConfig {
     pub scan_list: Option<Vec<String>>,
 }
 
-// ── EgressConfig ──────────────────────────────────────────────────────────────
-
-/// Network egress control.
-///
-/// The egress allowlist controls which hosts the agent is permitted to contact.
-/// `LocalChatClient` defaults to `localhost` only. External providers add
-/// their API hostname to this list.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-pub struct EgressConfig {
-    /// Hostnames the agent is allowed to contact (in addition to `localhost`).
-    ///
-    /// `localhost` is always allowed and does not need to be listed.
-    #[serde(default)]
-    pub allowed_hosts: Vec<String>,
-}
-
-impl EgressConfig {
-    /// Check whether a hostname is permitted by this egress allowlist.
-    ///
-    /// `localhost`, `127.0.0.1`, and `::1` are always allowed. Other hosts
-    /// must appear in `allowed_hosts`.
-    pub fn is_host_allowed(&self, host: &str) -> bool {
-        if host == "localhost" || host == "127.0.0.1" || host == "::1" {
-            return true;
-        }
-        self.allowed_hosts.iter().any(|h| h == host)
-    }
-}
-
 // ── RedactionConfig ───────────────────────────────────────────────────────────
 
 /// Secret redaction settings.
@@ -358,9 +327,6 @@ struct WireConfig {
     /// Context file settings.
     #[serde(default)]
     context: Option<ContextConfig>,
-    /// Egress settings.
-    #[serde(default)]
-    egress: Option<EgressConfig>,
     /// Redaction settings.
     #[serde(default)]
     redaction: Option<WireRedactionConfig>,
@@ -514,7 +480,6 @@ impl ConfigLoader {
             },
             sandbox: project.sandbox.or(user.sandbox).unwrap_or_default(),
             context: project.context.or(user.context).unwrap_or_default(),
-            egress: project.egress.or(user.egress).unwrap_or_default(),
             redaction: {
                 let ur = user.redaction.unwrap_or_default();
                 let pr = project.redaction.unwrap_or_default();
@@ -605,13 +570,6 @@ impl RhoConfig {
             .as_ref()
             .and_then(|var| std::env::var(var).ok())
     }
-
-    /// Check whether a hostname is permitted by the egress allowlist.
-    ///
-    /// Delegates to [`EgressConfig::is_host_allowed`].
-    pub fn is_host_allowed(&self, host: &str) -> bool {
-        self.egress.is_host_allowed(host)
-    }
 }
 
 #[cfg(test)]
@@ -647,7 +605,6 @@ mod tests {
                 assert!(config.shell.denied_commands.is_empty());
                 assert!(config.sandbox.enabled);
                 assert!(config.context.scan_list.is_none());
-                assert!(config.egress.allowed_hosts.is_empty());
                 assert!(config.redaction.enabled);
                 assert!(config.redaction.custom_patterns.is_empty());
                 assert!(config.system_prompt.extensions.is_empty());
@@ -658,10 +615,18 @@ mod tests {
     #[test]
     fn load_project_config_overrides_defaults() {
         let dir = TempDir::new().unwrap();
-        let rho_dir = dir.path().join(".rho");
-        std::fs::create_dir_all(&rho_dir).unwrap();
+        // Isolate from the user's real ~/.rho/config.toml.
+        temp_env::with_vars(
+            [
+                ("HOME", Some(dir.path().to_path_buf())),
+                ("USERPROFILE", Some(dir.path().to_path_buf())),
+                ("XDG_CONFIG_HOME", Some(dir.path().to_path_buf())),
+            ],
+            || {
+                let rho_dir = dir.path().join(".rho");
+                std::fs::create_dir_all(&rho_dir).unwrap();
 
-        let toml_text = r#"
+                let toml_text = r#"
 [agent]
 model = "gpt-4o"
 max_iterations = 10
@@ -684,54 +649,48 @@ enabled = true
 [context]
 scan_list = ["AGENTS.md", "CLAUDE.md"]
 
-[egress]
-allowed_hosts = ["api.openai.com"]
-
 [redaction]
 enabled = false
 
 [system_prompt]
 extensions = ["Always use PowerShell 7."]
 "#;
-        let mut f = std::fs::File::create(rho_dir.join("config.toml")).unwrap();
-        f.write_all(toml_text.as_bytes()).unwrap();
+                let mut f = std::fs::File::create(rho_dir.join("config.toml")).unwrap();
+                f.write_all(toml_text.as_bytes()).unwrap();
 
-        let config = ConfigLoader::load(dir.path()).unwrap();
+                let config = ConfigLoader::load(dir.path()).unwrap();
 
-        assert_eq!(config.agent.model.as_deref(), Some("gpt-4o"));
-        assert_eq!(config.agent.max_iterations, 10);
-        assert_eq!(config.provider.r#type.as_deref(), Some("openai"));
-        assert_eq!(
-            config.provider.endpoint.as_deref(),
-            Some("https://api.openai.com/v1/chat/completions")
-        );
-        assert_eq!(
-            config.provider.api_key_env.as_deref(),
-            Some("OPENAI_API_KEY")
-        );
-        assert_eq!(
-            config.approval.per_tool.get("run_command"),
-            Some(&ApprovalAction::Ask)
-        );
-        assert_eq!(
-            config.approval.per_tool.get("write_file"),
-            Some(&ApprovalAction::Deny)
-        );
-        assert_eq!(
-            config.shell.denied_commands,
-            vec!["Remove-Item", "Invoke-WebRequest"]
-        );
-        assert!(config.sandbox.enabled);
-        assert_eq!(
-            config.context.scan_list,
-            Some(vec!["AGENTS.md".to_owned(), "CLAUDE.md".to_owned()])
-        );
-        assert_eq!(config.egress.allowed_hosts, vec!["api.openai.com"]);
-        assert!(!config.redaction.enabled);
-        assert!(config.redaction.custom_patterns.is_empty());
-        assert_eq!(
-            config.system_prompt.extensions,
-            vec!["Always use PowerShell 7."]
+                assert_eq!(config.agent.model.as_deref(), Some("gpt-4o"));
+                assert_eq!(config.agent.max_iterations, 10);
+                assert_eq!(config.provider.r#type.as_deref(), Some("openai"));
+                assert_eq!(
+                    config.provider.endpoint.as_deref(),
+                    Some("https://api.openai.com/v1/chat/completions")
+                );
+                assert_eq!(
+                    config.provider.api_key_env.as_deref(),
+                    Some("OPENAI_API_KEY")
+                );
+                assert_eq!(
+                    config.approval.per_tool.get("run_command"),
+                    Some(&ApprovalAction::Ask)
+                );
+                assert_eq!(
+                    config.approval.per_tool.get("write_file"),
+                    Some(&ApprovalAction::Deny)
+                );
+                assert_eq!(
+                    config.shell.denied_commands,
+                    vec!["Remove-Item", "Invoke-WebRequest"]
+                );
+                assert!(config.sandbox.enabled);
+                assert_eq!(
+                    config.context.scan_list,
+                    Some(vec!["AGENTS.md".to_owned(), "CLAUDE.md".to_owned()])
+                );
+                assert!(!config.redaction.enabled);
+                assert!(config.redaction.custom_patterns.is_empty());
+            },
         );
     }
 
@@ -859,70 +818,6 @@ future_unknown_field = "surprise"
         assert!(result.is_ok(), "unknown scalar fields should be ignored");
     }
 
-    // ── Egress allowlist ───────────────────────────────────────────────────
-
-    #[test]
-    fn localhost_always_allowed() {
-        let config = RhoConfig::default();
-        assert!(config.is_host_allowed("localhost"));
-        assert!(config.is_host_allowed("127.0.0.1"));
-        assert!(config.is_host_allowed("::1"));
-    }
-
-    #[test]
-    fn unknown_host_denied_by_default() {
-        let config = RhoConfig::default();
-        assert!(!config.is_host_allowed("api.openai.com"));
-    }
-
-    #[test]
-    fn allowed_hosts_permitted() {
-        let config = RhoConfig {
-            egress: EgressConfig {
-                allowed_hosts: vec!["api.openai.com".to_owned()],
-            },
-            ..Default::default()
-        };
-        assert!(config.is_host_allowed("api.openai.com"));
-        assert!(!config.is_host_allowed("api.anthropic.com"));
-    }
-
-    // ── EgressConfig::is_host_allowed ───────────────────────────────────────
-
-    #[test]
-    fn egress_config_localhost_always_allowed() {
-        let egress = EgressConfig::default();
-        assert!(egress.is_host_allowed("localhost"));
-        assert!(egress.is_host_allowed("127.0.0.1"));
-        assert!(egress.is_host_allowed("::1"));
-    }
-
-    #[test]
-    fn egress_config_unknown_host_denied_by_default() {
-        let egress = EgressConfig::default();
-        assert!(!egress.is_host_allowed("api.openai.com"));
-        assert!(!egress.is_host_allowed("evil.example.com"));
-    }
-
-    #[test]
-    fn egress_config_allowed_hosts_permitted() {
-        let egress = EgressConfig {
-            allowed_hosts: vec!["api.openai.com".to_owned()],
-        };
-        assert!(egress.is_host_allowed("api.openai.com"));
-        assert!(!egress.is_host_allowed("api.anthropic.com"));
-    }
-
-    #[test]
-    fn egress_config_multiple_allowed_hosts() {
-        let egress = EgressConfig {
-            allowed_hosts: vec!["api.openai.com".to_owned(), "api.anthropic.com".to_owned()],
-        };
-        assert!(egress.is_host_allowed("api.openai.com"));
-        assert!(egress.is_host_allowed("api.anthropic.com"));
-        assert!(!egress.is_host_allowed("api.deepseek.com"));
-    }
-
     // ── API key resolution ─────────────────────────────────────────────────
 
     #[test]
@@ -1013,46 +908,66 @@ run_command = "deny"
     #[test]
     fn partial_agent_config_preserves_defaults() {
         let dir = TempDir::new().unwrap();
-        let rho_dir = dir.path().join(".rho");
-        std::fs::create_dir_all(&rho_dir).unwrap();
+        // Isolate from the user real ~/.rho/config.toml.
+        temp_env::with_vars(
+            [
+                ("HOME", Some(dir.path().to_path_buf())),
+                ("USERPROFILE", Some(dir.path().to_path_buf())),
+                ("XDG_CONFIG_HOME", Some(dir.path().to_path_buf())),
+            ],
+            || {
+                let rho_dir = dir.path().join(".rho");
+                std::fs::create_dir_all(&rho_dir).unwrap();
 
-        // Only set model, everything else should be default.
-        std::fs::write(
-            rho_dir.join("config.toml"),
-            r#"
+                // Only set model, everything else should be default.
+                std::fs::write(
+                    rho_dir.join("config.toml"),
+                    r#"
 [agent]
 model = "test-model"
 "#,
-        )
-        .unwrap();
+                )
+                .unwrap();
 
-        let config = ConfigLoader::load(dir.path()).unwrap();
-        assert_eq!(config.agent.model.as_deref(), Some("test-model"));
-        assert_eq!(config.agent.max_iterations, 32);
-        assert_eq!(config.agent.retry_budget, 4);
-        assert_eq!(config.agent.initial_backoff_ms, 500);
-        assert_eq!(config.agent.token_budget, 32_768);
+                let config = ConfigLoader::load(dir.path()).unwrap();
+                assert_eq!(config.agent.model.as_deref(), Some("test-model"));
+                assert_eq!(config.agent.max_iterations, 32);
+                assert_eq!(config.agent.retry_budget, 4);
+                assert_eq!(config.agent.initial_backoff_ms, 500);
+                assert_eq!(config.agent.token_budget, 32_768);
+            },
+        );
     }
 
     #[test]
     fn token_budget_from_config() {
         let dir = TempDir::new().unwrap();
-        let rho_dir = dir.path().join(".rho");
-        std::fs::create_dir_all(&rho_dir).unwrap();
+        // Isolate from the user real ~/.rho/config.toml.
+        temp_env::with_vars(
+            [
+                ("HOME", Some(dir.path().to_path_buf())),
+                ("USERPROFILE", Some(dir.path().to_path_buf())),
+                ("XDG_CONFIG_HOME", Some(dir.path().to_path_buf())),
+            ],
+            || {
+                let rho_dir = dir.path().join(".rho");
+                std::fs::create_dir_all(&rho_dir).unwrap();
 
-        std::fs::write(
-            rho_dir.join("config.toml"),
-            r"
+                std::fs::write(
+                    rho_dir.join("config.toml"),
+                    r"
 [agent]
 token_budget = 65536
 ",
-        )
-        .unwrap();
+                )
+                .unwrap();
 
-        let config = ConfigLoader::load(dir.path()).unwrap();
-        assert_eq!(config.agent.token_budget, 65_536);
-        // Other agent fields should still be defaults.
-        assert_eq!(config.agent.max_iterations, 32);
+                let config = ConfigLoader::load(dir.path()).unwrap();
+                assert_eq!(config.agent.token_budget, 65_536);
+                // Other agent fields should still be defaults.
+                assert_eq!(config.agent.max_iterations, 32);
+            },
+        );
     }
 
     #[test]
@@ -1099,28 +1014,38 @@ token_budget = 16384
     #[test]
     fn config_with_only_provider_section() {
         let dir = TempDir::new().unwrap();
-        let rho_dir = dir.path().join(".rho");
-        std::fs::create_dir_all(&rho_dir).unwrap();
+        // Isolate from the user real ~/.rho/config.toml.
+        temp_env::with_vars(
+            [
+                ("HOME", Some(dir.path().to_path_buf())),
+                ("USERPROFILE", Some(dir.path().to_path_buf())),
+                ("XDG_CONFIG_HOME", Some(dir.path().to_path_buf())),
+            ],
+            || {
+                let rho_dir = dir.path().join(".rho");
+                std::fs::create_dir_all(&rho_dir).unwrap();
 
-        std::fs::write(
-            rho_dir.join("config.toml"),
-            r#"
+                std::fs::write(
+                    rho_dir.join("config.toml"),
+                    r#"
 [provider]
 type = "local"
 endpoint = "http://localhost:8080/v1/chat/completions"
 "#,
-        )
-        .unwrap();
+                )
+                .unwrap();
 
-        let config = ConfigLoader::load(dir.path()).unwrap();
-        assert_eq!(config.provider.r#type.as_deref(), Some("local"));
-        assert_eq!(
-            config.provider.endpoint.as_deref(),
-            Some("http://localhost:8080/v1/chat/completions")
+                let config = ConfigLoader::load(dir.path()).unwrap();
+                assert_eq!(config.provider.r#type.as_deref(), Some("local"));
+                assert_eq!(
+                    config.provider.endpoint.as_deref(),
+                    Some("http://localhost:8080/v1/chat/completions")
+                );
+                // Everything else is default.
+                assert!(config.agent.model.is_none());
+                assert!(config.sandbox.enabled);
+            },
         );
-        // Everything else is default.
-        assert!(config.agent.model.is_none());
-        assert!(config.sandbox.enabled);
     }
 
     // ── Redaction config ──────────────────────────────────────────────────

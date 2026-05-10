@@ -442,21 +442,6 @@ fn config_approval_falls_back_to_default() {
     assert!(policy.requires_approval(&ToolName::from("run_command"), ToolRisk::Destructive));
 }
 
-// ── Config egress allowlist ───────────────────────────────────────────────────
-
-#[test]
-fn egress_localhost_always_allowed() {
-    let config = RhoConfig::default();
-    assert!(config.is_host_allowed("localhost"));
-    assert!(config.is_host_allowed("127.0.0.1"));
-}
-
-#[test]
-fn egress_unknown_host_blocked_by_default() {
-    let config = RhoConfig::default();
-    assert!(!config.is_host_allowed("api.openai.com"));
-}
-
 // ── Config sandbox opt-out ────────────────────────────────────────────────────
 
 #[test]

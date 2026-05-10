@@ -92,8 +92,7 @@ pub use approval::{
 pub use client::{ChatClient, LocalChatClient, ModelInfo, ModelList};
 pub use config::{
     AgentLoopConfig, ApprovalAction, ApprovalConfig, ConfigLoadError, ConfigLoader, ContextConfig,
-    EgressConfig, ProviderConfig, RedactionConfig, RhoConfig, SandboxConfig, ShellConfig,
-    SystemPromptConfig,
+    ProviderConfig, RedactionConfig, RhoConfig, SandboxConfig, ShellConfig, SystemPromptConfig,
 };
 pub use context::{ContextManager, SlidingWindowContextManager, TokenBudget};
 pub use context_files::{ContextFile, ContextScanner, TrustStore, compose_system_prompt};

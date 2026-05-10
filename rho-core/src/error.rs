@@ -48,13 +48,6 @@ pub enum RhoError {
     #[error("cancelled")]
     Cancelled,
 
-    /// A network request was blocked by the egress policy.
-    #[error("egress blocked: {host}")]
-    EgressBlocked {
-        /// The hostname that was blocked.
-        host: String,
-    },
-
     /// The model API returned a response that violates the expected protocol.
     ///
     /// For example, the model returned an empty `tool_calls` array or a

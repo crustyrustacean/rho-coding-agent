@@ -1,6 +1,5 @@
 //! The [`ChatClient`] trait and [`LocalChatClient`] default implementation.
 
-use crate::config::EgressConfig;
 use crate::error::{Result, RhoError};
 use crate::request::ChatRequest;
 use crate::response::ModelResponse;
@@ -28,13 +27,6 @@ pub trait ChatClient: Send + Sync {
 /// (`OpenRouter`, `OpenAI`, `DeepInfra`, `Groq`, etc.) — anything that speaks
 /// the `OpenAI` wire format.
 ///
-/// # Egress enforcement
-///
-/// When constructed with [`LocalChatClient::with_egress`], the client checks
-/// the resolved host of the endpoint URL against the egress allowlist before
-/// sending any request. Requests to non-allowed hosts are rejected immediately
-/// with an error.
-///
 /// # Bearer authentication
 ///
 /// When an API key is provided, it is sent as an `Authorization: Bearer`
@@ -46,8 +38,6 @@ pub struct LocalChatClient {
     http_client: Client,
     /// The model API endpoint URL.
     endpoint: String,
-    /// Egress allowlist. When `None`, all hosts are permitted (legacy mode).
-    egress: Option<EgressConfig>,
     /// Optional API key for bearer authentication.
     ///
     /// When `Some`, sent as `Authorization: Bearer <key>` with each request.
@@ -65,63 +55,27 @@ impl LocalChatClient {
         Self {
             http_client: Client::new(),
             endpoint: "http://localhost:1234/v1/chat/completions".to_owned(),
-            egress: None,
             api_key: None,
         }
     }
 
     /// Create a client at a custom endpoint URL.
-    ///
-    /// No egress enforcement is applied — all hosts are permitted.
-    /// Use [`LocalChatClient::with_endpoint_and_egress`] to enforce the
-    /// egress allowlist.
     pub fn with_endpoint(endpoint: impl Into<String>) -> Self {
         Self {
             http_client: Client::new(),
             endpoint: endpoint.into(),
-            egress: None,
             api_key: None,
-        }
-    }
-
-    /// Create a client at a custom endpoint URL with egress enforcement
-    /// and optional bearer authentication.
-    ///
-    /// Before each request, the host portion of the endpoint URL is checked
-    /// against the egress allowlist. Requests to non-allowed hosts are
-    /// rejected with an error.
-    pub fn with_endpoint_egress_and_key(
-        endpoint: impl Into<String>,
-        egress: EgressConfig,
-        api_key: Option<String>,
-    ) -> Self {
-        Self {
-            http_client: Client::new(),
-            endpoint: endpoint.into(),
-            egress: Some(egress),
-            api_key,
         }
     }
 
     /// Create a client at a custom endpoint URL with optional bearer
     /// authentication.
-    ///
-    /// No egress enforcement is applied.
     pub fn with_endpoint_and_key(endpoint: impl Into<String>, api_key: Option<String>) -> Self {
         Self {
             http_client: Client::new(),
             endpoint: endpoint.into(),
-            egress: None,
             api_key,
         }
-    }
-
-    /// Create a client at a custom endpoint URL with egress enforcement.
-    ///
-    /// No bearer authentication is set. Use
-    /// [`LocalChatClient::with_endpoint_egress_and_key`] to include an API key.
-    pub fn with_endpoint_and_egress(endpoint: impl Into<String>, egress: EgressConfig) -> Self {
-        Self::with_endpoint_egress_and_key(endpoint, egress, None)
     }
 
     /// List models available at the server's `/v1/models` endpoint.
@@ -135,7 +89,6 @@ impl LocalChatClient {
     /// Returns an error if the endpoint URL cannot be parsed or the request
     /// fails (e.g. the server is unreachable).
     pub async fn list_models(&self) -> Result<ModelList> {
-        self.check_egress()?;
         let models_url = reqwest::Url::parse(&self.endpoint)
             .map(|mut u| {
                 u.set_path("/v1/models");
@@ -147,31 +100,6 @@ impl LocalChatClient {
             req = req.bearer_auth(key);
         }
         Ok(req.send().await?.json::<ModelList>().await?)
-    }
-
-    /// Check whether the configured endpoint host is permitted by the egress
-    /// allowlist.
-    ///
-    /// Returns `Ok(())` if the host is allowed or if no egress config is set.
-    /// Returns an error with the blocked host name if the host is not allowed.
-    fn check_egress(&self) -> Result<()> {
-        let Some(egress) = &self.egress else {
-            return Ok(());
-        };
-
-        let host = reqwest::Url::parse(&self.endpoint)
-            .ok()
-            .and_then(|url| url.host_str().map(String::from));
-
-        let Some(host) = host else {
-            return Ok(());
-        };
-
-        if egress.is_host_allowed(&host) {
-            Ok(())
-        } else {
-            Err(crate::error::RhoError::EgressBlocked { host: host.clone() })
-        }
     }
 }
 
@@ -242,7 +170,6 @@ fn enhance_http_body(status: u16, body: &str) -> String {
 impl ChatClient for LocalChatClient {
     #[tracing::instrument(skip_all, fields(model = %request.model, message_count = request.messages.len(), tool_count = request.tools.len()))]
     async fn chat(&self, request: ChatRequest) -> Result<ModelResponse> {
-        self.check_egress()?;
         debug!(
             model = %request.model,
             num_messages = request.messages.len(),
@@ -298,97 +225,6 @@ impl ChatClient for LocalChatClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ── Egress enforcement ───────────────────────────────────────────────
-
-    #[test]
-    fn check_egress_allows_localhost_without_config() {
-        let client = LocalChatClient::new();
-        assert!(client.check_egress().is_ok());
-    }
-
-    #[test]
-    fn check_egress_allows_localhost_with_empty_egress() {
-        let client = LocalChatClient::with_endpoint_and_egress(
-            "http://localhost:1234/v1/chat/completions",
-            EgressConfig::default(),
-        );
-        assert!(client.check_egress().is_ok());
-    }
-
-    #[test]
-    fn check_egress_allows_127_0_0_1() {
-        let client = LocalChatClient::with_endpoint_and_egress(
-            "http://127.0.0.1:1234/v1/chat/completions",
-            EgressConfig::default(),
-        );
-        assert!(client.check_egress().is_ok());
-    }
-
-    #[test]
-    fn check_egress_blocks_unknown_host_by_default() {
-        let client = LocalChatClient::with_endpoint_and_egress(
-            "https://api.openai.com/v1/chat/completions",
-            EgressConfig::default(),
-        );
-        let err = client.check_egress().unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("egress blocked"),
-            "expected egress blocked message, got: {msg}"
-        );
-        assert!(
-            msg.contains("api.openai.com"),
-            "expected host in error, got: {msg}"
-        );
-    }
-
-    #[test]
-    fn check_egress_allows_listed_host() {
-        let egress = EgressConfig {
-            allowed_hosts: vec!["api.openai.com".to_owned()],
-        };
-        let client = LocalChatClient::with_endpoint_and_egress(
-            "https://api.openai.com/v1/chat/completions",
-            egress,
-        );
-        assert!(client.check_egress().is_ok());
-    }
-
-    #[test]
-    fn check_egress_blocks_unlisted_host_even_when_others_allowed() {
-        let egress = EgressConfig {
-            allowed_hosts: vec!["api.openai.com".to_owned()],
-        };
-        let client = LocalChatClient::with_endpoint_and_egress(
-            "https://api.anthropic.com/v1/messages",
-            egress,
-        );
-        assert!(client.check_egress().is_err());
-    }
-
-    #[test]
-    fn check_egress_no_config_allows_any_host() {
-        // Without egress config, any host is permitted.
-        let client = LocalChatClient::with_endpoint("https://api.openai.com/v1/chat/completions");
-        assert!(client.check_egress().is_ok());
-    }
-
-    // ── list_models egress ───────────────────────────────────────────────
-
-    #[tokio::test]
-    async fn list_models_blocks_external_host_by_default() {
-        let client = LocalChatClient::with_endpoint_and_egress(
-            "https://api.openai.com/v1/chat/completions",
-            EgressConfig::default(),
-        );
-        let err = client.list_models().await.unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("egress blocked"),
-            "expected egress blocked message, got: {msg}"
-        );
-    }
 
     // ── Endpoint derivation ──────────────────────────────────────────────
 
