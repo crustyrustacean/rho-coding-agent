@@ -61,6 +61,13 @@ struct Cli {
     /// Maximum agent loop iterations per task.
     #[arg(long, default_value = "32")]
     max_iterations: u32,
+
+    /// Environment variable containing the API key for bearer authentication.
+    ///
+    /// Required for external providers (`OpenRouter`, `OpenAI`, etc.).
+    /// Ignored for local endpoints.
+    #[arg(long)]
+    api_key_env: Option<String>,
 }
 
 #[tokio::main]
@@ -77,8 +84,14 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
 
+    // --- Resolve API key ---
+    let api_key = cli
+        .api_key_env
+        .as_deref()
+        .and_then(|var| std::env::var(var).ok());
+
     // --- Resolve models ---
-    let model_ids = resolve_models(&cli).await?;
+    let model_ids = resolve_models(&cli, api_key.as_deref()).await?;
 
     // --- Resolve tasks ---
     let all_tasks = all_tasks();
@@ -111,6 +124,7 @@ async fn main() -> anyhow::Result<()> {
         &tasks,
         cli.repeats,
         &cli.endpoint,
+        api_key.as_deref(),
         cli.compact,
         cli.token_budget,
         cli.max_iterations,
@@ -141,7 +155,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 /// Resolve model IDs from CLI flag or auto-detect from server.
-async fn resolve_models(cli: &Cli) -> anyhow::Result<Vec<String>> {
+async fn resolve_models(cli: &Cli, api_key: Option<&str>) -> anyhow::Result<Vec<String>> {
     if let Some(ref models_str) = cli.models {
         return Ok(models_str
             .split(',')
@@ -152,7 +166,8 @@ async fn resolve_models(cli: &Cli) -> anyhow::Result<Vec<String>> {
 
     // Auto-detect: query the server for loaded models.
     eprintln!("no --models specified, querying server...");
-    let client = rho_core::LocalChatClient::with_endpoint(&cli.endpoint);
+    let client =
+        rho_core::LocalChatClient::with_endpoint_and_key(&cli.endpoint, api_key.map(String::from));
     let list = client
         .list_models()
         .await

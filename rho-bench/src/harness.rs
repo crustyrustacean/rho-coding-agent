@@ -78,11 +78,13 @@ impl ChatClient for CountingClient {
 /// Run all (model × task × repeat) combinations and collect eval runs.
 ///
 /// Returns one [`EvalRun`] per model, containing outcomes for all tasks.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_benchmarks(
     model_ids: &[String],
     tasks: &[Box<dyn EvalTask>],
     repeats: u32,
     endpoint: &str,
+    api_key: Option<&str>,
     compact: bool,
     token_budget: Option<u32>,
     max_iterations: u32,
@@ -98,7 +100,7 @@ pub async fn run_benchmarks(
     for model_id in model_ids {
         eprintln!("━━━ Model: {model_id} ━━━");
         let mut run = EvalRun::new(prompt_base, prompt_base).with_model(model_id);
-        let client = LocalChatClient::with_endpoint(endpoint);
+        let client = LocalChatClient::with_endpoint_and_key(endpoint, api_key.map(String::from));
 
         for task in tasks {
             for repeat in 1..=repeats {

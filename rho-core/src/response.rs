@@ -26,7 +26,7 @@ pub struct ModelResponse {
     #[serde(default)]
     pub stats: ModelStats,
     /// Server configuration fingerprint.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_string")]
     pub system_fingerprint: String,
 }
 
@@ -71,13 +71,14 @@ impl<'de> Deserialize<'de> for FinishReason {
     where
         D: serde::Deserializer<'de>,
     {
-        let s = String::deserialize(deserializer)?;
-        match s.as_str() {
-            "stop" => Ok(Self::Stop),
-            "tool_calls" => Ok(Self::ToolCalls),
-            "length" => Ok(Self::Length),
-            "content_filter" => Ok(Self::ContentFilter),
-            other => Ok(Self::Other(other.to_owned())),
+        let opt = Option::<String>::deserialize(deserializer)?;
+        match opt.as_deref() {
+            Some("stop") => Ok(Self::Stop),
+            Some("tool_calls") => Ok(Self::ToolCalls),
+            Some("length") => Ok(Self::Length),
+            Some("content_filter") => Ok(Self::ContentFilter),
+            Some(other) => Ok(Self::Other(other.to_owned())),
+            None => Ok(Self::Other("null".to_owned())),
         }
     }
 }
@@ -86,10 +87,10 @@ impl<'de> Deserialize<'de> for FinishReason {
 #[derive(Clone, Debug, Deserialize)]
 pub struct ModelMessage {
     /// Text content (may be empty when tool calls are present).
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_string")]
     pub content: String,
     /// Chain-of-thought reasoning (model-specific; may be empty).
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_string")]
     pub reasoning_content: String,
     /// Tool calls the model wants to invoke.
     #[serde(default)]
@@ -118,4 +119,12 @@ pub struct ModelUsage {
 pub struct ReasoningTokens {
     /// Tokens used for chain-of-thought reasoning.
     pub reasoning_tokens: usize,
+}
+
+/// Deserialize a string field that may be `null` (e.g. from `OpenRouter`).
+fn deserialize_null_string<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer).map(Option::unwrap_or_default)
 }

@@ -22,10 +22,11 @@ pub trait ChatClient: Send + Sync {
     async fn chat(&self, request: ChatRequest) -> Result<ModelResponse>;
 }
 
-/// Default [`ChatClient`] targeting `localhost` OpenAI-compatible endpoints
-/// (LM Studio, Ollama, etc.).
+/// Default [`ChatClient`] targeting `OpenAI`-compatible endpoints.
 ///
-/// Replaces the earlier `RhoHttpClient`.
+/// Works with local servers (LM Studio, Ollama) and external providers
+/// (`OpenRouter`, `OpenAI`, `DeepInfra`, `Groq`, etc.) — anything that speaks
+/// the `OpenAI` wire format.
 ///
 /// # Egress enforcement
 ///
@@ -33,6 +34,12 @@ pub trait ChatClient: Send + Sync {
 /// the resolved host of the endpoint URL against the egress allowlist before
 /// sending any request. Requests to non-allowed hosts are rejected immediately
 /// with an error.
+///
+/// # Bearer authentication
+///
+/// When an API key is provided, it is sent as an `Authorization: Bearer`
+/// header with every request. This is required for external providers but
+/// unused for local endpoints.
 #[derive(Clone, Debug)]
 pub struct LocalChatClient {
     /// The underlying HTTP client.
@@ -41,6 +48,11 @@ pub struct LocalChatClient {
     endpoint: String,
     /// Egress allowlist. When `None`, all hosts are permitted (legacy mode).
     egress: Option<EgressConfig>,
+    /// Optional API key for bearer authentication.
+    ///
+    /// When `Some`, sent as `Authorization: Bearer <key>` with each request.
+    /// Local endpoints typically don't need this.
+    api_key: Option<String>,
 }
 
 impl LocalChatClient {
@@ -54,6 +66,7 @@ impl LocalChatClient {
             http_client: Client::new(),
             endpoint: "http://localhost:1234/v1/chat/completions".to_owned(),
             egress: None,
+            api_key: None,
         }
     }
 
@@ -67,20 +80,48 @@ impl LocalChatClient {
             http_client: Client::new(),
             endpoint: endpoint.into(),
             egress: None,
+            api_key: None,
+        }
+    }
+
+    /// Create a client at a custom endpoint URL with egress enforcement
+    /// and optional bearer authentication.
+    ///
+    /// Before each request, the host portion of the endpoint URL is checked
+    /// against the egress allowlist. Requests to non-allowed hosts are
+    /// rejected with an error.
+    pub fn with_endpoint_egress_and_key(
+        endpoint: impl Into<String>,
+        egress: EgressConfig,
+        api_key: Option<String>,
+    ) -> Self {
+        Self {
+            http_client: Client::new(),
+            endpoint: endpoint.into(),
+            egress: Some(egress),
+            api_key,
+        }
+    }
+
+    /// Create a client at a custom endpoint URL with optional bearer
+    /// authentication.
+    ///
+    /// No egress enforcement is applied.
+    pub fn with_endpoint_and_key(endpoint: impl Into<String>, api_key: Option<String>) -> Self {
+        Self {
+            http_client: Client::new(),
+            endpoint: endpoint.into(),
+            egress: None,
+            api_key,
         }
     }
 
     /// Create a client at a custom endpoint URL with egress enforcement.
     ///
-    /// Before each request, the host portion of the endpoint URL is checked
-    /// against the egress allowlist. Requests to non-allowed hosts are
-    /// rejected with an error.
+    /// No bearer authentication is set. Use
+    /// [`LocalChatClient::with_endpoint_egress_and_key`] to include an API key.
     pub fn with_endpoint_and_egress(endpoint: impl Into<String>, egress: EgressConfig) -> Self {
-        Self {
-            http_client: Client::new(),
-            endpoint: endpoint.into(),
-            egress: Some(egress),
-        }
+        Self::with_endpoint_egress_and_key(endpoint, egress, None)
     }
 
     /// List models available at the server's `/v1/models` endpoint.
@@ -101,13 +142,11 @@ impl LocalChatClient {
                 u
             })
             .map_err(|e| RhoError::Unexpected(anyhow::anyhow!("bad endpoint URL: {e}")))?;
-        Ok(self
-            .http_client
-            .get(models_url)
-            .send()
-            .await?
-            .json::<ModelList>()
-            .await?)
+        let mut req = self.http_client.get(models_url);
+        if let Some(ref key) = self.api_key {
+            req = req.bearer_auth(key);
+        }
+        Ok(req.send().await?.json::<ModelList>().await?)
     }
 
     /// Check whether the configured endpoint host is permitted by the egress
@@ -210,12 +249,11 @@ impl ChatClient for LocalChatClient {
             num_tools = request.tools.len(),
             "sending chat request"
         );
-        let response = self
-            .http_client
-            .post(&self.endpoint)
-            .json(&request)
-            .send()
-            .await?;
+        let mut request_builder = self.http_client.post(&self.endpoint).json(&request);
+        if let Some(ref key) = self.api_key {
+            request_builder = request_builder.bearer_auth(key);
+        }
+        let response = request_builder.send().await?;
 
         let status = response.status();
 

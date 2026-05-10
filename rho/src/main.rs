@@ -171,7 +171,16 @@ async fn main() -> Result<()> {
     // --- Project context files ---
     let system_prompt = load_system_prompt(&sandbox, &cli);
 
-    let client = LocalChatClient::with_endpoint_and_egress(endpoint, rho_config.egress.clone());
+    let client = resolve_api_key(&rho_config).map_or_else(
+        || LocalChatClient::with_endpoint_and_egress(endpoint, rho_config.egress.clone()),
+        |key| {
+            LocalChatClient::with_endpoint_egress_and_key(
+                endpoint,
+                rho_config.egress.clone(),
+                Some(key),
+            )
+        },
+    );
 
     // --- Session ---
     let model = resolve_model(&rho_config, cli.model.as_ref(), &client).await?;
@@ -485,6 +494,17 @@ fn check_provider_consent(endpoint: &str, cli: &Cli) -> Result<()> {
 }
 
 // ── Provider detection ─────────────────────────────────────────────────────────
+
+/// Resolve the API key from the provider configuration.
+///
+/// Reads the environment variable named in `provider.api_key_env` and returns
+/// the value. Returns `None` if no env var is configured or the variable is
+/// not set.
+fn resolve_api_key(rho_config: &RhoConfig) -> Option<String> {
+    let env_var = rho_config.provider.api_key_env.as_deref()?;
+    let key = std::env::var(env_var).ok()?;
+    if key.is_empty() { None } else { Some(key) }
+}
 
 /// Determine whether an endpoint URL points to a local address.
 ///
