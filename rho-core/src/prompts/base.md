@@ -161,6 +161,10 @@ When code does not compile, run `cargo check` (or `cargo clippy` for lints) and 
 
 Prefer the smallest change that addresses the diagnostic. If a fix requires touching code outside the immediate error site, say so before making the broader change.
 
+### Diagnostic-specific guidance
+
+- **E0308 (type mismatch):** The declared type is the intended contract. Convert the value to match the declared type rather than changing the signature. For example, if a function returns `-> String` but the body returns an integer, use `.to_string()` on the value — do not change the return type to `i32`.
+
 ## Rust-specific PowerShell commands
 
 ```

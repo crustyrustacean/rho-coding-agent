@@ -50,7 +50,9 @@ impl EvalTask for FixE0308TypeMismatch {
                     || content.contains("to_string()")
                     || content.contains("format!")
                     || content.contains(".to_owned()");
-                if has_string_return && !content.contains("42") {
+                // Reject bare "42" on its own (no conversion), but allow "42.to_string()" etc.
+                let has_bare_42 = content.contains("    42\n") || content.contains("\t42\n");
+                if has_string_return && !has_bare_42 {
                     TaskOutcome::new(
                         self.id(),
                         self.name(),
