@@ -13,9 +13,11 @@ A local coding agent written in Rust. rho runs in your terminal, talks to a mode
 - 🐚 **PowerShell-native** — the shell is PowerShell (via `pwsh`); the model generates PowerShell commands, not bash
 - 📂 **Project-aware** — auto-detects project root, loads context files (`AGENTS.md`, `CLAUDE.md`, `.cursorrules`, etc.) with hash-verified trust
 - ⚙️ **Configurable** — two-tier TOML config (user-level `~/.rho/config.toml` + project-level `.rho/config.toml`), per-tool approval policies, command denylist, egress allowlist
-- 🧠 **Local models** — targets OpenAI-compatible endpoints on localhost (LM Studio, Ollama); external providers are supported with explicit consent
+- 🧠 **Local and remote models** — targets OpenAI-compatible endpoints (LM Studio, Ollama, OpenAI, Groq, OpenRouter, DeepInfra, and more)
 
 ## Quick Start
+
+### Using a local model
 
 1. **Start a local model server** (e.g. [LM Studio](https://lmstudio.ai/) or [Ollama](https://ollama.com/)) on `localhost:1234`.
 
@@ -33,6 +35,41 @@ A local coding agent written in Rust. rho runs in your terminal, talks to a mode
 
    rho will use its tools to read your project, ask for approval before writing files or running commands, and report back.
 
+### Using an external provider (e.g. OpenAI)
+
+1. **Set your API key:**
+
+   ```sh
+   export OPENAI_API_KEY="sk-..."
+   ```
+
+2. **Create `.rho/config.toml` in your project root:**
+
+   ```toml
+   [agent]
+   model = "gpt-4o"
+   token_budget = 131072
+
+   [provider]
+   endpoint = "https://api.openai.com/v1/chat/completions"
+   api_key_env = "OPENAI_API_KEY"
+
+   [egress]
+   allowed_hosts = ["api.openai.com"]
+   ```
+
+3. **Run:**
+
+   ```sh
+   cargo run --package rho -- --accept-external-provider
+   ```
+
+   The `--accept-external-provider` flag skips the consent prompt that warns your data will be sent to an external server. Omit it on first use to see the warning.
+
+   See [External Providers](docs/src/providers.md) for more providers (Groq, OpenRouter, DeepInfra) and detailed configuration.
+
+   **Note:** rho speaks the OpenAI Chat Completions wire format. Providers with their own API format (Anthropic, Google Gemini, AWS Bedrock) require an [OpenAI-compatible proxy](https://github.com/BerriAI/litellm) like LiteLLM or OpenRouter.
+
 ## CLI Options
 
 ```
@@ -45,6 +82,9 @@ Options:
       --root <ROOT>                      Project/sandbox root (auto-detected if omitted)
       --accept-external-provider         Skip consent warning for external endpoints
       --token-budget <TOKEN_BUDGET>      Context window token budget (default: 32768)
+      --prompt-file <FILE>               Read a prompt from a file, then exit
+      --session <PATH>                   Resume a previous session from a JSONL file
+      --ephemeral                        Run without disk persistence
 ```
 
 ### REPL Commands
@@ -63,7 +103,7 @@ rho loads config from two TOML files, with project-level overrides taking preced
 | User-level | `~/.rho/config.toml` | Global defaults: default model, API endpoint, egress allowlist |
 | Project-level | `.rho/config.toml` | Per-project: model, approval policies, command denylist, sandbox toggle |
 
-Example `.rho/config.toml`:
+Example `.rho/config.toml` (local model):
 
 ```toml
 [agent]
@@ -71,7 +111,6 @@ model = "qwen3-8b"
 token_budget = 32768
 
 [provider]
-type = "local"
 endpoint = "http://localhost:1234/v1/chat/completions"
 
 [approval.per_tool]
@@ -90,6 +129,21 @@ allowed_hosts = []
 
 [redaction]
 enabled = true
+```
+
+Example `.rho/config.toml` (OpenAI):
+
+```toml
+[agent]
+model = "gpt-4o"
+token_budget = 131072
+
+[provider]
+endpoint = "https://api.openai.com/v1/chat/completions"
+api_key_env = "OPENAI_API_KEY"
+
+[egress]
+allowed_hosts = ["api.openai.com"]
 ```
 
 API keys are **never** stored in config. Reference environment variables instead:

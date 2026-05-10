@@ -2,6 +2,19 @@
 
 Egress control restricts which hosts the agent can contact over the network. It prevents the model from exfiltrating data to arbitrary internet endpoints.
 
+## When egress matters
+
+Local model servers (LM Studio, Ollama) on `localhost` don't need any egress configuration — they're always allowed. Egress becomes relevant when you use an **external provider** (OpenAI, Groq, OpenRouter, etc.), where you must explicitly allow the provider's hostname.
+
+## Two-gate requirement for external providers
+
+External providers must pass **two independent gates** before any request is sent:
+
+1. **Provider consent** — an interactive warning that your data will leave the machine (`--accept-external-provider` to skip)
+2. **Egress allowlist** — the hostname must appear in `allowed_hosts` in `[egress]` config
+
+If either gate blocks, the request is refused. See [External Providers](./providers.md) for a full walkthrough.
+
 ## Allowlist
 
 The egress allowlist is configured in `EgressConfig`:

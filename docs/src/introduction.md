@@ -1,12 +1,13 @@
 # Introduction
 
-**rho** is a Rust coding agent that runs against local LLMs.
+**rho** is a Rust coding agent that runs against local and remote LLMs.
 
-It connects to OpenAI-compatible endpoints (LM Studio, Ollama) on `localhost`, gives the model access to tools for reading and writing files, executing shell commands, and running Rust tooling — then runs an autonomous agent loop that the user supervises through an approval gate.
+It connects to OpenAI-compatible endpoints (LM Studio, Ollama, OpenAI, Groq, OpenRouter, DeepInfra, and more), gives the model access to tools for reading and writing files, executing shell commands, and running Rust tooling — then runs an autonomous agent loop that the user supervises through an approval gate.
 
 Design priorities:
 
 - **Local first** — your code stays on your machine by default
+- **Remote ready** — external providers (OpenAI, Groq, etc.) with egress control and consent
 - **Safe by default** — destructive actions require your approval
 - **Rust-native** — structured compiler diagnostics, tree-sitter syntax analysis, not text scraping
 - **Extensible** — custom tools via extensions, provider-agnostic core

@@ -162,7 +162,12 @@ fn default_show_reasoning() -> bool {
 /// Model provider selection and connection settings.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct ProviderConfig {
-    /// Provider type: `"local"` (default), `"openai"`, `"anthropic"`, etc.
+    /// Provider type label — informational only, has no effect on behavior.
+    ///
+    /// rho uses `endpoint` and `api_key_env` to determine how to connect;
+    /// it does not branch on this field. Set to any string for your own
+    /// bookkeeping (e.g. `"openai"`, `"groq"`, `"production"`), or omit
+    /// it entirely.
     #[serde(default)]
     pub r#type: Option<String>,
     /// API endpoint URL.

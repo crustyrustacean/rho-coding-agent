@@ -43,8 +43,10 @@ stuck_loop_threshold = 3
 show_reasoning = false
 
 [provider]
-# Provider type: "local" (default), "openai", "anthropic", etc.
-type = "local"
+# Provider type label — informational only, has no effect on behavior.
+# Set to anything for your own bookkeeping, or omit entirely.
+# The endpoint URL and api_key_env are what actually matter.
+# type = "local"
 
 # API endpoint URL (default: http://localhost:1234/v1/chat/completions)
 endpoint = "http://localhost:1234/v1/chat/completions"
@@ -99,7 +101,11 @@ API keys are **never** stored in plaintext in config files. Instead, config refe
 api_key_env = "OPENAI_API_KEY"
 ```
 
-The provider reads the key from the environment variable at runtime. If the variable is not set, the provider reports an error at connection time.
+The provider reads the key from the environment variable at runtime. If the variable is not set, the key is silently omitted (local endpoints typically don't need one).
+
+## External providers
+
+rho can connect to any OpenAI-compatible endpoint (OpenAI, Groq, OpenRouter, DeepInfra, etc.). External providers require **both** an egress allowlist entry and provider consent. See the [External Providers](./providers.md) page for worked examples and setup instructions.
 
 ## CLI overrides
 

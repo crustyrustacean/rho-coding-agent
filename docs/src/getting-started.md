@@ -3,7 +3,15 @@
 ## Prerequisites
 
 - Rust toolchain (edition 2024)
-- A local LLM server (LM Studio, Ollama) running on `localhost:1234`
+- A local LLM server (LM Studio, Ollama) running on `localhost:1234`, **or** an API key for an external provider (OpenAI, Groq, OpenRouter, DeepInfra, etc.)
+
+### Local model (default)
+
+No configuration needed — just start a local server on `localhost:1234` and run `rho`. It will auto-detect the loaded model.
+
+### External provider
+
+Create `.rho/config.toml` in your project root with the endpoint, API key env var, and egress allowlist. See [External Providers](./providers.md) for worked examples.
 
 ## Build
 

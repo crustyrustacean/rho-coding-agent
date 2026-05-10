@@ -21,6 +21,7 @@
   - [Egress Control](./security/egress-control.md)
   - [Prompt Injection Defense](./security/prompt-injection-defense.md)
 - [Configuration](./configuration.md)
+- [External Providers](./providers.md)
 - [Extensions](./extensions.md)
 - [Development](./development.md)
   - [Testing](./development/testing.md)

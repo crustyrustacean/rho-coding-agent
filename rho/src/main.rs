@@ -153,15 +153,55 @@ async fn main() -> Result<()> {
         RhoConfig::default()
     });
 
-    // --- Client (with provider consent check) ---
-    // Consent is checked BEFORE the trust workflow so the user can bail out
-    // before being prompted about context files.
+    // --- Provider compatibility check ---
+    // rho only speaks the OpenAI Chat Completions wire format.
+    // Warn if the configured endpoint looks like a non-OpenAI-compatible API
+    // (Anthropic Messages API, Google Gemini, etc.) — these require a proxy
+    // that translates to OpenAI format.
     let endpoint = rho_config
         .provider
         .endpoint
         .as_deref()
         .unwrap_or("http://localhost:1234/v1/chat/completions");
 
+    if let Some(ref provider_type) = rho_config.provider.r#type {
+        let non_openai = [
+            "anthropic",
+            "google",
+            "gemini",
+            "cohere",
+            "mistral",
+            "together",
+            "anyscale",
+            "perplexity",
+            "bedrock",
+            "vertex",
+        ];
+        if non_openai
+            .iter()
+            .any(|t| provider_type.eq_ignore_ascii_case(t))
+        {
+            eprintln!(
+                "warning: provider type \"{}\" was set, but rho only supports \
+                 OpenAI-compatible endpoints (the Chat Completions API wire format). \
+                 {}",
+                provider_type, endpoint
+            );
+        }
+    }
+    if !endpoint.contains("/chat/completions") && !is_local_endpoint(endpoint) {
+        eprintln!(
+            "warning: endpoint \"{}\" does not end with /chat/completions, \
+             which is the standard OpenAI-compatible path. rho sends requests in \
+             the OpenAI Chat Completions format. If this endpoint uses a different \
+             API format (e.g. Anthropic Messages, Google GenerateContent), \
+             requests will fail. Use an OpenAI-compatible proxy or verify the endpoint.",
+            endpoint
+        );
+    }
+    // --- Client (with provider consent check) ---
+    // Consent is checked BEFORE the trust workflow so the user can bail out
+    // before being prompted about context files.
     check_provider_consent(endpoint, &cli)?;
 
     // --- Tool registry ---
@@ -396,13 +436,31 @@ async fn resolve_model(
         return Ok(model.to_owned());
     }
     // 3. Auto-detect from the server.
+    // Auto-detection is best-effort: it works reliably for local servers
+    // (LM Studio, Ollama) but may fail or return unexpected results for
+    // external providers. When using an external provider, always specify
+    // the model explicitly with --model or in config.
     eprintln!("no model specified, querying server for loaded models...");
-    let list = client
-        .list_models()
-        .await
-        .map_err(|e| anyhow::anyhow!("cannot query /v1/models: {e}"))?;
+    let configured_endpoint = config.provider.endpoint.as_deref().unwrap_or("");
+    let list = client.list_models().await.map_err(|e| {
+        // Tailor the error hint to whether the endpoint is local or external.
+        let hint = if is_local_endpoint(configured_endpoint) {
+            "Load a model in your local server and try again."
+        } else {
+            "This may indicate the endpoint doesn't support /v1/models, \
+                 requires authentication, or uses a non-standard model list. \
+                 Specify the model explicitly with --model or in config."
+        };
+        anyhow::anyhow!("cannot query /v1/models: {e}\n  {hint}")
+    })?;
     if list.data.is_empty() {
-        anyhow::bail!("no models loaded on the server. Load a model in LM Studio and try again.");
+        let hint = if is_local_endpoint(configured_endpoint) {
+            "Load a model in your local server and try again."
+        } else {
+            "The server returned an empty model list. Specify the model \
+             explicitly with --model or in config."
+        };
+        anyhow::bail!("no models loaded on the server. {hint}");
     }
     let model = &list.data[0].id;
     eprintln!("auto-detected model: {model}");
