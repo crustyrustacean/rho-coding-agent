@@ -21,10 +21,10 @@ rho-core/           # Core library
     lib.rs          # Module declarations and convenience re-exports
     agent.rs        # Agent loop state machine and `run_loop`
     approval.rs     # `ApprovalPolicy` and `ApprovalGate` traits
-    client.rs       # `ChatClient` trait, `LocalChatClient`
+    client.rs       # `ChatClient` trait, `LocalChatClient`, `client_factory()`, `resolve_api_key()`, `is_local_endpoint()`
     config.rs       # `RhoConfig`, `ConfigLoader`, config sub-types — two-tier TOML loading
     context.rs      # `ContextManager` trait, `SlidingWindowContextManager`, `TokenBudget`
-    context_files.rs# Project context file scanner, `TrustStore`, prompt composition
+    context_files.rs# Project context file scanner, `TrustStore`, `compose_full_system_prompt()`
     conversation.rs # `Conversation`, `AssistantResponse`
     error.rs        # `RhoError` and `Result`
     message.rs      # `ChatMessage`, `ContentBlock`, `ModelToolCall`
@@ -43,6 +43,12 @@ rho-tools/          # Built-in tool implementations
     files.rs        # `ReadFile`, `WriteFile`, `ListDir`, `EditFile`
     shell.rs        # `PowerShellExecutor`, `RunCommand` (delegates to `ShellExecutor` trait)
     rust.rs         # `CargoCheck`, `CargoClippy`, `CargoTest`, `CargoFix`, `RustcExplain`
+rho-highlight/       # Tree-sitter syntax analysis
+  src/
+    lib.rs          # Re-exports: `Language`, `parse()`, `highlight()`, `node_at()`
+    parse.rs        # Tree-sitter parsing
+    highlight.rs    # Token classification and highlighting
+    query.rs        # AST node lookup by position
 rho-eval/           # Behavioural benchmark definitions (dev-only)
   src/
     lib.rs          # `EvalTask`, `TaskOutcome`, `TaskMetrics`, `EvalRun`
@@ -151,7 +157,6 @@ The agent uses multiple defense-in-depth layers:
 | `ShellConfig` | Command denylist extensions from config |
 | `SandboxConfig` | Sandbox on/off toggle |
 | `ContextConfig` | Project context file scan list override |
-| `ProviderConfig` | Model provider selection and connection settings |
 | `RedactionConfig` | Secret redaction on/off toggle |
 | `SystemPromptConfig` | System prompt extension fragments |
 | `FilePath` | Newtype for sandboxed file paths (`Deref<Target = Path>`) |
@@ -187,7 +192,7 @@ cargo xtask test -- --nocapture # Run with stdout visible
 - Tool integration tests live in `rho-tools/tests/tool_tests.rs`.
 - `rho-test-helpers` provides `MockChatClient`, `MockShellExecutor`, response builders (`text_response`, `tool_call_response`, `multi_tool_call_response`), approval gates (`AutoApproveGate`, `AutoDenyGate`), file-system test environment (`FileTestEnv`), shell detection (`detect_shell`), sandbox helpers (`tempdir_with_sandbox`), and trust-store helpers (`empty_trust_store`).
 - `rho-eval` defines canonical coding tasks and scoring logic used by `rho-bench`.
-- `rho-bench` runs eval tasks against local models with timing and token metrics. Run with `cargo run -p rho-bench -- --models <id>`.
+- `rho-bench` runs eval tasks against models with timing and token metrics. Run with `cargo run -p rho-bench -- --models <id> --endpoint <url>`.
 - When adding new deserialization logic, add a JSON fixture test.
 - For `Conversation` branching logic, prefer the trait-abstraction pattern over coupling to `LocalChatClient`.
 

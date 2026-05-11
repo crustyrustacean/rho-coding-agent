@@ -7,9 +7,9 @@ use std::time::Instant;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use rho_core::{
-    AgentConfig, ApprovalGate, AutoApprovePolicy, ChatClient, ChatRequest, LocalChatClient,
-    ModelResponse, ModelToolCall, RhoConfig, SandboxRoot, Session, TokenBudget, ToolRegistry,
-    ToolRisk, base_prompt, compact_prompt, run_loop,
+    AgentConfig, ApprovalGate, AutoApprovePolicy, ChatClient, ChatRequest, ConfigLoader,
+    LocalChatClient, ModelResponse, ModelToolCall, RhoConfig, SandboxRoot, Session, TokenBudget,
+    ToolRegistry, ToolRisk, compose_full_system_prompt, run_loop,
 };
 use rho_eval::{EvalRun, EvalTask, TaskMetrics, TaskOutcome};
 use rho_tools::register_all;
@@ -84,15 +84,23 @@ pub async fn run_benchmarks(
     tasks: &[Box<dyn EvalTask>],
     repeats: u32,
     endpoint: &str,
-    api_key: Option<&str>,
+    api_key_env: Option<&str>,
     compact: bool,
     token_budget: Option<u32>,
-    max_iterations: u32,
+    max_iterations: Option<u32>,
+    sandbox_root: &Path,
 ) -> Vec<EvalRun> {
+    // Load full two-tier config (same as rho).
+    let rho_config = ConfigLoader::load(sandbox_root).unwrap_or_else(|e| {
+        eprintln!("Warning: {e} — using defaults");
+        RhoConfig::default()
+    });
+
+    // Build prompt_base for EvalRun's prompt hash.
     let prompt_base = if compact {
-        compact_prompt()
+        rho_core::compact_prompt()
     } else {
-        base_prompt()
+        rho_core::base_prompt()
     };
 
     let mut runs = Vec::with_capacity(model_ids.len());
@@ -100,7 +108,7 @@ pub async fn run_benchmarks(
     for model_id in model_ids {
         eprintln!("━━━ Model: {model_id} ━━━");
         let mut run = EvalRun::new(prompt_base, prompt_base).with_model(model_id);
-        let client = LocalChatClient::with_endpoint_and_key(endpoint, api_key.map(String::from));
+        let client = rho_core::client_factory(&rho_config, Some(endpoint), api_key_env);
 
         for task in tasks {
             for repeat in 1..=repeats {
@@ -116,7 +124,7 @@ pub async fn run_benchmarks(
                     task.as_ref(),
                     model_id,
                     &client,
-                    endpoint,
+                    &rho_config,
                     compact,
                     token_budget,
                     max_iterations,
@@ -169,10 +177,10 @@ async fn run_single_task(
     task: &dyn EvalTask,
     model_id: &str,
     client: &LocalChatClient,
-    endpoint: &str,
+    rho_config: &RhoConfig,
     compact: bool,
     token_budget: Option<u32>,
-    max_iterations: u32,
+    max_iterations_override: Option<u32>,
 ) -> Result<TaskOutcome> {
     // Create a temp directory for this task run.
     let project_dir =
@@ -180,45 +188,31 @@ async fn run_single_task(
 
     let sandbox = SandboxRoot::new(&project_dir).context("failed to create sandbox root")?;
 
-    // Load a minimal rho config with all tools set to auto.
-    let rho_config = bench_config(max_iterations, token_budget);
-
-    // Set up tool registry.
+    // Set up tool registry with auto-approve policy for benchmarking.
     let mut registry = ToolRegistry::new();
-    register_all(&mut registry, sandbox.clone(), &rho_config);
+    register_all(&mut registry, sandbox.clone(), rho_config);
 
-    // Build system prompt.
-    let prompt_base: String = if compact {
-        compact_prompt().to_owned()
-    } else {
-        base_prompt().to_owned()
-    };
-    let mut system_prompt = prompt_base;
-    let root = sandbox.path().display();
-    #[allow(clippy::format_push_string)]
-    system_prompt.push_str(&format!(
-        "\n\n# Environment\n\n\
-         - Working directory (project root): `{root}`\n\
-         - All relative file paths and shell commands resolve from this directory.\n\
-         - Each `run_command` invocation starts a fresh process in this directory.\n\
-           `cd` and `Set-Location` do not persist between commands — include the\n\
-           full relative path from the project root in every command."
-    ));
-    system_prompt.push_str(
-        "\n\n# Rust Tooling\n\n\
-         - You have access to structured Rust compiler diagnostics via `cargo_check` and `cargo_clippy`.\n\
-         - When code fails to compile, use `cargo_check` before attempting manual fixes.\n\
-         - Trust machine-applicable suggestions from the compiler — apply them with `cargo_fix` or by\n\
-           using the suggested replacement text in `edit_file`.\n\
-         - Use `cargo_clippy` for code-quality lints beyond compilation errors.\n\
-         - Use `rustc_explain` to look up detailed explanations for error codes (e.g. E0308).\n\
-         - Use `cargo_test` to verify fixes — run the relevant tests after each change.\n\
-         - Prefer the structured diagnostic tools over `run_command` with raw `cargo check` —\n\
-           the tools parse JSON output and surface only actionable workspace diagnostics.",
+    // Build system prompt using shared construction (no context file scanning
+    // in bench — task dirs are ephemeral and don't have project context files).
+    let system_prompt = compose_full_system_prompt(&sandbox, &[], rho_config, None, compact);
+
+    // Build agent config from the shared config, with auto-approve override.
+    let mut agent_config = AgentConfig::from_config(rho_config);
+    agent_config.approval_policy = Box::new(AutoApprovePolicy);
+    if let Some(max_iterations) = max_iterations_override {
+        agent_config.max_iterations = max_iterations;
+    }
+
+    // Apply token budget override.
+    let budget = token_budget.unwrap_or(rho_config.agent.token_budget) as usize;
+
+    // Build redactor from config (respects enabled toggle and custom patterns).
+    let redactor = rho_core::Redactor::from_config(
+        rho_config.redaction.enabled,
+        &rho_config.redaction.custom_patterns,
     );
 
     // Create an in-memory session.
-    let budget = token_budget.unwrap_or(rho_config.agent.token_budget) as usize;
     let mut session = Session::in_memory(
         model_id,
         Some(&system_prompt),
@@ -226,19 +220,10 @@ async fn run_single_task(
         &project_dir,
     )
     .with_token_budget(TokenBudget::new(budget))
-    .with_redactor(rho_core::Redactor::new());
+    .with_redactor(redactor);
 
     // Wrap the client to count token usage.
     let counting_client = CountingClient::new((*client).clone());
-
-    // Build agent config with auto-approve policy.
-    let agent_config = AgentConfig {
-        max_iterations,
-        retry_budget: 2,
-        initial_backoff_ms: 250,
-        approval_policy: Box::new(AutoApprovePolicy),
-        ..AgentConfig::default()
-    };
 
     let gate = BenchApprovalGate;
     let cancel = rho_core::CancellationToken::new();
@@ -281,8 +266,7 @@ async fn run_single_task(
     let mut outcome = task.verify(&final_refs);
     outcome.metrics = metrics;
 
-    // Suppress unused-variable warning for endpoint — it's kept for future use.
-    let _ = endpoint;
+    // Suppress unused-variable warning for request_count — it's kept for future use.
     let _ = request_count;
 
     // If the run_loop itself failed, override with Error.
@@ -338,47 +322,6 @@ fn create_task_project(task: &dyn EvalTask) -> Result<PathBuf> {
     Ok(dir)
 }
 
-/// Build a minimal [`RhoConfig`] suitable for benchmarking.
-///
-/// All tools are set to auto-approve.
-fn bench_config(max_iterations: u32, token_budget: Option<u32>) -> RhoConfig {
-    use rho_core::config::{AgentLoopConfig, ApprovalAction, ApprovalConfig};
-
-    let agent = if let Some(budget) = token_budget {
-        AgentLoopConfig {
-            max_iterations,
-            token_budget: budget,
-            ..AgentLoopConfig::default()
-        }
-    } else {
-        AgentLoopConfig {
-            max_iterations,
-            ..AgentLoopConfig::default()
-        }
-    };
-
-    let mut per_tool = std::collections::HashMap::new();
-    for name in [
-        "cargo_check",
-        "cargo_clippy",
-        "cargo_fix",
-        "cargo_test",
-        "edit_file",
-        "write_file",
-        "run_command",
-        "read_file",
-        "list_dir",
-    ] {
-        per_tool.insert(name.to_string(), ApprovalAction::Auto);
-    }
-
-    RhoConfig {
-        agent,
-        approval: ApprovalConfig { per_tool },
-        ..RhoConfig::default()
-    }
-}
-
 /// Read back the final file contents from the project directory.
 ///
 /// Only reads files that were part of the task's initial file set.
@@ -394,20 +337,4 @@ fn read_project_files<'a>(
                 .map(|content| (rel.to_string(), content))
         })
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn bench_config_sets_auto_approve() {
-        let config = bench_config(16, Some(8192));
-        assert_eq!(config.agent.max_iterations, 16);
-        assert_eq!(config.agent.token_budget, 8192);
-        assert_eq!(
-            config.approval.per_tool.get("edit_file"),
-            Some(&rho_core::config::ApprovalAction::Auto)
-        );
-    }
 }

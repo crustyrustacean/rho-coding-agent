@@ -252,7 +252,7 @@ impl<'a> ContextScanner<'a> {
 
 // ── Prompt composition ────────────────────────────────────────────────────────
 
-/// Compose the full system prompt from the base prompt and trusted context files.
+/// Compose the base system prompt with trusted context files.
 ///
 /// Layout:
 /// ```text
@@ -278,6 +278,85 @@ pub fn compose_system_prompt(base: &str, context_files: &[ContextFile]) -> Strin
         out.push_str("\n---");
     }
     out
+}
+
+/// Build the complete system prompt from base prompt, context files, and config.
+///
+/// This is the shared prompt construction used by both `rho` and `rho-bench`.
+///
+/// # Parameters
+///
+/// - `sandbox` — the project root, used for the working directory info block.
+/// - `context_files` — trusted project context files (from [`ContextScanner`]).
+///   Pass an empty slice to skip context file injection (e.g. for non-interactive
+///   benchmarks).
+/// - `config` — application config (used for [`system_prompt.extensions`]).
+/// - `system_override` — if `Some`, replaces the base prompt and context files
+///   entirely. The environment and Rust tooling blocks are still appended.
+/// - `compact` — if `true`, uses the compact base prompt (~100 tokens) instead
+///   of the full base prompt (~2,000 tokens).
+///
+/// # Layout
+///
+/// 1. System override **or** (base prompt + context files)
+/// 2. `# Environment` block (working directory, fresh process note)
+/// 3. `# Rust Tooling` block (`cargo_check`, `cargo_clippy`, etc.)
+/// 4. Config-based [`system_prompt.extensions`] fragments
+pub fn compose_full_system_prompt(
+    sandbox: &SandboxRoot,
+    context_files: &[ContextFile],
+    config: &crate::config::RhoConfig,
+    system_override: Option<&str>,
+    compact: bool,
+) -> String {
+    use crate::prompts::{base_prompt, compact_prompt};
+
+    let mut prompt = if let Some(custom) = system_override {
+        custom.to_owned()
+    } else {
+        let prompt_base = if compact {
+            compact_prompt()
+        } else {
+            base_prompt()
+        };
+        compose_system_prompt(prompt_base, context_files)
+    };
+
+    // Append the working directory so the model knows its absolute path.
+    // Each run_command starts a fresh process in this directory —
+    // cd / Set-Location does not persist between invocations.
+    let root = sandbox.path().display();
+    #[allow(clippy::format_push_string)]
+    prompt.push_str(&format!(
+        "\n\n# Environment\n\n\
+         - Working directory (project root): `{root}`\n\
+         - All relative file paths and shell commands resolve from this directory.\n\
+         - Each `run_command` invocation starts a fresh process in this directory.\n\
+           `cd` and `Set-Location` do not persist between commands — include the\n\
+           full relative path from the project root in every command."
+    ));
+
+    // Append Rust tooling guidance when Rust tools are available.
+    prompt.push_str(
+        "\n\n# Rust Tooling\n\n\
+         - You have access to structured Rust compiler diagnostics via `cargo_check` and `cargo_clippy`.\n\
+         - When code fails to compile, use `cargo_check` before attempting manual fixes.\n\
+         - Trust machine-applicable suggestions from the compiler — apply them with `cargo_fix` or by\n\
+           using the suggested replacement text in `edit_file`.\n\
+         - Use `cargo_clippy` for code-quality lints beyond compilation errors.\n\
+         - Use `rustc_explain` to look up detailed explanations for error codes (e.g. E0308).\n\
+         - Use `cargo_test` to verify fixes — run the relevant tests after each change.\n\
+         - Prefer the structured diagnostic tools over `run_command` with raw `cargo check` —\n\
+           the tools parse JSON output and surface only actionable workspace diagnostics.",
+    );
+
+    // Append config-based system prompt extensions.
+    for extension in &config.system_prompt.extensions {
+        #[allow(clippy::format_push_string)]
+        prompt.push_str(&format!("\n\n{extension}"));
+    }
+
+    prompt
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -429,5 +508,94 @@ mod tests {
     fn compose_prompt_no_files_returns_base() {
         let base = "You are rho.";
         assert_eq!(compose_system_prompt(base, &[]), base);
+    }
+
+    // ── compose_full_system_prompt ────────────────────────────────────────
+
+    #[test]
+    fn full_prompt_contains_environment_block() {
+        let dir = tempfile::tempdir().unwrap();
+        let sandbox = SandboxRoot::new(dir.path()).unwrap();
+        let config = crate::config::RhoConfig::default();
+        let prompt = compose_full_system_prompt(&sandbox, &[], &config, None, false);
+        assert!(prompt.contains("# Environment"));
+        assert!(prompt.contains("Working directory (project root)"));
+        assert!(prompt.contains(dir.path().to_str().unwrap()));
+    }
+
+    #[test]
+    fn full_prompt_contains_rust_tooling_block() {
+        let dir = tempfile::tempdir().unwrap();
+        let sandbox = SandboxRoot::new(dir.path()).unwrap();
+        let config = crate::config::RhoConfig::default();
+        let prompt = compose_full_system_prompt(&sandbox, &[], &config, None, false);
+        assert!(prompt.contains("# Rust Tooling"));
+        assert!(prompt.contains("cargo_check"));
+        assert!(prompt.contains("cargo_clippy"));
+        assert!(prompt.contains("cargo_fix"));
+        assert!(prompt.contains("rustc_explain"));
+        assert!(prompt.contains("cargo_test"));
+    }
+
+    #[test]
+    fn full_prompt_with_override_skips_base_and_context() {
+        let dir = tempfile::tempdir().unwrap();
+        let sandbox = SandboxRoot::new(dir.path()).unwrap();
+        let config = crate::config::RhoConfig::default();
+        let context_files = vec![ContextFile {
+            name: "AGENTS.md".to_owned(),
+            contents: "# Instructions".to_owned(),
+        }];
+        let prompt = compose_full_system_prompt(
+            &sandbox,
+            &context_files,
+            &config,
+            Some("Custom system prompt."),
+            false,
+        );
+        assert!(prompt.starts_with("Custom system prompt."));
+        assert!(!prompt.contains("AGENTS.md"));
+        // Environment and Rust Tooling blocks are still appended.
+        assert!(prompt.contains("# Environment"));
+        assert!(prompt.contains("# Rust Tooling"));
+    }
+
+    #[test]
+    fn full_prompt_includes_context_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let sandbox = SandboxRoot::new(dir.path()).unwrap();
+        let config = crate::config::RhoConfig::default();
+        let context_files = vec![ContextFile {
+            name: "AGENTS.md".to_owned(),
+            contents: "# Project rules".to_owned(),
+        }];
+        let prompt = compose_full_system_prompt(&sandbox, &context_files, &config, None, false);
+        assert!(prompt.contains("--- AGENTS.md ---"));
+        assert!(prompt.contains("# Project rules"));
+    }
+
+    #[test]
+    fn full_prompt_includes_config_extensions() {
+        let dir = tempfile::tempdir().unwrap();
+        let sandbox = SandboxRoot::new(dir.path()).unwrap();
+        let mut config = crate::config::RhoConfig::default();
+        config.system_prompt.extensions = vec![
+            "Always use PowerShell.".to_owned(),
+            "Prefer functional style.".to_owned(),
+        ];
+        let prompt = compose_full_system_prompt(&sandbox, &[], &config, None, false);
+        assert!(prompt.contains("Always use PowerShell."));
+        assert!(prompt.contains("Prefer functional style."));
+    }
+
+    #[test]
+    fn full_prompt_empty_extensions_no_extra_newlines() {
+        let dir = tempfile::tempdir().unwrap();
+        let sandbox = SandboxRoot::new(dir.path()).unwrap();
+        let config = crate::config::RhoConfig::default();
+        let prompt = compose_full_system_prompt(&sandbox, &[], &config, None, false);
+        // Extensions are empty, so the prompt should end after the Rust Tooling block
+        // with no trailing double-newline from extensions.
+        assert!(prompt.contains("# Rust Tooling"));
     }
 }

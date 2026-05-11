@@ -1,8 +1,0 @@
-[approval.per_tool]
-cargo_check  = "auto"
-cargo_clippy = "auto"
-cargo_fix    = "auto"
-cargo_test   = "auto"
-edit_file    = "auto"
-write_file   = "auto"
-run_command  = "auto"

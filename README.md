@@ -167,14 +167,18 @@ rho treats model output as untrusted and applies defense-in-depth:
 ┌──────────────────┐
 │      rho         │  ← Binary: CLI, REPL, wiring
 ├──────────────────┤
-│    rho-tools     │  ← Built-in tools: files, shell, denylist
+│    rho-tools     │  ← Built-in tools: files, shell, rust tooling
+├──────────────────┤
+│  rho-highlight   │  ← Tree-sitter syntax analysis (node splitting, highlighting)
 ├──────────────────┤
 │    rho-core      │  ← Agent kernel: loop, types, traits, config
 └──────────────────┘
    rho-test-helpers   ← Dev-only: mocks, fixtures, tempdir helpers
+   rho-eval            ← Dev-only: behavioural benchmark suite (5 eval tasks)
+   rho-bench          ← Dev-only: benchmark harness (multi-model comparison)
 ```
 
-**Dependency rule:** crates only depend on layers below them. `rho-core` depends on external libraries only. `rho-tools` depends on `rho-core`. The binary assembles everything.
+**Dependency rule:** crates only depend on layers below them. `rho-core` depends on external libraries only. `rho-tools` and `rho-highlight` depend on `rho-core`. The binary assembles everything. `rho-bench` depends on `rho-eval` → `rho-core` + `rho-tools`.
 
 ## Development
 
@@ -191,6 +195,9 @@ cargo xtask changelog <ver>   # Generate CHANGELOG.md
 rho/                  # Binary entry point
 rho-core/             # Agent kernel (loop, types, traits, config)
 rho-tools/            # Built-in tools (files, shell)
+rho-highlight/        # Tree-sitter syntax analysis
+rho-eval/             # Behavioural benchmark suite (5 eval tasks)
+rho-bench/            # Benchmark harness (multi-model comparison)
 rho-test-helpers/     # Shared test utilities (dev-only)
 xtask/                # Dev task runner
 ```

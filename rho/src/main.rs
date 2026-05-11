@@ -7,9 +7,9 @@ use rho_core::{
     AgentConfig, ConfigLoader, LocalChatClient, ModelToolCall, RhoConfig, Session, ToolRegistry,
     ToolRisk,
     approval::ApprovalGate,
-    base_prompt, compact_prompt,
-    context_files::{ContextScanner, TrustStore, compose_system_prompt},
-    find_project_root,
+    client_factory, compose_full_system_prompt,
+    context_files::{ContextScanner, TrustStore},
+    find_project_root, is_local_endpoint,
     sandbox::SandboxRoot,
     tool::CancellationToken,
 };
@@ -233,13 +233,29 @@ async fn main() -> Result<()> {
     let mut registry = ToolRegistry::new();
     register_all(&mut registry, sandbox.clone(), &rho_config);
 
-    // --- Project context files ---
-    let system_prompt = load_system_prompt(&sandbox, &cli);
+    // --- Project context files (interactive trust workflow) ---
+    let mut trust_store = TrustStore::load_default();
+    let scanner = ContextScanner::new(&sandbox);
+    let mut stdout = io::stdout();
+    let stdin = io::stdin();
+    let mut stdin_locked = stdin.lock();
+    let context_files = scanner.run(&mut trust_store, &mut stdin_locked, &mut stdout);
 
-    let client = match resolve_api_key(&rho_config, cli.api_key_env.as_deref()) {
-        Some(key) => LocalChatClient::with_endpoint_and_key(endpoint, Some(key)),
-        None => LocalChatClient::with_endpoint(endpoint),
-    };
+    // --- System prompt ---
+    let system_prompt = compose_full_system_prompt(
+        &sandbox,
+        &context_files,
+        &rho_config,
+        cli.system.as_deref(),
+        cli.compact,
+    );
+
+    // --- Client ---
+    let client = client_factory(
+        &rho_config,
+        cli.endpoint.as_deref(),
+        cli.api_key_env.as_deref(),
+    );
 
     // --- Session ---
     let model = resolve_model(&rho_config, cli.model.as_ref(), &client).await?;
@@ -489,60 +505,6 @@ async fn resolve_model(
     Ok(model.clone())
 }
 
-/// Load the system prompt from CLI override or project context files.
-///
-/// Appends the project root as the model's working directory so the model
-/// knows its absolute path and that each `run_command` starts a fresh
-/// process (i.e. `cd` does not persist between commands).
-fn load_system_prompt(sandbox: &SandboxRoot, cli: &Cli) -> String {
-    let mut prompt = if let Some(custom) = &cli.system {
-        custom.clone()
-    } else {
-        let prompt_base = if cli.compact {
-            compact_prompt()
-        } else {
-            base_prompt()
-        };
-        let mut trust_store = TrustStore::load_default();
-        let scanner = ContextScanner::new(sandbox);
-        let mut stdout = io::stdout();
-        let stdin = io::stdin();
-        let mut stdin_locked = stdin.lock();
-        let context_files = scanner.run(&mut trust_store, &mut stdin_locked, &mut stdout);
-        compose_system_prompt(prompt_base, &context_files)
-    };
-
-    // Append the working directory so the model knows its absolute path.
-    // Each run_command starts a fresh process in this directory —
-    // cd / Set-Location does not persist between invocations.
-    let root = sandbox.path().display();
-    #[allow(clippy::format_push_string)]
-    prompt.push_str(&format!(
-        "\n\n# Environment\n\n\
-         - Working directory (project root): `{root}`\n\
-         - All relative file paths and shell commands resolve from this directory.\n\
-         - Each `run_command` invocation starts a fresh process in this directory.\n\
-           `cd` and `Set-Location` do not persist between commands — include the\n\
-           full relative path from the project root in every command."
-    ));
-
-    // Append Rust tooling guidance when Rust tools are available.
-    prompt.push_str(
-        "\n\n# Rust Tooling\n\n\
-         - You have access to structured Rust compiler diagnostics via `cargo_check` and `cargo_clippy`.\n\
-         - When code fails to compile, use `cargo_check` before attempting manual fixes.\n\
-         - Trust machine-applicable suggestions from the compiler — apply them with `cargo_fix` or by\n\
-           using the suggested replacement text in `edit_file`.\n\
-         - Use `cargo_clippy` for code-quality lints beyond compilation errors.\n\
-         - Use `rustc_explain` to look up detailed explanations for error codes (e.g. E0308).\n\
-         - Use `cargo_test` to verify fixes — run the relevant tests after each change.\n\
-         - Prefer the structured diagnostic tools over `run_command` with raw `cargo check` —\n\
-           the tools parse JSON output and surface only actionable workspace diagnostics.",
-    );
-
-    prompt
-}
-
 /// Display a consent warning and read confirmation for external providers.
 ///
 /// Returns `Ok(())` if the user consents or if the provider is local.
@@ -571,84 +533,5 @@ fn check_provider_consent(endpoint: &str, cli: &Cli) -> Result<()> {
     } else {
         eprintln!("  Aborting. Use --accept-external-provider to skip this prompt.");
         Err(anyhow::anyhow!("user declined external provider consent"))
-    }
-}
-
-// ── Provider detection ─────────────────────────────────────────────────────────
-
-/// Resolve the API key from the provider configuration.
-///
-/// CLI `--api-key-env` takes priority over config `provider.api_key_env`.
-/// Reads the named environment variable and returns the value.
-/// Returns `None` if no env var is configured or the variable is not set.
-fn resolve_api_key(rho_config: &RhoConfig, cli_api_key_env: Option<&str>) -> Option<String> {
-    let env_var = cli_api_key_env.or(rho_config.provider.api_key_env.as_deref())?;
-    let key = std::env::var(env_var).ok()?;
-    if key.is_empty() { None } else { Some(key) }
-}
-
-/// Determine whether an endpoint URL points to a local address.
-///
-/// A local endpoint is one whose host is `localhost`, `127.0.0.1`, or `::1`.
-/// Any other host is considered external and triggers the consent warning.
-///
-/// Uses `url::Url` parsing so that crafted hostnames like
-/// `api.localhost-fake.evil.com` are correctly classified as external.
-fn is_local_endpoint(endpoint: &str) -> bool {
-    url::Url::parse(endpoint)
-        .ok()
-        .and_then(|u| u.host_str().map(String::from))
-        .is_some_and(|h| matches!(h.as_str(), "localhost" | "127.0.0.1" | "::1" | "[::1]"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn local_endpoint_localhost() {
-        assert!(is_local_endpoint(
-            "http://localhost:1234/v1/chat/completions"
-        ));
-    }
-
-    #[test]
-    fn local_endpoint_127_0_0_1() {
-        assert!(is_local_endpoint(
-            "http://127.0.0.1:1234/v1/chat/completions"
-        ));
-    }
-
-    #[test]
-    fn local_endpoint_ipv6_loopback() {
-        assert!(is_local_endpoint("http://[::1]:1234/v1/chat/completions"));
-    }
-
-    #[test]
-    fn external_endpoint_openai() {
-        assert!(!is_local_endpoint(
-            "https://api.openai.com/v1/chat/completions"
-        ));
-    }
-
-    #[test]
-    fn external_endpoint_anthropic() {
-        assert!(!is_local_endpoint("https://api.anthropic.com/v1/messages"));
-    }
-
-    #[test]
-    fn local_endpoint_case_insensitive() {
-        assert!(is_local_endpoint(
-            "http://LocalHost:1234/v1/chat/completions"
-        ));
-    }
-
-    #[test]
-    fn local_endpoint_rejects_localhost_subdomain() {
-        // A crafted hostname containing "localhost" as a substring
-        // must NOT be classified as local.
-        assert!(!is_local_endpoint(
-            "https://api.localhost-fake.evil.com/v1/chat/completions"
-        ));
     }
 }

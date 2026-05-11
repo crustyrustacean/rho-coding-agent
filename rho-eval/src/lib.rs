@@ -1,8 +1,7 @@
 //! rho-eval — behavioural benchmark suite for the rho coding agent.
 //!
 //! Defines canonical coding tasks with known correct outcomes and provides
-//! automated scoring. Each eval task runs in an isolated in-memory session
-//! and produces a pass/fail result.
+//! automated scoring. Run `rho-bench --tasks all` to execute the full suite.
 //!
 //! # Module layout
 //!
@@ -10,7 +9,7 @@
 //! |---|---|
 //! | [`task`] | [`EvalTask`] trait, [`TaskOutcome`], [`TaskVerdict`] |
 //! | [`report`] | [`EvalReport`], [`EvalRun`] — run summary with prompt hashes |
-//! | [`tasks`] | Built-in eval task definitions |
+//! | [`tasks`] | Built-in scenario-based eval tasks |
 
 pub mod report;
 pub mod task;

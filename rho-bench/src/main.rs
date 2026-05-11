@@ -39,6 +39,8 @@ struct Cli {
     repeats: u32,
 
     /// Model API endpoint URL.
+    ///
+    /// Overrides the `[provider] endpoint` config value.
     #[arg(long, default_value = "http://localhost:1234/v1/chat/completions")]
     endpoint: String,
 
@@ -55,16 +57,21 @@ struct Cli {
     compact: bool,
 
     /// Context window token budget.
+    ///
+    /// Overrides the `[agent] token_budget` config value.
     #[arg(long)]
     token_budget: Option<u32>,
 
     /// Maximum agent loop iterations per task.
-    #[arg(long, default_value = "32")]
-    max_iterations: u32,
+    ///
+    /// Overrides the `[agent] max_iterations` config value.
+    /// Defaults to config or 32.
+    #[arg(long)]
+    max_iterations: Option<u32>,
 
     /// Environment variable containing the API key for bearer authentication.
     ///
-    /// Required for external providers (`OpenRouter`, `OpenAI`, etc.).
+    /// Overrides the `[provider] api_key_env` config value.
     /// Ignored for local endpoints.
     #[arg(long)]
     api_key_env: Option<String>,
@@ -84,14 +91,8 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
 
-    // --- Resolve API key ---
-    let api_key = cli
-        .api_key_env
-        .as_deref()
-        .and_then(|var| std::env::var(var).ok());
-
     // --- Resolve models ---
-    let model_ids = resolve_models(&cli, api_key.as_deref()).await?;
+    let model_ids = resolve_models(&cli).await?;
 
     // --- Resolve tasks ---
     let all_tasks = all_tasks();
@@ -118,16 +119,20 @@ async fn main() -> anyhow::Result<()> {
     eprintln!("endpoint: {}", cli.endpoint);
     eprintln!();
 
+    // --- Sandbox root for config loading ---
+    let sandbox_root = std::env::current_dir().unwrap_or_default();
+
     // --- Run benchmarks ---
     let runs = harness::run_benchmarks(
         &model_ids,
         &tasks,
         cli.repeats,
         &cli.endpoint,
-        api_key.as_deref(),
+        cli.api_key_env.as_deref(),
         cli.compact,
         cli.token_budget,
         cli.max_iterations,
+        &sandbox_root,
     )
     .await;
 
@@ -155,7 +160,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 /// Resolve model IDs from CLI flag or auto-detect from server.
-async fn resolve_models(cli: &Cli, api_key: Option<&str>) -> anyhow::Result<Vec<String>> {
+async fn resolve_models(cli: &Cli) -> anyhow::Result<Vec<String>> {
     if let Some(ref models_str) = cli.models {
         return Ok(models_str
             .split(',')
@@ -165,9 +170,12 @@ async fn resolve_models(cli: &Cli, api_key: Option<&str>) -> anyhow::Result<Vec<
     }
 
     // Auto-detect: query the server for loaded models.
+    // Build a client using the configured endpoint and api-key-env for auth.
+    let config = rho_core::ConfigLoader::load(&std::env::current_dir().unwrap_or_default())
+        .unwrap_or_default();
+    let client = rho_core::client_factory(&config, Some(&cli.endpoint), cli.api_key_env.as_deref());
+
     eprintln!("no --models specified, querying server...");
-    let client =
-        rho_core::LocalChatClient::with_endpoint_and_key(&cli.endpoint, api_key.map(String::from));
     let list = client
         .list_models()
         .await

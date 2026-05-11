@@ -1,4 +1,4 @@
-## [0.19.0] - 2026-05-03
+## [0.35.0] - 2026-05-11
 
 ### 🚀 Features
 
@@ -18,12 +18,30 @@
 - *(core)* Add EntryId newtype and uuid dependency (Phase 2.5, tasks 1–2)
 - *(core)* Add Entry, EntryPayload, EntryResolution, CompactionSummary types (Phase 2.5, task 3)
 - *(core)* Add Session, SessionHeader, SessionId, TokenEstimator (Phase 2.5, task 4)
-- *(core)* Add ToolResultDetails extensible enum with FullOutput variant (Phase 2.5, task 13)
-- *(core)* Implement HeuristicEstimator with per-model EMA calibration (Phase 2.5, task 6)
-- *(core)* Add Session append operations with bounded tool-result handling (Phase 2.5, task 5)
-- *(core)* Restructure TokenBudget with prompt_budget() and completion_reserve (P2.5-10)
-- *(core)* Pin first user turn and last turn in SlidingWindowContextManager to prevent amnesia
-- *(core)* Backport bounded tool results and first-turn pinning to Conversation for live fix
+- *(core)* Fix context window amnesia bug, add Phase 2.5 session tree foundation
+- *(core)* Add tree navigation and context building (Phase 2.5, tasks 7–8)
+- *(session)* Add CompactionStrategy trait and MechanicalCompactionStrategy (Phase 2.5 Task 9)
+- *(session)* Add ExtensionEntry and ExtensionMessageEntry traits (Phase 2.5 Task 10)
+- Wire agent loop to Session, add JSONL persistence, update binary and docs (Phase 2.5 Tasks 11-15)
+- Add working directory awareness (Phase 3 CWD tasks 1-3)
+- Adaptive context fixes 1-2, details store, budget diagnostics, cleanup
+- Stuck-loop detection, run_command cwd parameter, edit_file hint improvements
+- Context:end sentinel, SessionEnded trailer, improved edit_file hints
+- *(phase-3)* Add rho-highlight crate with tree-sitter Rust grammar
+- Add CargoCheck tool with structured diagnostic parsing (Phase 3 Task 2)
+- Add CargoClippy tool (Phase 3 Task 3)
+- Add RustcExplain tool (Phase 3 Task 4)
+- Add CargoTest tool (Phase 3 Task 5)
+- Add CargoFix tool (Phase 3 Task 6)
+- Add AST context for diagnostic spans (Phase 3 Tasks 7-8)
+- Add tree-sitter node-splitting validation to EditFile (Phase 3 Task 9)
+- Add Rust-aware system prompt extension (Phase 3 Task 10)
+- Create rho-eval behavioural benchmark suite (Phase 3 Task 12)
+- Surface reasoning content from reasoning models in agent output
+- Add show_reasoning config flag (default: summary-only)
+- Add rho-bench multi-model benchmark harness
+- Add external model provider support and OpenRouter integration for rho-bench
+- *(rho)* Add CLI flags for endpoint, api-key-env, and max-iterations
 
 ### 🐛 Bug Fixes
 
@@ -34,8 +52,25 @@
 - Address M1, M3, M9, M10, M11, M12 from Phase 2 review
 - Address L1, L4, L7, L9, L11, L12 from Phase 2 review
 - Default tracing filter to info when RHO_LOG is unset
-- *(core)* Fix context window amnesia bug — oversized tool results now truncated with full output preserved; first user turn never evicted (closes P2.5-1, P2.5-9, P2.5-10)
 - Clean up tracing instrumentation
+- *(edit_file)* Detect regex patterns in old_text and surface diagnostic hint
+- Append tool result even when tool execution fails
+- Detect finish_reason=length and recover instead of silently dropping response
+- Handle empty stop responses and unblock context window eviction
+- Resolve relative paths against sandbox root in file tools
+- *(eval)* Correct E0308 verifier false negative
+- Inline format args and isolate config test from user config
+- *(rho)* Auto-allow egress host when --endpoint is set
+
+### 💼 Other
+
+- Program functions end to end, takes a chat message, send it to the model, returns the response and prints it to the console
+- Add github workflow to build docs
+
+### 🚜 Refactor
+
+- Consolidate assert_no_orphan_tool_results into rho-test-helpers
+- Remove egress enforcement
 
 ### 📚 Documentation
 
@@ -49,9 +84,23 @@
 - *(plans)* Add token budget configurability and close context management gap
 - Add Phase 2.5 adaptive-resolution context plan to .plans
 - Mark Phase 2 complete, add Phase 2.5 to roadmap
+- Add 5 prompt scenarios exercising Rust tooling
+- Add bash scenario runners and mark Phase 3 complete in plan docs
+- Add Phase 4 readiness assessment
+- Fill in all TODO stubs, update book to reflect current state
+- Add external provider guide and startup validation for non-OpenAI endpoints
+- Remove egress references and add new CLI flags
+
+### 🧪 Testing
+
+- Add CargoCheck → EditFile → CargoCheck integration test (Phase 3 Task 11)
+- Extract JSON fixtures and add fixture-based tests (Phase 3 Task 13)
+- Add alternate prompt variants for Scenario 01
 
 ### ⚙️ Miscellaneous Tasks
 
+- Initial project scaffold
+- Bump version to 0.1.1
 - Resolve clippy lints from CI
 - *(release)* Prepare 0.2.2
 - *(release)* Prepare 0.3.0
@@ -62,13 +111,10 @@
 - *(release)* Prepare 0.6.0
 - *(release)* Prepare 0.11.0
 - Add logs/ to .gitignore
-## [0.2.0] - 2026-04-25
-
-### 💼 Other
-
-- Program functions end to end, takes a chat message, send it to the model, returns the response and prints it to the console
-
-### ⚙️ Miscellaneous Tasks
-
-- Initial project scaffold
-- Bump version to 0.1.1
+- Update plans to match status of code base
+- *(release)* Prepare 0.23.0
+- Cleanup of test suite
+- *(release)* Bump version to 0.27.0
+- *(release)* Bump version to 0.28.0 — Phase 3 complete
+- Fix clippy pedantic warnings across rho-bench and rho-eval
+- *(release)* Bump version to 0.34.0

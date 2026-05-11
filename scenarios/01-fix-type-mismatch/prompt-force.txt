@@ -1,8 +1,0 @@
-You MUST use tools. Do NOT just respond with text.
-
-Step 1: Call the cargo_check tool.
-Step 2: Read the error output.
-Step 3: Call the edit_file tool to fix the error in src/lib.rs.
-Step 4: Call cargo_check again to verify.
-
-Start now by calling cargo_check.

@@ -1,1 +1,0 @@
-The file src/lib.rs has a compilation error. Use the cargo_check tool to see the error, then use edit_file to fix it. After fixing, run cargo_check again to confirm the fix compiles cleanly.

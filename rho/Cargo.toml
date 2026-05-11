@@ -22,4 +22,3 @@ rho-tools = { path = "../rho-tools" }
 tokio = { version = "1.52.1", features = ["macros", "rt-multi-thread"] }
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-url = "2"

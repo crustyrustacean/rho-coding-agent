@@ -6,14 +6,14 @@
 |---|---|---|
 | 1a: The Agent Loop | ✅ Complete | Agent loop, tool registry, `ChatClient` trait, conversation management |
 | 1b: Security Surface | ✅ Complete | Approval gate, file sandbox, context-file trust, secret redaction, untrusted-data framing |
-| 2: PowerShell, File Tools & Cross-Platform | ✅ Complete | PowerShell-native shell, `ListDir`/`EditFile`/`WriteFile` tools, config loader (two-tier TOML), command denylist, egress allowlist, cross-platform support (Windows/macOS/Linux), auto-detection (project root, model), compact prompt, `RhoError::HttpError` for retry classification |
+| 2: PowerShell, File Tools & Cross-Platform | ✅ Complete | PowerShell-native shell, `ListDir`/`EditFile`/`WriteFile` tools, config loader (two-tier TOML), command denylist, cross-platform support (Windows/macOS/Linux), auto-detection (project root, model), compact prompt, `RhoError::HttpError` for retry classification |
 | 2.5: Adaptive-Resolution Context | ✅ Complete | Session tree, resolution levels, calibrated budget, tool-result bounding, amnesia fix, JSONL persistence, extension entries, compaction strategy |
-| 3: Rust Tooling and Tree-Sitter | ✅ Complete | `rho-highlight` crate, structured diagnostics, `CargoCheck`/`CargoClippy`/`CargoTest`/`CargoFix`/`RustcExplain` tools, AST span mapping, `EditFile` node-splitting validation, Rust-aware system prompt, `rho-eval` benchmark suite, test suite audit, 5 prompt scenarios validated end-to-end |
+| 3: Rust Tooling and Tree-Sitter | ✅ Complete | `rho-highlight` crate, structured diagnostics, `CargoCheck`/`CargoClippy`/`CargoTest`/`CargoFix`/`RustcExplain` tools, AST span mapping, `EditFile` node-splitting validation, Rust-aware system prompt, `rho-eval` benchmark suite (5 eval tasks), `rho-bench` harness, shared bootstrapping (`client_factory`, `compose_full_system_prompt`), test suite audit |
 | 4: Terminal UI | 🔜 Next | Rich TUI replacing the bare REPL |
 | 5: Extensions and Polish | Planned | Custom tools, prompt composition with budget awareness |
 | 6: LSP | Deferred | rust-analyzer integration |
 
-**Workspace version:** 0.28.0
+**Workspace version:** 0.34.0
 
 **Platform support:** Windows, macOS, Linux. PowerShell 7+ (`pwsh`) is the primary shell on all platforms; Windows PowerShell 5.1 (`powershell`) is the fallback on Windows only.
 
@@ -83,8 +83,7 @@ The foundation. Defines the contract everything else implements.
 - **Context window management** — A `ContextManager` trait keeps the conversation within the model's context limit. The default `SlidingWindowContextManager` pins the system message *and the first user turn* and evicts by *turn*, never splitting an assistant `tool_calls` message from its matching `tool` results. The `ContextManager` now exposes `fit_path`, a default-implemented method that walks the session tree's leaf-to-root path, filters by resolution, renders compaction summaries as synthetic messages, subtracts tool-schema and system-message overhead from the budget, and delegates to `fit` for final enforcement. The token budget splits into `context_window` and `completion_reserve` (default 4096) — all context-fitting uses `prompt_budget()`. The token budget defaults to 32K (raised from 8K in Phase 2) and is configurable via `[agent] token_budget` and `--token-budget`.
 - **Base identity prompt** — The agent's core instructions live at `rho-core/src/prompts/base.md` and are included in the binary at compile time via `include_str!`. Exposed as `pub fn base_prompt() -> &'static str` in a `rho_core::prompts` module (a function rather than a `const` so runtime substitution can be added later without an API break). The `--system` CLI flag overrides it for experiments and tests; the default is always the bundled prompt. The prompt is the testable contract for agent behaviour: every integration test that exercises real model interactions runs against this known baseline. Prompt edits go through code review like any other change; `rho-eval` tracks pass-rate across prompt versions.
 - **Project context files** — The agent detects and loads project-level instruction files (`AGENTS.md`, `.agents.md`, `CLAUDE.md`, `.cursorrules`, `.rho/prompt.md`) from the sandbox root. These files go through the trust model: hash verification on first load, user confirmation required, re-confirmation if the file changes. Trust storage lives in `~/.rho/trusted_projects.toml`. Project context files are appended to the system prompt as clearly delimited sections, *not* as untrusted-data-framed `User` messages — they are intentional instructions the user placed in the project.
-- **Provider abstraction** — A `ChatClient` trait that decouples the agent loop from any specific model provider. Local models are the primary target (LM Studio, Ollama over OpenAI-compatible endpoints), but the trait is designed so external providers (OpenAI, Anthropic, Google) can implement it without modifying `rho-core`. The concrete `LocalChatClient` (talking to `localhost`) ships as the default. Tests use a mock implementation from `rho-test-helpers`. Dyn-compatible via `async-trait` so providers can be swapped at runtime.
-- **Network egress** — An egress allowlist controls which hosts the agent is permitted to contact. `LocalChatClient` defaults to `localhost` only. External providers add their API hostname to the allowlist. When switching from local to an external provider, the user is warned that conversation contents (including file contents) will be sent to that provider.
+- **Provider abstraction** — A `ChatClient` trait that decouples the agent loop from any specific model provider. Local models are the primary target (LM Studio, Ollama over OpenAI-compatible endpoints), but the trait is designed so external providers (OpenAI, Anthropic, Google) can implement it without modifying `rho-core`. The concrete `LocalChatClient` (talking to `localhost`) ships as the default. Tests use a mock implementation from `rho-test-helpers`. Dyn-compatible via `async-trait` so providers can be swapped at runtime. `client_factory()` and `resolve_api_key()` in `rho-core/src/client.rs` provide shared construction logic used by both `rho` and `rho-bench`.
 - **Error types** — `RhoError` and `Result`
 
 **Command surface** — These operations must be supported by `rho-core` APIs. The UI layer decides how to expose them.
@@ -211,9 +210,9 @@ A dev-only crate containing reusable test infrastructure shared across the works
 
 A standalone evaluation tool that runs the agent against fixed coding tasks and tracks success rate.
 
-- **Task definitions** — 10–20 canonical tasks (fix this compile error, refactor this function, add this test) with known correct outcomes
+- **Task definitions** — 5 canonical coding tasks (fix type mismatch, unused imports, explain-and-fix, fix-and-test, multi-error fix) with known correct outcomes
 - **Automated scoring** — Run each task, compare the agent's result against the expected outcome, produce a pass/fail report
-- **Regression tracking** — Compare success rates across phases to ensure new features don't regress existing behaviour
+- **Multi-model comparison** — `rho-bench` drives eval tasks against any OpenAI-compatible endpoint (local or remote) with timing and token metrics
 
 `rho-eval` depends on `rho-core` (for the agent loop and types). It is a dev-only tool, not published.
 
@@ -240,7 +239,7 @@ Each phase produces a runnable agent. No phase requires a rewrite of the previou
 |---|---|---|
 | 1a: The Agent Loop | [`phases/phase-1a-COMPLETE/`](phases/phase-1a-COMPLETE/) | Model invokes tools, agent loop runs autonomously. ✅ **Complete** |
 | 1b: Security Surface | [`phases/phase-1b-COMPLETE/`](phases/phase-1b-COMPLETE/) | Approval gate, sandbox, context-file trust, redaction, untrusted-data framing. ✅ **Complete** |
-| 2: PowerShell, File Tools, and Cross-Platform Support | [`phases/phase-2-COMPLETE/`](phases/phase-2-COMPLETE/) | PowerShell-native assistant, file system navigation, config loader, denylist, egress allowlist, cross-platform (Windows/macOS/Linux). ✅ **Complete** |
+| 2: PowerShell, File Tools, and Cross-Platform Support | [`phases/phase-2-COMPLETE/`](phases/phase-2-COMPLETE/) | PowerShell-native assistant, file system navigation, config loader, denylist, cross-platform (Windows/macOS/Linux). ✅ **Complete** |
 | 2.5: Adaptive-Resolution Context | [`phases/phase-2.5-COMPLETE/`](phases/phase-2.5-COMPLETE/) | Session tree, resolution levels, calibrated budget, tool-result bounding, amnesia fix, JSONL persistence, extension entries, compaction strategy. ✅ **Complete** |
 | 3: Rust Tooling and Tree-Sitter | [`phases/phase-3-COMPLETE/`](phases/phase-3-COMPLETE/) | `rho-highlight` crate, structured diagnostics, all Cargo tools, AST span mapping, `EditFile` validation, `rho-eval`, test suite audit, 5 prompt scenarios. ✅ **Complete** |
 | 4: Terminal UI | [`phases/phase-4/`](phases/phase-4/) | Rich TUI with approval prompts, streaming, session navigation. 🔜 **Next** |
@@ -324,7 +323,7 @@ A coding agent takes untrusted input (LLM output), interprets it as instructions
 ### Security Principles
 
 1. **Approval is an agent-loop concern, not a UI concern.** `rho-core` decides *whether* to execute; the UI decides *how* to ask.
-2. **Default deny.** The agent starts locked down: sandbox on, denylist active, redaction enabled, egress restricted. Users opt out explicitly.
+2. **Default deny.** The agent starts locked down: sandbox on, denylist active, redaction enabled. Users opt out explicitly.
 3. **Defense in depth.** Each threat has at least two layers of defense. The approval gate is the final backstop — even if every other defense fails, the user must confirm destructive actions.
 4. **Transparency.** Tool call previews, provider switch warnings, and extension audit views ensure the user can see what the agent is about to do before it does it.
 5. **Best-effort redaction, honest documentation.** Redaction reduces accidental secret exposure but does not guarantee its absence. The approval gate is the primary defense.
@@ -391,7 +390,7 @@ These are choices that seem right now but may need adjustment as we build:
 
 20. **Prompt injection defense** — Untrusted-data framing (`<context>` wrapper inside `User` messages) is a defense-in-depth measure, not a guarantee. Models vary in their ability to distinguish instructions from data inside framing. The approval gate is the primary defense — even if the model is tricked into generating a destructive command, the user must approve it before execution.
 
-21. **Egress control granularity** — The egress allowlist controls which hosts the `ChatClient` can contact. `RunCommand` with PowerShell networking is a separate egress path. The command denylist blocks the most common networking cmdlets (`Invoke-WebRequest`, `Invoke-RestMethod`), external network tools (`curl`, `wget`, `bitsadmin`, `certutil`), and direct .NET HTTP/socket access (`[System.Net.WebClient]`, `[System.Net.Http.HttpClient]`, `[System.Net.Sockets.TcpClient]`). However, a determined model could still construct network requests using less common .NET APIs or creative escape paths. The approval gate is the **primary** defense for shell egress; the denylist is a best-effort safety net. Full egress control requires OS-level network filtering, which is out of scope.
+21. **Egress control** — An egress allowlist was implemented in Phase 2 but removed in v0.33.3 after review determined it provided a false sense of security: the model could bypass it via shell commands regardless. The approval gate and command denylist remain the primary defenses. The provider consent warning (informing the user that data will leave the machine when connecting to an external endpoint) was retained.
 
 22. **Project context file scope** — The default scan list covers the most common ecosystem conventions, but the landscape evolves. Configurable in `.rho/config.toml`. Subdirectory scanning (e.g., `.claude/rules/`) is not done initially — each additional file is another supply-chain vector.
 

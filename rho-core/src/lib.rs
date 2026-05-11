@@ -89,13 +89,18 @@ pub use agent::{AgentConfig, AgentState, TransitionError, run_loop};
 pub use approval::{
     ApprovalGate, ApprovalPolicy, AutoApprovePolicy, ConfigApprovalPolicy, DefaultApprovalPolicy,
 };
-pub use client::{ChatClient, LocalChatClient, ModelInfo, ModelList};
+pub use client::{
+    ChatClient, LocalChatClient, ModelInfo, ModelList, client_factory, is_local_endpoint,
+    resolve_api_key,
+};
 pub use config::{
     AgentLoopConfig, ApprovalAction, ApprovalConfig, ConfigLoadError, ConfigLoader, ContextConfig,
     ProviderConfig, RedactionConfig, RhoConfig, SandboxConfig, ShellConfig, SystemPromptConfig,
 };
 pub use context::{ContextManager, SlidingWindowContextManager, TokenBudget};
-pub use context_files::{ContextFile, ContextScanner, TrustStore, compose_system_prompt};
+pub use context_files::{
+    ContextFile, ContextScanner, TrustStore, compose_full_system_prompt, compose_system_prompt,
+};
 pub use conversation::AssistantResponse;
 pub use diagnostic::{
     Diagnostic, DiagnosticLevel, DiagnosticSpan, DiagnosticSuggestion, SuggestionApplicability,

@@ -1,5 +1,9 @@
 //! The [`ChatClient`] trait and [`LocalChatClient`] default implementation.
+//!
+//! Also provides [`client_factory`] for constructing a fully-configured client
+//! from [`RhoConfig`] with optional CLI overrides.
 
+use crate::config::RhoConfig;
 use crate::error::{Result, RhoError};
 use crate::request::ChatRequest;
 use crate::response::ModelResponse;
@@ -48,9 +52,6 @@ pub struct LocalChatClient {
 impl LocalChatClient {
     /// Create a client at the default local endpoint
     /// (`http://localhost:1234/v1/chat/completions`).
-    ///
-    /// No egress enforcement is applied — all hosts are permitted.
-    /// This is the legacy constructor for backward compatibility.
     pub fn new() -> Self {
         Self {
             http_client: Client::new(),
@@ -106,6 +107,20 @@ impl LocalChatClient {
 impl Default for LocalChatClient {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl LocalChatClient {
+    /// The configured endpoint URL.
+    #[must_use]
+    pub fn endpoint(&self) -> &str {
+        &self.endpoint
+    }
+
+    /// The configured API key (if any).
+    #[must_use]
+    pub fn api_key(&self) -> &Option<String> {
+        &self.api_key
     }
 }
 
@@ -222,11 +237,226 @@ impl ChatClient for LocalChatClient {
     }
 }
 
+// ── Shared bootstrapping ─────────────────────────────────────────────────────────
+
+/// The default endpoint URL when no override or config is set.
+const DEFAULT_ENDPOINT: &str = "http://localhost:1234/v1/chat/completions";
+
+/// Construct a fully-configured [`LocalChatClient`] from [`RhoConfig`].
+///
+/// Reads `provider.endpoint` and `provider.api_key_env` from config.
+/// CLI overrides for endpoint and api-key-env are applied on top.
+///
+/// Priority (endpoint): CLI override → config → default.
+/// Priority (api key): CLI override → config `provider.api_key_env`.
+pub fn client_factory(
+    config: &RhoConfig,
+    endpoint_override: Option<&str>,
+    api_key_env_override: Option<&str>,
+) -> LocalChatClient {
+    let endpoint = endpoint_override
+        .map(String::from)
+        .or_else(|| config.provider.endpoint.clone())
+        .unwrap_or_else(|| DEFAULT_ENDPOINT.to_owned());
+
+    let api_key = resolve_api_key(config, api_key_env_override);
+
+    match api_key {
+        Some(key) => LocalChatClient::with_endpoint_and_key(endpoint, Some(key)),
+        None => LocalChatClient::with_endpoint(endpoint),
+    }
+}
+
+/// Resolve the API key from provider configuration.
+///
+/// CLI `--api-key-env` takes priority over config `provider.api_key_env`.
+/// Reads the named environment variable and returns the value.
+/// Returns `None` if no env var is configured or the variable is not set.
+pub fn resolve_api_key(config: &RhoConfig, api_key_env_override: Option<&str>) -> Option<String> {
+    let env_var = api_key_env_override.or(config.provider.api_key_env.as_deref())?;
+    let key = std::env::var(env_var).ok()?;
+    if key.is_empty() { None } else { Some(key) }
+}
+
+/// Determine whether an endpoint URL points to a local address.
+///
+/// A local endpoint is one whose host is `localhost`, `127.0.0.1`, or `::1`.
+/// Any other host is considered external.
+///
+/// Uses `url::Url` parsing so that crafted hostnames like
+/// `api.localhost-fake.evil.com` are correctly classified as external.
+pub fn is_local_endpoint(endpoint: &str) -> bool {
+    url::Url::parse(endpoint)
+        .ok()
+        .and_then(|u| u.host_str().map(String::from))
+        .is_some_and(|h| matches!(h.as_str(), "localhost" | "127.0.0.1" | "::1" | "[::1]"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     // ── Endpoint derivation ──────────────────────────────────────────────
+
+    // ── client_factory ───────────────────────────────────────────────────────
+
+    #[test]
+    fn client_factory_defaults_when_no_config_or_override() {
+        let config = RhoConfig::default();
+        let client = client_factory(&config, None, None);
+        assert_eq!(client.endpoint(), DEFAULT_ENDPOINT);
+        assert!(client.api_key().is_none());
+    }
+
+    #[test]
+    fn client_factory_uses_endpoint_override() {
+        let config = RhoConfig::default();
+        let client = client_factory(
+            &config,
+            Some("http://example.com/v1/chat/completions"),
+            None,
+        );
+        assert_eq!(client.endpoint(), "http://example.com/v1/chat/completions");
+    }
+
+    #[test]
+    fn client_factory_override_beats_config() {
+        let mut config = RhoConfig::default();
+        config.provider.endpoint = Some("http://config.com/v1/chat/completions".to_owned());
+        let client = client_factory(
+            &config,
+            Some("http://override.com/v1/chat/completions"),
+            None,
+        );
+        assert_eq!(client.endpoint(), "http://override.com/v1/chat/completions");
+    }
+
+    #[test]
+    fn client_factory_uses_config_endpoint() {
+        let mut config = RhoConfig::default();
+        config.provider.endpoint = Some("http://config.com/v1/chat/completions".to_owned());
+        let client = client_factory(&config, None, None);
+        assert_eq!(client.endpoint(), "http://config.com/v1/chat/completions");
+    }
+
+    #[test]
+    fn client_factory_uses_config_api_key() {
+        let mut config = RhoConfig::default();
+        config.provider.api_key_env = Some("RHO_TEST_API_KEY_12345".to_owned());
+        temp_env::with_var("RHO_TEST_API_KEY_12345", Some("test-key-value"), || {
+            let client = client_factory(&config, None, None);
+            assert_eq!(client.api_key().as_deref(), Some("test-key-value"));
+        });
+    }
+
+    #[test]
+    fn client_factory_api_key_override_beats_config() {
+        let mut config = RhoConfig::default();
+        config.provider.api_key_env = Some("CONFIG_KEY".to_owned());
+        temp_env::with_vars(
+            [
+                ("CONFIG_KEY", Some("config-key")),
+                ("OVERRIDE_KEY", Some("override-key")),
+            ],
+            || {
+                let client = client_factory(&config, None, Some("OVERRIDE_KEY"));
+                assert_eq!(client.api_key().as_deref(), Some("override-key"));
+            },
+        );
+    }
+
+    // ── resolve_api_key ────────────────────────────────────────────────────
+
+    #[test]
+    fn resolve_api_key_returns_none_when_nothing_configured() {
+        let config = RhoConfig::default();
+        assert!(resolve_api_key(&config, None).is_none());
+    }
+
+    #[test]
+    fn resolve_api_key_reads_from_config() {
+        let mut config = RhoConfig::default();
+        config.provider.api_key_env = Some("RHO_TEST_KEY_RESOLVE".to_owned());
+        temp_env::with_var("RHO_TEST_KEY_RESOLVE", Some("secret"), || {
+            assert_eq!(resolve_api_key(&config, None), Some("secret".to_owned()));
+        });
+    }
+
+    #[test]
+    fn resolve_api_key_override_beats_config() {
+        let mut config = RhoConfig::default();
+        config.provider.api_key_env = Some("CONFIG_ENV".to_owned());
+        temp_env::with_vars(
+            [
+                ("CONFIG_ENV", Some("config-val")),
+                ("CLI_ENV", Some("cli-val")),
+            ],
+            || {
+                assert_eq!(
+                    resolve_api_key(&config, Some("CLI_ENV")),
+                    Some("cli-val".to_owned())
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn resolve_api_key_returns_none_for_empty_value() {
+        let mut config = RhoConfig::default();
+        config.provider.api_key_env = Some("RHO_TEST_EMPTY_KEY".to_owned());
+        temp_env::with_var("RHO_TEST_EMPTY_KEY", Some(""), || {
+            assert!(resolve_api_key(&config, None).is_none());
+        });
+    }
+
+    // ── is_local_endpoint ──────────────────────────────────────────────────
+
+    #[test]
+    fn local_endpoint_localhost() {
+        assert!(is_local_endpoint(
+            "http://localhost:1234/v1/chat/completions"
+        ));
+    }
+
+    #[test]
+    fn local_endpoint_127_0_0_1() {
+        assert!(is_local_endpoint(
+            "http://127.0.0.1:1234/v1/chat/completions"
+        ));
+    }
+
+    #[test]
+    fn local_endpoint_ipv6_loopback() {
+        assert!(is_local_endpoint("http://[::1]:1234/v1/chat/completions"));
+    }
+
+    #[test]
+    fn external_endpoint_openai() {
+        assert!(!is_local_endpoint(
+            "https://api.openai.com/v1/chat/completions"
+        ));
+    }
+
+    #[test]
+    fn external_endpoint_anthropic() {
+        assert!(!is_local_endpoint("https://api.anthropic.com/v1/messages"));
+    }
+
+    #[test]
+    fn local_endpoint_case_insensitive() {
+        assert!(is_local_endpoint(
+            "http://LocalHost:1234/v1/chat/completions"
+        ));
+    }
+
+    #[test]
+    fn local_endpoint_rejects_localhost_subdomain() {
+        assert!(!is_local_endpoint(
+            "https://api.localhost-fake.evil.com/v1/chat/completions"
+        ));
+    }
+
+    // ── Endpoint derivation ────────────────────────────────────────────────
 
     #[test]
     fn default_endpoint_derives_models_url() {

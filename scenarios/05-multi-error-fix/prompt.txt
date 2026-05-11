@@ -1,1 +1,0 @@
-Run cargo_check to find all compilation errors. Fix each error one at a time, running cargo_check after each fix to see what remains. Once it compiles, run cargo_clippy to check for any remaining warnings and fix those too. Confirm everything is clean at the end.
