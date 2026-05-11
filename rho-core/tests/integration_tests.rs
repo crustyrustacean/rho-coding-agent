@@ -1206,14 +1206,13 @@ fn custom_system_overrides_base_prompt() {
 #[tokio::test]
 async fn tool_execution_error_still_appends_tool_result() {
     // When a tool execution fails, the agent loop must still append a
-    // tool result entry to the session. Without this, the conversation
-    // history has an orphaned assistant tool_call message with no matching
-    // tool result, violating the API contract on the next request.
-    let client = MockChatClient::new(vec![tool_call_response(
-        "call_1",
-        "fail_tool",
-        r#"{"path":"test"}"#,
-    )]);
+    // tool result entry to the session. The error is fed back to the
+    // model so it can see what went wrong and retry, matching the
+    // pattern used for denied and stuck-loop tool calls.
+    let client = MockChatClient::new(vec![
+        tool_call_response("call_1", "fail_tool", r#"{"path":"test"}"#),
+        text_response("I see the error, let me try differently."),
+    ]);
 
     let mut registry = ToolRegistry::new();
     registry.register(Box::new(FailingTool {
@@ -1235,10 +1234,10 @@ async fn tool_execution_error_still_appends_tool_result() {
     )
     .await;
 
-    // The loop should have returned an error from the failing tool.
+    // The loop should recover: the model sees the error and returns a text reply.
     assert!(
-        result.is_err(),
-        "expected error from failing tool, got: {result:?}"
+        result.is_ok(),
+        "expected ok after model recovered from tool error, got: {result:?}"
     );
 
     // Verify a tool result entry exists in the session (even though
@@ -1351,7 +1350,13 @@ async fn length_truncated_with_partial_content_shows_it() {
 /// the explanation should use the "no output" variant.
 #[tokio::test]
 async fn length_truncated_empty_everything_shows_no_output() {
-    let client = MockChatClient::new(vec![length_truncated_response("", "")]);
+    // When the model produces completely empty output (no text, no
+    // reasoning), the agent loop injects a nudge and retries rather
+    // than attempting compaction (which would fail with too few entries).
+    let client = MockChatClient::new(vec![
+        length_truncated_response("", ""),
+        text_response("Sorry about that — here is my actual response."),
+    ]);
 
     let registry = ToolRegistry::new();
     let config = AgentConfig::default();
@@ -1370,12 +1375,8 @@ async fn length_truncated_empty_everything_shows_no_output() {
     .unwrap();
 
     assert!(
-        !result.is_empty(),
-        "expected a non-empty explanation, got empty string"
-    );
-    assert!(
-        result.contains("No output was produced"),
-        "expected 'No output was produced' in explanation, got: {result}"
+        result.contains("actual response"),
+        "expected model to recover after nudge, got: {result}"
     );
 }
 

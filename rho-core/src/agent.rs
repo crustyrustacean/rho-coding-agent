@@ -278,6 +278,22 @@ pub async fn run_loop(
                 );
                 state = AgentState::Thinking;
 
+                // When both content and reasoning are empty, the model
+                // produced nothing at all. This is common with reasoning
+                // models (llama.cpp, LM Studio) that report "stop" instead
+                // of "length" when the completion budget is exhausted during
+                // thinking. Rather than attempting compaction (which will
+                // fail with too few entries), inject a nudge so the model
+                // can see the empty response and try again.
+                if content.is_empty() && reasoning_content.is_empty() {
+                    warn!("model produced empty response, injecting nudge and retrying");
+                    session.append_user_message(
+                        "Your previous response was empty. Please provide a \
+                         tool call or text response and try again.",
+                    );
+                    continue;
+                }
+
                 // Attempt compaction to free context space, then retry.
                 // If compaction fails (too few entries, or nothing to compact),
                 // return a user-facing explanation.
@@ -305,22 +321,18 @@ pub async fn run_loop(
                              context window. \
                              \n\n",
                         );
-                        if !reasoning_content.is_empty() {
-                            explanation.push_str(
-                                "The model was still thinking (chain-of-thought) and did not \
-                                 produce any output before being cut off. Try one of:\
-                                 \n  1. Use `/compact` to summarize the conversation and free space\n                                 \n  2. Start a fresh session with `/reset`\n                                 \n  3. Increase the context window in your model server\n",
-                            );
-                        } else if content.is_empty() {
-                            explanation.push_str(
-                                "No output was produced. Try `/compact` or `/reset` to continue.\n",
-                            );
-                        } else {
+                        if reasoning_content.is_empty() {
                             use std::fmt::Write;
                             let _ = write!(
                                 explanation,
                                 "Partial output (truncated):\n\n{content}\n\n\
                                  Use `/compact` or `/reset` to get a complete response.\n"
+                            );
+                        } else {
+                            explanation.push_str(
+                                "The model was still thinking (chain-of-thought) and did not \
+                                 produce any output before being cut off. Try one of:\
+                                 \n  1. Use `/compact` to summarize the conversation and free space\n                                 \n  2. Start a fresh session with `/reset`\n                                 \n  3. Increase the context window in your model server\n",
                             );
                         }
                         state = AgentState::Idle;
@@ -371,14 +383,16 @@ pub async fn run_loop(
                     let result = match registry.execute(&call, cancel.clone()).await {
                         Ok(r) => r,
                         Err(e) => {
-                            // Persist the error as a tool result so the
-                            // conversation history stays valid (every
-                            // assistant tool_call must have a matching
-                            // tool result). The ? propagation happens
-                            // after we write the error to the session.
+                            // Feed the error back to the model as a tool
+                            // result so it can see what went wrong and retry.
+                            // This mirrors the denial and stuck-loop paths,
+                            // which also continue the loop instead of
+                            // terminating.
+                            warn!(error = %e, "tool execution failed, feeding error back to model");
                             let _ = session
                                 .append_tool_result(call_id, &ToolResult::error(format!("{e}")));
-                            return Err(e);
+                            state = AgentState::Thinking;
+                            continue;
                         }
                     };
 
