@@ -18,7 +18,7 @@
 use rho_core::{
     AgentConfig, ChatMessage, ContentBlock, ContextManager, MechanicalCompactionStrategy,
     ModelResponse, Session, SlidingWindowContextManager, TokenBudget, ToolCallId, ToolName,
-    ToolRegistry, ToolResult,
+    ToolResult,
     agent::run_loop,
     message::{ModelToolCall, ToolCallFunction},
     session::{
@@ -28,7 +28,7 @@ use rho_core::{
 };
 use rho_test_helpers::{
     AutoApproveGate, MockChatClient, assert_no_orphan_tool_results, fixed_registry,
-    in_memory_session, text_response, tool_call_response,
+    in_memory_session, single_text_turn, single_tool_turn, text_response, tool_call_response,
 };
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -62,59 +62,6 @@ fn response_with_usage(text: &str, prompt_tokens: usize) -> ModelResponse {
         "system_fingerprint": ""
     });
     serde_json::from_value(json).expect("response_with_usage")
-}
-
-/// Run a single agent loop turn: user sends text, model responds with text.
-/// Returns the session after the turn.
-async fn single_text_turn(
-    session: &mut Session,
-    user_text: &str,
-    response_text: &str,
-    registry: &ToolRegistry,
-) -> String {
-    let client = MockChatClient::new(vec![text_response(response_text)]);
-    let config = AgentConfig::default();
-    let result = run_loop(
-        session,
-        user_text,
-        &client,
-        registry,
-        &config,
-        CancellationToken::new(),
-        &AutoApproveGate,
-    )
-    .await
-    .unwrap();
-    result
-}
-
-/// Run a single agent loop turn: user sends text, model requests a tool call,
-/// tool executes, model replies with text.
-/// Returns the session after the turn.
-async fn single_tool_turn(
-    session: &mut Session,
-    user_text: &str,
-    call_id: &str,
-    tool_name: &str,
-    tool_args: &str,
-    registry: &ToolRegistry,
-) {
-    let client = MockChatClient::new(vec![
-        tool_call_response(call_id, tool_name, tool_args),
-        text_response("done"),
-    ]);
-    let config = AgentConfig::default();
-    let _ = run_loop(
-        session,
-        user_text,
-        &client,
-        registry,
-        &config,
-        CancellationToken::new(),
-        &AutoApproveGate,
-    )
-    .await
-    .unwrap();
 }
 
 // ── Task 16: Phase 2.5–specific tests ─────────────────────────────────────────

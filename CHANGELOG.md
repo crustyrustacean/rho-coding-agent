@@ -1,3 +1,16 @@
+## [0.35.2] - 2026-05-12
+
+### 🚜 Refactor
+
+- Consolidate `single_text_turn` and `single_tool_turn` helpers into rho-test-helpers
+- Rename `phase_2_5_tests.rs` to `session_integration_tests.rs` for clarity
+
+### 🧪 Testing
+
+- Update test documentation to reflect new helpers in rho-test-helpers
+
+---
+
 ## [0.35.0] - 2026-05-11
 
 ### 🚀 Features

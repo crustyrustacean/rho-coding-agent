@@ -11,6 +11,8 @@
 //!   to build a [`ToolRegistry`] containing a single `FixedResponseTool`.
 //! - [`FileTestEnv`] — a temporary directory with a [`SandboxRoot`] and helpers
 //!   for creating files and subdirectories inside the sandbox.
+//! - [`single_text_turn`] — run a single agent loop turn (text-only).
+//! - [`single_tool_turn`] — run a single agent loop turn (tool call + text).
 //! - [`detect_shell`] — detect the available PowerShell executable (`pwsh` or
 //!   `powershell`), returning `None` if neither is on `PATH`.
 //! - [`load_fixture`] — load a JSON fixture file from `tests/fixtures/`.
@@ -27,9 +29,11 @@
 
 use async_trait::async_trait;
 use rho_core::{
-    CancellationToken, ChatClient, ChatMessage, ChatRequest, ModelResponse, RhoError, SandboxRoot,
-    Session, ShellExecutor, ShellOutput, Tool, ToolName, ToolOutcome, ToolRegistry, ToolResult,
-    TrustStore, approval::ApprovalGate, message::ModelToolCall, tool::ToolRisk,
+    agent::run_loop,
+    AgentConfig, CancellationToken, ChatClient, ChatMessage, ChatRequest, ModelResponse,
+    RhoError, SandboxRoot, Session, ShellExecutor, ShellOutput, Tool, ToolName, ToolOutcome,
+    ToolRegistry, ToolResult, TrustStore, approval::ApprovalGate, message::ModelToolCall,
+    tool::ToolRisk,
 };
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -796,4 +800,69 @@ pub fn assert_no_orphan_tool_results(messages: &[ChatMessage]) {
             ChatMessage::System { .. } | ChatMessage::User { .. } => {}
         }
     }
+}
+
+// ── Agent loop helpers ─────────────────────────────────────────────────────────
+
+/// Run a single agent loop turn: user sends text, model responds with text.
+///
+/// Returns the response text from the turn.
+///
+/// # Panics
+///
+/// Panics if the agent loop fails.
+pub async fn single_text_turn(
+    session: &mut Session,
+    user_text: &str,
+    response_text: &str,
+    registry: &ToolRegistry,
+) -> String {
+    let client = MockChatClient::new(vec![text_response(response_text)]);
+    let config = AgentConfig::default();
+    let result = run_loop(
+        session,
+        user_text,
+        &client,
+        registry,
+        &config,
+        CancellationToken::new(),
+        &AutoApproveGate,
+    )
+    .await
+    .unwrap();
+    result
+}
+
+/// Run a single agent loop turn: user sends text, model requests a tool call,
+/// tool executes, model replies with text.
+///
+/// The turn completes after the model responds with text (the "done" response).
+///
+/// # Panics
+///
+/// Panics if the agent loop fails.
+pub async fn single_tool_turn(
+    session: &mut Session,
+    user_text: &str,
+    call_id: &str,
+    tool_name: &str,
+    tool_args: &str,
+    registry: &ToolRegistry,
+) {
+    let client = MockChatClient::new(vec![
+        tool_call_response(call_id, tool_name, tool_args),
+        text_response("done"),
+    ]);
+    let config = AgentConfig::default();
+    let _ = run_loop(
+        session,
+        user_text,
+        &client,
+        registry,
+        &config,
+        CancellationToken::new(),
+        &AutoApproveGate,
+    )
+    .await
+    .unwrap();
 }
