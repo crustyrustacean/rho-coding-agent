@@ -483,7 +483,6 @@ mod tests {
         ));
     }
 
-
     #[test]
     fn default_endpoint_derives_models_url() {
         let client = LocalChatClient::new();

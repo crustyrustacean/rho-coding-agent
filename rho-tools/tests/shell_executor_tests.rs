@@ -4,8 +4,7 @@
 //! `powershell` to be available on the system. They are kept minimal and
 //! fast — no network, no file I/O beyond what PowerShell itself does.
 //!
-//! If no PowerShell is found on `PATH`, all tests in this file are skipped
-//! (returned as `ignored` by the `detect_shell()` check).
+//! If no PowerShell is found on `PATH`, all tests in this file are skipped.
 
 use std::path::Path;
 use std::time::Duration;
@@ -13,11 +12,39 @@ use std::time::Duration;
 use rho_core::{CancellationToken, shell::ShellExecutor};
 use rho_tools::PowerShellExecutor;
 
+// ── Test setup ───────────────────────────────────────────────────────────────
+
+/// Check if PowerShell is available, returning true if it is.
+fn has_powershell() -> bool {
+    which::which("pwsh").is_ok() || which::which("powershell").is_ok()
+}
+
+/// Macro to skip tests when PowerShell is not available.
+macro_rules! skip_if_no_powershell {
+    () => {
+        if !has_powershell() {
+            eprintln!(
+                "Skipping {}: PowerShell not found on PATH — install PowerShell 7+ (pwsh) or ensure Windows PowerShell (powershell) is available",
+                std::any::type_name::<fn()>()
+            );
+            return;
+        }
+    };
+}
+
+/// Create a PowerShell executor, assuming PowerShell is available.
+/// Use `skip_if_no_powershell!()` before calling this function.
+fn get_executor() -> PowerShellExecutor {
+    PowerShellExecutor::new()
+}
+
 // ── Basic execution ───────────────────────────────────────────────────────────
 
 #[tokio::test]
 async fn captures_stdout() {
-    let executor = PowerShellExecutor::new();
+    skip_if_no_powershell!();
+    skip_if_no_powershell!();
+    let executor = get_executor();
     let output = executor
         .execute(
             "Write-Output 'hello world'",
@@ -35,7 +62,8 @@ async fn captures_stdout() {
 
 #[tokio::test]
 async fn captures_stderr() {
-    let executor = PowerShellExecutor::new();
+    skip_if_no_powershell!();
+    let executor = get_executor();
     let output = executor
         .execute(
             "Write-Error 'oops'",
@@ -52,7 +80,8 @@ async fn captures_stderr() {
 
 #[tokio::test]
 async fn reports_nonzero_exit_code() {
-    let executor = PowerShellExecutor::new();
+    skip_if_no_powershell!();
+    let executor = get_executor();
     let output = executor
         .execute("exit 42", Path::new("."), None, CancellationToken::new())
         .await
@@ -63,7 +92,8 @@ async fn reports_nonzero_exit_code() {
 
 #[tokio::test]
 async fn reports_zero_exit_code_on_success() {
-    let executor = PowerShellExecutor::new();
+    skip_if_no_powershell!();
+    let executor = get_executor();
     let output = executor
         .execute(
             "Write-Output 'ok'",
@@ -81,7 +111,8 @@ async fn reports_zero_exit_code_on_success() {
 
 #[tokio::test]
 async fn respects_working_directory() {
-    let executor = PowerShellExecutor::new();
+    skip_if_no_powershell!();
+    let executor = get_executor();
     let output = executor
         .execute(
             "Get-Location | Write-Output",
@@ -100,7 +131,8 @@ async fn respects_working_directory() {
 
 #[tokio::test]
 async fn cancellation_kills_long_running_process() {
-    let executor = PowerShellExecutor::new();
+    skip_if_no_powershell!();
+    let executor = get_executor();
     let cancel = CancellationToken::new();
     let cancel_clone = cancel.clone();
 
@@ -122,7 +154,8 @@ async fn cancellation_kills_long_running_process() {
 
 #[tokio::test]
 async fn timeout_kills_long_running_process() {
-    let executor = PowerShellExecutor::new();
+    skip_if_no_powershell!();
+    let executor = get_executor();
 
     let result = executor
         .execute(
@@ -138,7 +171,8 @@ async fn timeout_kills_long_running_process() {
 
 #[tokio::test]
 async fn short_command_completes_within_timeout() {
-    let executor = PowerShellExecutor::new();
+    skip_if_no_powershell!();
+    let executor = get_executor();
 
     let output = executor
         .execute(
@@ -158,7 +192,8 @@ async fn short_command_completes_within_timeout() {
 
 #[test]
 fn executor_reports_available_shell() {
-    let executor = PowerShellExecutor::new();
+    skip_if_no_powershell!();
+    let executor = get_executor();
     // On a Windows dev machine, at least one PowerShell should be available.
     assert!(
         !executor.shell_exe().is_empty(),
@@ -170,7 +205,8 @@ fn executor_reports_available_shell() {
 
 #[tokio::test]
 async fn normalizes_forward_slashes_in_paths() {
-    let executor = PowerShellExecutor::new();
+    skip_if_no_powershell!();
+    let executor = get_executor();
     // Use a path with forward slashes.
     let output = executor
         .execute(
@@ -199,7 +235,8 @@ async fn normalizes_forward_slashes_in_paths() {
 
 #[tokio::test]
 async fn preserves_division_operator() {
-    let executor = PowerShellExecutor::new();
+    skip_if_no_powershell!();
+    let executor = get_executor();
     // `10 / 2` should NOT be normalized — spaces around `/` mean division.
     let output = executor
         .execute("10 / 2", Path::new("."), None, CancellationToken::new())
@@ -213,7 +250,8 @@ async fn preserves_division_operator() {
 
 #[tokio::test]
 async fn executes_pipeline() {
-    let executor = PowerShellExecutor::new();
+    skip_if_no_powershell!();
+    let executor = get_executor();
     let output = executor
         .execute(
             "1..3 | ForEach-Object { $_ * 2 }",
@@ -231,9 +269,10 @@ async fn executes_pipeline() {
 
 #[tokio::test]
 async fn executes_with_no_profile() {
+    skip_if_no_powershell!();
     // The executor passes -NoProfile. Verify the $PROFILE variable is empty
     // (not loading a user profile script).
-    let executor = PowerShellExecutor::new();
+    let executor = get_executor();
     let output = executor
         .execute(
             "Write-Output ($PROFILE -eq $null)",

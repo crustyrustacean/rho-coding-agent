@@ -29,10 +29,9 @@
 
 use async_trait::async_trait;
 use rho_core::{
-    agent::run_loop,
-    AgentConfig, CancellationToken, ChatClient, ChatMessage, ChatRequest, ModelResponse,
-    RhoError, SandboxRoot, Session, ShellExecutor, ShellOutput, Tool, ToolName, ToolOutcome,
-    ToolRegistry, ToolResult, TrustStore, approval::ApprovalGate, message::ModelToolCall,
+    AgentConfig, CancellationToken, ChatClient, ChatMessage, ChatRequest, ModelResponse, RhoError,
+    SandboxRoot, Session, ShellExecutor, ShellOutput, Tool, ToolName, ToolOutcome, ToolRegistry,
+    ToolResult, TrustStore, agent::run_loop, approval::ApprovalGate, message::ModelToolCall,
     tool::ToolRisk,
 };
 use std::path::{Path, PathBuf};
