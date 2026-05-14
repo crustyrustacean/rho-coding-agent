@@ -52,15 +52,26 @@ pub struct LocalChatClient {
 impl LocalChatClient {
     /// Create a client at the default local endpoint
     /// (`http://localhost:1234/v1/chat/completions`).
+    ///
+    /// This is a convenience constructor equivalent to
+    /// `with_endpoint(DEFAULT_ENDPOINT)`. For custom endpoints, use
+    /// [`with_endpoint()`]. For production use with config, prefer
+    /// [`client_factory()`].
     pub fn new() -> Self {
-        Self {
-            http_client: Client::new(),
-            endpoint: "http://localhost:1234/v1/chat/completions".to_owned(),
-            api_key: None,
-        }
+        Self::with_endpoint(DEFAULT_ENDPOINT)
     }
 
     /// Create a client at a custom endpoint URL.
+    ///
+    /// # When to use
+    ///
+    /// - Local server at non-default port or path
+    /// - Quick configuration without loading config files
+    ///
+    /// # When not to use
+    ///
+    /// - Production with config: use [`client_factory()`]
+    /// - Need API key authentication: use [`with_endpoint_and_key()`]
     pub fn with_endpoint(endpoint: impl Into<String>) -> Self {
         Self {
             http_client: Client::new(),
@@ -71,6 +82,15 @@ impl LocalChatClient {
 
     /// Create a client at a custom endpoint URL with optional bearer
     /// authentication.
+    ///
+    /// # When to use
+    ///
+    /// - External API providers (`OpenRouter`, `OpenAI`, etc.)
+    /// - Quick configuration without loading config files
+    ///
+    /// # When not to use
+    ///
+    /// - Production with config: use [`client_factory()`]
     pub fn with_endpoint_and_key(endpoint: impl Into<String>, api_key: Option<String>) -> Self {
         Self {
             http_client: Client::new(),
@@ -243,6 +263,13 @@ impl ChatClient for LocalChatClient {
 const DEFAULT_ENDPOINT: &str = "http://localhost:1234/v1/chat/completions";
 
 /// Construct a fully-configured [`LocalChatClient`] from [`RhoConfig`].
+///
+/// This is the **recommended** way to construct clients in production.
+/// It respects config values, handles API key resolution from environment
+/// variables, and applies CLI overrides.
+///
+/// For quick testing without config, you may use [`new()`], [`with_endpoint()`],
+/// or [`with_endpoint_and_key()`] directly.
 ///
 /// Reads `provider.endpoint` and `provider.api_key_env` from config.
 /// CLI overrides for endpoint and api-key-env are applied on top.
@@ -456,7 +483,6 @@ mod tests {
         ));
     }
 
-    // ── Endpoint derivation ────────────────────────────────────────────────
 
     #[test]
     fn default_endpoint_derives_models_url() {

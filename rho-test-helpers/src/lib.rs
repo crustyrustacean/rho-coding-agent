@@ -819,7 +819,7 @@ pub async fn single_text_turn(
 ) -> String {
     let client = MockChatClient::new(vec![text_response(response_text)]);
     let config = AgentConfig::default();
-    let result = run_loop(
+    run_loop(
         session,
         user_text,
         &client,
@@ -829,8 +829,7 @@ pub async fn single_text_turn(
         &AutoApproveGate,
     )
     .await
-    .unwrap();
-    result
+    .unwrap()
 }
 
 /// Run a single agent loop turn: user sends text, model requests a tool call,
