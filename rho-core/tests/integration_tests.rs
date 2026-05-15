@@ -4,10 +4,13 @@
 //! is required.
 
 use rho_core::{
-    AgentConfig, ChatMessage, ContentBlock, ContextManager, RhoError, Session, ToolCallId,
-    ToolName, ToolOutcome, ToolRegistry, ToolResult, ToolRisk,
+    AgentConfig, ChatClient, ChatMessage, ContentBlock, ContextManager, RhoError, Session,
+    ToolCallId, ToolName, ToolOutcome, ToolRegistry, ToolResult, ToolRisk,
     agent::run_loop,
+    client::client_factory,
+    config::RhoConfig,
     message::{ModelToolCall, ToolCallFunction},
+    request::ChatRequest,
     tool::{CancellationToken, Tool},
 };
 use rho_test_helpers::{
@@ -823,6 +826,7 @@ async fn retryable_http_error() -> RhoError {
     let request = rho_core::ChatRequest {
         model: String::new(),
         messages: vec![],
+        stream: false,
         tools: vec![],
     };
     client.chat(request).await.unwrap_err()
@@ -1093,6 +1097,7 @@ async fn local_chat_client_returns_http_error_when_server_unreachable() {
     let request = ChatRequest {
         model: "test".to_owned(),
         messages: vec![ChatMessage::user_text("hello")],
+        stream: false,
         tools: vec![],
     };
     let result = tokio::time::timeout(Duration::from_secs(5), client.chat(request)).await;
@@ -1548,4 +1553,23 @@ async fn nonempty_stop_remains_message() {
         matches!(result, AssistantResponse::Message { ref text, .. } if text == "all good"),
         "expected Message {{ text: \"all good\", .. }}, got: {result:?}"
     );
+}
+
+// -- Streaming requests ----------------------------------------------------
+
+#[tokio::test]
+#[ignore = "requires running a local model server"]
+async fn test_chat_stream() {
+    let client = client_factory(&RhoConfig::default(), None, None);
+    let request = ChatRequest {
+        model: "google/gemma-4-26b-a4b".to_string(),
+        messages: vec![],
+        tools: vec![],
+        stream: true,
+    };
+    let mut rx = client.chat_stream(request).await.unwrap();
+
+    while let Some(event) = rx.recv().await {
+        println!("{:?}", event);
+    }
 }

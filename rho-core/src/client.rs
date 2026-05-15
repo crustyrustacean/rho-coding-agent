@@ -7,8 +7,9 @@ use crate::config::RhoConfig;
 use crate::error::{Result, RhoError};
 use crate::request::ChatRequest;
 use crate::response::ModelResponse;
-use crate::stream::StreamEvent;
+use crate::stream::{StreamChunk, StreamEvent};
 use async_trait::async_trait;
+use futures::StreamExt;
 use reqwest::Client;
 use serde::Deserialize;
 use tracing::{debug, error, info, warn};
@@ -29,7 +30,12 @@ pub trait ChatClient: Send + Sync {
     async fn chat_stream(
         &self,
         request: ChatRequest,
-    ) -> Result<tokio::sync::mpsc::Receiver<StreamEvent>>;
+    ) -> Result<tokio::sync::mpsc::Receiver<StreamEvent>> {
+        let _ = request;
+        Err(RhoError::Unexpected(anyhow::anyhow!(
+            "streaming not implemented."
+        )))
+    }
 }
 
 /// Default [`ChatClient`] targeting `OpenAI`-compatible endpoints.
@@ -109,15 +115,7 @@ impl LocalChatClient {
         }
         Ok(req.send().await?.json::<ModelList>().await?)
     }
-}
 
-impl Default for LocalChatClient {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl LocalChatClient {
     /// The configured endpoint URL.
     #[must_use]
     pub fn endpoint(&self) -> &str {
@@ -128,6 +126,12 @@ impl LocalChatClient {
     #[must_use]
     pub fn api_key(&self) -> &Option<String> {
         &self.api_key
+    }
+}
+
+impl Default for LocalChatClient {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -247,7 +251,52 @@ impl ChatClient for LocalChatClient {
         &self,
         request: ChatRequest,
     ) -> Result<tokio::sync::mpsc::Receiver<StreamEvent>> {
-        todo!()
+        let (tx, rx) = tokio::sync::mpsc::channel::<StreamEvent>(32);
+        let mut request_builder = self.http_client.post(&self.endpoint).json(&request);
+        if let Some(ref key) = self.api_key {
+            request_builder = request_builder.bearer_auth(key);
+        }
+
+        let mut response = request_builder.send().await?.bytes_stream();
+
+        tokio::spawn(async move {
+            while let Some(chunk) = response.next().await {
+                let bytes = match chunk {
+                    Ok(b) => b,
+                    Err(_) => break,
+                };
+
+                let text = String::from_utf8_lossy(&bytes);
+
+                for line in text.lines() {
+                    if !line.starts_with("data: ") {
+                        continue;
+                    }
+
+                    if line.ends_with("data: [DONE]") {
+                        break;
+                    }
+
+                    let json = line.trim_start_matches("data: ");
+
+                    let chunk = match serde_json::from_str::<StreamChunk>(json) {
+                        Ok(c) => c,
+                        Err(_) => continue,
+                    };
+
+                    if let Some(choice) = chunk.choices.first() {
+                        if let Some(text) = &choice.delta.content {
+                            let _ = tx.send(StreamEvent::TextDelta(text.clone())).await;
+                        }
+                        if let Some(reason) = &choice.finish_reason {
+                            let _ = tx.send(StreamEvent::Done(reason.clone())).await;
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(rx)
     }
 }
 
