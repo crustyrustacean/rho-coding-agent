@@ -7,6 +7,7 @@ use crate::config::RhoConfig;
 use crate::error::{Result, RhoError};
 use crate::request::ChatRequest;
 use crate::response::ModelResponse;
+use crate::stream::StreamEvent;
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
@@ -23,6 +24,12 @@ use tracing::{debug, error, info, warn};
 pub trait ChatClient: Send + Sync {
     /// Send a chat completion request and return the model's response.
     async fn chat(&self, request: ChatRequest) -> Result<ModelResponse>;
+
+    /// Chat stream
+    async fn chat_stream(
+        &self,
+        request: ChatRequest,
+    ) -> Result<tokio::sync::mpsc::Receiver<StreamEvent>>;
 }
 
 /// Default [`ChatClient`] targeting `OpenAI`-compatible endpoints.
@@ -234,6 +241,13 @@ impl ChatClient for LocalChatClient {
         }
 
         Ok(model_response)
+    }
+
+    async fn chat_stream(
+        &self,
+        request: ChatRequest,
+    ) -> Result<tokio::sync::mpsc::Receiver<StreamEvent>> {
+        todo!()
     }
 }
 

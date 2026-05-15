@@ -911,6 +911,7 @@ impl Session {
             model: self.model.clone(),
             messages: fitted,
             tools: self.tools.clone(),
+            stream: true,
         };
 
         let response = client.chat(request).await?;

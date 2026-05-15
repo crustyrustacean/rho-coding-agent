@@ -13,4 +13,6 @@ pub struct ChatRequest {
     pub messages: Vec<ChatMessage>,
     /// Tool definitions available to the model.
     pub tools: Vec<ToolSchema>,
+    /// Flag to enable streaming
+    pub stream: bool,
 }
