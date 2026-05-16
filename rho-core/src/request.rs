@@ -13,6 +13,17 @@ pub struct ChatRequest {
     pub messages: Vec<ChatMessage>,
     /// Tool definitions available to the model.
     pub tools: Vec<ToolSchema>,
-    /// Flag to enable streaming
+    /// Whether to enable streaming responses.
+    ///
+    /// When `false`, this field is omitted from the serialized JSON so that
+    /// non-streaming requests remain compatible with all OpenAI-compatible
+    /// servers.
+    #[serde(skip_serializing_if = "is_false")]
     pub stream: bool,
+}
+
+/// Helper for `#[serde(skip_serializing_if)]`.
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_false(value: &bool) -> bool {
+    !value
 }

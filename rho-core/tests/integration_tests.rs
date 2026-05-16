@@ -1560,16 +1560,19 @@ async fn nonempty_stop_remains_message() {
 #[tokio::test]
 #[ignore = "requires running a local model server"]
 async fn test_chat_stream() {
+    use futures::StreamExt;
+
     let client = client_factory(&RhoConfig::default(), None, None);
     let request = ChatRequest {
         model: "google/gemma-4-26b-a4b".to_string(),
         messages: vec![],
         tools: vec![],
-        stream: true,
+        stream: false,
     };
-    let mut rx = client.chat_stream(request).await.unwrap();
+    let mut stream = client.chat_stream(request).await.unwrap();
 
-    while let Some(event) = rx.recv().await {
-        println!("{:?}", event);
+    while let Some(event) = stream.next().await {
+        let event = event.unwrap();
+        println!("{event:?}");
     }
 }

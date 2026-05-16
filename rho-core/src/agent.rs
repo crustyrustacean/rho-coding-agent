@@ -9,8 +9,12 @@ use crate::client::ChatClient;
 use crate::conversation::AssistantResponse;
 use crate::error::{Result, RhoError};
 use crate::newtypes::ToolCallId;
+use crate::request::ChatRequest;
+use crate::response::FinishReason;
 use crate::session::Session;
+use crate::stream::StreamChunk;
 use crate::tool::{CancellationToken, Tool, ToolRegistry, ToolResult};
+use futures::StreamExt;
 use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
 
@@ -234,7 +238,7 @@ pub async fn run_loop(
             return Err(RhoError::Cancelled);
         }
 
-        let response = send_with_retry(session, client, config).await?;
+        let response = send_with_retry_streaming(session, client, config).await?;
 
         iterations += 1;
         if iterations > config.max_iterations {
@@ -444,13 +448,17 @@ pub async fn run_loop(
     }
 }
 
-/// Send `session.send_current` with exponential backoff on transient errors.
+/// Send a streaming chat request with exponential backoff on transient errors.
+///
+/// Uses [`ChatClient::chat_stream`] — the default implementation wraps
+/// [`ChatClient::chat`], so this works for all providers. Real SSE streaming
+/// is used when the provider overrides `chat_stream`.
 ///
 /// # Errors
 ///
 /// Returns [`RhoError::RetryBudgetExhausted`] when the retry budget is exceeded.
 /// Returns any non-retryable [`RhoError`] immediately.
-async fn send_with_retry(
+async fn send_with_retry_streaming(
     session: &mut Session,
     client: &dyn ChatClient,
     config: &AgentConfig,
@@ -458,7 +466,7 @@ async fn send_with_retry(
     let mut attempts = 0u32;
     let mut last_error: Option<RhoError> = None;
     loop {
-        match session.send_current(client).await {
+        match send_streaming(session, client).await {
             Ok(r) => return Ok(r),
             Err(e) => match TransitionError::from_error(e) {
                 TransitionError::Retryable(re) if attempts < config.retry_budget => {
@@ -480,6 +488,106 @@ async fn send_with_retry(
                 }
                 TransitionError::Fatal(e) => return Err(e),
             },
+        }
+    }
+}
+
+/// Execute a single streaming request, consume the stream, and build an
+/// [`AssistantResponse`].
+///
+/// For providers that use the default `chat_stream` (which wraps `chat`),
+/// the entire response arrives as a single batch of chunks. For providers
+/// with real SSE, chunks arrive incrementally.
+async fn send_streaming(
+    session: &mut Session,
+    client: &dyn ChatClient,
+) -> Result<AssistantResponse> {
+    let fitted = session.path_messages();
+
+    let request = ChatRequest {
+        model: session.model.clone(),
+        messages: fitted,
+        tools: session.tools.clone(),
+        stream: false,
+    };
+
+    let mut stream = client.chat_stream(request).await?;
+
+    let mut chunks: Vec<StreamChunk> = Vec::new();
+    while let Some(result) = stream.next().await {
+        chunks.push(result?);
+    }
+
+    let acc = StreamChunk::accumulate(&chunks);
+
+    match acc.finish_reason {
+        FinishReason::ToolCalls => {
+            let mut tool_calls = Vec::new();
+            for tc in &acc.tool_calls {
+                let id = tc
+                    .id
+                    .clone()
+                    .ok_or_else(|| RhoError::ProtocolViolation("tool call missing id".into()))?;
+                let name = tc.function_name.clone().ok_or_else(|| {
+                    RhoError::ProtocolViolation("tool call missing function name".into())
+                })?;
+                tool_calls.push(crate::message::ModelToolCall {
+                    id: crate::newtypes::ToolCallId::new(id),
+                    call_type: "function".to_owned(),
+                    function: crate::message::ToolCallFunction {
+                        name: crate::newtypes::ToolName::new(name),
+                        arguments: tc.arguments.clone(),
+                    },
+                });
+            }
+            // Persist assistant message with tool_calls BEFORE returning.
+            session.append_assistant_message(crate::ChatMessage::Assistant {
+                content: if acc.text.is_empty() {
+                    vec![]
+                } else {
+                    vec![crate::message::ContentBlock::Text {
+                        text: acc.text.clone(),
+                    }]
+                },
+                tool_calls: tool_calls.clone(),
+            });
+            Ok(AssistantResponse::ToolCalls(tool_calls))
+        }
+        FinishReason::Length => {
+            // Persist the truncated response so conversation history stays valid.
+            session.append_assistant_message(crate::ChatMessage::assistant_text(&acc.text));
+            Ok(AssistantResponse::LengthTruncated {
+                content: acc.text,
+                reasoning_content: acc.reasoning,
+            })
+        }
+        _ => {
+            // Stop, ContentFilter, or Other — treat as a message.
+            let text = acc.text.clone();
+            let reasoning = acc.reasoning.clone();
+
+            // llama.cpp sometimes reports "stop" instead of "length"
+            // when the model exhausts its completion budget and produces
+            // nothing. Route to LengthTruncated so the agent loop can
+            // attempt compaction and retry. ContentFilter is excluded
+            // because retrying a filtered response is futile.
+            if text.is_empty() && !matches!(acc.finish_reason, FinishReason::ContentFilter) {
+                warn!(
+                    finish_reason = ?acc.finish_reason,
+                    "model returned empty content — treating as length truncation"
+                );
+                session.append_assistant_message(crate::ChatMessage::assistant_text(&text));
+                return Ok(AssistantResponse::LengthTruncated {
+                    content: text,
+                    reasoning_content: reasoning,
+                });
+            }
+
+            session.append_assistant_message(crate::ChatMessage::assistant_text(&text));
+            Ok(AssistantResponse::Message {
+                text: acc.text,
+                reasoning_content: acc.reasoning,
+            })
         }
     }
 }
