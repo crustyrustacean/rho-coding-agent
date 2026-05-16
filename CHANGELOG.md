@@ -1,3 +1,11 @@
+## [0.36.2] - 2026-05-15
+
+### 🐛 Bug Fixes
+
+- *(debug)* Add enhanced logging for SSE stream parsing to diagnose REPL output issues
+
+---
+
 ## [0.36.1] - 2026-05-15
 
 ### 🐛 Bug Fixes
