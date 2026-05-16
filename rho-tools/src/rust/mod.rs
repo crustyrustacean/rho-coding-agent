@@ -19,10 +19,6 @@
 //! diagnostic span, using tree-sitter via `rho-highlight` for accurate
 //! positioning.
 
-use std::path::Path;
-
-use rho_core::Diagnostic;
-
 // Re-export core diagnostic types for downstream convenience.
 pub use rho_core::diagnostic::{
     Diagnostic as RustDiagnostic, DiagnosticLevel as RustDiagnosticLevel,
@@ -31,7 +27,7 @@ pub use rho_core::diagnostic::{
 };
 
 // Re-export tools
-pub use tools::{CargoCheck, CargoClippy, CargoTest, CargoFix, RustcExplain};
+pub use tools::{CargoCheck, CargoClippy, CargoFix, CargoTest, RustcExplain};
 
 // Re-export public parsing functions
 pub use parse::parse_cargo_diagnostics;
@@ -40,8 +36,8 @@ pub use parse::parse_cargo_diagnostics;
 pub use format::{ast_context_for_span, format_ast_context};
 
 // Internal modules
-mod types;
 mod convert;
-mod parse;
 mod format;
+mod parse;
 mod tools;
+mod types;

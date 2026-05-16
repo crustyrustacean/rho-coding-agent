@@ -1,7 +1,7 @@
 //! Conversion functions from raw cargo JSON types to core diagnostic types.
 
-use rho_core::{DiagnosticLevel, DiagnosticSpan};
 use rho_core::diagnostic::{Diagnostic, DiagnosticSuggestion, SuggestionApplicability};
+use rho_core::{DiagnosticLevel, DiagnosticSpan};
 
 use super::types::{RawDiagnostic, RawSpan};
 

@@ -1,10 +1,8 @@
 //! Diagnostic formatting and AST context functions.
 
-use std::fmt::Write as _;
-use rho_core::{
-    Diagnostic, DiagnosticLevel, DiagnosticSpan,
-};
 use rho_core::diagnostic::SuggestionApplicability;
+use rho_core::{Diagnostic, DiagnosticLevel, DiagnosticSpan};
+use std::fmt::Write as _;
 
 /// Format diagnostics into a human-readable summary for the model.
 ///
@@ -134,7 +132,7 @@ pub fn ast_context_for_span(
     let mut output = String::new();
     for (i, line) in lines[context_start..context_end].iter().enumerate() {
         let line_num = context_start + i + 1;
-        let _ = writeln!(output, "{:4} | {}", line_num, line);
+        let _ = writeln!(output, "{line_num:4} | {line}");
     }
 
     Some(output)

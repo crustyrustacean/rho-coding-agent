@@ -5,8 +5,8 @@ use std::path::Path;
 use rho_core::Diagnostic;
 use serde_json;
 
-use super::types::CargoMessage;
 use super::convert::convert_diagnostic;
+use super::types::CargoMessage;
 
 /// Parse cargo `--message-format=json` NDJSON output into structured diagnostics.
 ///

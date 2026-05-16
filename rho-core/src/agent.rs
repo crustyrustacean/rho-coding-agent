@@ -505,19 +505,23 @@ async fn send_streaming(
     client: &dyn ChatClient,
 ) -> Result<AssistantResponse> {
     let fitted = session.path_messages();
-    info!("creating streaming request: model={}, messages={}, tools={}", 
-          session.model, fitted.len(), session.tools.len());
-    
+    info!(
+        "creating streaming request: model={}, messages={}, tools={}",
+        session.model,
+        fitted.len(),
+        session.tools.len()
+    );
+
     let request = ChatRequest {
         model: session.model.clone(),
         messages: fitted,
         tools: session.tools.clone(),
         stream: true,
     };
-    
+
     let request_json = serde_json::to_string(&request).unwrap_or_else(|e| {
         error!("failed to serialize request: {}", e);
-        format!("{{\"serialization_error\":\"{}\"}}", e)
+        format!("{{\"serialization_error\":\"{e}\"}}")
     });
     debug!("request JSON: {}", request_json);
 

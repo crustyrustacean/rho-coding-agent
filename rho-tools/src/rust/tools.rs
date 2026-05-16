@@ -1,11 +1,9 @@
-//! Cargo tool implementations: CargoCheck, CargoClippy, CargoTest, CargoFix, RustcExplain.
+//! Cargo tool implementations: [`CargoCheck`], [`CargoClippy`], [`CargoTest`], [`CargoFix`], [`RustcExplain`].
 
 use async_trait::async_trait;
-use rho_core::{
-    Result, SandboxRoot, ShellExecutor, ToolName, ToolRisk,
-};
 use rho_core::diagnostic::DiagnosticLevel;
 use rho_core::tool::{CancellationToken, Tool, ToolOutcome, ToolResult, ToolResultDetails};
+use rho_core::{Result, SandboxRoot, ShellExecutor, ToolName, ToolRisk};
 use serde_json;
 
 use super::format::format_diagnostics_for_model;
@@ -22,23 +20,26 @@ pub(super) fn execute_cargo_diagnostic_tool(
     tool_name: &str,
     ndjson_output: &str,
     workspace_root: &std::path::Path,
-) -> Result<ToolOutcome> {
+) -> ToolOutcome {
     let diagnostics = parse_cargo_diagnostics(ndjson_output, workspace_root);
 
-    let has_errors = diagnostics.iter().any(|d| matches!(d.level, DiagnosticLevel::Error));
-    
+    let has_errors = diagnostics
+        .iter()
+        .any(|d| matches!(d.level, DiagnosticLevel::Error));
+
     if diagnostics.is_empty() {
-        return Ok(ToolOutcome::Immediate(ToolResult::success(format_diagnostics_for_model(
-            tool_name, &diagnostics,
-        ))));
+        return ToolOutcome::Immediate(ToolResult::success(format_diagnostics_for_model(
+            tool_name,
+            &diagnostics,
+        )));
     }
 
     let output = format_diagnostics_for_model(tool_name, &diagnostics);
-    Ok(ToolOutcome::Immediate(ToolResult {
+    ToolOutcome::Immediate(ToolResult {
         output,
         is_error: has_errors,
         details: ToolResultDetails::Diagnostics(diagnostics),
-    }))
+    })
 }
 
 // ── CargoCheck tool ───────────────────────────────────────────────────────────
@@ -115,7 +116,11 @@ impl Tool for CargoCheck {
             .execute(&cmd, self.root.path(), None, cancel)
             .await?;
 
-        execute_cargo_diagnostic_tool("cargo check", &shell_output.stdout, self.root.path())
+        Ok(execute_cargo_diagnostic_tool(
+            "cargo check",
+            &shell_output.stdout,
+            self.root.path(),
+        ))
     }
 }
 
@@ -187,7 +192,11 @@ impl Tool for CargoClippy {
             .execute(&cmd, self.root.path(), None, cancel)
             .await?;
 
-        execute_cargo_diagnostic_tool("cargo clippy", &shell_output.stdout, self.root.path())
+        Ok(execute_cargo_diagnostic_tool(
+            "cargo clippy",
+            &shell_output.stdout,
+            self.root.path(),
+        ))
     }
 }
 
@@ -250,14 +259,16 @@ impl Tool for RustcExplain {
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| anyhow::anyhow!("missing required field: error_code"))?;
 
-        let cmd = format!("rustc --explain {}", error_code);
+        let cmd = format!("rustc --explain {error_code}");
 
         let shell_output = self
             .executor
             .execute(&cmd, self.root.path(), None, cancel)
             .await?;
 
-        Ok(ToolOutcome::Immediate(ToolResult::success(shell_output.stdout)))
+        Ok(ToolOutcome::Immediate(ToolResult::success(
+            shell_output.stdout,
+        )))
     }
 }
 
@@ -321,7 +332,9 @@ impl Tool for CargoTest {
         }
 
         let package = arguments.get("package").and_then(serde_json::Value::as_str);
-        let test_name = arguments.get("test_name").and_then(serde_json::Value::as_str);
+        let test_name = arguments
+            .get("test_name")
+            .and_then(serde_json::Value::as_str);
 
         let mut cmd = String::from("cargo test");
         if let Some(pkg) = package {
@@ -329,7 +342,7 @@ impl Tool for CargoTest {
             cmd.push_str(pkg);
         }
         if let Some(test) = test_name {
-            cmd.push_str(" ");
+            cmd.push(' ');
             cmd.push_str(test);
         }
 

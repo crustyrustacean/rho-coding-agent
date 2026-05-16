@@ -91,8 +91,8 @@ pub use approval::{
     ApprovalGate, ApprovalPolicy, AutoApprovePolicy, ConfigApprovalPolicy, DefaultApprovalPolicy,
 };
 pub use client::{
-    ChatClient, LocalChatClient, ModelInfo, ModelList, client_factory, is_local_endpoint,
-    resolve_api_key,
+    ChatClient, ChatStream, LocalChatClient, ModelInfo, ModelList, client_factory,
+    is_local_endpoint, resolve_api_key,
 };
 pub use config::{
     AgentLoopConfig, ApprovalAction, ApprovalConfig, ConfigLoadError, ConfigLoader, ContextConfig,
