@@ -416,7 +416,7 @@ impl SseStream {
             let sse_chunk = match serde_json::from_str::<SseChunk>(payload) {
                 Ok(c) => c,
                 Err(e) => {
-                    debug!("failed to parse SSE chunk: {e}");
+                    warn!("failed to parse SSE chunk: {e}; payload: {payload}");
                     continue;
                 }
             };
@@ -449,6 +449,7 @@ impl SseStream {
                 }
             }
             // If no useful data in this SSE event, continue to next line.
+            debug!("SSE chunk had no text, reasoning, tool_calls, or finish_reason; skipping");
         }
     }
 }
@@ -486,7 +487,7 @@ impl futures::Stream for SseStream {
                     // No chunk ready yet — keep polling.
                 }
                 std::task::Poll::Ready(Some(Err(e))) => {
-                    debug!("SSE byte stream error: {e}");
+                    warn!("SSE byte stream error: {e}");
                     return std::task::Poll::Ready(None);
                 }
                 std::task::Poll::Ready(None) => {

@@ -515,8 +515,18 @@ async fn send_streaming(
 
     let mut chunks: Vec<StreamChunk> = Vec::new();
     while let Some(result) = stream.next().await {
-        chunks.push(result?);
+        match result {
+            Ok(chunk) => {
+                debug!("Received stream chunk: {:?}", chunk);
+                chunks.push(chunk);
+            }
+            Err(e) => {
+                warn!("Stream chunk error: {e}");
+                return Err(e);
+            }
+        }
     }
+    debug!("Stream ended with {} chunks", chunks.len());
 
     let acc = StreamChunk::accumulate(&chunks);
 
