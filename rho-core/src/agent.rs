@@ -211,6 +211,7 @@ pub async fn run_loop(
     cancel: CancellationToken,
     gate: &dyn ApprovalGate,
 ) -> Result<String> {
+    info!("run_loop called with message: {}", message);
     session.append_user_message(message);
 
     // `state` is the observable agent state. The assignments below are
@@ -463,6 +464,7 @@ async fn send_with_retry_streaming(
     client: &dyn ChatClient,
     config: &AgentConfig,
 ) -> Result<AssistantResponse> {
+    info!("send_with_retry_streaming called - starting retry loop");
     let mut attempts = 0u32;
     let mut last_error: Option<RhoError> = None;
     loop {
