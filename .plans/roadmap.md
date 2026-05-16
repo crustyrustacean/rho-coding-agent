@@ -9,15 +9,15 @@
 | 2: PowerShell, File Tools & Cross-Platform | ✅ Complete | PowerShell-native shell, `ListDir`/`EditFile`/`WriteFile` tools, config loader (two-tier TOML), command denylist, cross-platform support (Windows/macOS/Linux), auto-detection (project root, model), compact prompt, `RhoError::HttpError` for retry classification |
 | 2.5: Adaptive-Resolution Context | ✅ Complete | Session tree, resolution levels, calibrated budget, tool-result bounding, amnesia fix, JSONL persistence, extension entries, compaction strategy |
 | 3: Rust Tooling and Tree-Sitter | ✅ Complete | `rho-highlight` crate, structured diagnostics, `CargoCheck`/`CargoClippy`/`CargoTest`/`CargoFix`/`RustcExplain` tools, AST span mapping, `EditFile` node-splitting validation, Rust-aware system prompt, `rho-eval` benchmark suite (5 eval tasks), `rho-bench` harness, shared bootstrapping (`client_factory`, `compose_full_system_prompt`), test suite audit |
-| 4: Terminal UI | 🔜 Next | Rich TUI replacing the bare REPL |
+| 4: Terminal UI | 🔜 In Progress | Rich TUI replacing the bare REPL. Pre-Work 1 (streaming API) complete. |
 | 5: Extensions and Polish | Planned | Custom tools, prompt composition with budget awareness |
 | 6: LSP | Deferred | rust-analyzer integration |
 
-**Workspace version:** 0.34.0
+**Workspace version:** 0.36.0
 
 **Platform support:** Windows, macOS, Linux. PowerShell 7+ (`pwsh`) is the primary shell on all platforms; Windows PowerShell 5.1 (`powershell`) is the fallback on Windows only.
 
-**Existing crates:** `rho` (binary), `rho-core`, `rho-tools`, `rho-test-helpers`, `xtask`
+**Existing crates:** `rho` (binary), `rho-core`, `rho-tools`, `rho-highlight`, `rho-test-helpers`, `rho-eval`
 
 **Not yet created:** `rho-tui`, `rho-ext`
 
@@ -354,7 +354,7 @@ These are choices that seem right now but may need adjustment as we build:
 
 2. **Approval model** — Phase 1b introduces `ApprovalPolicy` with a default that requires approval for destructive operations. Phase 4 enhances the UX (rich preview, single-keypress, batch approval). Per-tool config-driven policy lands in Phase 2. A trust-on-first-use model could be added later.
 
-3. **Streaming** — `ChatClient::chat` is non-streaming in Phase 1a. Phase 4 adds `chat_stream` as a method with a default impl that wraps `chat` (so non-streaming providers don't need to change). `ToolOutcome::Streamed` is the corresponding tool-side variant, declared in Phase 1a, exercised in Phase 4.
+3. **Streaming** — ✅ Implemented (Pre-Work 1, `improvement-chat-streaming` branch): `ChatClient::chat_stream` returns `Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>>` with a default impl that wraps `chat`. `LocalChatClient` implements real SSE parsing with line buffering. `run_loop` always uses the streaming path. `StreamChunk` enum carries `TextDelta`, `ReasoningDelta`, `ToolCallDelta`, `Done`. `StreamChunk::accumulate()` reconstructs `AssistantResponse`. All 716 tests pass. `ToolOutcome::Streamed` remains for tool-side streaming in a future phase.
 
 4. **Extension format** — TOML-defined command tools are the simplest starting point (Phase 5). WASM or Lua would allow more sophisticated extensions but add significant complexity.
 

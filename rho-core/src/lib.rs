@@ -82,6 +82,7 @@ pub mod sandbox;
 pub mod schema;
 pub mod session;
 pub mod shell;
+pub mod stream;
 pub mod tool;
 
 // Convenience re-exports for the most commonly used types

@@ -6,11 +6,17 @@
 use crate::config::RhoConfig;
 use crate::error::{Result, RhoError};
 use crate::request::ChatRequest;
-use crate::response::ModelResponse;
+use crate::response::{FinishReason, ModelResponse};
+use crate::stream::StreamChunk;
 use async_trait::async_trait;
+use futures::stream::Stream;
 use reqwest::Client;
 use serde::Deserialize;
+use std::pin::Pin;
 use tracing::{debug, error, info, warn};
+
+/// The type returned by [`ChatClient::chat_stream`].
+pub type ChatStream = Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>;
 
 /// Interface all model providers must implement.
 ///
@@ -23,6 +29,20 @@ use tracing::{debug, error, info, warn};
 pub trait ChatClient: Send + Sync {
     /// Send a chat completion request and return the model's response.
     async fn chat(&self, request: ChatRequest) -> Result<ModelResponse>;
+
+    /// Send a chat completion request and receive a stream of chunks.
+    ///
+    /// The default implementation wraps [`chat`](Self::chat) — it sends a
+    /// non-streaming request and converts the full response into a `Vec`
+    /// of [`StreamChunk`] via [`StreamChunk::from_response`]. This means
+    /// every [`ChatClient`] implementation supports streaming automatically;
+    /// providers that natively support SSE override this method for
+    /// incremental token delivery.
+    async fn chat_stream(&self, request: ChatRequest) -> Result<ChatStream> {
+        let response = self.chat(request).await?;
+        let chunks = StreamChunk::from_response(&response);
+        Ok(Box::pin(futures::stream::iter(chunks.into_iter().map(Ok))))
+    }
 }
 
 /// Default [`ChatClient`] targeting `OpenAI`-compatible endpoints.
@@ -122,15 +142,7 @@ impl LocalChatClient {
         }
         Ok(req.send().await?.json::<ModelList>().await?)
     }
-}
 
-impl Default for LocalChatClient {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl LocalChatClient {
     /// The configured endpoint URL.
     #[must_use]
     pub fn endpoint(&self) -> &str {
@@ -141,6 +153,12 @@ impl LocalChatClient {
     #[must_use]
     pub fn api_key(&self) -> &Option<String> {
         &self.api_key
+    }
+}
+
+impl Default for LocalChatClient {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -201,6 +219,65 @@ fn enhance_http_body(status: u16, body: &str) -> String {
     snippet.to_string()
 }
 
+// ── SSE wire types (private) ──────────────────────────────────────────────────
+//
+// These types mirror the OpenAI SSE wire format. They are only used by
+// `LocalChatClient::chat_stream` to deserialize individual `data:` lines.
+// Clippy's `missing_docs_in_private_items` lint is suppressed for these
+// deserialization-only structs.
+
+/// A single SSE event payload from the streaming API.
+#[derive(Debug, Clone, Deserialize)]
+#[allow(clippy::missing_docs_in_private_items)]
+struct SseChunk {
+    #[serde(default)]
+    choices: Vec<SseChoice>,
+}
+
+/// A single choice within an SSE chunk.
+#[derive(Debug, Clone, Deserialize)]
+#[allow(clippy::missing_docs_in_private_items)]
+struct SseChoice {
+    delta: SseDelta,
+    finish_reason: Option<FinishReason>,
+}
+
+/// The delta content within an SSE choice.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[allow(clippy::missing_docs_in_private_items)]
+struct SseDelta {
+    #[serde(default)]
+    #[allow(dead_code)]
+    role: Option<String>,
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    reasoning_content: Option<String>,
+    #[serde(default)]
+    tool_calls: Option<Vec<SseToolCallDelta>>,
+}
+
+/// A tool call delta within an SSE choice.
+#[derive(Debug, Clone, Deserialize)]
+#[allow(clippy::missing_docs_in_private_items)]
+struct SseToolCallDelta {
+    index: usize,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    function: Option<SseFunctionDelta>,
+}
+
+/// A function delta within a tool call delta.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[allow(clippy::missing_docs_in_private_items)]
+struct SseFunctionDelta {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    arguments: Option<String>,
+}
+
 #[async_trait]
 impl ChatClient for LocalChatClient {
     #[tracing::instrument(skip_all, fields(model = %request.model, message_count = request.messages.len(), tool_count = request.tools.len()))]
@@ -255,9 +332,176 @@ impl ChatClient for LocalChatClient {
 
         Ok(model_response)
     }
+
+    async fn chat_stream(&self, request: ChatRequest) -> Result<ChatStream> {
+        let mut request_builder = self.http_client.post(&self.endpoint).json(&request);
+        if let Some(ref key) = self.api_key {
+            request_builder = request_builder.bearer_auth(key);
+        }
+
+        let byte_stream = request_builder.send().await?.bytes_stream();
+
+        // Build a `futures::Stream` that buffers SSE lines and emits
+        // `StreamChunk` items.
+        let stream = SseStream::new(Box::pin(byte_stream));
+        Ok(Box::pin(stream))
+    }
 }
 
-// ── Shared bootstrapping ─────────────────────────────────────────────────────────
+// ── SSE line-buffered stream ──────────────────────────────────────────────────
+
+/// A `futures::Stream` that consumes a reqwest byte stream, buffers SSE
+/// lines, and emits parsed [`StreamChunk`] items.
+///
+/// SSE data may be split across TCP frames arbitrarily, so we must buffer
+/// partial lines and only process complete `\n`-terminated lines.
+struct SseStream {
+    /// Inner byte stream from reqwest.
+    byte_stream: std::pin::Pin<
+        Box<dyn futures::Stream<Item = std::result::Result<bytes::Bytes, reqwest::Error>> + Send>,
+    >,
+    /// Line buffer for accumulating partial SSE lines across chunks.
+    line_buf: String,
+    /// Whether `[DONE]` has been received.
+    done: bool,
+}
+
+impl SseStream {
+    /// Create a new SSE stream parser wrapping a reqwest byte stream.
+    #[allow(clippy::missing_docs_in_private_items)]
+    fn new(
+        byte_stream: std::pin::Pin<
+            Box<
+                dyn futures::Stream<Item = std::result::Result<bytes::Bytes, reqwest::Error>>
+                    + Send,
+            >,
+        >,
+    ) -> Self {
+        Self {
+            byte_stream,
+            line_buf: String::new(),
+            done: false,
+        }
+    }
+
+    /// Try to extract the next `StreamChunk` from the line buffer.
+    /// Returns `None` if no complete SSE event is available.
+    fn try_next_chunk(&mut self) -> Option<Result<StreamChunk>> {
+        loop {
+            if self.done {
+                return None;
+            }
+
+            // Find the next complete line.
+            let newline_pos = self.line_buf.find('\n')?;
+
+            let line = self.line_buf[..newline_pos]
+                .trim_end_matches('\r')
+                .to_owned();
+            self.line_buf = self.line_buf[newline_pos + 1..].to_owned();
+
+            // Skip non-data lines.
+            let Some(payload) = line.strip_prefix("data: ") else {
+                continue;
+            };
+            let payload = payload.trim();
+
+            // Check for stream end sentinel.
+            if payload == "[DONE]" {
+                self.done = true;
+                return None;
+            }
+
+            // Parse the JSON payload.
+            let sse_chunk = match serde_json::from_str::<SseChunk>(payload) {
+                Ok(c) => c,
+                Err(e) => {
+                    debug!("failed to parse SSE chunk: {e}");
+                    continue;
+                }
+            };
+
+            // Convert the first choice into StreamChunk(s).
+            if let Some(choice) = sse_chunk.choices.first() {
+                // Emit text delta.
+                if let Some(text) = choice.delta.content.clone() {
+                    return Some(Ok(StreamChunk::TextDelta(text)));
+                }
+                // Emit reasoning delta.
+                if let Some(reasoning) = choice.delta.reasoning_content.clone() {
+                    return Some(Ok(StreamChunk::ReasoningDelta(reasoning)));
+                }
+                // Emit tool call deltas.
+                if let Some(tool_call_deltas) = &choice.delta.tool_calls
+                    && let Some(tc_delta) = tool_call_deltas.first()
+                {
+                    let func = tc_delta.function.as_ref();
+                    return Some(Ok(StreamChunk::ToolCallDelta {
+                        index: tc_delta.index,
+                        id: tc_delta.id.clone(),
+                        function_name: func.and_then(|f| f.name.clone()),
+                        arguments_delta: func.and_then(|f| f.arguments.clone()),
+                    }));
+                }
+                // Emit done.
+                if let Some(reason) = &choice.finish_reason {
+                    return Some(Ok(StreamChunk::Done(reason.clone())));
+                }
+            }
+            // If no useful data in this SSE event, continue to next line.
+        }
+    }
+}
+
+impl futures::Stream for SseStream {
+    type Item = Result<StreamChunk>;
+
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        // First, try to extract a chunk from already-buffered lines.
+        if let Some(chunk) = self.try_next_chunk() {
+            return std::task::Poll::Ready(Some(chunk));
+        }
+
+        // If done, close the stream.
+        if self.done {
+            return std::task::Poll::Ready(None);
+        }
+
+        // Poll the inner byte stream for more data.
+        loop {
+            match self.byte_stream.as_mut().poll_next(cx) {
+                std::task::Poll::Ready(Some(Ok(bytes))) => {
+                    self.line_buf.push_str(&String::from_utf8_lossy(&bytes));
+                    if let Some(chunk) = self.try_next_chunk() {
+                        return std::task::Poll::Ready(Some(chunk));
+                    }
+                    // try_next_chunk may have set `done`; check before
+                    // polling again.
+                    if self.done {
+                        return std::task::Poll::Ready(None);
+                    }
+                    // No chunk ready yet — keep polling.
+                }
+                std::task::Poll::Ready(Some(Err(e))) => {
+                    debug!("SSE byte stream error: {e}");
+                    return std::task::Poll::Ready(None);
+                }
+                std::task::Poll::Ready(None) => {
+                    // Inner stream exhausted.
+                    return std::task::Poll::Ready(None);
+                }
+                std::task::Poll::Pending => {
+                    return std::task::Poll::Pending;
+                }
+            }
+        }
+    }
+}
+
+// ── Shared bootstrapping ─────────────────────────────────────────────────────
 
 /// The default endpoint URL when no override or config is set.
 const DEFAULT_ENDPOINT: &str = "http://localhost:1234/v1/chat/completions";
@@ -322,8 +566,6 @@ pub fn is_local_endpoint(endpoint: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ── Endpoint derivation ──────────────────────────────────────────────
 
     // ── client_factory ───────────────────────────────────────────────────────
 

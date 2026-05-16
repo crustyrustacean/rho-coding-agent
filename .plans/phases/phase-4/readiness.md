@@ -1,12 +1,12 @@
 # Phase 4 Readiness Assessment
 
-**Date:** 2026-05-07 | **Version:** 0.28.0 | **Tests:** 708 passing
+**Date:** 2026-05-16 | **Version:** 0.36.0 | **Tests:** 716 passing
 
 ## Executive Summary
 
-**Ready to start Phase 4, with two pre-work items.**
+**Ready to start Phase 4 TUI development.**
 
-The architecture was designed for this — `AgentState`, `ApprovalGate`, `ToolOutcome::Streamed`, `Session` tree navigation, and `rho-highlight` were all built with Phase 4 in mind. The foundation is solid. Two targeted pre-work tasks will clear the path for clean TUI development.
+The architecture was designed for this — `AgentState`, `ApprovalGate`, `ToolOutcome::Streamed`, `Session` tree navigation, and `rho-highlight` were all built with Phase 4 in mind. The foundation is solid. **Pre-Work 1 (streaming API) is complete.** Pre-Work 2 (modularize `rust.rs`) remains open but is not a blocker.
 
 ---
 
@@ -48,15 +48,20 @@ All 5 prompt scenarios pass end-to-end against `qwen/qwen3.6-27b`, proving the a
 
 ## ⚠️ Concerns
 
-### Streaming Not Implemented — 🟡 Medium Severity
+### Streaming — ✅ Complete (Pre-Work 1)
 
-`ChatClient::chat` is synchronous (full request → full response). Phase 4 Task 5 requires SSE/streaming API support. This is a significant API addition:
+The streaming API is fully implemented on the `improvement-chat-streaming` branch:
 
-- New `chat_stream` method on `ChatClient` trait
-- Token-by-token rendering with backpressure
-- The `ToolOutcome::Streamed` variant exists but `chat_stream` does not
-
-**This is the hardest task in Phase 4.** It's a trait-breaking change that affects `MockChatClient`, `LocalChatClient`, and every test that constructs a `ChatClient`. Must be designed first, before any TUI code.
+- `chat_stream` on `ChatClient` trait returns `Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>`
+- Default impl wraps `chat` — no breakage for `MockChatClient` or other providers
+- `LocalChatClient` implements real SSE parsing with line buffering and `[DONE]` detection
+- `run_loop` always uses the streaming path; non-streaming providers work via the default wrapper
+- `StreamChunk` enum: `TextDelta`, `ReasoningDelta`, `ToolCallDelta`, `Done`
+- `StreamChunk::from_response()` converts a full `ModelResponse` into chunks for the default impl
+- `accumulate()` reconstructs an `AssistantResponse` from a stream of chunks
+- 11 new unit tests in `stream::tests`
+- All 716 tests pass, `cargo xtask ci` green
+- Validated against `deepseek/deepseek-v4-flash` and `z-ai/glm-5.1` via OpenRouter (4/5 eval scenarios pass)
 
 ### `rust.rs` Size — 🟡 Medium Severity
 
@@ -78,41 +83,11 @@ PowerShell, TOML, JSON, Markdown grammars are "evaluated" — may not be mature 
 
 ## 🔴 Pre-Work Items
 
-These two tasks should be completed before starting Phase 4 TUI development:
+### Pre-Work 1: Design the Streaming API — ✅ Complete
 
-### Pre-Work 1: Design the Streaming API (1 day)
+Implemented on `improvement-chat-streaming` branch. See streaming section above for details.
 
-Add `chat_stream` to `ChatClient` with a default impl that wraps `chat`, so existing providers and tests don't break. This is the most important design decision of Phase 4.
-
-**Design sketch:**
-
-```rust
-#[async_trait]
-pub trait ChatClient: Send + Sync {
-    /// Non-streaming: send request, get full response.
-    async fn chat(&self, request: ChatRequest) -> Result<ModelResponse>;
-
-    /// Streaming: send request, get tokens as they arrive.
-    /// Default implementation wraps `chat` for backward compatibility.
-    async fn chat_stream(
-        &self,
-        request: ChatRequest,
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>> {
-        // Default: fall back to non-streaming, emit entire response as one chunk
-        let response = self.chat(request).await?;
-        let stream = futures::stream::once(async move { Ok(StreamChunk::from(response)) });
-        Ok(Box::pin(stream))
-    }
-}
-```
-
-**Impact analysis:**
-- `MockChatClient` — implement `chat_stream` with configurable chunk timing for deterministic tests
-- `LocalChatClient` — implement real SSE parsing against OpenAI-compatible `/v1/chat/completions` with `stream: true`
-- `run_loop` — add a streaming branch that renders tokens incrementally, falling back to the current non-streaming path
-- All existing tests continue to use `chat` — no breakage
-
-### Pre-Work 2: Modularize `rust.rs` (1–2 days)
+### Pre-Work 2: Modularize `rust.rs` (1–2 days) — 🔜 Open (non-blocking)
 
 Split `rho-tools/src/rust.rs` (2,134 lines) into focused submodules:
 
@@ -169,4 +144,4 @@ This ordering ensures each task builds on the previous one, with streaming (the 
 
 ---
 
-**Last updated:** 2026-05-07
+**Last updated:** 2026-05-16

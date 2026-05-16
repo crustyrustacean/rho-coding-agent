@@ -168,9 +168,9 @@ pub struct Session {
     /// Token estimator for budget-aware decisions.
     estimator: Box<dyn TokenEstimator>,
     /// Model identifier.
-    model: String,
+    pub model: String,
     /// Tool schemas sent with every request.
-    tools: Vec<ToolSchema>,
+    pub tools: Vec<ToolSchema>,
     /// Context window manager applied before each request.
     context_manager: Box<dyn ContextManager>,
     /// Token budget for the context manager.
@@ -911,6 +911,7 @@ impl Session {
             model: self.model.clone(),
             messages: fitted,
             tools: self.tools.clone(),
+            stream: false,
         };
 
         let response = client.chat(request).await?;

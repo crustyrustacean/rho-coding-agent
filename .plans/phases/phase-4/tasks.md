@@ -25,9 +25,11 @@
    - Batch approval: when the model returns multiple tool calls, the TUI can present them all and allow batch approve/deny
 
 5. **Implement streaming output:**
-   - Switch from `POST and wait for full response` to SSE/streaming API
-   - Render tokens as they arrive
-   - Show "thinking" indicator while waiting
+   - ✅ Streaming API implemented (Pre-Work 1): `ChatClient::chat_stream` returns `Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>` with default impl wrapping `chat`
+   - ✅ SSE parsing with line buffering in `LocalChatClient`
+   - ✅ `run_loop` uses streaming path; `StreamChunk::accumulate()` reconstructs `AssistantResponse`
+   - ✅ Validated against remote models (DeepSeek v4 Flash, GLM 5.1 via OpenRouter)
+   - 🔜 TUI integration: render tokens as they arrive, show "thinking" indicator while waiting
 
 6. **Implement a diagnostic panel:**
    - Render structured `Diagnostic` objects with file/line context
