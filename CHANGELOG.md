@@ -1,3 +1,13 @@
+## [0.36.4] - 2026-05-16
+
+### 🐛 Bug Fixes
+
+- *(repl)* Fix REPL hang caused by reqwest 'stream' feature interfering with blocking stdin
+- *(repl)* Replace blocking stdin with async stdin (tokio::io::stdin()) to work with streaming
+- *(deps)* Add 'io-util' feature to tokio for async stdin support
+
+---
+
 ## [0.36.3] - 2026-05-16
 
 ### 🐛 Debug
