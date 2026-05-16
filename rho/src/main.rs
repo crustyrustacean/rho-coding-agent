@@ -20,6 +20,7 @@ use std::{
     io::{self, BufRead, Write},
 };
 use tracing_subscriber::EnvFilter;
+use tracing::info;
 
 // ── REPL approval gate ────────────────────────────────────────────────────────
 
@@ -148,16 +149,26 @@ struct Cli {
 #[tokio::main]
 #[allow(clippy::too_many_lines)]
 async fn main() -> Result<()> {
+    eprintln!("DEBUG: main() function started");
+    
     // --- Tracing ---
     let file_appender = tracing_appender::rolling::never("logs", "rho.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+    
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info,rustls=warn,hyper=warn,reqwest=warn"));
+    
+    // Simple stdout logging for debugging
+    eprintln!("DEBUG: Tracing initialized with filter: {:?}", env_filter);
+    eprintln!("DEBUG: RUST_LOG env var: {:?}", std::env::var("RUST_LOG"));
+    
     tracing_subscriber::fmt()
         .with_writer(non_blocking)
-        .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("info,rustls=warn,hyper=warn,reqwest=warn")),
-        )
+        .with_env_filter(env_filter)
         .init();
+    
+    // Test that logging works
+    info!("rho started successfully");
 
     let cli = Cli::parse();
 
