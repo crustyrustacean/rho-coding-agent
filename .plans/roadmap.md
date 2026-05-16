@@ -9,11 +9,11 @@
 | 2: PowerShell, File Tools & Cross-Platform | ✅ Complete | PowerShell-native shell, `ListDir`/`EditFile`/`WriteFile` tools, config loader (two-tier TOML), command denylist, cross-platform support (Windows/macOS/Linux), auto-detection (project root, model), compact prompt, `RhoError::HttpError` for retry classification |
 | 2.5: Adaptive-Resolution Context | ✅ Complete | Session tree, resolution levels, calibrated budget, tool-result bounding, amnesia fix, JSONL persistence, extension entries, compaction strategy |
 | 3: Rust Tooling and Tree-Sitter | ✅ Complete | `rho-highlight` crate, structured diagnostics, `CargoCheck`/`CargoClippy`/`CargoTest`/`CargoFix`/`RustcExplain` tools, AST span mapping, `EditFile` node-splitting validation, Rust-aware system prompt, `rho-eval` benchmark suite (5 eval tasks), `rho-bench` harness, shared bootstrapping (`client_factory`, `compose_full_system_prompt`), test suite audit |
-| 4: Terminal UI | 🔜 In Progress | Rich TUI replacing the bare REPL. Pre-Work 1 (streaming API) complete. |
+| 3.8: Streaming Support | ✅ Complete | Streaming API (`chat_stream`), SSE parsing, `StreamChunk` accumulation, external provider support (OpenRouter), `rho-bench` streaming-compatible `CountingClient` |
+| 4: Terminal UI | 🔜 In Progress | Rich TUI replacing the bare REPL. Pre-Work 1 (streaming API) and Pre-Work 2 (modularize rust.rs) complete. External provider streaming validated. |
 | 5: Extensions and Polish | Planned | Custom tools, prompt composition with budget awareness |
-| 6: LSP | Deferred | rust-analyzer integration |
 
-**Workspace version:** 0.36.0
+| 6: LSP | Deferred | rust-analyzer integration |
 
 **Platform support:** Windows, macOS, Linux. PowerShell 7+ (`pwsh`) is the primary shell on all platforms; Windows PowerShell 5.1 (`powershell`) is the fallback on Windows only.
 
@@ -242,7 +242,8 @@ Each phase produces a runnable agent. No phase requires a rewrite of the previou
 | 2: PowerShell, File Tools, and Cross-Platform Support | [`phases/phase-2-COMPLETE/`](phases/phase-2-COMPLETE/) | PowerShell-native assistant, file system navigation, config loader, denylist, cross-platform (Windows/macOS/Linux). ✅ **Complete** |
 | 2.5: Adaptive-Resolution Context | [`phases/phase-2.5-COMPLETE/`](phases/phase-2.5-COMPLETE/) | Session tree, resolution levels, calibrated budget, tool-result bounding, amnesia fix, JSONL persistence, extension entries, compaction strategy. ✅ **Complete** |
 | 3: Rust Tooling and Tree-Sitter | [`phases/phase-3-COMPLETE/`](phases/phase-3-COMPLETE/) | `rho-highlight` crate, structured diagnostics, all Cargo tools, AST span mapping, `EditFile` validation, `rho-eval`, test suite audit, 5 prompt scenarios. ✅ **Complete** |
-| 4: Terminal UI | [`phases/phase-4/`](phases/phase-4/) | Rich TUI with approval prompts, streaming, session navigation. 🔜 **Next** |
+| 3.8: Streaming Support | [`phases/phase-3.8/`](phases/phase-3.8/) | Streaming API, SSE parsing, `StreamChunk` accumulation, external provider support (OpenRouter). ✅ **Complete** |
+| 4: Terminal UI | [`phases/phase-4/`](phases/phase-4/) | Rich TUI with approval prompts, streaming, session navigation. 🔜 **In Progress** |
 | 5: Extensions and Polish | [`phases/phase-5/`](phases/phase-5/) | Custom tools, config, prompt composition |
 | 6: LSP (Future) | [`phases/phase-6/`](phases/phase-6/) | rust-analyzer LSP integration (deferred) |
 
@@ -354,7 +355,9 @@ These are choices that seem right now but may need adjustment as we build:
 
 2. **Approval model** — Phase 1b introduces `ApprovalPolicy` with a default that requires approval for destructive operations. Phase 4 enhances the UX (rich preview, single-keypress, batch approval). Per-tool config-driven policy lands in Phase 2. A trust-on-first-use model could be added later.
 
-3. **Streaming** — ✅ Implemented (Pre-Work 1, `improvement-chat-streaming` branch): `ChatClient::chat_stream` returns `Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>>` with a default impl that wraps `chat`. `LocalChatClient` implements real SSE parsing with line buffering. `run_loop` always uses the streaming path. `StreamChunk` enum carries `TextDelta`, `ReasoningDelta`, `ToolCallDelta`, `Done`. `StreamChunk::accumulate()` reconstructs `AssistantResponse`. All 716 tests pass. `ToolOutcome::Streamed` remains for tool-side streaming in a future phase.
+**Workspace version:** 0.36.6
+
+3. **Streaming** — ✅ Complete (Phase 3.8): `ChatClient::chat_stream` returns `Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>>` with a default impl that wraps `chat`. `LocalChatClient` implements real SSE parsing with line buffering. `run_loop` always uses the streaming path. `StreamChunk` enum carries `TextDelta`, `ReasoningDelta`, `ToolCallDelta`, `Done`. `StreamChunk::accumulate()` reconstructs `AssistantResponse`. SSE parser handles external providers (OpenRouter) — tool-call deltas checked first, empty content strings skipped to avoid blocking `Done` chunks. `rho-bench`'s `CountingClient` delegates `chat_stream()` to the inner client. Validated against DeepSeek v4 Flash, GLM 5.1, Gemini 2.0 Flash, and Gemma 4 26B via OpenRouter. `ToolOutcome::Streamed` remains for tool-side streaming in a future phase.
 
 4. **Extension format** — TOML-defined command tools are the simplest starting point (Phase 5). WASM or Lua would allow more sophisticated extensions but add significant complexity.
 

@@ -1,12 +1,12 @@
 # Phase 4 Readiness Assessment
 
-**Date:** 2026-05-16 | **Version:** 0.36.0 | **Tests:** 716 passing
+**Date:** 2026-05-16 | **Version:** 0.36.6 | **Tests:** 560+ passing
 
 ## Executive Summary
 
 **Ready to start Phase 4 TUI development.**
 
-The architecture was designed for this — `AgentState`, `ApprovalGate`, `ToolOutcome::Streamed`, `Session` tree navigation, and `rho-highlight` were all built with Phase 4 in mind. The foundation is solid. **Pre-Work 1 (streaming API) is complete.** Pre-Work 2 (modularize `rust.rs`) remains open but is not a blocker.
+The architecture was designed for this — `AgentState`, `ApprovalGate`, `ToolOutcome::Streamed`, `Session` tree navigation, and `rho-highlight` were all built with Phase 4 in mind. The foundation is solid. **Pre-Work 1 (streaming API) is complete.** **Pre-Work 2 (modularize `rust.rs`) is complete.** External provider support (OpenRouter) has been validated with `rho-bench`.
 
 ---
 
@@ -42,15 +42,15 @@ Tree-shaped, JSONL-persisted, resolution-aware. The slash commands map directly 
 
 ### Scenarios — Validated
 
-All 5 prompt scenarios pass end-to-end against `qwen/qwen3.6-27b`, proving the agent loop + Rust tooling + approval flow work correctly. The scenarios exercise the exact code paths the TUI will render.
+All 5 prompt scenarios pass end-to-end against `qwen/qwen3.6-27b` and `google/gemma-4-26b-a4b-it` (4/5 via OpenRouter), proving the agent loop + Rust tooling + approval flow work correctly with both local and remote providers. The scenarios exercise the exact code paths the TUI will render.
 
 ---
 
 ## ⚠️ Concerns
 
-### Streaming — ✅ Complete (Pre-Work 1)
+### Streaming — ✅ Complete (Pre-Work 1 + OpenRouter Validation)
 
-The streaming API is fully implemented on the `improvement-chat-streaming` branch:
+The streaming API is fully implemented and merged to trunk:
 
 - `chat_stream` on `ChatClient` trait returns `Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>`
 - Default impl wraps `chat` — no breakage for `MockChatClient` or other providers
@@ -59,13 +59,27 @@ The streaming API is fully implemented on the `improvement-chat-streaming` branc
 - `StreamChunk` enum: `TextDelta`, `ReasoningDelta`, `ToolCallDelta`, `Done`
 - `StreamChunk::from_response()` converts a full `ModelResponse` into chunks for the default impl
 - `accumulate()` reconstructs an `AssistantResponse` from a stream of chunks
-- 11 new unit tests in `stream::tests`
-- All 716 tests pass, `cargo xtask ci` green
-- Validated against `deepseek/deepseek-v4-flash` and `z-ai/glm-5.1` via OpenRouter (4/5 eval scenarios pass)
+- SSE parser fixed for external providers: tool-call deltas checked first, empty content strings skipped
+- `rho-bench` `CountingClient` delegates `chat_stream()` to inner client (not default wrapper)
+- `ChatStream` re-exported from `rho-core`
+- All 560+ tests pass, `cargo xtask ci` green
+- Validated against 4 models via OpenRouter: DeepSeek v4 Flash (4/5), GLM 5.1 (4/5), Gemini 2.0 Flash (3/5), Gemma 4 26B (4/5)
 
-### `rust.rs` Size — 🟡 Medium Severity
+### `rust.rs` Modularization — ✅ Complete (Pre-Work 2)
 
-2,134 lines, 8 responsibilities, debtmap score 309.9 (CRITICAL). Modularizing before adding TUI code reduces cognitive load when working in `rho-tools` alongside the new `rho-tui` crate. Low-risk refactor (1–2 days), all tests stay green.
+`rho-tools/src/rust.rs` (2,134 lines) has been split into focused submodules:
+
+```
+rho-tools/src/rust/
+├── mod.rs              (re-exports, public API)
+├── tools.rs            (CargoCheck, CargoClippy, CargoTest, CargoFix, RustcExplain)
+├── parse.rs            (NDJSON parsing, message extraction, filtering)
+├── format.rs           (diagnostic formatting, AST context, suggestions)
+├── convert.rs          (conversion from raw JSON to core diagnostic types)
+└── types.rs            (raw cargo JSON types for deserialization)
+```
+
+All clippy lints fixed, all tests pass.
 
 ### Remaining Test Cleanup — 🟢 Low Severity
 
@@ -87,28 +101,9 @@ PowerShell, TOML, JSON, Markdown grammars are "evaluated" — may not be mature 
 
 Implemented on `improvement-chat-streaming` branch. See streaming section above for details.
 
-### Pre-Work 2: Modularize `rust.rs` (1–2 days) — 🔜 Open (non-blocking)
+### Pre-Work 2: Modularize `rust.rs` — ✅ Complete
 
-Split `rho-tools/src/rust.rs` (2,134 lines) into focused submodules:
-
-```
-rho-tools/src/
-├── lib.rs                  (unchanged)
-├── files.rs                (unchanged)
-├── shell.rs                (unchanged)
-├── rust/
-│   ├── mod.rs              (re-exports, public API)
-│   ├── tools.rs            (CargoCheck, CargoClippy, CargoTest, CargoFix, RustcExplain)
-│   ├── parse.rs            (NDJSON parsing, message extraction, filtering)
-│   ├── format.rs           (diagnostic formatting, AST context, suggestions)
-│   └── validate.rs         (node-splitting checks, path filtering, error codes)
-```
-
-**Expected outcome:**
-- 5 modules of ~400–500 LOC each
-- Debt score for rust tooling drops from 309.9 → ~150
-- All existing tests pass unchanged
-- Improved readability for Phase 4 TUI integration
+Split `rho-tools/src/rust.rs` (2,134 lines) into focused submodules (mod.rs, tools.rs, parse.rs, format.rs, convert.rs, types.rs). All clippy lints fixed. All tests pass.
 
 ---
 

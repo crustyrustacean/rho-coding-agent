@@ -28,7 +28,10 @@
    - ✅ Streaming API implemented (Pre-Work 1): `ChatClient::chat_stream` returns `Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>` with default impl wrapping `chat`
    - ✅ SSE parsing with line buffering in `LocalChatClient`
    - ✅ `run_loop` uses streaming path; `StreamChunk::accumulate()` reconstructs `AssistantResponse`
-   - ✅ Validated against remote models (DeepSeek v4 Flash, GLM 5.1 via OpenRouter)
+   - ✅ SSE parser fixed for external providers: tool-call deltas first, empty content skipped
+   - ✅ `rho-bench` `CountingClient` delegates `chat_stream()` to inner client
+   - ✅ `ChatStream` re-exported from `rho-core`
+   - ✅ Validated against 4 remote models via OpenRouter (Gemini 2.0 Flash, Gemma 4 26B, DeepSeek v4 Flash, GLM 5.1)
    - 🔜 TUI integration: render tokens as they arrive, show "thinking" indicator while waiting
 
 6. **Implement a diagnostic panel:**

@@ -10,9 +10,10 @@ This directory contains the long-term development plan for rho-coding-agent.
 | [phases/phase-1a-COMPLETE/](phases/phase-1a-COMPLETE/) | The agent-loop machinery ✅ |
 | [phases/phase-1b-COMPLETE/](phases/phase-1b-COMPLETE/) | The security surface (approval, sandbox, trust, redaction) ✅ |
 | [phases/phase-2-COMPLETE/](phases/phase-2-COMPLETE/) | PowerShell-native tools, config, cross-platform support, and security hardening ✅ |
-| [phases/phase-2.5/](phases/phase-2.5/) | Adaptive-resolution context (session tree, calibrated budget, amnesia fix) ✅ |
-| [phases/phase-3/](phases/phase-3/) | Rust tooling and tree-sitter 🔜 Next |
-| [phases/phase-4/](phases/phase-4/) | Terminal UI |
+| [phases/phase-2.5-COMPLETE/](phases/phase-2.5-COMPLETE/) | Adaptive-resolution context (session tree, calibrated budget, amnesia fix) ✅ |
+| [phases/phase-3-COMPLETE/](phases/phase-3-COMPLETE/) | Rust tooling and tree-sitter ✅ |
+| [phases/phase-3.8-COMPLETE/](phases/phase-3.8-COMPLETE/) | Streaming API, SSE parsing, external provider support ✅ |
+| [phases/phase-4/](phases/phase-4/) | Terminal UI 🔜 In Progress |
 | [phases/phase-5/](phases/phase-5/) | Extensions and polish |
 | [phases/phase-6/](phases/phase-6/) | LSP integration (deferred) |
 
