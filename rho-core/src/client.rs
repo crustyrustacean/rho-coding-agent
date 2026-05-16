@@ -343,10 +343,16 @@ impl ChatClient for LocalChatClient {
         let response = request_builder.send().await?;
         let status = response.status();
         info!("received response with status: {}", status);
-        
+
         if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_else(|_| "unable to read error body".to_string());
-            error!("streaming request failed with status {}: {}", status, error_text);
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "unable to read error body".to_string());
+            error!(
+                "streaming request failed with status {}: {}",
+                status, error_text
+            );
             return Err(RhoError::HttpError {
                 status: status.as_u16(),
                 message: error_text,
@@ -438,15 +444,8 @@ impl SseStream {
 
             // Convert the first choice into StreamChunk(s).
             if let Some(choice) = sse_chunk.choices.first() {
-                // Emit text delta.
-                if let Some(text) = choice.delta.content.clone() {
-                    return Some(Ok(StreamChunk::TextDelta(text)));
-                }
-                // Emit reasoning delta.
-                if let Some(reasoning) = choice.delta.reasoning_content.clone() {
-                    return Some(Ok(StreamChunk::ReasoningDelta(reasoning)));
-                }
-                // Emit tool call deltas.
+                // Emit tool call deltas first — these carry the most important
+                // signal and should not be shadowed by empty content fields.
                 if let Some(tool_call_deltas) = &choice.delta.tool_calls
                     && let Some(tc_delta) = tool_call_deltas.first()
                 {
@@ -457,6 +456,20 @@ impl SseStream {
                         function_name: func.and_then(|f| f.name.clone()),
                         arguments_delta: func.and_then(|f| f.arguments.clone()),
                     }));
+                }
+                // Emit text delta (skip empty strings — some providers send
+                // `content: ""` alongside `finish_reason`, which would
+                // prevent the Done chunk from being emitted).
+                if let Some(text) = choice.delta.content.clone()
+                    && !text.is_empty()
+                {
+                    return Some(Ok(StreamChunk::TextDelta(text)));
+                }
+                // Emit reasoning delta (similarly skip empty strings).
+                if let Some(reasoning) = choice.delta.reasoning_content.clone()
+                    && !reasoning.is_empty()
+                {
+                    return Some(Ok(StreamChunk::ReasoningDelta(reasoning)));
                 }
                 // Emit done.
                 if let Some(reason) = &choice.finish_reason {
@@ -476,7 +489,11 @@ impl futures::Stream for SseStream {
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
-        debug!("poll_next called: done={}, line_buf_len={}", self.done, self.line_buf.len());
+        debug!(
+            "poll_next called: done={}, line_buf_len={}",
+            self.done,
+            self.line_buf.len()
+        );
         // First, try to extract a chunk from already-buffered lines.
         if let Some(chunk) = self.try_next_chunk() {
             return std::task::Poll::Ready(Some(chunk));
@@ -492,7 +509,11 @@ impl futures::Stream for SseStream {
             match self.byte_stream.as_mut().poll_next(cx) {
                 std::task::Poll::Ready(Some(Ok(bytes))) => {
                     let bytes_str = String::from_utf8_lossy(&bytes).to_string();
-                    debug!("received {} bytes from byte stream: {:?}", bytes.len(), bytes_str);
+                    debug!(
+                        "received {} bytes from byte stream: {:?}",
+                        bytes.len(),
+                        bytes_str
+                    );
                     self.line_buf.push_str(&bytes_str);
                     if let Some(chunk) = self.try_next_chunk() {
                         return std::task::Poll::Ready(Some(chunk));
