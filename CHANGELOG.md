@@ -1,3 +1,12 @@
+## [0.36.3] - 2026-05-16
+
+### 🐛 Debug
+
+- Add stderr debug output and tracing dependency to diagnose empty log files
+- Add tracing test log on startup to verify logging system works
+
+---
+
 ## [0.36.2] - 2026-05-15
 
 ### 🐛 Bug Fixes
