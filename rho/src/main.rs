@@ -238,9 +238,14 @@ async fn main() -> Result<()> {
     let mut trust_store = TrustStore::load_default();
     let scanner = ContextScanner::new(&sandbox);
     let mut stdout = io::stdout();
-    let stdin = io::stdin();
-    let mut stdin_locked = stdin.lock();
-    let context_files = scanner.run(&mut trust_store, &mut stdin_locked, &mut stdout);
+    let context_files = {
+        let stdin = io::stdin();
+        let mut stdin_locked = stdin.lock();
+        scanner.run(&mut trust_store, &mut stdin_locked, &mut stdout)
+    };
+    // stdin_locked is dropped here, releasing the stdin mutex so the
+    // REPL loop can read stdin from a spawn_blocking thread without
+    // deadlocking.
 
     // --- System prompt ---
     let system_prompt = compose_full_system_prompt(
@@ -375,13 +380,20 @@ async fn main() -> Result<()> {
 
         let input = tokio::task::spawn_blocking(|| {
             let mut line = String::new();
-            std::io::stdin().read_line(&mut line).ok();
-            line
+            let bytes_read = std::io::stdin().read_line(&mut line).unwrap_or(0);
+            (line, bytes_read)
         })
         .await
         .map_err(|e| anyhow::anyhow!("spawn_blocking failed: {e}"))?;
 
-        let input = input.trim();
+        // EOF on stdin (bytes_read == 0) means the user closed the pipe
+        // or redirected /dev/null. Exit gracefully instead of spinning.
+        if input.1 == 0 {
+            session.close("stdin EOF");
+            break;
+        }
+
+        let input = input.0.trim();
 
         match input {
             "/quit" | "quit" => {
