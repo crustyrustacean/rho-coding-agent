@@ -1,3 +1,20 @@
+## [0.36.5] - 2026-05-16
+
+### 🐛 Bug Fixes
+
+- *(repl)* Fix REPL hang using tokio::spawn_blocking for stdin reads
+- *(repl)* Properly isolate blocking stdin operations from async runtime
+- *(deps)* Remove unnecessary tracing dependency from rho binary
+- *(deps)* Keep io-std feature in tokio for spawn_blocking compatibility
+
+### 🧹 Cleanup
+
+- Remove all temporary debugging code from REPL
+- Clean up debug output from main function
+- Remove test files created during debugging
+
+---
+
 ## [0.36.4] - 2026-05-16
 
 ### 🐛 Bug Fixes
