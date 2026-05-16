@@ -381,6 +381,9 @@ async fn main() -> Result<()> {
     }
 
     // --- REPL loop ---
+    
+    let stdin = io::stdin();
+    let mut stdin_locked = stdin.lock();
 
     loop {
         eprintln!("DEBUG: Waiting for user input...");
@@ -389,8 +392,14 @@ async fn main() -> Result<()> {
         print!("User: ");
         io::stdout().flush()?;
         
+        eprintln!("DEBUG: About to read from stdin...");
+        io::stderr().flush().ok();
+        
         let mut input = String::new();
-        let bytes_read = io::stdin().read_line(&mut input)?;
+        let bytes_read = stdin_locked.read_line(&mut input).map_err(|e| {
+            eprintln!("ERROR: Failed to read from stdin: {}", e);
+            e
+        })?;
         eprintln!("DEBUG: Read {} bytes from stdin", bytes_read);
         io::stderr().flush().ok();
         
