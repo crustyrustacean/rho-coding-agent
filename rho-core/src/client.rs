@@ -334,12 +334,27 @@ impl ChatClient for LocalChatClient {
     }
 
     async fn chat_stream(&self, request: ChatRequest) -> Result<ChatStream> {
+        info!("sending streaming request to {}", self.endpoint);
         let mut request_builder = self.http_client.post(&self.endpoint).json(&request);
         if let Some(ref key) = self.api_key {
             request_builder = request_builder.bearer_auth(key);
         }
 
-        let byte_stream = request_builder.send().await?.bytes_stream();
+        let response = request_builder.send().await?;
+        let status = response.status();
+        info!("received response with status: {}", status);
+        
+        if !status.is_success() {
+            let error_text = response.text().await.unwrap_or_else(|_| "unable to read error body".to_string());
+            error!("streaming request failed with status {}: {}", status, error_text);
+            return Err(RhoError::HttpError {
+                status: status.as_u16(),
+                message: error_text,
+            });
+        }
+
+        let byte_stream = response.bytes_stream();
+        debug!("created byte stream from response");
 
         // Build a `futures::Stream` that buffers SSE lines and emits
         // `StreamChunk` items.
@@ -461,6 +476,7 @@ impl futures::Stream for SseStream {
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
+        debug!("poll_next called: done={}, line_buf_len={}", self.done, self.line_buf.len());
         // First, try to extract a chunk from already-buffered lines.
         if let Some(chunk) = self.try_next_chunk() {
             return std::task::Poll::Ready(Some(chunk));
@@ -475,7 +491,9 @@ impl futures::Stream for SseStream {
         loop {
             match self.byte_stream.as_mut().poll_next(cx) {
                 std::task::Poll::Ready(Some(Ok(bytes))) => {
-                    self.line_buf.push_str(&String::from_utf8_lossy(&bytes));
+                    let bytes_str = String::from_utf8_lossy(&bytes).to_string();
+                    debug!("received {} bytes from byte stream: {:?}", bytes.len(), bytes_str);
+                    self.line_buf.push_str(&bytes_str);
                     if let Some(chunk) = self.try_next_chunk() {
                         return std::task::Poll::Ready(Some(chunk));
                     }
