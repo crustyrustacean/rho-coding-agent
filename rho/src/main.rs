@@ -20,8 +20,7 @@ use std::{
     io::{self, BufRead, Write},
 };
 use tracing_subscriber::EnvFilter;
-use tracing::info;
-use tokio::io::AsyncBufReadExt;
+
 
 // ── REPL approval gate ────────────────────────────────────────────────────────
 
@@ -150,8 +149,6 @@ struct Cli {
 #[tokio::main]
 #[allow(clippy::too_many_lines)]
 async fn main() -> Result<()> {
-    eprintln!("DEBUG: main() function started");
-    
     // --- Tracing ---
     let file_appender = tracing_appender::rolling::never("logs", "rho.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
@@ -159,17 +156,10 @@ async fn main() -> Result<()> {
     let env_filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info,rustls=warn,hyper=warn,reqwest=warn"));
     
-    // Simple stdout logging for debugging
-    eprintln!("DEBUG: Tracing initialized with filter: {:?}", env_filter);
-    eprintln!("DEBUG: RUST_LOG env var: {:?}", std::env::var("RUST_LOG"));
-    
     tracing_subscriber::fmt()
         .with_writer(non_blocking)
         .with_env_filter(env_filter)
         .init();
-    
-    // Test that logging works
-    info!("rho started successfully");
 
     let cli = Cli::parse();
 
@@ -359,9 +349,6 @@ async fn main() -> Result<()> {
         let input = fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("cannot read prompt file `{}`: {e}", path.display()))?;
         eprintln!("using prompt file: {}", path.display());
-        eprintln!("DEBUG: About to call run_loop with input: '{}'", input);
-        io::stderr().flush().ok();
-        
         match rho_core::run_loop(
             &mut session,
             &input,
@@ -383,31 +370,19 @@ async fn main() -> Result<()> {
 
     // --- REPL loop ---
 
-    let stdin = tokio::io::stdin();
-    let mut reader = tokio::io::BufReader::new(stdin).lines();
-
     loop {
-        eprintln!("DEBUG: Waiting for user input...");
-        io::stderr().flush().ok();
-        
         print!("User: ");
         io::stdout().flush()?;
         
-        eprintln!("DEBUG: About to read from stdin...");
-        io::stderr().flush().ok();
-        
-        let input = reader.next_line().await.map_err(|e| {
-            eprintln!("ERROR: Failed to read from stdin: {}", e);
-            eprintln!("Error details: {:?}", e);
-            anyhow::anyhow!("stdin read failed: {}", e)
-        })?
-        .ok_or_else(|| anyhow::anyhow!("stdin closed"))?;
-        eprintln!("DEBUG: Read input: '{}'", input);
-        io::stderr().flush().ok();
+        let input = tokio::task::spawn_blocking(|| {
+            let mut line = String::new();
+            std::io::stdin().read_line(&mut line).ok();
+            line
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("spawn_blocking failed: {}", e))?;
         
         let input = input.trim();
-        eprintln!("DEBUG: Trimmed input: '{}'", input);
-        io::stderr().flush().ok();
 
         match input {
             "/quit" | "quit" => {

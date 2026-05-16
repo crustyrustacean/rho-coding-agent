@@ -1399,7 +1399,6 @@ dependencies = [
  "rho-core",
  "rho-tools",
  "tokio",
- "tracing",
  "tracing-appender",
  "tracing-subscriber",
 ]
