@@ -358,6 +358,8 @@ async fn main() -> Result<()> {
         let input = fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("cannot read prompt file `{}`: {e}", path.display()))?;
         eprintln!("using prompt file: {}", path.display());
+        eprintln!("DEBUG: About to call run_loop with input: '{}'", input);
+        
         match rho_core::run_loop(
             &mut session,
             &input,
@@ -382,9 +384,12 @@ async fn main() -> Result<()> {
     loop {
         print!("User: ");
         io::stdout().flush()?;
+        eprintln!("DEBUG: Waiting for user input...");
         let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
+        let bytes_read = io::stdin().read_line(&mut input)?;
+        eprintln!("DEBUG: Read {} bytes from stdin", bytes_read);
         let input = input.trim();
+        eprintln!("DEBUG: Trimmed input: '{}'", input);
 
         match input {
             "/quit" | "quit" => {
