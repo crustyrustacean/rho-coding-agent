@@ -508,7 +508,7 @@ async fn send_streaming(
         model: session.model.clone(),
         messages: fitted,
         tools: session.tools.clone(),
-        stream: false,
+        stream: true,
     };
 
     let mut stream = client.chat_stream(request).await?;

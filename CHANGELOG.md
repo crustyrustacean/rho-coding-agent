@@ -1,3 +1,11 @@
+## [0.36.1] - 2026-05-15
+
+### 🐛 Bug Fixes
+
+- *(core)* Fix streaming bug where `stream: false` was sent instead of `stream: true`, causing no model output
+
+---
+
 ## [0.35.2] - 2026-05-12
 
 ### 🚜 Refactor
