@@ -242,7 +242,6 @@ impl Session {
         };
 
         let save_path = persist::compute_save_path(&header);
-        let initial_count = append_order.len();
 
         Self {
             header,
@@ -256,7 +255,7 @@ impl Session {
             token_budget: TokenBudget::default(),
             redactor: Redactor::new(),
             details_store: HashMap::new(),
-            persist: PersistState::with_path(save_path, initial_count),
+            persist: PersistState::with_path(save_path, 0),
         }
     }
 
