@@ -21,6 +21,7 @@ use std::{
 };
 use tracing_subscriber::EnvFilter;
 use tracing::info;
+use tokio::io::AsyncBufReadExt;
 
 // ── REPL approval gate ────────────────────────────────────────────────────────
 
@@ -381,9 +382,9 @@ async fn main() -> Result<()> {
     }
 
     // --- REPL loop ---
-    
-    let stdin = io::stdin();
-    let mut stdin_locked = stdin.lock();
+
+    let stdin = tokio::io::stdin();
+    let mut reader = tokio::io::BufReader::new(stdin).lines();
 
     loop {
         eprintln!("DEBUG: Waiting for user input...");
@@ -395,12 +396,13 @@ async fn main() -> Result<()> {
         eprintln!("DEBUG: About to read from stdin...");
         io::stderr().flush().ok();
         
-        let mut input = String::new();
-        let bytes_read = stdin_locked.read_line(&mut input).map_err(|e| {
+        let input = reader.next_line().await.map_err(|e| {
             eprintln!("ERROR: Failed to read from stdin: {}", e);
-            e
-        })?;
-        eprintln!("DEBUG: Read {} bytes from stdin", bytes_read);
+            eprintln!("Error details: {:?}", e);
+            anyhow::anyhow!("stdin read failed: {}", e)
+        })?
+        .ok_or_else(|| anyhow::anyhow!("stdin closed"))?;
+        eprintln!("DEBUG: Read input: '{}'", input);
         io::stderr().flush().ok();
         
         let input = input.trim();
@@ -430,7 +432,7 @@ async fn main() -> Result<()> {
 
         match rho_core::run_loop(
             &mut session,
-            input,
+            &input,
             &client,
             &registry,
             &config,
