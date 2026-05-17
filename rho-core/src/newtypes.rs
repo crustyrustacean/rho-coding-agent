@@ -198,10 +198,13 @@ impl Default for EntryId {
 impl From<Uuid> for EntryId {
     fn from(uuid: Uuid) -> Self {
         let bytes = uuid.as_bytes();
-        // Efficiently extract the first 4 bytes as an 8-char hex string
+        // Use the first 8 bytes (16 hex chars, 64 bits) to make collisions
+        // effectively impossible. Full UUID is 32 hex chars but 16 is plenty.
         let prefix = format!(
-            "{:08x}",
-            u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+            "{:016x}",
+            u64::from_be_bytes([
+                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+            ])
         );
         Self(prefix)
     }
