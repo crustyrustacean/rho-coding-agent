@@ -12,6 +12,10 @@ This directory contains the long-term development plan for rho-coding-agent.
 | [phases/phase-2-COMPLETE/](phases/phase-2-COMPLETE/) | PowerShell-native tools, config, cross-platform support, and security hardening ✅ |
 | [phases/phase-2.5-COMPLETE/](phases/phase-2.5-COMPLETE/) | Adaptive-resolution context (session tree, calibrated budget, amnesia fix) ✅ |
 | [phases/phase-3-COMPLETE/](phases/phase-3-COMPLETE/) | Rust tooling and tree-sitter ✅ |
+| [phases/phase-3.4-COMPLETE/](phases/phase-3.4-COMPLETE/) | First-class frontier model support (shared bootstrapping, CLI flags, egress) ✅ |
+| [phases/phase-3.5/](phases/phase-3.5/) | Rust standard library reference (local rustdoc lookup) 🔜 Planned |
+| [phases/phase-3.6/](phases/phase-3.6/) | crates.io registry research (crate lookup, search, deps) 🔜 Planned |
+| [phases/phase-3.7-COMPLETE/](phases/phase-3.7-COMPLETE/) | Multi-model benchmark harness (`rho-bench` binary) ✅ |
 | [phases/phase-3.8-COMPLETE/](phases/phase-3.8-COMPLETE/) | Streaming API, SSE parsing, external provider support ✅ |
 | [phases/phase-4/](phases/phase-4/) | Terminal UI 🔜 In Progress |
 | [phases/phase-5/](phases/phase-5/) | Extensions and polish |
