@@ -16,13 +16,15 @@
 //! [`CargoCheck`] — structured compiler diagnostics via
 //! `cargo check --message-format=json`, with NDJSON parsing and dependency
 //! noise filtering.
+//!
+//! [`RustdocTool`] — stdlib documentation lookup from locally installed rustdoc.
 
 pub mod files;
 pub mod rust;
 pub mod shell;
 
 pub use files::{EditFile, ListDir, ReadFile, WriteFile};
-pub use rust::{CargoCheck, CargoClippy, CargoFix, CargoTest, RustcExplain};
+pub use rust::{CargoCheck, CargoClippy, CargoFix, CargoTest, RustcExplain, RustdocTool};
 pub use shell::{CommandDenylist, PowerShellExecutor, RunCommand};
 
 use rho_core::{SandboxRoot, ToolRegistry};
@@ -65,6 +67,9 @@ pub fn register_all(registry: &mut ToolRegistry, root: SandboxRoot, config: &rho
         root: root.clone(),
         executor: fix_executor,
     }));
+
+    // Rustdoc lookup (Phase 3.5)
+    registry.register(Box::new(RustdocTool::new()));
 
     let executor = Box::new(PowerShellExecutor::new());
     let denylist = CommandDenylist::from_config(config);

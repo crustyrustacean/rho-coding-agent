@@ -1,4 +1,4 @@
-//! Rust tooling: Cargo tools and diagnostic parsing.
+//! Rust tooling: Cargo tools, diagnostic parsing, and rustdoc lookup.
 //!
 //! This module provides tools for working with Rust projects:
 //!
@@ -7,6 +7,7 @@
 //! - [`CargoTest`] — Run `cargo test` and report test results
 //! - [`CargoFix`] — Apply machine-applicable compiler suggestions
 //! - [`RustcExplain`] — Get explanations for Rust error codes
+//! - [`RustdocTool`] — Look up stdlib documentation from local rustdoc HTML
 //!
 //! ## Diagnostic parsing
 //!
@@ -27,6 +28,7 @@ pub use rho_core::diagnostic::{
 };
 
 // Re-export tools
+pub use rustdoc::RustdocTool;
 pub use tools::{CargoCheck, CargoClippy, CargoFix, CargoTest, RustcExplain};
 
 // Re-export public parsing functions
@@ -39,5 +41,6 @@ pub use format::{ast_context_for_span, format_ast_context};
 mod convert;
 mod format;
 mod parse;
+mod rustdoc;
 mod tools;
 mod types;

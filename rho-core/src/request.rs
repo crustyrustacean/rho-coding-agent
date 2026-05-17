@@ -20,6 +20,14 @@ pub struct ChatRequest {
     /// servers.
     #[serde(skip_serializing_if = "is_false")]
     pub stream: bool,
+    /// Maximum number of tokens the model may generate.
+    ///
+    /// When `Some`, sent as `max_tokens` in the request body. This is
+    /// essential for reasoning/thinking models where the server's default
+    /// output budget may be too small to accommodate both chain-of-thought
+    /// reasoning and the actual content.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<usize>,
 }
 
 /// Helper for `#[serde(skip_serializing_if)]`.

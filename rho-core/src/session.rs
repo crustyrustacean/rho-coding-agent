@@ -911,6 +911,7 @@ impl Session {
             messages: fitted,
             tools: self.tools.clone(),
             stream: false,
+            max_tokens: Some(self.token_budget.completion_reserve),
         };
 
         let response = client.chat(request).await?;

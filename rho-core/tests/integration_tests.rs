@@ -828,6 +828,7 @@ async fn retryable_http_error() -> RhoError {
         messages: vec![],
         stream: false,
         tools: vec![],
+        max_tokens: None,
     };
     client.chat(request).await.unwrap_err()
 }
@@ -1099,6 +1100,7 @@ async fn local_chat_client_returns_http_error_when_server_unreachable() {
         messages: vec![ChatMessage::user_text("hello")],
         stream: false,
         tools: vec![],
+        max_tokens: None,
     };
     let result = tokio::time::timeout(Duration::from_secs(5), client.chat(request)).await;
     // On machines with proxies/VPNs, the connection may time out rather than
@@ -1568,6 +1570,7 @@ async fn test_chat_stream() {
         messages: vec![],
         tools: vec![],
         stream: false,
+        max_tokens: None,
     };
     let mut stream = client.chat_stream(request).await.unwrap();
 
