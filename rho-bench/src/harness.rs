@@ -7,7 +7,7 @@ use std::time::Instant;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use rho_core::{
-    AgentConfig, ApprovalGate, AutoApprovePolicy, ChatClient, ChatRequest, ChatStream,
+    AgentConfig, ApprovalGate, AutoApprovePolicy, ChatClient, ChatRequest, ModelResponseStream,
     ConfigLoader, LocalChatClient, ModelResponse, ModelToolCall, RhoConfig, SandboxRoot, Session,
     TokenBudget, ToolRegistry, ToolRisk, compose_full_system_prompt, run_loop,
 };
@@ -74,7 +74,7 @@ impl ChatClient for CountingClient {
         Ok(response)
     }
 
-    async fn chat_stream(&self, request: ChatRequest) -> rho_core::error::Result<ChatStream> {
+    async fn chat_stream(&self, request: ChatRequest) -> rho_core::error::Result<ModelResponseStream> {
         // Delegate to the inner client's real SSE implementation
         // instead of the default trait wrapper (which calls chat()).
         self.inner.chat_stream(request).await
