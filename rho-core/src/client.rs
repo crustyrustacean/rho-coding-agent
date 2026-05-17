@@ -16,7 +16,7 @@ use std::pin::Pin;
 use tracing::{debug, error, info, warn};
 
 /// The type returned by [`ChatClient::chat_stream`].
-pub type ChatStream = Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>;
+pub type ModelResponseStream = Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>;
 
 /// Interface all model providers must implement.
 ///
@@ -38,7 +38,7 @@ pub trait ChatClient: Send + Sync {
     /// every [`ChatClient`] implementation supports streaming automatically;
     /// providers that natively support SSE override this method for
     /// incremental token delivery.
-    async fn chat_stream(&self, request: ChatRequest) -> Result<ChatStream> {
+    async fn chat_stream(&self, request: ChatRequest) -> Result<ModelResponseStream> {
         let response = self.chat(request).await?;
         let chunks = StreamChunk::from_response(&response);
         Ok(Box::pin(futures::stream::iter(chunks.into_iter().map(Ok))))
@@ -333,7 +333,7 @@ impl ChatClient for LocalChatClient {
         Ok(model_response)
     }
 
-    async fn chat_stream(&self, request: ChatRequest) -> Result<ChatStream> {
+    async fn chat_stream(&self, request: ChatRequest) -> Result<ModelResponseStream> {
         info!("sending streaming request to {}", self.endpoint);
         let mut request_builder = self.http_client.post(&self.endpoint).json(&request);
         if let Some(ref key) = self.api_key {
