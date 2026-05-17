@@ -1,4 +1,4 @@
-# Phase 3.5: Rust Standard Library Reference 🔜 Planned
+# Phase 3.5: Rust Standard Library Reference ✅ Complete
 
 **Goal:** Give the agent the ability to look up Rust standard library API documentation without network access, using the locally installed rustdoc HTML shipped by `rustup`.
 
@@ -54,11 +54,19 @@ Wrapped in `<stdlib reference>` framing (consistent with `<context>` framing pat
 Apply the same `ToolResultDetails::FullOutput` truncation pattern used by `CargoCheck`.
 
 ## Exit Criteria
-- [ ] `rustdoc_lookup` tool resolves and returns docs for common stdlib types
-- [ ] Model can use the tool to answer API questions correctly
-- [ ] Zero new crate dependencies (V1)
-- [ ] All existing tests pass
-- [ ] New tool has ≥ 10 unit tests
+- [x] `rustdoc_lookup` tool resolves and returns docs for common stdlib types
+- [x] Model can use the tool to answer API questions correctly
+- [x] Zero new crate dependencies (V1)
+- [x] All existing tests pass
+- [x] New tool has ≥ 10 unit tests (37 unit tests)
+
+**Completed:** 2026-05-17
+
+**Eval result:** Scenario 06 passes against Gemma 4 27B (53s, 8 iterations).
+
+**Bonus fixes delivered alongside:**
+- `max_tokens` field added to `ChatRequest` — sent as `completion_reserve` (4096) so thinking models get explicit output budget from the server.
+- `EntryId` widened from 32-bit to 64-bit to eliminate UUID collision flake in CI.
 
 ## Future Work (Beyond Phase 3.5)
 - V2: Structured extraction with `scraper`
