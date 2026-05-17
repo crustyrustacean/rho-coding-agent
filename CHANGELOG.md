@@ -1,3 +1,20 @@
+## [0.36.9] - 2026-05-17
+
+### ✨ New Features
+
+- *(tools)* Add `rustdoc_lookup` tool — resolves Rust stdlib queries to local
+  rustdoc HTML, extracts documentation, and returns it to the model without
+  network access. Supports bare names (Vec), qualified paths
+  (std::collections::HashMap), method queries (Option::map), primitives,
+  macros, and section filtering.
+- *(eval)* Add scenario 06 — tests that the agent can use rustdoc_lookup to
+  understand HashMap::get return type and fix a compilation error.
+
+### 🔄 Changed
+
+- *(core)* Send `max_tokens` in API requests (set to completion reserve) so
+  thinking/reasoning models receive explicit output budget from the server.
+
 ## [0.36.5] - 2026-05-16
 
 ### 🐛 Bug Fixes

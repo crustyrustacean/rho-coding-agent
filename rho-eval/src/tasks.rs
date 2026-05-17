@@ -13,6 +13,7 @@ pub fn all_tasks() -> Vec<Box<dyn EvalTask>> {
         Box::new(Scenario03ExplainAndFix),
         Box::new(Scenario04FixAndTest),
         Box::new(Scenario05MultiErrorFix),
+        Box::new(Scenario06RustdocApiLookup),
     ]
 }
 
@@ -402,7 +403,7 @@ impl EvalTask for Scenario05MultiErrorFix {
              \x20       self.data.insert(key, value);\n\
              \x20   }\n\
              \n\
-             \x20   /// Get a value by key. Returns the value, not an Option.\n\
+             \x20   /// Get a value by key.\n\
              \x20   pub fn get(&self, key: &str) -> String {\n\
              \x20       self.data.get(key)\n\
              \x20   }\n\
@@ -480,14 +481,109 @@ impl EvalTask for Scenario05MultiErrorFix {
     }
 }
 
+// ── Scenario 06: Fix stdlib API misuse with rustdoc ───────────────────────
+
+/// The code misuses `HashMap::get`, ignoring its `Option` return type.
+/// The model should use `rustdoc_lookup` to check the API, then fix it.
+struct Scenario06RustdocApiLookup;
+
+impl EvalTask for Scenario06RustdocApiLookup {
+    fn id(&self) -> &str {
+        "scenario_06_rustdoc_api_lookup"
+    }
+
+    fn name(&self) -> &str {
+        "Fix stdlib API misuse with rustdoc"
+    }
+
+    fn description(&self) -> &str {
+        "Fix HashMap::get return-type confusion using rustdoc_lookup."
+    }
+
+    fn initial_files(&self) -> Vec<(&str, &str)> {
+        vec![(
+            "src/lib.rs",
+            "use std::collections::HashMap;\n\
+             \n\
+             /// Merge `other` into `base`, summing values for duplicate keys.\n\
+             pub fn merge_sum(base: &mut HashMap<String, i64>, other: &HashMap<String, i64>) {\n\
+             \x20   for (key, val) in other {\n\
+             \x20       let existing = base.get(key);\n\
+             \x20       base.insert(key.to_string(), existing + val);\n\
+             \x20   }\n\
+             }\n",
+        )]
+    }
+
+    fn user_prompt(&self) -> &str {
+        "The file src/lib.rs has a compilation error related to HashMap's API. \
+         Use cargo_check to see the error, then use rustdoc_lookup to look up \
+         HashMap::get and HashMap::entry so you understand the correct return \
+         types. Fix the code and verify with cargo_check."
+    }
+
+    fn verify(&self, files: &[(&str, &str)]) -> TaskOutcome {
+        let Some((_, lib)) = files.iter().find(|(p, _)| *p == "src/lib.rs") else {
+            return TaskOutcome::new(
+                self.id(),
+                self.name(),
+                TaskVerdict::Error,
+                "src/lib.rs not found in output",
+            );
+        };
+
+        let mut issues = Vec::new();
+
+        // The function must still exist.
+        if !lib.contains("fn merge_sum") {
+            issues.push("merge_sum function was removed");
+        }
+
+        // The original buggy pattern: bare .get(key) result used in arithmetic.
+        // If the file still has the raw `let existing = base.get(key);` line
+        // AND uses `existing + val`, it hasn't been fixed.
+        let has_bare_get = lib.contains("base.get(key);") || lib.contains("base.get(key));");
+        if has_bare_get && lib.contains("existing + val") {
+            issues.push("existing is still Option, not unwrapped");
+        }
+
+        // A correct fix must handle the Option somehow.
+        let handles_option = lib.contains("or_insert(0)")
+            || lib.contains("or_insert_with")
+            || lib.contains("unwrap_or(0)")
+            || lib.contains("unwrap_or_default")
+            || lib.contains("or_default()");
+
+        if !handles_option {
+            issues.push("no Option handling found (expected or_insert/unwrap_or/etc)");
+        }
+
+        if issues.is_empty() {
+            TaskOutcome::new(
+                self.id(),
+                self.name(),
+                TaskVerdict::Pass,
+                "HashMap::get Option handled correctly",
+            )
+        } else {
+            TaskOutcome::new(
+                self.id(),
+                self.name(),
+                TaskVerdict::Fail,
+                format!("issues: {}", issues.join("; ")),
+            )
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn all_tasks_returns_five_tasks() {
+    fn all_tasks_returns_six_tasks() {
         let tasks = all_tasks();
-        assert_eq!(tasks.len(), 5);
+        assert_eq!(tasks.len(), 6);
     }
 
     #[test]
@@ -687,6 +783,48 @@ mod tests {
     #[test]
     fn scenario_05_fails_with_original_errors() {
         let task = Scenario05MultiErrorFix;
+        let files = task.initial_files();
+        assert_eq!(task.verify(&files).verdict, TaskVerdict::Fail);
+    }
+
+    // ── Scenario 06 ─────────────────────────────────────────────────────
+
+    #[test]
+    fn scenario_06_passes_with_entry_api() {
+        let task = Scenario06RustdocApiLookup;
+        let files = vec![(
+            "src/lib.rs",
+            "use std::collections::HashMap;\n\
+             \n\
+             pub fn merge_sum(base: &mut HashMap<String, i64>, other: &HashMap<String, i64>) {\n\
+             \x20   for (key, val) in other {\n\
+             \x20       *base.entry(key.to_string()).or_insert(0) += val;\n\
+             \x20   }\n\
+             }\n",
+        )];
+        assert_eq!(task.verify(&files).verdict, TaskVerdict::Pass);
+    }
+
+    #[test]
+    fn scenario_06_passes_with_get_unwrap_or() {
+        let task = Scenario06RustdocApiLookup;
+        let files = vec![(
+            "src/lib.rs",
+            "use std::collections::HashMap;\n\
+             \n\
+             pub fn merge_sum(base: &mut HashMap<String, i64>, other: &HashMap<String, i64>) {\n\
+             \x20   for (key, val) in other {\n\
+             \x20       let existing = base.get(key).copied().unwrap_or(0);\n\
+             \x20       base.insert(key.to_string(), existing + val);\n\
+             \x20   }\n\
+             }\n",
+        )];
+        assert_eq!(task.verify(&files).verdict, TaskVerdict::Pass);
+    }
+
+    #[test]
+    fn scenario_06_fails_with_original_bug() {
+        let task = Scenario06RustdocApiLookup;
         let files = task.initial_files();
         assert_eq!(task.verify(&files).verdict, TaskVerdict::Fail);
     }

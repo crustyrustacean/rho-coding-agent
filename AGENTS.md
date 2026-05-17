@@ -36,10 +36,15 @@ cargo xtask test -- --nocapture # Run with stdout visible
 - When adding new deserialization logic, add a JSON fixture test.
 - For `Conversation` branching logic, prefer the trait-abstraction pattern over coupling to `LocalChatClient`.
 
+## Tooling
+
+- **git-cliff** — generates `CHANGELOG.md` from conventional commits. Invoked by `cargo xtask changelog <version>`.
+- **cargo-release** — automates version bumping, tagging, and publishing. Run `cargo release <version>` to perform a dry-run; add `--execute` to apply.
+
 ## Release Checklist
 
 1. Ensure `cargo xtask ci` passes.
-2. `cargo xtask changelog <version>` — update `CHANGELOG.md`.
+2. `cargo xtask changelog <version>` — update `CHANGELOG.md` (requires `git-cliff`).
 3. Bump `version` in workspace `Cargo.toml`.
 4. `git add -A && git commit -m "chore(release): prepare <version>"`.
 5. `git push origin trunk`.

@@ -517,6 +517,7 @@ async fn send_streaming(
         messages: fitted,
         tools: session.tools.clone(),
         stream: true,
+        max_tokens: Some(session.token_budget().completion_reserve),
     };
 
     let request_json = serde_json::to_string(&request).unwrap_or_else(|e| {
