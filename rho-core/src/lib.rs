@@ -91,7 +91,7 @@ pub use approval::{
     ApprovalGate, ApprovalPolicy, AutoApprovePolicy, ConfigApprovalPolicy, DefaultApprovalPolicy,
 };
 pub use client::{
-    ChatClient, ModelResponseStream, LocalChatClient, ModelInfo, ModelList, client_factory,
+    ChatClient, LocalChatClient, ModelInfo, ModelList, ModelResponseStream, client_factory,
     is_local_endpoint, resolve_api_key,
 };
 pub use config::{
