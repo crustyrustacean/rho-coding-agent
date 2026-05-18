@@ -6,6 +6,8 @@ use rho_core::tool::{CancellationToken, Tool, ToolOutcome, ToolResult, ToolResul
 use rho_core::{Result, SandboxRoot, ShellExecutor, ToolName, ToolRisk};
 use serde_json;
 
+use crate::error::ToolError;
+
 use super::format::format_diagnostics_for_model;
 use super::parse::parse_cargo_diagnostics;
 
@@ -257,7 +259,9 @@ impl Tool for RustcExplain {
         let error_code = arguments
             .get("error_code")
             .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| anyhow::anyhow!("missing required field: error_code"))?;
+            .ok_or_else(|| ToolError::MissingArgument {
+                name: "error_code".to_string(),
+            })?;
 
         let cmd = format!("rustc --explain {error_code}");
 

@@ -12,12 +12,13 @@
 //! checks the denylist, normalizes paths, flags working directory escapes,
 //! then delegates to a `Box<dyn ShellExecutor>`.
 
+use crate::ToolError;
 use async_trait::async_trait;
 use rho_core::{
     Result, SandboxRoot, ShellExecutor, ShellOutput, ToolName, ToolRisk,
     tool::{CancellationToken, Tool, ToolOutcome, ToolResult},
 };
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -256,9 +257,7 @@ impl ShellExecutor for PowerShellExecutor {
         input: Option<&str>,
     ) -> Result<ShellOutput> {
         if cancel.is_cancelled() {
-            return Err(rho_core::RhoError::Unexpected(anyhow::anyhow!(
-                "cancelled before execution"
-            )));
+            return Err(ToolError::Cancelled.into());
         }
 
         // Normalize path separators before execution.
@@ -273,11 +272,9 @@ impl ShellExecutor for PowerShellExecutor {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
-            .map_err(|e| {
-                rho_core::RhoError::Unexpected(anyhow::anyhow!(
-                    "shell: failed to spawn `{}`: {e}",
-                    self.shell
-                ))
+            .map_err(|e| ToolError::CommandSpawn {
+                command: self.shell.to_string(),
+                source: e,
             })?;
 
         // Write the input to the child's stdin, then close it.
@@ -286,9 +283,10 @@ impl ShellExecutor for PowerShellExecutor {
         if let Some(mut stdin_handle) = child.stdin.take() {
             if let Some(text) = input {
                 stdin_handle.write_all(text.as_bytes()).await.map_err(|e| {
-                    rho_core::RhoError::Unexpected(anyhow::anyhow!(
-                        "shell: failed to write to stdin: {e}"
-                    ))
+                    ToolError::FileSystem {
+                        path: PathBuf::from("<stdin>"),
+                        source: e,
+                    }
                 })?;
             }
             // Drop closes the pipe, sending EOF.
@@ -298,11 +296,13 @@ impl ShellExecutor for PowerShellExecutor {
         let child_id = child.id();
 
         let run_future = async {
-            let output = child.wait_with_output().await.map_err(|e| {
-                rho_core::RhoError::Unexpected(anyhow::anyhow!(
-                    "shell: failed to wait for process: {e}"
-                ))
-            })?;
+            let output = child
+                .wait_with_output()
+                .await
+                .map_err(|e| ToolError::FileSystem {
+                    path: PathBuf::from("<process_wait>"),
+                    source: e,
+                })?;
 
             let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
             let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
@@ -318,17 +318,14 @@ impl ShellExecutor for PowerShellExecutor {
                     if let Ok(inner) = res { inner } else {
                         // Timeout elapsed — kill the process.
                         kill_process(child_id).await;
-                        Err(rho_core::RhoError::Unexpected(anyhow::anyhow!(
-                            "shell: command timed out after {}ms",
-                            dur.as_millis()
-                        )))
+                        Err(ToolError::Timeout {
+                            duration_ms: u64::try_from(dur.as_millis()).unwrap_or(u64::MAX),
+                        }.into())
                     }
                 }
                 () = cancel.cancelled() => {
                     kill_process(child_id).await;
-                    Err(rho_core::RhoError::Unexpected(anyhow::anyhow!(
-                        "cancelled"
-                    )))
+                    Err(ToolError::Cancelled.into())
                 }
             }
         } else {
@@ -336,9 +333,7 @@ impl ShellExecutor for PowerShellExecutor {
                 res = run_future => res,
                 () = cancel.cancelled() => {
                     kill_process(child_id).await;
-                    Err(rho_core::RhoError::Unexpected(anyhow::anyhow!(
-                        "cancelled"
-                    )))
+                    Err(ToolError::Cancelled.into())
                 }
             }
         }
@@ -415,7 +410,9 @@ impl Tool for RunCommand {
     ) -> Result<ToolOutcome> {
         let command = arguments["command"]
             .as_str()
-            .ok_or_else(|| anyhow::anyhow!("run_command: missing required argument `command`"))?
+            .ok_or_else(|| ToolError::MissingArgument {
+                name: "command".to_owned(),
+            })?
             .to_owned();
         let cwd_arg = arguments["cwd"].as_str();
         let input_arg = arguments["input"].as_str().map(str::to_owned);

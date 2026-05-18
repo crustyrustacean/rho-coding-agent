@@ -3,8 +3,11 @@
 //! Also provides [`client_factory`] for constructing a fully-configured client
 //! from [`RhoConfig`] with optional CLI overrides.
 
+pub mod error;
+
+use crate::client::error::ClientError;
 use crate::config::RhoConfig;
-use crate::error::{Result, RhoError};
+use crate::error::Result;
 use crate::request::ChatRequest;
 use crate::response::{FinishReason, ModelResponse};
 use crate::stream::StreamChunk;
@@ -130,12 +133,8 @@ impl LocalChatClient {
     /// Returns an error if the endpoint URL cannot be parsed or the request
     /// fails (e.g. the server is unreachable).
     pub async fn list_models(&self) -> Result<ModelList> {
-        let models_url = reqwest::Url::parse(&self.endpoint)
-            .map(|mut u| {
-                u.set_path("/v1/models");
-                u
-            })
-            .map_err(|e| RhoError::Unexpected(anyhow::anyhow!("bad endpoint URL: {e}")))?;
+        let mut models_url = reqwest::Url::parse(&self.endpoint).map_err(ClientError::from)?;
+        models_url.set_path("/v1/models");
         let mut req = self.http_client.get(models_url);
         if let Some(ref key) = self.api_key {
             req = req.bearer_auth(key);
@@ -299,25 +298,23 @@ impl ChatClient for LocalChatClient {
         // Read the body as text so we can report it on parse failures and
         // include it in HTTP error diagnostics. If the body read itself
         // fails (e.g. connection dropped mid-response), propagate as
-        // RhoError::Http so it remains retryable.
+        // ClientError::Http so it remains retryable.
         let body = response.text().await?;
 
         if !status.is_success() {
             // Non-2xx HTTP response. Use HttpError which preserves the
             // status code for retry classification.
             warn!(status = status.as_u16(), body = %truncate_error_body(&body));
-            return Err(RhoError::HttpError {
-                status: status.as_u16(),
-                message: enhance_http_body(status.as_u16(), &body),
-            });
+            return Err(ClientError::http_error(
+                status.as_u16(),
+                enhance_http_body(status.as_u16(), &body),
+            )
+            .into());
         }
 
         let model_response = serde_json::from_str::<ModelResponse>(&body).map_err(|e| {
             error!(error = %e);
-            RhoError::Unexpected(anyhow::anyhow!(
-                "failed to parse model response: {e}\n  raw response (first 512 chars): {}",
-                truncate_error_body(&body)
-            ))
+            ClientError::Json(e)
         })?;
 
         // Log response telemetry for data model assessment.
@@ -353,10 +350,7 @@ impl ChatClient for LocalChatClient {
                 "streaming request failed with status {}: {}",
                 status, error_text
             );
-            return Err(RhoError::HttpError {
-                status: status.as_u16(),
-                message: error_text,
-            });
+            return Err(ClientError::http_error(status.as_u16(), error_text).into());
         }
 
         let byte_stream = response.bytes_stream();

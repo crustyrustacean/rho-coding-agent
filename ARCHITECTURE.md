@@ -313,8 +313,14 @@ cliff.toml          # git-cliff configuration
 
 | Type | Location | Purpose |
 |---|---|---|
-| `RhoError` | `error.rs` | `Http`, `HttpError`, `Json`, `ToolNotFound`, `MaxIterationsExceeded`, `RetryBudgetExhausted`, `Cancelled`, `Unexpected` |
-| `Result` | `error.rs` | `std::result::Result<T, RhoError>` |
+| `RhoError` | `error.rs` | Thin boundary enum wrapping domain-specific errors (Agent, Client, Session, Sandbox, plus cross-domain variants) |
+| `ClientError` | `client/error.rs` | HTTP, JSON parsing, retry budget exhaustion |
+| `AgentError` | `agent/error.rs` | Agent loop: max iterations, cancellation, protocol violations |
+| `SessionError` | `session/error.rs` | Session management: entry not found, persistence |
+| `SandboxError` | `sandbox.rs` | File sandbox: path validation, security violations |
+| `ToolError` | `rho-tools/src/error.rs` | Tool operations: file access, command execution, sandbox violations |
+| `HighlightError` | `rho-highlight/src/error.rs` | Syntax highlighting: grammar not available, parse failure, position errors |
+| `Result<T>` | `error.rs` | `std::result::Result<T, RhoError>` |
 
 ### Newtypes
 

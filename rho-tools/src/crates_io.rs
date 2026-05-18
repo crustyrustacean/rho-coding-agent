@@ -5,6 +5,7 @@ use crate::error::{ToolError, ToolResult};
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct CratesIoResponse {
+    /// The list of crates returned by the search.
     crates: Vec<Crate>,
 }
 
@@ -22,16 +23,24 @@ pub struct Crate {
 
 #[derive(Clone, Debug)]
 pub struct CratesIoClient {
+    /// The HTTP client used for API requests.
     http_client: Client,
 }
 
 impl CratesIoClient {
+    /// Create a new `CratesIoClient`.
     pub fn new() -> Self {
         Self {
             http_client: Client::new(),
         }
     }
 
+    /// Search crates.io for crates matching the given query.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ToolError::Http` if the request fails at the transport level,
+    /// or `ToolError::ApiError` if the API returns a non-success status.
     pub async fn search_crates_io(&self, query: &str) -> ToolResult<Vec<Crate>> {
         let endpoint = search_url(query);
         let results = self.get_from_crates_io(&endpoint).await?;
@@ -39,6 +48,12 @@ impl CratesIoClient {
         Ok(results.crates)
     }
 
+    /// Fetch a response from the crates.io API.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ToolError::Http` on transport errors or `ToolError::ApiError`
+    /// for non-success HTTP status codes.
     async fn get_from_crates_io(&self, endpoint: &str) -> ToolResult<CratesIoResponse> {
         let response = self
             .http_client
@@ -75,8 +90,9 @@ impl Default for CratesIoClient {
     }
 }
 
+/// Build the crates.io search URL for a given query.
 fn search_url(query: &str) -> String {
-    format!("https://crates.io/api/v1/crates?q={}", query)
+    format!("https://crates.io/api/v1/crates?q={query}")
 }
 
 #[cfg(test)]

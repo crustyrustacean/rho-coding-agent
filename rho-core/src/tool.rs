@@ -244,8 +244,10 @@ impl ToolRegistry {
 
         match outcome {
             ToolOutcome::Immediate(result) => Ok(result),
-            ToolOutcome::Streamed(_) => Err(crate::error::RhoError::ProtocolViolation(
-                "streaming tool output is not yet supported".into(),
+            ToolOutcome::Streamed(_) => Err(crate::error::RhoError::Agent(
+                crate::agent::error::AgentError::ProtocolViolation(
+                    "streaming tool output is not yet supported".to_string(),
+                ),
             )),
         }
     }

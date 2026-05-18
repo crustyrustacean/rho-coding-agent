@@ -73,14 +73,31 @@ pub enum ToolError {
     /// JSON deserialization of an API response failed.
     #[error("JSON parsing failed: {source}")]
     Json {
-        /// The underlying serde_json error.
+        /// The underlying `serde_json` error.
         source: serde_json::Error,
     },
 
     /// A sandbox violation was detected.
     #[error("sandbox violation: {0}")]
     SandboxViolation(String),
+
+    /// A shell command exceeded its configured timeout.
+    #[error("command timed out after {duration_ms}ms")]
+    Timeout {
+        /// The timeout duration in milliseconds.
+        duration_ms: u64,
+    },
 }
 
 /// A specialised `Result` type for rho-tools operations.
 pub type ToolResult<T> = std::result::Result<T, ToolError>;
+
+/// Convert [`ToolError`] to [`rho_core::RhoError`] via the `Tool` variant.
+///
+/// This bridges tool-specific errors into the top-level error type so that
+/// `?` works in trait implementations that return `rho_core::Result`.
+impl From<ToolError> for rho_core::RhoError {
+    fn from(error: ToolError) -> Self {
+        rho_core::RhoError::Tool(error.to_string())
+    }
+}

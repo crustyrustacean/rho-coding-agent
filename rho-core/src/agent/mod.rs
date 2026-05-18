@@ -4,14 +4,19 @@
 //! exhausted. [`AgentState`] is the observable state for UIs and tests.
 //! [`TransitionError`] classifies errors as retryable or fatal.
 
+pub mod error;
+
+use crate::agent::error::AgentError;
 use crate::approval::{ApprovalGate, ApprovalPolicy, DefaultApprovalPolicy};
 use crate::client::ChatClient;
 use crate::conversation::AssistantResponse;
 use crate::error::{Result, RhoError};
-use crate::newtypes::ToolCallId;
+use crate::message::{ModelToolCall, ToolCallFunction};
+use crate::newtypes::{ToolCallId, ToolName};
 use crate::request::ChatRequest;
 use crate::response::FinishReason;
 use crate::session::Session;
+use crate::stream::AccumulatedToolCall;
 use crate::stream::StreamChunk;
 use crate::tool::{CancellationToken, Tool, ToolRegistry, ToolResult};
 use futures::StreamExt;
@@ -236,7 +241,7 @@ pub async fn run_loop(
         // ── Thinking ──────────────────────────────────────────────────────────
         if cancel.is_cancelled() {
             warn!("cancelled");
-            return Err(RhoError::Cancelled);
+            return Err(AgentError::Cancelled.into());
         }
 
         let response = send_with_retry_streaming(session, client, config).await?;
@@ -244,7 +249,7 @@ pub async fn run_loop(
         iterations += 1;
         if iterations > config.max_iterations {
             error!(max = config.max_iterations);
-            return Err(RhoError::MaxIterationsExceeded(config.max_iterations));
+            return Err(AgentError::MaxIterationsExceeded(config.max_iterations).into());
         }
 
         match response {
@@ -349,7 +354,9 @@ pub async fn run_loop(
             AssistantResponse::ToolCalls(calls) => {
                 info!(tool_count = calls.len());
                 if calls.is_empty() {
-                    return Err(RhoError::ProtocolViolation("empty tool_calls".into()));
+                    return Err(
+                        AgentError::ProtocolViolation("empty tool_calls".to_string()).into(),
+                    );
                 }
 
                 // Execute each tool call sequentially. All results are appended
@@ -357,7 +364,7 @@ pub async fn run_loop(
                 // loop iteration.
                 for call in calls {
                     if cancel.is_cancelled() {
-                        return Err(RhoError::Cancelled);
+                        return Err(AgentError::Cancelled.into());
                     }
 
                     let call_id = ToolCallId::new(call.id.to_string());
@@ -494,6 +501,32 @@ async fn send_with_retry_streaming(
     }
 }
 
+/// Build tool calls from streaming response.
+fn build_tool_calls(tc_list: &[AccumulatedToolCall]) -> Result<Vec<ModelToolCall>> {
+    let mut tool_calls = Vec::new();
+    for tc in tc_list {
+        let id = tc.id.clone().ok_or_else(|| {
+            crate::error::RhoError::Agent(AgentError::ProtocolViolation(
+                "tool call missing id".to_string(),
+            ))
+        })?;
+        let name = tc.function_name.clone().ok_or_else(|| {
+            crate::error::RhoError::Agent(AgentError::ProtocolViolation(
+                "tool call missing function name".to_string(),
+            ))
+        })?;
+        tool_calls.push(ModelToolCall {
+            id: ToolCallId::new(id),
+            call_type: "function".to_owned(),
+            function: ToolCallFunction {
+                name: ToolName::new(name),
+                arguments: tc.arguments.clone(),
+            },
+        });
+    }
+    Ok(tool_calls)
+}
+
 /// Execute a single streaming request, consume the stream, and build an
 /// [`AssistantResponse`].
 ///
@@ -547,24 +580,7 @@ async fn send_streaming(
 
     match acc.finish_reason {
         FinishReason::ToolCalls => {
-            let mut tool_calls = Vec::new();
-            for tc in &acc.tool_calls {
-                let id = tc
-                    .id
-                    .clone()
-                    .ok_or_else(|| RhoError::ProtocolViolation("tool call missing id".into()))?;
-                let name = tc.function_name.clone().ok_or_else(|| {
-                    RhoError::ProtocolViolation("tool call missing function name".into())
-                })?;
-                tool_calls.push(crate::message::ModelToolCall {
-                    id: crate::newtypes::ToolCallId::new(id),
-                    call_type: "function".to_owned(),
-                    function: crate::message::ToolCallFunction {
-                        name: crate::newtypes::ToolName::new(name),
-                        arguments: tc.arguments.clone(),
-                    },
-                });
-            }
+            let tool_calls = build_tool_calls(&acc.tool_calls)?;
             // Persist assistant message with tool_calls BEFORE returning.
             session.append_assistant_message(crate::ChatMessage::Assistant {
                 content: if acc.text.is_empty() {

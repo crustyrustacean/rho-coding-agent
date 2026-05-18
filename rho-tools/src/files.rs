@@ -6,6 +6,7 @@
 //! Phase 2: [`ListDir`] with `.gitignore`-aware directory walking via the
 //! `ignore` crate, and [`EditFile`] with exact-match replacement and validation.
 
+use crate::error::ToolError;
 use async_trait::async_trait;
 use rho_core::{
     Result, SandboxRoot, ToolName, ToolRisk,
@@ -61,7 +62,9 @@ impl Tool for ReadFile {
     ) -> Result<ToolOutcome> {
         let path_str = arguments["path"]
             .as_str()
-            .ok_or_else(|| anyhow::anyhow!("read_file: missing required argument `path`"))?;
+            .ok_or_else(|| ToolError::MissingArgument {
+                name: "path".to_string(),
+            })?;
 
         // Validate path is within the sandbox root.
         // Resolve relative paths against the sandbox root before validation.
@@ -144,10 +147,14 @@ impl Tool for WriteFile {
     ) -> Result<ToolOutcome> {
         let path_str = arguments["path"]
             .as_str()
-            .ok_or_else(|| anyhow::anyhow!("write_file: missing required argument `path`"))?;
+            .ok_or_else(|| ToolError::MissingArgument {
+                name: "path".to_string(),
+            })?;
         let content = arguments["content"]
             .as_str()
-            .ok_or_else(|| anyhow::anyhow!("write_file: missing required argument `content`"))?;
+            .ok_or_else(|| ToolError::MissingArgument {
+                name: "content".to_string(),
+            })?;
 
         // Use the write-variant validator that handles not-yet-existing paths.
         // Resolve relative paths against the sandbox root before validation.
@@ -402,10 +409,15 @@ impl Tool for EditFile {
     ) -> Result<ToolOutcome> {
         let path_str = arguments["path"]
             .as_str()
-            .ok_or_else(|| anyhow::anyhow!("edit_file: missing required argument `path`"))?;
-        let edits_arg = arguments["edits"]
-            .as_array()
-            .ok_or_else(|| anyhow::anyhow!("edit_file: missing required argument `edits`"))?;
+            .ok_or_else(|| ToolError::MissingArgument {
+                name: "path".to_string(),
+            })?;
+        let edits_arg =
+            arguments["edits"]
+                .as_array()
+                .ok_or_else(|| ToolError::MissingArgument {
+                    name: "edits".to_string(),
+                })?;
 
         if edits_arg.is_empty() {
             return Ok(ToolOutcome::Immediate(ToolResult::error(
@@ -418,11 +430,15 @@ impl Tool for EditFile {
         for (i, edit_val) in edits_arg.iter().enumerate() {
             let old_text = edit_val["old_text"]
                 .as_str()
-                .ok_or_else(|| anyhow::anyhow!("edit_file: edit {i} missing `old_text`"))?
+                .ok_or_else(|| ToolError::MissingArgument {
+                    name: format!("edit {i} old_text"),
+                })?
                 .to_owned();
             let new_text = edit_val["new_text"]
                 .as_str()
-                .ok_or_else(|| anyhow::anyhow!("edit_file: edit {i} missing `new_text`"))?
+                .ok_or_else(|| ToolError::MissingArgument {
+                    name: format!("edit {i} new_text"),
+                })?
                 .to_owned();
             edits.push(Edit { old_text, new_text });
         }

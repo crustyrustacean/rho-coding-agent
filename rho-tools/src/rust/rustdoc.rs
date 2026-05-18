@@ -12,6 +12,7 @@
 //! - No `ShellExecutor` field is needed: the tool only reads files at runtime.
 //! - V1 uses a simple state machine for HTML stripping — zero new crate deps.
 
+use crate::error::ToolError;
 use async_trait::async_trait;
 use rho_core::tool::{CancellationToken, Tool, ToolOutcome, ToolResult};
 use rho_core::{Result, ToolName, ToolRisk};
@@ -234,8 +235,10 @@ impl RustdocTool {
     /// Read an HTML file under the doc root and extract plain-text documentation.
     fn extract_docs(&self, html_path: &Path, section: &str) -> Result<String> {
         let full_path = self.doc_root.join(html_path);
-        let html = std::fs::read_to_string(&full_path)
-            .map_err(|e| anyhow::anyhow!("rustdoc: cannot read `{}`: {e}", full_path.display()))?;
+        let html = std::fs::read_to_string(&full_path).map_err(|e| ToolError::FileSystem {
+            path: full_path.clone(),
+            source: e,
+        })?;
 
         let main_content = extract_main_content(&html);
         let plain = strip_html_tags(&main_content);
@@ -303,7 +306,9 @@ impl Tool for RustdocTool {
         let query = arguments
             .get("query")
             .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| anyhow::anyhow!("missing required field: query"))?;
+            .ok_or_else(|| ToolError::MissingArgument {
+                name: "query".to_string(),
+            })?;
 
         let section = arguments
             .get("section")

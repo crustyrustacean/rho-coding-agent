@@ -30,8 +30,9 @@
 //! `Session::in_memory()` creates a session that skips all disk operations.
 //! Used by tests and ephemeral sessions.
 
-use crate::error::{Result, RhoError};
+use crate::error::Result;
 use crate::session::entry::Entry;
+use crate::session::error::SessionError;
 use crate::session::{Session, SessionHeader};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -170,7 +171,7 @@ impl PersistState {
 /// - The session has no entries after the header.
 pub fn open_session(path: &Path) -> Result<Session> {
     let file = std::fs::File::open(path).map_err(|e| {
-        RhoError::Unexpected(anyhow::anyhow!(
+        SessionError::Persistence(format!(
             "failed to open session file {}: {e}",
             path.display()
         ))
@@ -183,17 +184,17 @@ pub fn open_session(path: &Path) -> Result<Session> {
     let header_line = lines
         .next()
         .ok_or_else(|| {
-            RhoError::Unexpected(anyhow::anyhow!("session file is empty: {}", path.display()))
+            SessionError::Persistence(format!("session file is empty: {}", path.display()))
         })?
         .map_err(|e| {
-            RhoError::Unexpected(anyhow::anyhow!(
+            SessionError::Persistence(format!(
                 "failed to read header from {}: {e}",
                 path.display()
             ))
         })?;
 
     let header_jsonl: JsonlLine = serde_json::from_str(&header_line).map_err(|e| {
-        RhoError::Unexpected(anyhow::anyhow!(
+        SessionError::Persistence(format!(
             "failed to parse session header from {}: {e}",
             path.display()
         ))
@@ -214,10 +215,11 @@ pub fn open_session(path: &Path) -> Result<Session> {
             parent_session,
         ),
         JsonlLine::Entry(_) => {
-            return Err(RhoError::Unexpected(anyhow::anyhow!(
+            return Err(SessionError::Persistence(format!(
                 "first line of session file is not a header: {}",
                 path.display()
-            )));
+            ))
+            .into());
         }
     };
 
@@ -228,7 +230,7 @@ pub fn open_session(path: &Path) -> Result<Session> {
 
     for line_result in lines {
         let line = line_result.map_err(|e| {
-            RhoError::Unexpected(anyhow::anyhow!(
+            SessionError::Persistence(format!(
                 "failed to read line from session file {}: {e}",
                 path.display()
             ))
@@ -240,7 +242,7 @@ pub fn open_session(path: &Path) -> Result<Session> {
         }
 
         let jsonl_line: JsonlLine = serde_json::from_str(line).map_err(|e| {
-            RhoError::Unexpected(anyhow::anyhow!(
+            SessionError::Persistence(format!(
                 "failed to parse entry at line {} in {}: {e}",
                 entry_count + 2, // +2: header is line 1, entries start at line 2
                 path.display()
@@ -327,7 +329,7 @@ pub fn flush_session(session: &mut Session) -> Result<()> {
     // Create parent directories if needed.
     if let Some(parent) = save_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {
-            RhoError::Unexpected(anyhow::anyhow!(
+            SessionError::Persistence(format!(
                 "failed to create session directory {}: {e}",
                 parent.display()
             ))
@@ -343,7 +345,7 @@ pub fn flush_session(session: &mut Session) -> Result<()> {
         .append(true)
         .open(&save_path)
         .map_err(|e| {
-            RhoError::Unexpected(anyhow::anyhow!(
+            SessionError::Persistence(format!(
                 "failed to open session file for writing {}: {e}",
                 save_path.display()
             ))
@@ -368,10 +370,10 @@ pub fn flush_session(session: &mut Session) -> Result<()> {
                 .map(|p| p.to_string_lossy().into_owned()),
         };
         let json = serde_json::to_string(&header_line).map_err(|e| {
-            RhoError::Unexpected(anyhow::anyhow!("failed to serialize session header: {e}"))
+            SessionError::Persistence(format!("failed to serialize session header: {e}"))
         })?;
         writeln!(writer, "{json}").map_err(|e| {
-            RhoError::Unexpected(anyhow::anyhow!(
+            SessionError::Persistence(format!(
                 "failed to write session header to {}: {e}",
                 save_path.display()
             ))
@@ -391,13 +393,10 @@ pub fn flush_session(session: &mut Session) -> Result<()> {
     for entry in ordered_entries.iter().skip(persist.flushed_count) {
         let line = JsonlLine::Entry(entry.clone());
         let json = serde_json::to_string(&line).map_err(|e| {
-            RhoError::Unexpected(anyhow::anyhow!(
-                "failed to serialize entry {}: {e}",
-                entry.id
-            ))
+            SessionError::Persistence(format!("failed to serialize entry {}: {e}", entry.id))
         })?;
         writeln!(writer, "{json}").map_err(|e| {
-            RhoError::Unexpected(anyhow::anyhow!(
+            SessionError::Persistence(format!(
                 "failed to write entry to {}: {e}",
                 save_path.display()
             ))
@@ -405,7 +404,7 @@ pub fn flush_session(session: &mut Session) -> Result<()> {
     }
 
     writer.flush().map_err(|e| {
-        RhoError::Unexpected(anyhow::anyhow!(
+        SessionError::Persistence(format!(
             "failed to flush session file {}: {e}",
             save_path.display()
         ))

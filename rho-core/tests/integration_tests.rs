@@ -11,6 +11,7 @@ use rho_core::{
     config::RhoConfig,
     message::{ModelToolCall, ToolCallFunction},
     request::ChatRequest,
+    session::error::SessionError,
     tool::{CancellationToken, Tool},
 };
 use rho_test_helpers::{
@@ -547,7 +548,10 @@ async fn cancellation_between_tool_calls_in_batch() {
     .unwrap_err();
 
     assert!(
-        matches!(err, RhoError::Cancelled),
+        matches!(
+            err,
+            RhoError::Agent(rho_core::agent::error::AgentError::Cancelled)
+        ),
         "expected cancellation error, got: {err}"
     );
 
@@ -591,7 +595,10 @@ async fn empty_tool_calls_vec_returns_error() {
     .unwrap_err();
 
     assert!(
-        matches!(err, RhoError::ProtocolViolation(_)),
+        matches!(
+            err,
+            RhoError::Agent(rho_core::agent::error::AgentError::ProtocolViolation(_))
+        ),
         "expected ProtocolViolation error for empty tool_calls, got: {err}"
     );
 }
@@ -630,7 +637,10 @@ async fn iteration_count_includes_multi_tool_call_response() {
     .unwrap_err();
 
     assert!(
-        matches!(err, RhoError::MaxIterationsExceeded(5)),
+        matches!(
+            err,
+            RhoError::Agent(rho_core::agent::error::AgentError::MaxIterationsExceeded(5))
+        ),
         "expected MaxIterationsExceeded(5), got: {err}"
     );
 }
@@ -665,7 +675,10 @@ async fn loop_terminates_after_max_iterations() {
     .unwrap_err();
 
     assert!(
-        matches!(err, rho_core::RhoError::MaxIterationsExceeded(5)),
+        matches!(
+            err,
+            rho_core::RhoError::Agent(rho_core::agent::error::AgentError::MaxIterationsExceeded(5))
+        ),
         "expected MaxIterationsExceeded(5), got: {err}"
     );
 }
@@ -751,7 +764,10 @@ async fn stuck_loop_disabled_when_threshold_is_zero() {
     .unwrap_err();
 
     assert!(
-        matches!(err, rho_core::RhoError::MaxIterationsExceeded(5)),
+        matches!(
+            err,
+            rho_core::RhoError::Agent(rho_core::agent::error::AgentError::MaxIterationsExceeded(5))
+        ),
         "expected MaxIterationsExceeded(5), got: {err}"
     );
 }
@@ -761,8 +777,9 @@ async fn stuck_loop_disabled_when_threshold_is_zero() {
 #[tokio::test]
 async fn non_retryable_error_propagates_immediately() {
     // The mock panics on empty queue, so queue a single non-retryable error.
-    let client =
-        MockChatClient::with_results(vec![Err(RhoError::Unexpected(anyhow::anyhow!("boom")))]);
+    let client = MockChatClient::with_results(vec![Err(RhoError::Session(
+        SessionError::persistence_error("boom"),
+    ))]);
     let registry = ToolRegistry::new();
     let config = AgentConfig {
         retry_budget: 4, // high budget, but it should never be touched
@@ -785,8 +802,8 @@ async fn non_retryable_error_propagates_immediately() {
 
     // Non-retryable errors should propagate immediately without burning the budget.
     assert!(
-        matches!(err, RhoError::Unexpected(_)),
-        "expected Unexpected, got: {err}"
+        matches!(err, RhoError::Session(_)),
+        "expected Session error, got: {err}"
     );
 }
 
@@ -794,10 +811,9 @@ async fn non_retryable_error_propagates_immediately() {
 fn http_error_retryable_for_server_errors() {
     // Server errors (5xx) and rate limiting (429) are retryable.
     for status in [429, 500, 502, 503, 504] {
-        let err = RhoError::HttpError {
-            status,
-            message: "server error".to_owned(),
-        };
+        let client_err =
+            rho_core::client::error::ClientError::http_error(status, "server error".to_owned());
+        let err = rho_core::RhoError::Client(client_err);
         assert!(err.is_retryable(), "HTTP {status} should be retryable");
     }
 }
@@ -806,10 +822,9 @@ fn http_error_retryable_for_server_errors() {
 fn http_error_not_retryable_for_client_errors() {
     // Client errors (4xx, except 429) are permanent — not retryable.
     for status in [400, 401, 403, 404, 405, 422] {
-        let err = RhoError::HttpError {
-            status,
-            message: "client error".to_owned(),
-        };
+        let client_err =
+            rho_core::client::error::ClientError::http_error(status, "client error".to_owned());
+        let err = rho_core::RhoError::Client(client_err);
         assert!(!err.is_retryable(), "HTTP {status} should not be retryable");
     }
 }
@@ -1024,7 +1039,10 @@ async fn cancellation_checked_at_top_of_loop() {
     .unwrap_err();
 
     assert!(
-        matches!(err, rho_core::RhoError::Cancelled),
+        matches!(
+            err,
+            rho_core::RhoError::Agent(rho_core::agent::error::AgentError::Cancelled)
+        ),
         "expected Cancelled error from early cancellation check, got: {err}"
     );
 }
@@ -1068,7 +1086,10 @@ async fn cancellation_propagates_into_running_tool() {
     .unwrap_err();
 
     assert!(
-        matches!(err, rho_core::RhoError::Cancelled),
+        matches!(
+            err,
+            rho_core::RhoError::Agent(rho_core::agent::error::AgentError::Cancelled)
+        ),
         "expected cancellation error, got: {err}"
     );
 
@@ -1109,7 +1130,10 @@ async fn local_chat_client_returns_http_error_when_server_unreachable() {
         Ok(Ok(_)) => panic!("expected error when server is unreachable"),
         Ok(Err(e)) => {
             assert!(
-                matches!(e, rho_core::RhoError::Http(_)),
+                matches!(
+                    e,
+                    rho_core::RhoError::Client(rho_core::client::error::ClientError::Http(_))
+                ),
                 "expected Http error variant, got: {e}"
             );
         }

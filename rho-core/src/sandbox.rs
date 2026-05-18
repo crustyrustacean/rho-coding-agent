@@ -14,9 +14,136 @@
 //!   the remaining components, and verifies containment. Any `..` component
 //!   after the existing-ancestor boundary is rejected immediately.
 
-use crate::error::{Result, RhoError};
+use crate::error::Result;
 use crate::newtypes::FilePath;
 use std::path::{Component, Path, PathBuf};
+use thiserror::Error;
+
+/// Errors that can occur during sandbox operations.
+#[derive(Debug, Error)]
+pub enum SandboxError {
+    /// Cannot canonicalize the sandbox root path.
+    #[error("sandbox: cannot canonicalize root `{root}`: {source}")]
+    RootCanonicalizationFailed {
+        root: String,
+        source: std::io::Error,
+    },
+
+    /// Cannot resolve a path within the sandbox.
+    #[error("sandbox: cannot resolve `{path}`: {source}")]
+    PathResolutionFailed {
+        path: String,
+        source: std::io::Error,
+    },
+
+    /// A path would escape the sandbox.
+    #[error("sandbox: path `{path}` is outside the sandbox root")]
+    PathEscape { path: String },
+
+    /// A `..` component appears in a not-yet-existing path suffix.
+    #[error("sandbox: path `{path}` contains `..` in non-existent suffix")]
+    ParentDirInSuffix { path: String },
+
+    /// No existing ancestor found for path validation.
+    #[error("sandbox: no existing ancestor found for `{path}`")]
+    NoExistingAncestor { path: String },
+}
+
+/// A specialised `Result` type for sandbox operations.
+pub type SandboxResult<T> = std::result::Result<T, SandboxError>;
+
+// Convert SandboxError to RhoError::Sandbox
+impl From<SandboxError> for crate::error::RhoError {
+    fn from(error: SandboxError) -> Self {
+        crate::error::RhoError::Sandbox(error)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_root_canonicalization_failed() {
+        let error = SandboxError::RootCanonicalizationFailed {
+            root: "/nonexistent".to_string(),
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "not found"),
+        };
+        assert!(matches!(
+            error,
+            SandboxError::RootCanonicalizationFailed { .. }
+        ));
+        assert!(error.to_string().contains("cannot canonicalize root"));
+        assert!(error.to_string().contains("/nonexistent"));
+    }
+
+    #[test]
+    fn test_path_resolution_failed() {
+        let error = SandboxError::PathResolutionFailed {
+            path: "/some/path".to_string(),
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "not found"),
+        };
+        assert!(matches!(error, SandboxError::PathResolutionFailed { .. }));
+        assert!(error.to_string().contains("cannot resolve"));
+        assert!(error.to_string().contains("/some/path"));
+    }
+
+    #[test]
+    fn test_path_escape() {
+        let error = SandboxError::PathEscape {
+            path: "/etc/passwd".to_string(),
+        };
+        assert!(matches!(error, SandboxError::PathEscape { .. }));
+        assert!(error.to_string().contains("outside the sandbox root"));
+        assert!(error.to_string().contains("/etc/passwd"));
+    }
+
+    #[test]
+    fn test_parent_dir_in_suffix() {
+        let error = SandboxError::ParentDirInSuffix {
+            path: "safe/..".to_string(),
+        };
+        assert!(matches!(error, SandboxError::ParentDirInSuffix { .. }));
+        assert!(
+            error
+                .to_string()
+                .contains("contains `..` in non-existent suffix")
+        );
+    }
+
+    #[test]
+    fn test_no_existing_ancestor() {
+        let error = SandboxError::NoExistingAncestor {
+            path: "/nonexistent/deep/path".to_string(),
+        };
+        assert!(matches!(error, SandboxError::NoExistingAncestor { .. }));
+        assert!(error.to_string().contains("no existing ancestor found"));
+    }
+
+    #[test]
+    fn test_sandbox_result_ok() {
+        let result: SandboxResult<String> = Ok("success".to_string());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_sandbox_result_err() {
+        let result: SandboxResult<String> = Err(SandboxError::PathEscape {
+            path: "/escape".to_string(),
+        });
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_debug_format() {
+        let error = SandboxError::PathEscape {
+            path: "/test/path".to_string(),
+        };
+        let debug_str = format!("{error:?}");
+        assert!(debug_str.contains("PathEscape"));
+        assert!(debug_str.contains("/test/path"));
+    }
+}
 
 // ── SandboxRoot ───────────────────────────────────────────────────────────────
 
@@ -42,10 +169,10 @@ impl SandboxRoot {
     /// Returns an error if the path does not exist or cannot be canonicalised.
     pub fn new(root: impl AsRef<Path>) -> Result<Self> {
         Ok(Self(root.as_ref().canonicalize().map_err(|e| {
-            RhoError::Unexpected(anyhow::anyhow!(
-                "sandbox: cannot canonicalize root `{}`: {e}",
-                root.as_ref().display()
-            ))
+            SandboxError::RootCanonicalizationFailed {
+                root: root.as_ref().display().to_string(),
+                source: e,
+            }
         })?))
     }
 
@@ -61,16 +188,16 @@ impl SandboxRoot {
     ///
     /// # Errors
     ///
-    /// Returns [`RhoError::Unexpected`] if the path is outside the sandbox or
-    /// if `canonicalize` fails (e.g. file does not exist).
+    /// Returns [`SandboxError::PathEscape`] if the path is outside the sandbox or
+    /// [`SandboxError::PathResolutionFailed`] if `canonicalize` fails (e.g. file does not exist).
     pub fn validate(&self, input: impl AsRef<Path>) -> Result<FilePath> {
         let input = input.as_ref();
-        let canonical = input.canonicalize().map_err(|e| {
-            RhoError::Unexpected(anyhow::anyhow!(
-                "sandbox: cannot resolve `{}`: {e}",
-                input.display()
-            ))
-        })?;
+        let canonical = input
+            .canonicalize()
+            .map_err(|e| SandboxError::PathResolutionFailed {
+                path: input.display().to_string(),
+                source: e,
+            })?;
         self.assert_within(&canonical)?;
         Ok(FilePath::from(canonical))
     }
@@ -84,10 +211,10 @@ impl SandboxRoot {
     ///
     /// # Errors
     ///
-    /// Returns [`RhoError::Unexpected`] if any of the following are true:
-    /// - A `..` component appears in the not-yet-existing suffix.
-    /// - The resolved path would be outside the sandbox root.
-    /// - No existing ancestor can be found.
+    /// Returns [`SandboxError`] variants if any of the following are true:
+    /// - A `..` component appears in the not-yet-existing suffix ([`SandboxError::ParentDirInSuffix`]).
+    /// - The resolved path would be outside the sandbox root ([`SandboxError::PathEscape`]).
+    /// - No existing ancestor can be found ([`SandboxError::NoExistingAncestor`]).
     ///
     /// # TOCTOU assumption
     ///
@@ -117,11 +244,10 @@ impl SandboxRoot {
     /// Assert that `canonical` is within the sandbox root, returning an error otherwise.
     fn assert_within(&self, canonical: &Path) -> Result<()> {
         if !canonical.starts_with(&self.0) {
-            return Err(RhoError::Unexpected(anyhow::anyhow!(
-                "sandbox violation: `{}` is outside sandbox root `{}`",
-                canonical.display(),
-                self.0.display()
-            )));
+            return Err(SandboxError::PathEscape {
+                path: canonical.display().to_string(),
+            }
+            .into());
         }
         Ok(())
     }
@@ -149,10 +275,9 @@ const PROJECT_MARKERS: &[&str] = &[
 ///
 /// Returns an error if the current directory cannot be determined.
 pub fn find_project_root() -> Result<SandboxRoot> {
-    let cwd = std::env::current_dir().map_err(|e| {
-        RhoError::Unexpected(anyhow::anyhow!(
-            "sandbox: cannot determine current directory: {e}"
-        ))
+    let cwd = std::env::current_dir().map_err(|e| SandboxError::RootCanonicalizationFailed {
+        root: "current directory".to_string(),
+        source: e,
     })?;
     let mut dir = cwd.as_path();
 
@@ -184,10 +309,11 @@ pub(crate) fn canonicalize_for_write(input: &Path) -> Result<PathBuf> {
     // If the full path already exists, just canonicalize normally.
     if input.exists() {
         return input.canonicalize().map_err(|e| {
-            RhoError::Unexpected(anyhow::anyhow!(
-                "sandbox: cannot canonicalize `{}`: {e}",
-                input.display()
-            ))
+            SandboxError::PathResolutionFailed {
+                path: input.display().to_string(),
+                source: e,
+            }
+            .into()
         });
     }
 
@@ -197,10 +323,10 @@ pub(crate) fn canonicalize_for_write(input: &Path) -> Result<PathBuf> {
             Component::ParentDir => {
                 // `..` in the not-yet-existing suffix is rejected.
                 if found_existing {
-                    return Err(RhoError::Unexpected(anyhow::anyhow!(
-                        "sandbox: `..` component after non-existent path segment in `{}`",
-                        input.display()
-                    )));
+                    return Err(SandboxError::ParentDirInSuffix {
+                        path: input.display().to_string(),
+                    }
+                    .into());
                 }
                 // Still in the existing portion — let canonicalize handle it.
                 existing.push("..");
@@ -225,17 +351,20 @@ pub(crate) fn canonicalize_for_write(input: &Path) -> Result<PathBuf> {
     // If existing is empty (e.g. relative path with no existing ancestor),
     // try to canonicalize the current directory and use that as the base.
     if existing.as_os_str().is_empty() {
-        existing = std::env::current_dir().map_err(|e| {
-            RhoError::Unexpected(anyhow::anyhow!("sandbox: cannot get current dir: {e}"))
-        })?;
+        existing =
+            std::env::current_dir().map_err(|e| SandboxError::RootCanonicalizationFailed {
+                root: "current directory".to_string(),
+                source: e,
+            })?;
     }
 
-    let canonical_base = existing.canonicalize().map_err(|e| {
-        RhoError::Unexpected(anyhow::anyhow!(
-            "sandbox: cannot canonicalize ancestor `{}`: {e}",
-            existing.display()
-        ))
-    })?;
+    let canonical_base =
+        existing
+            .canonicalize()
+            .map_err(|e| SandboxError::PathResolutionFailed {
+                path: existing.display().to_string(),
+                source: e,
+            })?;
 
     let mut result = canonical_base;
     for part in tail {
@@ -245,7 +374,7 @@ pub(crate) fn canonicalize_for_write(input: &Path) -> Result<PathBuf> {
 }
 
 #[cfg(test)]
-mod tests {
+mod sandbox_tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;

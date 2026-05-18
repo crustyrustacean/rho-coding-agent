@@ -81,6 +81,7 @@
 
 pub mod compaction;
 pub mod entry;
+pub mod error;
 pub mod estimator;
 pub mod persist;
 
@@ -94,11 +95,12 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::context::{ContextManager, SlidingWindowContextManager, TokenBudget};
-use crate::error::{Result, RhoError};
+use crate::error::Result;
 use crate::message::{ChatMessage, ContentBlock};
 use crate::newtypes::{EntryId, SessionId, ToolCallId};
 use crate::redact::Redactor;
 use crate::schema::ToolSchema;
+use crate::session::error::SessionError;
 use crate::tool::{ToolResult, ToolResultDetails};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -678,7 +680,7 @@ impl Session {
     pub fn branch_to(&mut self, id: &EntryId) -> Result<()> {
         // Validate that the target exists
         if !self.entries.contains_key(id) {
-            return Err(RhoError::EntryNotFound(id.to_string()));
+            return Err(SessionError::EntryNotFound(id.to_string()).into());
         }
 
         // No-op if already at this leaf
@@ -789,9 +791,10 @@ impl Session {
 
         if chronological.len() <= 1 {
             // Nothing to compact (only the root, or empty)
-            return Err(RhoError::Unexpected(anyhow::anyhow!(
-                "cannot compact: session has too few entries"
-            )));
+            return Err(SessionError::Persistence(
+                "cannot compact: session has too few entries".to_string(),
+            )
+            .into());
         }
 
         // Find the contiguous range of oldest entries whose tokens exceed
@@ -823,17 +826,20 @@ impl Session {
 
         // If we didn't accumulate enough tokens, there's nothing to compact.
         if cumulative_tokens < threshold || compact_end <= 1 {
-            return Err(RhoError::Unexpected(anyhow::anyhow!(
+            return Err(SessionError::Persistence(
                 "cannot compact: not enough full-resolution entries exceeding threshold"
-            )));
+                    .to_string(),
+            )
+            .into());
         }
 
         // Collect the entries to compact (indices 1..compact_end)
         let to_compact: Vec<&Entry> = chronological[1..compact_end].to_vec();
         if to_compact.is_empty() {
-            return Err(RhoError::Unexpected(anyhow::anyhow!(
-                "cannot compact: no entries selected"
-            )));
+            return Err(SessionError::Persistence(
+                "cannot compact: no entries selected".to_string(),
+            )
+            .into());
         }
 
         // Collect the IDs of entries to compact BEFORE any mutation
@@ -1611,6 +1617,7 @@ mod tests {
         clippy::cast_precision_loss
     )]
     use super::*;
+    use crate::RhoError;
     use crate::message::ContentBlock;
     use crate::newtypes::ToolName;
     use crate::tool::ToolResult;
@@ -2310,7 +2317,7 @@ mod tests {
         let fake_id = EntryId::new();
         let result = session.branch_to(&fake_id);
         assert!(result.is_err());
-        if let Err(RhoError::EntryNotFound(id)) = &result {
+        if let Err(RhoError::Session(SessionError::EntryNotFound(id))) = &result {
             assert_eq!(id, &*fake_id);
         } else {
             panic!("expected EntryNotFound error, got {result:?}");
@@ -2434,7 +2441,7 @@ mod tests {
 
         let result = session.branch_with_summary(&fake_id, summary, EntryId::new());
         assert!(result.is_err());
-        if let Err(RhoError::EntryNotFound(id)) = &result {
+        if let Err(RhoError::Session(SessionError::EntryNotFound(id))) = &result {
             assert_eq!(id, &*fake_id);
         } else {
             panic!("expected EntryNotFound error, got {result:?}");

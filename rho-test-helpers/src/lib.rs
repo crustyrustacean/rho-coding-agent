@@ -269,10 +269,7 @@ impl Tool for FailingTool {
         _arguments: serde_json::Value,
         _cancel: CancellationToken,
     ) -> rho_core::Result<ToolOutcome> {
-        Err(rho_core::RhoError::Unexpected(anyhow::anyhow!(
-            "{}",
-            self.error_message
-        )))
+        Err(rho_core::RhoError::Tool(self.error_message.clone()))
     }
 }
 
