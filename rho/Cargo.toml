@@ -14,11 +14,11 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-anyhow = "1.0.102"
-async-trait = "0.1"
+anyhow.workspace = true
+async-trait.workspace = true
 clap = { version = "4.5", features = ["derive"] }
 rho-core = { path = "../rho-core" }
-rho-tools = { path = "../rho-tools" }
-tokio = { version = "1.52.1", features = ["macros", "rt-multi-thread"] }
+rho-tools = { path = "..//rho-tools" }
+tokio.workspace = true
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

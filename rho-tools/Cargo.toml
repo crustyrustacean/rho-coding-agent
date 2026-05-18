@@ -21,11 +21,11 @@ tempfile = "3"
 [dependencies]
 rho-core = { path = "../rho-core" }
 rho-highlight = { path = "../rho-highlight" }
-async-trait = "0.1"
-serde = { version = "1.0", features = ["derive"] }
-anyhow = "1.0.102"
+async-trait.workspace = true
+serde.workspace = true
+anyhow.workspace = true
 ignore = "0.4"
-serde_json = "1.0.149"
-tree-sitter = "0.26"
-tokio = { version = "1.52.1", features = ["macros", "rt-multi-thread", "process", "io-util", "fs", "time"] }
+serde_json.workspace = true
+tree-sitter.workspace = true
+tokio.workspace = true
 which = "7"

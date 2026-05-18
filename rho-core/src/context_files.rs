@@ -365,7 +365,8 @@ pub fn compose_full_system_prompt(
 pub fn sha256_hex(text: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(text.as_bytes());
-    format!("{:x}", hasher.finalize())
+    let result = hasher.finalize();
+    result.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
 /// Return the default path for the trust store (`~/.rho/trusted_projects.toml`).

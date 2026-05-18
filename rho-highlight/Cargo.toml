@@ -36,8 +36,8 @@ rust = ["dep:tree-sitter-rust"]
 
 [dependencies]
 rho-core = { path = "../rho-core" }
-thiserror = "2.0.18"
-tree-sitter = "0.26"
+thiserror.workspace = true
+tree-sitter.workspace = true
 tree-sitter-rust = { version = "0.24", optional = true }
 
 [dev-dependencies]
