@@ -19,13 +19,15 @@ rho-test-helpers = { path = "../rho-test-helpers" }
 tempfile = "3"
 
 [dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+ignore = "0.4"
+reqwest = { version = "0.13.2", features = ["json"] }
 rho-core = { path = "../rho-core" }
 rho-highlight = { path = "../rho-highlight" }
-async-trait.workspace = true
 serde.workspace = true
-anyhow.workspace = true
-ignore = "0.4"
 serde_json.workspace = true
-tree-sitter.workspace = true
+thiserror.workspace = true
 tokio.workspace = true
+tree-sitter.workspace = true
 which = "7"

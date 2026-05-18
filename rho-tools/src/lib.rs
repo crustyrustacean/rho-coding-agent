@@ -19,10 +19,14 @@
 //!
 //! [`RustdocTool`] — stdlib documentation lookup from locally installed rustdoc.
 
+pub mod crates_io;
+pub mod error;
 pub mod files;
 pub mod rust;
 pub mod shell;
 
+pub use crate::error::ToolError;
+pub use crates_io::{Crate, CratesIoResponse};
 pub use files::{EditFile, ListDir, ReadFile, WriteFile};
 pub use rust::{CargoCheck, CargoClippy, CargoFix, CargoTest, RustcExplain, RustdocTool};
 pub use shell::{CommandDenylist, PowerShellExecutor, RunCommand};

@@ -104,23 +104,67 @@ Canonical coding tasks with known correct outcomes. Defines `EvalTask` trait, sc
 
 CLI tool that runs eval tasks against models with timing and token metrics.
 
-## Core Flow
+## End-to-End Flow
 
-```
-1. ToolRegistry holds Box<dyn Tool> implementations
-2. Session accumulates ChatMessages with system prompt and tool schemas
-3. run_loop() drives the interaction:
-   ┌──────────────────────────────────────────────┐
-   │  Send request to model (via ChatClient)      │
-   │         ↓                                     │
-   │  Response has tool calls?                     │
-   │    Yes → Get approval for each tool call      │
-   │         → Execute each tool sequentially      │
-   │         → Feed results back as Tool messages  │
-   │         → Loop back to "Send request"         │
-   │    No  → Return text reply to user            │
-   └──────────────────────────────────────────────┘
-```
+`rho` operates as a continuous loop of **Reasoning → Action → Observation**, bridging an LLM and your local file system and shell.
+
+### 1. Initialization & Configuration
+
+Before the loop begins:
+
+1. **Environment discovery** — Identify the project root (markers like `Cargo.toml`).
+2. **Config loading** — Merge user-level (`~/.rho/config.toml`) and project-level (`.rho/config.toml`) configuration via `ConfigLoader`. This selects the model, approval strictness, and command denylist.
+3. **Tool registration** — Populate the `ToolRegistry` with built-in tools from `rho-tools`. Each tool provides a JSON schema (`ToolSchema`) so the model knows how to call it.
+4. **Session construction** — Create or resume a `Session` (tree-shaped conversation with JSONL persistence).
+
+### 2. The Agent Loop (`run_loop`)
+
+The loop in `rho-core/src/agent.rs` follows these steps:
+
+#### A. Context Preparation
+
+Before sending to the model, `rho` constructs a `ChatRequest` containing:
+- **System prompt** — Instructions for API-driven agent behaviour.
+- **Tool schemas** — Wire-format definitions of every available tool.
+- **Conversation history** — Past `ChatMessage` values (System, User, Assistant, Tool).
+- **Context management** — The `SlidingWindowContextManager` fits messages within the model's token budget, evicting old turns while pinning the system prompt.
+
+#### B. Model Inference
+
+The request is sent via the `ChatClient` trait to an OpenAI-compatible API (e.g., LM Studio, Ollama). The model returns either:
+1. **Text content** — A direct response (no more tools needed).
+2. **Tool calls** — One or more `ModelToolCall` values requesting tool execution.
+
+#### C. Approval & Execution
+
+If the model requests tool calls:
+1. **Risk assessment** — Each tool has a `ToolRisk` level (`Read`, `Write`, `Destructive`).
+2. **Approval policy** — The `ApprovalPolicy` decides whether human confirmation is needed; if so, the `ApprovalGate` pauses and asks.
+3. **Execution** — The `ToolRegistry` dispatches each call to the actual implementation (e.g., `ReadFile`, `RunCommand`).
+4. **Safety layers** applied during execution:
+   - **Sandbox check** — `SandboxRoot` validates every file path stays within the allowed directory.
+   - **Redaction** — `Redactor` scans output for secrets (API keys, tokens) and replaces them with `[REDACTED]`.
+
+#### D. Observation & Feedback
+
+Tool results are wrapped in `Tool`-role `ChatMessage` values and appended to the conversation history. The model sees its previous action *and* the result, enabling it to reason about what to do next.
+
+### 3. Iteration vs. Completion
+
+- **Iteration** — The loop repeats. The model observes that `cargo test` failed, so it calls `EditFile` to fix the code, calls `CargoTest` again, and continues until all tests pass.
+- **Completion** — The loop terminates when the model returns a text-only response with no pending tool calls, or when a safety limit is reached (`MaxIterationsExceeded`).
+
+~~~
+Summary of data flow:
+
+    User Input → Conversation History → LLM
+         ↓ (if tool calls)
+    Tool Call Request → Approval Gate → Tool Execution
+         ↓ (sandbox check, redaction)
+    Tool Result → appended to Conversation History → back to LLM
+         ↓ (if text response)
+    Text reply to user
+~~~
 
 ## Safety Layers
 
