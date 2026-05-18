@@ -19,6 +19,7 @@ use rho_core::{
 };
 use std::path::Path;
 use std::time::Duration;
+use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 // ── CommandDenylist ───────────────────────────────────────────────────────────
@@ -252,6 +253,7 @@ impl ShellExecutor for PowerShellExecutor {
         working_dir: &Path,
         timeout: Option<Duration>,
         cancel: CancellationToken,
+        input: Option<&str>,
     ) -> Result<ShellOutput> {
         if cancel.is_cancelled() {
             return Err(rho_core::RhoError::Unexpected(anyhow::anyhow!(
@@ -264,9 +266,10 @@ impl ShellExecutor for PowerShellExecutor {
 
         let args = self.build_args(&normalized);
 
-        let child = Command::new(self.shell)
+        let mut child = Command::new(self.shell)
             .args(&args)
             .current_dir(working_dir)
+            .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
@@ -276,6 +279,21 @@ impl ShellExecutor for PowerShellExecutor {
                     self.shell
                 ))
             })?;
+
+        // Write the input to the child's stdin, then close it.
+        // When input is None this just sends EOF, which causes
+        // interactive prompts to fail fast instead of hanging.
+        if let Some(mut stdin_handle) = child.stdin.take() {
+            if let Some(text) = input {
+                stdin_handle.write_all(text.as_bytes()).await.map_err(|e| {
+                    rho_core::RhoError::Unexpected(anyhow::anyhow!(
+                        "shell: failed to write to stdin: {e}"
+                    ))
+                })?;
+            }
+            // Drop closes the pipe, sending EOF.
+            drop(stdin_handle);
+        }
 
         let child_id = child.id();
 
@@ -357,7 +375,12 @@ impl Tool for RunCommand {
         "Execute a PowerShell command within the project directory \
          and return its stdout, stderr, and exit code. \
          Use the optional cwd parameter to run in a subdirectory \
-         instead of the project root."
+         instead of the project root. \
+         Use the optional input parameter to pipe text to the command's \
+         stdin — this is needed for commands that prompt for confirmation \
+         (e.g. `cargo release --execute` asks `[y/N]`). When input is not \
+         provided, stdin is closed immediately; commands that try to read \
+         stdin will get EOF instead of hanging."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -371,6 +394,10 @@ impl Tool for RunCommand {
                 "cwd": {
                     "type": "string",
                     "description": "Working directory for the command, relative to the project root. Defaults to the project root if omitted."
+                },
+                "input": {
+                    "type": "string",
+                    "description": "Optional text to pipe to the command's stdin. Use this for commands that require interactive confirmation (e.g. `y\\n` for a yes/no prompt). When omitted, stdin is closed immediately (EOF)."
                 }
             },
             "required": ["command"]
@@ -391,6 +418,7 @@ impl Tool for RunCommand {
             .ok_or_else(|| anyhow::anyhow!("run_command: missing required argument `command`"))?
             .to_owned();
         let cwd_arg = arguments["cwd"].as_str();
+        let input_arg = arguments["input"].as_str().map(str::to_owned);
 
         if cancel.is_cancelled() {
             return Ok(ToolOutcome::Immediate(ToolResult::error("cancelled")));
@@ -421,7 +449,7 @@ impl Tool for RunCommand {
         // 3. Execute the command.
         let shell_output = self
             .executor
-            .execute(&command, &working_dir, None, cancel)
+            .execute(&command, &working_dir, None, cancel, input_arg.as_deref())
             .await?;
 
         // 4. Map ShellOutput → ToolResult at the tool boundary.

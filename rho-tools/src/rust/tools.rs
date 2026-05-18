@@ -113,7 +113,7 @@ impl Tool for CargoCheck {
 
         let shell_output = self
             .executor
-            .execute(&cmd, self.root.path(), None, cancel)
+            .execute(&cmd, self.root.path(), None, cancel, None)
             .await?;
 
         Ok(execute_cargo_diagnostic_tool(
@@ -189,7 +189,7 @@ impl Tool for CargoClippy {
 
         let shell_output = self
             .executor
-            .execute(&cmd, self.root.path(), None, cancel)
+            .execute(&cmd, self.root.path(), None, cancel, None)
             .await?;
 
         Ok(execute_cargo_diagnostic_tool(
@@ -263,7 +263,7 @@ impl Tool for RustcExplain {
 
         let shell_output = self
             .executor
-            .execute(&cmd, self.root.path(), None, cancel)
+            .execute(&cmd, self.root.path(), None, cancel, None)
             .await?;
 
         Ok(ToolOutcome::Immediate(ToolResult::success(
@@ -348,7 +348,7 @@ impl Tool for CargoTest {
 
         let shell_output = self
             .executor
-            .execute(&cmd, self.root.path(), None, cancel)
+            .execute(&cmd, self.root.path(), None, cancel, None)
             .await?;
 
         if shell_output.exit_code == 0 {
@@ -429,7 +429,7 @@ impl Tool for CargoFix {
 
         let shell_output = self
             .executor
-            .execute(&cmd, self.root.path(), None, cancel)
+            .execute(&cmd, self.root.path(), None, cancel, None)
             .await?;
 
         let mut result = String::from("cargo fix completed");

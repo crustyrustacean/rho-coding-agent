@@ -366,7 +366,11 @@ pub fn sha256_hex(text: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(text.as_bytes());
     let result = hasher.finalize();
-    result.iter().map(|b| format!("{:02x}", b)).collect()
+    result.iter().fold(String::new(), |mut acc, &b| {
+        use std::fmt::Write;
+        let _ = write!(acc, "{b:02x}");
+        acc
+    })
 }
 
 /// Return the default path for the trust store (`~/.rho/trusted_projects.toml`).

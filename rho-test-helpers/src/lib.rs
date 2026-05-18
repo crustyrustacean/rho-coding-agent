@@ -169,6 +169,7 @@ impl ShellExecutor for MockShellExecutor {
         working_dir: &Path,
         _timeout: Option<Duration>,
         _cancel: rho_core::CancellationToken,
+        _input: Option<&str>,
     ) -> rho_core::Result<ShellOutput> {
         self.commands.lock().unwrap().push(command.to_owned());
         self.working_dirs

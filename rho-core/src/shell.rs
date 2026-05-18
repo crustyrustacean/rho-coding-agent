@@ -67,12 +67,17 @@ pub trait ShellExecutor: Send + Sync {
     ///
     /// `cancel` is checked at spawn time and during the wait; if cancelled,
     /// the child process is killed and an error result is returned.
+    ///
+    /// `input` is an optional string piped to the child's stdin. When
+    /// `None`, stdin is closed immediately (EOF) so that interactive
+    /// prompts fail fast instead of hanging.
     async fn execute(
         &self,
         command: &str,
         working_dir: &Path,
         timeout: Option<Duration>,
         cancel: CancellationToken,
+        input: Option<&str>,
     ) -> Result<ShellOutput>;
 }
 

@@ -51,6 +51,7 @@ async fn captures_stdout() {
             Path::new("."),
             None,
             CancellationToken::new(),
+            None,
         )
         .await
         .expect("execution should succeed");
@@ -70,6 +71,7 @@ async fn captures_stderr() {
             Path::new("."),
             None,
             CancellationToken::new(),
+            None,
         )
         .await
         .expect("execution should succeed");
@@ -83,7 +85,13 @@ async fn reports_nonzero_exit_code() {
     skip_if_no_powershell!();
     let executor = get_executor();
     let output = executor
-        .execute("exit 42", Path::new("."), None, CancellationToken::new())
+        .execute(
+            "exit 42",
+            Path::new("."),
+            None,
+            CancellationToken::new(),
+            None,
+        )
         .await
         .expect("execution should succeed");
 
@@ -100,6 +108,7 @@ async fn reports_zero_exit_code_on_success() {
             Path::new("."),
             None,
             CancellationToken::new(),
+            None,
         )
         .await
         .expect("execution should succeed");
@@ -119,6 +128,7 @@ async fn respects_working_directory() {
             Path::new("."),
             None,
             CancellationToken::new(),
+            None,
         )
         .await
         .expect("execution should succeed");
@@ -143,7 +153,13 @@ async fn cancellation_kills_long_running_process() {
     });
 
     let result = executor
-        .execute("Start-Sleep -Seconds 30", Path::new("."), None, cancel)
+        .execute(
+            "Start-Sleep -Seconds 30",
+            Path::new("."),
+            None,
+            cancel,
+            None,
+        )
         .await;
 
     // Should return an error (process killed by cancellation).
@@ -163,6 +179,7 @@ async fn timeout_kills_long_running_process() {
             Path::new("."),
             Some(Duration::from_millis(200)),
             CancellationToken::new(),
+            None,
         )
         .await;
 
@@ -180,6 +197,7 @@ async fn short_command_completes_within_timeout() {
             Path::new("."),
             Some(Duration::from_secs(10)),
             CancellationToken::new(),
+            None,
         )
         .await
         .expect("fast command should complete within timeout");
@@ -214,6 +232,7 @@ async fn normalizes_forward_slashes_in_paths() {
             Path::new("."),
             None,
             CancellationToken::new(),
+            None,
         )
         .await
         .expect("execution should succeed");
@@ -239,7 +258,13 @@ async fn preserves_division_operator() {
     let executor = get_executor();
     // `10 / 2` should NOT be normalized — spaces around `/` mean division.
     let output = executor
-        .execute("10 / 2", Path::new("."), None, CancellationToken::new())
+        .execute(
+            "10 / 2",
+            Path::new("."),
+            None,
+            CancellationToken::new(),
+            None,
+        )
         .await
         .expect("execution should succeed");
 
@@ -258,6 +283,7 @@ async fn executes_pipeline() {
             Path::new("."),
             None,
             CancellationToken::new(),
+            None,
         )
         .await
         .expect("pipeline should execute");
@@ -279,6 +305,7 @@ async fn executes_with_no_profile() {
             Path::new("."),
             None,
             CancellationToken::new(),
+            None,
         )
         .await
         .expect("should execute");
@@ -286,5 +313,48 @@ async fn executes_with_no_profile() {
     // $PROFILE is never $null in PowerShell, but -NoProfile means no profile
     // is loaded. Just verify the command runs successfully — the real test
     // is that no user profile side effects occur.
+    assert_eq!(output.exit_code, 0);
+}
+
+// ── Stdin piping ──────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn input_piped_to_stdin() {
+    skip_if_no_powershell!();
+    let executor = get_executor();
+    // Read from stdin and echo it back.
+    let output = executor
+        .execute(
+            "$line = [Console]::In.ReadLine(); Write-Output \"got: $line\"",
+            Path::new("."),
+            None,
+            CancellationToken::new(),
+            Some("hello from stdin"),
+        )
+        .await
+        .expect("execution should succeed");
+
+    assert!(output.stdout.contains("got: hello from stdin"));
+    assert_eq!(output.exit_code, 0);
+}
+
+#[tokio::test]
+async fn no_input_sends_eof_to_stdin() {
+    skip_if_no_powershell!();
+    let executor = get_executor();
+    // [Console]::In.ReadLine() returns $null when stdin is closed (EOF).
+    let output = executor
+        .execute(
+            "$line = [Console]::In.ReadLine(); Write-Output \"read: $line\"",
+            Path::new("."),
+            None,
+            CancellationToken::new(),
+            None,
+        )
+        .await
+        .expect("execution should succeed");
+
+    // With no input piped, ReadLine() returns $null → empty string in output.
+    assert!(output.stdout.contains("read:"));
     assert_eq!(output.exit_code, 0);
 }
