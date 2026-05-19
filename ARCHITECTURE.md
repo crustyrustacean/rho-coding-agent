@@ -187,7 +187,12 @@ The agent uses defense-in-depth — no single layer is sufficient, but each rais
 ```
 rho/                # Binary entry point (`rho` CLI)
   src/
-    main.rs         # REPL loop, tool wiring, CLI dispatch
+    main.rs         # Thin entry: parse CLI, build App, run
+    lib.rs          # Module declarations
+    cli.rs          # `Cli` — CLI argument struct (17 flags)
+    app.rs          # `App` — runtime state, build/run orchestration
+    gate.rs         # `ReplApprovalGate` — REPL approval prompts
+    repl.rs         # `run_repl()`, `run_prompt_file()` — interaction modes
 rho-core/           # Core library
   src/
     lib.rs          # Module declarations and convenience re-exports

@@ -192,9 +192,16 @@ cargo xtask changelog <ver>   # Generate CHANGELOG.md
 ### Project layout
 
 ```
-rho/                  # Binary entry point
+rho/                  # Binary entry point + library crate
+  src/
+    main.rs           # Thin: parse CLI, build App, run
+    lib.rs            # Module declarations
+    cli.rs            # CLI argument parsing (17 flags)
+    app.rs            # App struct — startup orchestration
+    gate.rs           # REPL approval gate (replaced by TUI in Phase 4)
+    repl.rs           # REPL loop and prompt-file mode
 rho-core/             # Agent kernel (loop, types, traits, config)
-rho-tools/            # Built-in tools (files, shell)
+rho-tools/            # Built-in tools (files, shell, rust tooling)
 rho-highlight/        # Tree-sitter syntax analysis
 rho-eval/             # Behavioural benchmark suite (5 eval tasks)
 rho-bench/            # Benchmark harness (multi-model comparison)

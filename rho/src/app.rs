@@ -1,0 +1,463 @@
+//! Application assembly and startup orchestration.
+//!
+//! [`App`] owns the long-lived runtime state and runs the sequential setup
+//! phases that `main()` delegated to it. Each phase is a private free function
+//! scoped to this module, keeping [`App::build`] as a readable sequence.
+
+use crate::cli::Cli;
+use crate::gate::ReplApprovalGate;
+use anyhow::Result;
+use rho_core::tool::CancellationToken as Cancel;
+use rho_core::{
+    AgentConfig, ConfigLoader, LocalChatClient, Redactor, RhoConfig, SandboxRoot, Session,
+    TokenBudget, ToolRegistry, client_factory, compose_full_system_prompt,
+    context_files::{ContextFile, ContextScanner, TrustStore},
+    find_project_root, is_local_endpoint,
+};
+use rho_tools::register_all;
+use std::io::{self, BufRead, Write};
+use std::path::PathBuf;
+use tracing_subscriber::EnvFilter;
+
+// ── App ───────────────────────────────────────────────────────────────────────
+
+/// Long-lived runtime state for the `rho` agent.
+///
+/// Constructed by [`App::build`] which runs all startup phases in sequence.
+/// After construction, call [`App::run`] to enter prompt-file or REPL mode.
+pub struct App {
+    /// The agent's conversation session (tree-shaped, optionally persisted).
+    pub(crate) session: Session,
+    /// The model API client.
+    pub(crate) client: LocalChatClient,
+    /// Registered tools.
+    pub(crate) registry: ToolRegistry,
+    /// Agent loop configuration.
+    pub(crate) config: AgentConfig,
+    /// Approval gate for tool call confirmation.
+    pub(crate) gate: ReplApprovalGate,
+    /// Cooperative cancellation token.
+    pub(crate) cancel: Cancel,
+    /// Path to a prompt file for one-shot mode (None means REPL mode).
+    pub(crate) prompt_file: Option<PathBuf>,
+}
+
+impl App {
+    /// Build the application from CLI arguments.
+    ///
+    /// Runs the full startup sequence in order:
+    ///
+    /// 1. Initialize tracing
+    /// 2. Resolve sandbox root
+    /// 3. Load configuration (two-tier TOML)
+    /// 4. Resolve endpoint and check provider compatibility
+    /// 5. Check external provider consent
+    /// 6. Register built-in tools
+    /// 7. Scan project context files (interactive trust workflow)
+    /// 8. Compose the system prompt
+    /// 9. Construct the HTTP client
+    /// 10. Resolve the model identifier
+    /// 11. Build agent config with CLI overrides
+    /// 12. Build secret redactor
+    /// 13. Determine token budget
+    /// 14. Construct the session (resumed, in-memory, or persisted)
+    /// 15. Log budget diagnostics
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any setup phase fails (bad sandbox path, unreachable
+    /// model API, declined external provider consent, malformed session file).
+    pub async fn build(cli: Cli) -> Result<Self> {
+        // ── 1. Tracing ──────────────────────────────────────────────────
+        Self::init_tracing();
+
+        // ── 2. Sandbox root ──────────────────────────────────────────────
+        let sandbox = resolve_sandbox(&cli)?;
+
+        // ── 3. Config ────────────────────────────────────────────────────
+        let config = load_config(&sandbox);
+
+        // ── 4. Endpoint + provider compat ────────────────────────────────
+        let endpoint = resolve_endpoint(&cli, &config);
+        check_provider_compatibility(&endpoint, &config);
+
+        // ── 5. Provider consent ──────────────────────────────────────────
+        check_provider_consent(&endpoint, &cli)?;
+
+        // ── 6. Tool registry ────────────────────────────────────────────
+        let mut registry = ToolRegistry::new();
+        register_all(&mut registry, sandbox.clone(), &config);
+        let tool_schemas = registry.tool_schemas();
+
+        // ── 7. Context files (interactive trust workflow) ────────────────
+        let context_files = scan_context_files(&sandbox);
+
+        // ── 8. System prompt ─────────────────────────────────────────────
+        let system_prompt = compose_full_system_prompt(
+            &sandbox,
+            &context_files,
+            &config,
+            cli.system.as_deref(),
+            cli.compact,
+        );
+
+        // ── 9. Client ────────────────────────────────────────────────────
+        let client = client_factory(&config, cli.endpoint.as_deref(), cli.api_key_env.as_deref());
+
+        // ── 10. Model ────────────────────────────────────────────────────
+        let model = resolve_model(&config, cli.model.as_ref(), &client).await?;
+
+        // ── 11. Agent config ─────────────────────────────────────────────
+        let agent_config = build_agent_config(&config, &cli);
+
+        // ── 12. Redactor ─────────────────────────────────────────────────
+        let redactor =
+            Redactor::from_config(config.redaction.enabled, &config.redaction.custom_patterns);
+
+        // ── 13. Token budget ─────────────────────────────────────────────
+        let token_budget = build_token_budget(&config, &cli);
+
+        // ── 14. Session ──────────────────────────────────────────────────
+        let session = build_session(
+            &cli,
+            &model,
+            &system_prompt,
+            &tool_schemas,
+            &sandbox,
+            token_budget,
+            redactor,
+        )?;
+
+        // ── 15. Budget diagnostics ───────────────────────────────────────
+        log_budget_diagnostics(&session);
+
+        Ok(Self {
+            session,
+            client,
+            registry,
+            config: agent_config,
+            gate: ReplApprovalGate,
+            cancel: Cancel::new(),
+            prompt_file: cli.prompt_file.clone(),
+        })
+    }
+
+    /// Dispatch the agent: prompt-file mode or interactive REPL.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the prompt file cannot be read or the agent loop
+    /// encounters a fatal error.
+    pub async fn run(mut self) -> Result<()> {
+        use crate::repl::{run_prompt_file, run_repl};
+
+        // Check for prompt-file mode first.
+        if let Some(path) = self.prompt_file.take() {
+            return run_prompt_file(self, path).await;
+        }
+
+        run_repl(&mut self).await
+    }
+
+    // ── Private: tracing ────────────────────────────────────────────────
+
+    /// Initialise the tracing subscriber.
+    ///
+    /// Writes structured logs to `logs/rho.log` at `INFO` level, suppressing
+    /// noisy crates (`rustls`, `hyper`, `reqwest`). The log level can be
+    /// overridden via the `RHO_LOG` environment variable.
+    fn init_tracing() {
+        let file_appender = tracing_appender::rolling::never("logs", "rho.log");
+        let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
+        let env_filter = EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| EnvFilter::new("info,rustls=warn,hyper=warn,reqwest=warn"));
+
+        tracing_subscriber::fmt()
+            .with_writer(non_blocking)
+            .with_env_filter(env_filter)
+            .init();
+    }
+}
+
+// ── Private setup phases ───────────────────────────────────────────────────────
+
+/// Resolve the sandbox root from CLI `--root` or auto-detection.
+fn resolve_sandbox(cli: &Cli) -> Result<SandboxRoot> {
+    match cli.root {
+        Some(ref p) => SandboxRoot::new(p).map_err(|e| {
+            anyhow::anyhow!("cannot establish sandbox root at `{}`: {e}", p.display())
+        }),
+        None => {
+            find_project_root().map_err(|e| anyhow::anyhow!("cannot auto-detect project root: {e}"))
+        }
+    }
+}
+
+/// Load configuration from user-level and project-level TOML files.
+///
+/// Falls back to [`RhoConfig::default`] on error, printing a warning to stderr.
+fn load_config(sandbox: &SandboxRoot) -> RhoConfig {
+    ConfigLoader::load(sandbox.path()).unwrap_or_else(|e| {
+        eprintln!("Warning: {e} — using defaults");
+        RhoConfig::default()
+    })
+}
+
+/// Resolve the API endpoint URL.
+///
+/// Priority: CLI `--endpoint` → config `provider.endpoint` → localhost default.
+fn resolve_endpoint(cli: &Cli, config: &RhoConfig) -> String {
+    cli.endpoint.clone().unwrap_or_else(|| {
+        config
+            .provider
+            .endpoint
+            .clone()
+            .unwrap_or_else(|| "http://localhost:1234/v1/chat/completions".to_owned())
+    })
+}
+
+/// Check provider type and endpoint path compatibility.
+///
+/// rho only speaks the `OpenAI` Chat Completions wire format. Warns if the
+/// configured `[provider] type` is a known non-OpenAI provider (Anthropic,
+/// Google, etc.) or if the endpoint URL doesn't end with `/chat/completions`.
+fn check_provider_compatibility(endpoint: &str, config: &RhoConfig) {
+    if let Some(ref provider_type) = config.provider.r#type {
+        const NON_OPENAI: &[&str] = &[
+            "anthropic",
+            "google",
+            "gemini",
+            "cohere",
+            "anyscale",
+            "perplexity",
+            "bedrock",
+            "vertex",
+        ];
+        if NON_OPENAI
+            .iter()
+            .any(|t| provider_type.eq_ignore_ascii_case(t))
+        {
+            eprintln!(
+                "warning: provider type \"{provider_type}\" was set, but rho only supports \
+                 OpenAI-compatible endpoints (the Chat Completions API wire format). \
+                 {endpoint}"
+            );
+        }
+    }
+    if !endpoint.contains("/chat/completions") && !is_local_endpoint(endpoint) {
+        eprintln!(
+            "warning: endpoint \"{endpoint}\" does not end with /chat/completions, \
+             which is the standard OpenAI-compatible path. rho sends requests in \
+             the OpenAI Chat Completions format. If this endpoint uses a different \
+             API format (e.g. Anthropic Messages, Google GenerateContent), \
+             requests will fail. Use an OpenAI-compatible proxy or verify the endpoint."
+        );
+    }
+}
+
+/// Display a consent warning and read confirmation for external providers.
+fn check_provider_consent(endpoint: &str, cli: &Cli) -> Result<()> {
+    if is_local_endpoint(endpoint) || cli.accept_external_provider || cli.endpoint.is_some() {
+        return Ok(());
+    }
+    eprintln!();
+    eprintln!("  ⚠  External provider detected");
+    eprintln!("      Endpoint: {endpoint}");
+    eprintln!();
+    eprintln!("      Your prompts and code will be sent to an external server.");
+    eprintln!("      This may expose proprietary code, secrets, or other");
+    eprintln!("      sensitive data to the provider and any intermediaries.");
+    eprintln!();
+    eprint!("      Continue? [y/N] ");
+    io::stderr().flush().ok();
+
+    let mut line = String::new();
+    let ok = io::stdin().lock().read_line(&mut line).is_ok();
+    if ok && matches!(line.trim().to_lowercase().as_str(), "y" | "yes") {
+        Ok(())
+    } else {
+        eprintln!("  Aborting. Use --accept-external-provider to skip this prompt.");
+        Err(anyhow::anyhow!("user declined external provider consent"))
+    }
+}
+
+/// Scan the sandbox root for project context files (interactive trust workflow).
+///
+/// The stdin lock is released before returning so the REPL loop can access
+/// stdin without deadlock.
+fn scan_context_files(sandbox: &SandboxRoot) -> Vec<ContextFile> {
+    let mut trust_store = TrustStore::load_default();
+    let scanner = ContextScanner::new(sandbox);
+    let mut stdout = io::stdout();
+    let context_files = {
+        let stdin = io::stdin();
+        let mut stdin_locked = stdin.lock();
+        scanner.run(&mut trust_store, &mut stdin_locked, &mut stdout)
+    };
+    // stdin_locked is dropped here, releasing the stdin mutex.
+    context_files
+}
+
+/// Build the agent loop configuration from config and CLI overrides.
+fn build_agent_config(config: &RhoConfig, cli: &Cli) -> AgentConfig {
+    let mut ac = AgentConfig::from_config(config);
+    if let Some(max_iterations) = cli.max_iterations {
+        ac.max_iterations = max_iterations;
+    }
+    ac
+}
+
+/// Determine the token budget from CLI or config.
+fn build_token_budget(config: &RhoConfig, cli: &Cli) -> TokenBudget {
+    TokenBudget::new(cli.token_budget.unwrap_or(config.agent.token_budget) as usize)
+}
+
+/// Construct the session.
+///
+/// Three paths:
+/// - `--session <path>` — resume from a JSONL file (with stale-CWD detection)
+/// - `--ephemeral` — in-memory session, no disk I/O
+/// - Default — persisted session at `~/.rho/sessions/<project-hash>/`
+fn build_session(
+    cli: &Cli,
+    model: &str,
+    system_prompt: &str,
+    tool_schemas: &[rho_core::ToolSchema],
+    sandbox: &SandboxRoot,
+    token_budget: TokenBudget,
+    redactor: Redactor,
+) -> Result<Session> {
+    if let Some(ref path) = cli.session {
+        // Resume an existing session from JSONL
+        eprintln!("resuming session from: {}", path.display());
+        let mut s = Session::open(path.as_path())
+            .map_err(|e| anyhow::anyhow!("failed to open session: {e}"))?;
+
+        // Detect stale CWD.
+        let session_cwd = s.header().cwd.clone();
+        let current_cwd = sandbox.path();
+        if session_cwd != current_cwd {
+            if !session_cwd.as_os_str().is_empty() && !session_cwd.exists() {
+                eprintln!(
+                    "warning: session's working directory no longer exists\n  \
+                     session: {}\n  current: {}\n  continuing with current directory",
+                    session_cwd.display(),
+                    current_cwd.display()
+                );
+            } else {
+                eprintln!(
+                    "warning: session was created in a different directory\n  \
+                     session: {}\n  current: {}\n  continuing with current directory",
+                    session_cwd.display(),
+                    current_cwd.display()
+                );
+            }
+        }
+
+        s.set_model(model);
+        s.set_token_budget(token_budget);
+        s.set_redactor(redactor);
+        s.set_tools(tool_schemas.to_vec());
+        Ok(s)
+    } else if cli.ephemeral {
+        let s = Session::in_memory(
+            model,
+            Some(system_prompt),
+            tool_schemas.to_vec(),
+            sandbox.path(),
+        )
+        .with_token_budget(token_budget)
+        .with_redactor(redactor);
+        Ok(s)
+    } else {
+        let s = Session::new(
+            model,
+            Some(system_prompt),
+            tool_schemas.to_vec(),
+            sandbox.path(),
+        )
+        .with_token_budget(token_budget)
+        .with_redactor(redactor);
+        if let Some(path) = s.save_path() {
+            eprintln!("session: {}", path.display());
+        }
+        Ok(s)
+    }
+}
+
+/// Resolve the model identifier.
+///
+/// Priority: CLI `--model` → config `agent.model` → auto-detect via `/v1/models`.
+async fn resolve_model(
+    config: &RhoConfig,
+    cli_model: Option<&String>,
+    client: &LocalChatClient,
+) -> Result<String> {
+    // 1. CLI flag takes highest priority.
+    if let Some(model) = cli_model {
+        eprintln!("using model from --model: {model}");
+        return Ok(model.to_owned());
+    }
+    // 2. Config.
+    if let Some(model) = config.agent.model.as_deref() {
+        eprintln!("using model from config: {model}");
+        return Ok(model.to_owned());
+    }
+    // 3. Auto-detect from the server.
+    eprintln!("no model specified, querying server for loaded models...");
+    let configured_endpoint = config.provider.endpoint.as_deref().unwrap_or("");
+    let list = client.list_models().await.map_err(|e| {
+        let hint = if is_local_endpoint(configured_endpoint) {
+            "Load a model in your local server and try again."
+        } else {
+            "This may indicate the endpoint doesn't support /v1/models, \
+             requires authentication, or uses a non-standard model list. \
+             Specify the model explicitly with --model or in config."
+        };
+        anyhow::anyhow!("cannot query /v1/models: {e}\n  {hint}")
+    })?;
+    if list.data.is_empty() {
+        let hint = if is_local_endpoint(configured_endpoint) {
+            "Load a model in your local server and try again."
+        } else {
+            "The server returned an empty model list. Specify the model \
+             explicitly with --model or in config."
+        };
+        anyhow::bail!("no models loaded on the server. {hint}");
+    }
+    let model = &list.data[0].id;
+    eprintln!("auto-detected model: {model}");
+    Ok(model.clone())
+}
+
+/// Log token budget diagnostics at startup.
+fn log_budget_diagnostics(session: &Session) {
+    let budget = session.token_budget();
+    let system = session.system_overhead();
+    let schema = session.schema_overhead();
+    let total_overhead = system + schema;
+    let prompt = budget.prompt_budget();
+    let available = session.message_budget();
+
+    eprintln!(
+        "budget: {}T context, {}T reserve, {}T prompt \
+         ({}T system + {}T schema = {}T overhead, {}T for conversation)",
+        budget.context_window,
+        budget.completion_reserve,
+        prompt,
+        system,
+        schema,
+        total_overhead,
+        available,
+    );
+
+    if total_overhead > prompt / 2 {
+        #[allow(clippy::cast_possible_truncation)]
+        let pct = (100_usize.saturating_mul(total_overhead) / prompt.max(1)) as u32;
+        eprintln!(
+            "warning: system overhead is {pct}% of prompt budget — \
+             consider --compact or increasing token_budget in .rho/config.toml"
+        );
+    }
+}
