@@ -286,8 +286,14 @@ rho --ephemeral       # in-memory mode, no session file
 ├── cliff.toml               # git-cliff configuration
 ├── AGENTS.md                # Project instructions for AI assistants
 ├── docs/                    # This book (mdBook)
-├── rho/                     # Binary entry point (`rho` CLI)
-│   └── src/main.rs          # REPL loop, tool wiring, CLI dispatch
+├── rho/                     # Binary entry point + library crate (`rho` CLI)
+│   └── src/
+│       ├── main.rs           # Thin: parse CLI, build App, run
+│       ├── lib.rs            # Module declarations
+│       ├── cli.rs            # `Cli` — 17 CLI flags with clap
+│       ├── app.rs            # `App` — runtime state, build/run orchestration
+│       ├── gate.rs           # `ReplApprovalGate` — approval prompts
+│       └── repl.rs           # `run_repl()`, `run_prompt_file()` — interaction modes
 ├── rho-core/                # Agent kernel
 │   └── src/
 │       ├── lib.rs           # Module declarations, convenience re-exports
