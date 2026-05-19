@@ -27,6 +27,7 @@ rho-highlight = { path = "../rho-highlight" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["full"] }
 tree-sitter.workspace = true
+url = "2.5.8"
 which = "7"

@@ -14,6 +14,7 @@ pub fn all_tasks() -> Vec<Box<dyn EvalTask>> {
         Box::new(Scenario04FixAndTest),
         Box::new(Scenario05MultiErrorFix),
         Box::new(Scenario06RustdocApiLookup),
+        Box::new(Scenario07CrateLookup),
     ]
 }
 
@@ -576,14 +577,138 @@ impl EvalTask for Scenario06RustdocApiLookup {
     }
 }
 
+// ── Scenario 07: Add a crate dependency via crates.io lookup ────────────
+
+/// The model must use `crates_io_lookup` to find serde's latest version,
+/// then add it to Cargo.toml.
+struct Scenario07CrateLookup;
+
+impl EvalTask for Scenario07CrateLookup {
+    fn id(&self) -> &str {
+        "scenario_07_crate_lookup"
+    }
+
+    fn name(&self) -> &str {
+        "Add a crate dependency via crates.io lookup"
+    }
+
+    fn description(&self) -> &str {
+        "Use crates_io_lookup to find serde, then add it to Cargo.toml with the derive feature."
+    }
+
+    fn initial_files(&self) -> Vec<(&str, &str)> {
+        vec![
+            (
+                "Cargo.toml",
+                "[package]\n\
+                 name = \"scenario_07_crate_lookup\"\n\
+                 version = \"0.1.0\"\n\
+                 edition = \"2021\"\n\
+                 \n\
+                 [dependencies]\n",
+            ),
+            (
+                "src/lib.rs",
+                "use serde::{Deserialize, Serialize};\n\
+                 \n\
+                 /// A user record that can be serialized and deserialized.\n\
+                 #[derive(Serialize, Deserialize, Debug)]\n\
+                 pub struct User {\n\
+                 \x20   pub id: u64,\n\
+                 \x20   pub name: String,\n\
+                 \x20   pub email: String,\n\
+                 }\n\
+                 \n\
+                 /// Create a new user.\n\
+                 pub fn new_user(id: u64, name: &str, email: &str) -> User {\n\
+                 \x20   User {\n\
+                 \x20       id,\n\
+                 \x20       name: name.to_string(),\n\
+                 \x20       email: email.to_string(),\n\
+                 \x20   }\n\
+                 }\n",
+            ),
+        ]
+    }
+
+    fn user_prompt(&self) -> &str {
+        "The file src/lib.rs uses the `serde` crate for serialization, but serde is \
+         not listed as a dependency in Cargo.toml. Use the `crates_io_lookup` tool \
+         to find the latest version of serde and its available features, then edit \
+         Cargo.toml to add serde with the `derive` feature. After editing, run \
+         `cargo check` to make sure the project compiles."
+    }
+
+    fn verify(&self, files: &[(&str, &str)]) -> TaskOutcome {
+        let Some((_, toml)) = files.iter().find(|(p, _)| *p == "Cargo.toml") else {
+            return TaskOutcome::new(
+                self.id(),
+                self.name(),
+                TaskVerdict::Error,
+                "Cargo.toml not found in output",
+            );
+        };
+
+        let Some((_, lib)) = files.iter().find(|(p, _)| *p == "src/lib.rs") else {
+            return TaskOutcome::new(
+                self.id(),
+                self.name(),
+                TaskVerdict::Error,
+                "src/lib.rs not found in output",
+            );
+        };
+
+        let mut issues = Vec::new();
+
+        // Check serde is in Cargo.toml under [dependencies].
+        let deps_section_idx = toml.find("[dependencies]");
+        if let Some(idx) = deps_section_idx {
+            let after_deps = &toml[idx..];
+            if !after_deps.contains("serde") {
+                issues.push("serde not found under [dependencies] in Cargo.toml");
+            }
+        } else {
+            issues.push("[dependencies] section not found in Cargo.toml");
+        }
+
+        // Check the derive feature is mentioned.
+        let has_derive_feature =
+            toml.contains("derive") || toml.contains("\"derive\"") || toml.contains("'derive'");
+        if !has_derive_feature {
+            issues.push("serde's derive feature not found");
+        }
+
+        // Check src/lib.rs still has the User struct.
+        if !lib.contains("struct User") {
+            issues.push("User struct was removed from src/lib.rs");
+        }
+
+        if issues.is_empty() {
+            TaskOutcome::new(
+                self.id(),
+                self.name(),
+                TaskVerdict::Pass,
+                "serde added to Cargo.toml with derive feature",
+            )
+        } else {
+            TaskOutcome::new(
+                self.id(),
+                self.name(),
+                TaskVerdict::Fail,
+                format!("issues: {}", issues.join("; ")),
+            )
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn all_tasks_returns_six_tasks() {
+    fn all_tasks_returns_seven_tasks() {
         let tasks = all_tasks();
-        assert_eq!(tasks.len(), 6);
+        assert_eq!(tasks.len(), 7);
     }
 
     #[test]
@@ -835,6 +960,56 @@ mod tests {
     fn missing_file_returns_error_verdict() {
         let task = Scenario01FixTypeMismatch;
         let files: Vec<(&str, &str)> = vec![];
+        assert_eq!(task.verify(&files).verdict, TaskVerdict::Error);
+    }
+
+    // ── Scenario 07 ─────────────────────────────────────────────────────
+
+    #[test]
+    fn scenario_07_passes_with_serde_in_cargo_toml() {
+        let task = Scenario07CrateLookup;
+        let files = vec![
+            (
+                "Cargo.toml",
+                "[package]\n\
+                 name = \"test\"\n\
+                 version = \"0.1.0\"\n\
+                 [dependencies]\n\
+                 serde = { version = \"1\", features = [\"derive\"] }\n",
+            ),
+            (
+                "src/lib.rs",
+                "use serde::{Deserialize, Serialize};\n\
+                 pub struct User { pub id: u64, pub name: String, pub email: String }\n",
+            ),
+        ];
+        assert_eq!(task.verify(&files).verdict, TaskVerdict::Pass);
+    }
+
+    #[test]
+    fn scenario_07_fails_without_serde() {
+        let task = Scenario07CrateLookup;
+        let files = vec![
+            (
+                "Cargo.toml",
+                "[package]\n\
+                 name = \"test\"\n\
+                 version = \"0.1.0\"\n\
+                 [dependencies]\n",
+            ),
+            (
+                "src/lib.rs",
+                "use serde::{Deserialize, Serialize};\n\
+                 pub struct User { pub id: u64, pub name: String, pub email: String }\n",
+            ),
+        ];
+        assert_eq!(task.verify(&files).verdict, TaskVerdict::Fail);
+    }
+
+    #[test]
+    fn scenario_07_fails_missing_cargo_toml() {
+        let task = Scenario07CrateLookup;
+        let files = vec![];
         assert_eq!(task.verify(&files).verdict, TaskVerdict::Error);
     }
 }

@@ -6,6 +6,7 @@ use std::time::Instant;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use rho_core::stream::StreamChunk;
 use rho_core::{
     AgentConfig, ApprovalGate, AutoApprovePolicy, ChatClient, ChatRequest, ConfigLoader,
     LocalChatClient, ModelResponse, ModelResponseStream, ModelToolCall, RhoConfig, SandboxRoot,
@@ -76,11 +77,19 @@ impl ChatClient for CountingClient {
 
     async fn chat_stream(
         &self,
-        request: ChatRequest,
+        mut request: ChatRequest,
     ) -> rho_core::error::Result<ModelResponseStream> {
-        // Delegate to the inner client's real SSE implementation
-        // instead of the default trait wrapper (which calls chat()).
-        self.inner.chat_stream(request).await
+        // Use the non-streaming endpoint to avoid slow SSE streaming
+        // through proxies like OpenRouter that emit 1-3 chars per chunk.
+        // Force stream: false so the API returns plain JSON instead of SSE.
+        request.stream = false;
+        let response = self.chat(request).await?;
+        let chunks: Vec<rho_core::error::Result<StreamChunk>> =
+            StreamChunk::from_response(&response)
+                .into_iter()
+                .map(Ok)
+                .collect();
+        Ok(Box::pin(futures::stream::iter(chunks)))
     }
 }
 
