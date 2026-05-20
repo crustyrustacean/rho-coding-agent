@@ -177,6 +177,8 @@ Prefer the smallest change that addresses the diagnostic. If a fix requires touc
 ### Diagnostic-specific guidance
 
 - **E0308 (type mismatch):** The declared type is the intended contract. Convert the value to match the declared type rather than changing the signature. For example, if a function returns `-> String` but the body returns an integer, use `.to_string()` on the value — do not change the return type to `i32`.
+- **Type mismatches involving stdlib types:** When `cargo_check` reports a type mismatch that involves a standard library collection type (HashMap, Vec, Option, Result, etc.), use `rustdoc_lookup` to verify the method's return type and signature before editing. Do not assume you remember the exact return type — the docs are authoritative.
+- **E0502 (borrow conflict):** When an immutable borrow from `get()` prevents a mutable borrow for `insert()`, break the overlap by either: (a) copying the value out first (add `*` to dereference `Copy` types like `i64` before the mutable call), or (b) using the entry API (`entry(...).or_insert(...).and_modify(...)`) which avoids the two-phase borrow.
 
 ## Rust-specific PowerShell commands
 

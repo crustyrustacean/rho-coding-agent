@@ -15,6 +15,9 @@ pub fn all_tasks() -> Vec<Box<dyn EvalTask>> {
         Box::new(Scenario05MultiErrorFix),
         Box::new(Scenario06RustdocApiLookup),
         Box::new(Scenario07CrateLookup),
+        Box::new(Scenario08FixMissingLifetime),
+        Box::new(Scenario09FixBorrowConflict),
+        Box::new(Scenario10FixTraitBound),
     ]
 }
 
@@ -701,14 +704,419 @@ impl EvalTask for Scenario07CrateLookup {
     }
 }
 
+// ── Scenario 08: Fix E0106 missing lifetime specifier ───────────────────────
+
+/// A struct holds a `&str` reference but is missing the lifetime parameter.
+/// The model must add `<'a>` to the struct, annotate the field, and update
+/// the `impl` block and constructor — preserving reference semantics.
+struct Scenario08FixMissingLifetime;
+
+impl EvalTask for Scenario08FixMissingLifetime {
+    fn id(&self) -> &str {
+        "scenario_08_fix_missing_lifetime"
+    }
+
+    fn name(&self) -> &str {
+        "Fix missing lifetime specifier (E0106)"
+    }
+
+    fn description(&self) -> &str {
+        "Fix E0106: TextCursor holds &str but is missing a lifetime parameter."
+    }
+
+    fn initial_files(&self) -> Vec<(&str, &str)> {
+        vec![(
+            "src/lib.rs",
+            "/// A cursor that walks through a text buffer by character.\n\
+             pub struct TextCursor {\n\
+             \x20   source: &str,\n\
+             \x20   position: usize,\n\
+             }\n\
+             \n\
+             impl TextCursor {\n\
+             \x20   /// Create a new cursor for the given source text.\n\
+             \x20   pub fn new(source: &str) -> TextCursor {\n\
+             \x20       TextCursor { source, position: 0 }\n\
+             \x20   }\n\
+             \n\
+             \x20   /// Peek at the current character without advancing.\n\
+             \x20   pub fn peek(&self) -> Option<char> {\n\
+             \x20       self.source.chars().nth(self.position)\n\
+             \x20   }\n\
+             \n\
+             \x20   /// Advance the cursor by one character.\n\
+             \x20   pub fn advance(&mut self) {\n\
+             \x20       if self.position < self.source.len() {\n\
+             \x20           self.position += 1;\n\
+             \x20       }\n\
+             \x20   }\n\
+             \n\
+             \x20   /// Return the remaining text from the current position.\n\
+             \x20   pub fn remaining(&self) -> &str {\n\
+             \x20       &self.source[self.position..]\n\
+             \x20   }\n\
+             }\n",
+        )]
+    }
+
+    fn user_prompt(&self) -> &str {
+        "The file src/lib.rs has a compilation error. Use cargo_check to see \
+         the error, then use edit_file to fix it. After fixing, run cargo_check \
+         again to confirm the fix compiles cleanly."
+    }
+
+    fn verify(&self, files: &[(&str, &str)]) -> TaskOutcome {
+        let Some((_, lib)) = files.iter().find(|(p, _)| *p == "src/lib.rs") else {
+            return TaskOutcome::new(
+                self.id(),
+                self.name(),
+                TaskVerdict::Error,
+                "src/lib.rs not found in output",
+            );
+        };
+
+        let mut issues = Vec::new();
+
+        // The struct must have a lifetime parameter.
+        let struct_has_lifetime =
+            lib.contains("struct TextCursor<") || lib.contains("struct TextCursor <");
+        if !struct_has_lifetime {
+            issues.push("TextCursor struct is missing a lifetime parameter");
+        }
+
+        // The source field must use a lifetime (not owned String).
+        // Accept &'a str, '_ str, or any explicit lifetime.
+        let field_has_lifetime_ref =
+            (lib.contains("source: &'") || lib.contains("source: &'_")) && lib.contains("str");
+        let field_is_owned_string =
+            lib.contains("source: String") || lib.contains("source : String");
+
+        if field_is_owned_string {
+            issues.push("source field was changed to String — must remain &str with a lifetime");
+        } else if !field_has_lifetime_ref {
+            issues.push("source field is still &str without a lifetime annotation");
+        }
+
+        // The impl block must include the lifetime.
+        let impl_has_lifetime = lib.contains("impl<") && lib.contains("TextCursor");
+        if !impl_has_lifetime {
+            issues.push("impl block is missing the lifetime parameter");
+        }
+
+        // The struct and its methods should still exist.
+        if !lib.contains("fn new(") {
+            issues.push("new() method was removed");
+        }
+        if !lib.contains("fn peek(") {
+            issues.push("peek() method was removed");
+        }
+        if !lib.contains("fn advance(") {
+            issues.push("advance() method was removed");
+        }
+        if !lib.contains("fn remaining(") {
+            issues.push("remaining() method was removed");
+        }
+
+        if issues.is_empty() {
+            TaskOutcome::new(
+                self.id(),
+                self.name(),
+                TaskVerdict::Pass,
+                "lifetime parameter added correctly, reference semantics preserved",
+            )
+        } else {
+            TaskOutcome::new(
+                self.id(),
+                self.name(),
+                TaskVerdict::Fail,
+                format!("issues: {}", issues.join("; ")),
+            )
+        }
+    }
+}
+
+// ── Scenario 09: Fix E0502 borrow conflict ─────────────────────────────────
+
+/// Two methods call `get()` then `insert()` on the same `HashMap` — the
+/// immutable reference from `get()` is still alive when `insert()` needs a
+/// mutable borrow. The model must break the overlap by copying the value
+/// out before mutating, or by using the entry API.
+struct Scenario09FixBorrowConflict;
+
+impl EvalTask for Scenario09FixBorrowConflict {
+    fn id(&self) -> &str {
+        "scenario_09_fix_borrow_conflict"
+    }
+
+    fn name(&self) -> &str {
+        "Fix borrow conflict (E0502)"
+    }
+
+    fn description(&self) -> &str {
+        "Fix E0502: get() holds an immutable reference while insert() needs a mutable borrow."
+    }
+
+    fn initial_files(&self) -> Vec<(&str, &str)> {
+        vec![(
+            "src/lib.rs",
+            "use std::collections::HashMap;\n\
+             \n\
+             /// A registry that tracks scores for named participants.\n\
+             pub struct Scoreboard {\n\
+             \x20   scores: HashMap<String, i64>,\n\
+             }\n\
+             \n\
+             impl Scoreboard {\n\
+             \x20   /// Create a new empty scoreboard.\n\
+             \x20   pub fn new() -> Scoreboard {\n\
+             \x20       Scoreboard {\n\
+             \x20           scores: HashMap::new(),\n\
+             \x20       }\n\
+             \x20   }\n\
+             \n\
+             \x20   /// Add points to a participant's score.\n\
+             \x20   pub fn add_score(&mut self, name: &str, points: i64) {\n\
+             \x20       let current = self.scores.get(name).unwrap_or(&0);\n\
+             \x20       self.scores.insert(name.to_string(), *current + points);\n\
+             \x20   }\n\
+             \n\
+             \x20   /// Get a participant's current score.\n\
+             \x20   pub fn get_score(&self, name: &str) -> i64 {\n\
+             \x20       *self.scores.get(name).unwrap_or(&0)\n\
+             \x20   }\n\
+             \n\
+             \x20   /// Record a penalty by subtracting points.\n\
+             \x20   pub fn penalize(&mut self, name: &str, penalty: i64) {\n\
+             \x20       let current = self.scores.get(name).unwrap_or(&0);\n\
+             \x20       self.scores.insert(name.to_string(), *current - penalty);\n\
+             \x20   }\n\
+             }\n",
+        )]
+    }
+
+    fn user_prompt(&self) -> &str {
+        "The file src/lib.rs has a compilation error. Use cargo_check to see the \
+         error, then use edit_file to fix it. After fixing, run cargo_check again \
+         to confirm the fix compiles cleanly."
+    }
+
+    fn verify(&self, files: &[(&str, &str)]) -> TaskOutcome {
+        let Some((_, lib)) = files.iter().find(|(p, _)| *p == "src/lib.rs") else {
+            return TaskOutcome::new(
+                self.id(),
+                self.name(),
+                TaskVerdict::Error,
+                "src/lib.rs not found in output",
+            );
+        };
+
+        let mut issues = Vec::new();
+
+        // Both add_score and penalize must still exist.
+        if !lib.contains("fn add_score") {
+            issues.push("add_score() method was removed");
+        }
+        if !lib.contains("fn penalize") {
+            issues.push("penalize() method was removed");
+        }
+
+        // The Scoreboard struct and HashMap must still be present.
+        if !lib.contains("struct Scoreboard") {
+            issues.push("Scoreboard struct was removed");
+        }
+        if !lib.contains("HashMap") {
+            issues.push("HashMap usage was removed");
+        }
+
+        // The original borrow-conflict pattern: `let current = self.scores.get(...)`
+        // followed by `self.scores.insert(...)` in the same block. If `current`
+        // is still a reference (`&i64`), the borrow conflict persists.
+        //
+        // Valid fixes:
+        //   1. Copy the value out: `let current = *self.scores.get(...).unwrap_or(&0);`
+        //   2. Use entry API: `self.scores.entry(...).and_modify(...).or_insert(...)`
+        //
+        // The broken pattern: `let current = self.scores.get(name).unwrap_or(&0);`
+        // where `current` is `&i64` — still borrowing `self.scores`.
+
+        let has_broken_get_pattern =
+            lib.contains("let current = self.scores.get(name).unwrap_or(&0);");
+        let has_deref_fix = lib.contains("let current = *self.scores.get(");
+        let has_entry_fix = lib.contains("entry(");
+
+        if has_broken_get_pattern && !has_deref_fix && !has_entry_fix {
+            issues.push("add_score/penalize still have overlapping borrow pattern");
+        }
+
+        // The get_score method should still work (it has no borrow conflict).
+        if !lib.contains("fn get_score") {
+            issues.push("get_score() method was removed");
+        }
+
+        if issues.is_empty() {
+            TaskOutcome::new(
+                self.id(),
+                self.name(),
+                TaskVerdict::Pass,
+                "borrow conflict resolved",
+            )
+        } else {
+            TaskOutcome::new(
+                self.id(),
+                self.name(),
+                TaskVerdict::Fail,
+                format!("issues: {}", issues.join("; ")),
+            )
+        }
+    }
+}
+
+// ── Scenario 10: Fix E0277 trait bound not satisfied ────────────────────────
+
+/// A generic `verify<T>` function and a `Container<T>` struct both call
+/// `.checksum()` on `T`, but neither has a `T: Checksum` bound. The model
+/// must add the trait bound to both the function and the impl block.
+struct Scenario10FixTraitBound;
+
+impl EvalTask for Scenario10FixTraitBound {
+    fn id(&self) -> &str {
+        "scenario_10_fix_trait_bound"
+    }
+
+    fn name(&self) -> &str {
+        "Fix trait bound not satisfied (E0277)"
+    }
+
+    fn description(&self) -> &str {
+        "Fix E0277: add the `T: Checksum` bound to a generic function and struct impl."
+    }
+
+    fn initial_files(&self) -> Vec<(&str, &str)> {
+        vec![(
+            "src/lib.rs",
+            "/// A trait for types that can produce a checksum.\n\
+             pub trait Checksum {\n\
+             \x20   /// Return a simple checksum value.\n\
+             \x20   fn checksum(&self) -> u64;\n\
+             }\n\
+             \n\
+             impl Checksum for String {\n\
+             \x20   fn checksum(&self) -> u64 {\n\
+             \x20       self.bytes().fold(0u64, |acc, b| acc.wrapping_add(b as u64))\n\
+             \x20   }\n\
+             }\n\
+             \n\
+             impl Checksum for Vec<u8> {\n\
+             \x20   fn checksum(&self) -> u64 {\n\
+             \x20       self.iter().fold(0u64, |acc, b| acc.wrapping_add(*b as u64))\n\
+             \x20   }\n\
+             }\n\
+             \n\
+             /// Verify that a value's checksum matches the expected value.\n\
+             pub fn verify<T>(data: &T, expected: u64) -> bool {\n\
+             \x20   data.checksum() == expected\n\
+             }\n\
+             \n\
+             /// A container that holds a checksummable value.\n\
+             pub struct Container<T> {\n\
+             \x20   pub value: T,\n\
+             }\n\
+             \n\
+             impl<T> Container<T> {\n\
+             \x20   /// Create a new container.\n\
+             \x20   pub fn new(value: T) -> Container<T> {\n\
+             \x20       Container { value }\n\
+             \x20   }\n\
+             \n\
+             \x20   /// Check if the stored value's checksum matches the expected value.\n\
+             \x20   pub fn validate(&self, expected: u64) -> bool {\n\
+             \x20       self.value.checksum() == expected\n\
+             \x20   }\n\
+             }\n",
+        )]
+    }
+
+    fn user_prompt(&self) -> &str {
+        "The file src/lib.rs has compilation errors. Use cargo_check to see the \
+         errors, then use edit_file to fix them. After fixing, run cargo_check again \
+         to confirm the fix compiles cleanly."
+    }
+
+    fn verify(&self, files: &[(&str, &str)]) -> TaskOutcome {
+        let Some((_, lib)) = files.iter().find(|(p, _)| *p == "src/lib.rs") else {
+            return TaskOutcome::new(
+                self.id(),
+                self.name(),
+                TaskVerdict::Error,
+                "src/lib.rs not found in output",
+            );
+        };
+
+        let mut issues = Vec::new();
+
+        // The Checksum trait and its methods must still exist.
+        if !lib.contains("trait Checksum") {
+            issues.push("Checksum trait was removed");
+        }
+        if !lib.contains("fn checksum") {
+            issues.push("checksum() method was removed");
+        }
+
+        // The verify function must exist with a Checksum bound on T.
+        if !lib.contains("fn verify") {
+            issues.push("verify() function was removed");
+        } else if !lib.contains("Checksum") {
+            // If Checksum was removed entirely, already flagged above.
+        } else {
+            // Check that verify has T: Checksum (inline or where clause).
+            let verify_has_bound = lib.contains("fn verify<T: Checksum>")
+                || (lib.contains("fn verify<T>") && lib.contains("where T: Checksum"));
+            if !verify_has_bound {
+                issues.push("verify() is missing T: Checksum bound");
+            }
+        }
+
+        // The Container struct and its methods must still exist.
+        if !lib.contains("struct Container") {
+            issues.push("Container struct was removed");
+        }
+        if !lib.contains("fn validate") {
+            issues.push("validate() method was removed");
+        }
+
+        // The Container impl must have T: Checksum (inline or where clause).
+        let impl_has_bound = lib.contains("impl<T: Checksum> Container")
+            || (lib.contains("impl<T> Container") && lib.contains("where T: Checksum"));
+        if !impl_has_bound {
+            issues.push("Container impl is missing T: Checksum bound");
+        }
+
+        if issues.is_empty() {
+            TaskOutcome::new(
+                self.id(),
+                self.name(),
+                TaskVerdict::Pass,
+                "trait bounds added correctly",
+            )
+        } else {
+            TaskOutcome::new(
+                self.id(),
+                self.name(),
+                TaskVerdict::Fail,
+                format!("issues: {}", issues.join("; ")),
+            )
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn all_tasks_returns_seven_tasks() {
+    fn all_tasks_returns_ten_tasks() {
         let tasks = all_tasks();
-        assert_eq!(tasks.len(), 7);
+        assert_eq!(tasks.len(), 10);
     }
 
     #[test]
@@ -1011,5 +1419,271 @@ mod tests {
         let task = Scenario07CrateLookup;
         let files = vec![];
         assert_eq!(task.verify(&files).verdict, TaskVerdict::Error);
+    }
+
+    // ── Scenario 08 ─────────────────────────────────────────────────────
+
+    #[test]
+    fn scenario_08_passes_with_correct_lifetime() {
+        let task = Scenario08FixMissingLifetime;
+        let files = vec![(
+            "src/lib.rs",
+            "pub struct TextCursor<'a> {\n\
+             \x20   source: &'a str,\n\
+             \x20   position: usize,\n\
+             }\n\
+             \n\
+             impl<'a> TextCursor<'a> {\n\
+             \x20   pub fn new(source: &'a str) -> TextCursor<'a> {\n\
+             \x20       TextCursor { source, position: 0 }\n\
+             \x20   }\n\
+             \n\
+             \x20   pub fn peek(&self) -> Option<char> {\n\
+             \x20       self.source.chars().nth(self.position)\n\
+             \x20   }\n\
+             \n\
+             \x20   pub fn advance(&mut self) {\n\
+             \x20       if self.position < self.source.len() {\n\
+             \x20           self.position += 1;\n\
+             \x20       }\n\
+             \x20   }\n\
+             \n\
+             \x20   pub fn remaining(&self) -> &'a str {\n\
+             \x20       &self.source[self.position..]\n\
+             \x20   }\n\
+             }\n",
+        )];
+        assert_eq!(task.verify(&files).verdict, TaskVerdict::Pass);
+    }
+
+    #[test]
+    fn scenario_08_passes_with_underscore_lifetime() {
+        let task = Scenario08FixMissingLifetime;
+        let files = vec![(
+            "src/lib.rs",
+            "pub struct TextCursor<'_> {\n\
+             \x20   source: &'_ str,\n\
+             \x20   position: usize,\n\
+             }\n\
+             \n\
+             impl<'a> TextCursor<'a> {\n\
+             \x20   pub fn new(source: &'a str) -> TextCursor<'a> {\n\
+             \x20       TextCursor { source, position: 0 }\n\
+             \x20   }\n\
+             \x20   pub fn peek(&self) -> Option<char> {\n\
+             \x20       self.source.chars().nth(self.position)\n\
+             \x20   }\n\
+             \x20   pub fn advance(&mut self) {}\n\
+             \x20   pub fn remaining(&self) -> &str { &self.source[self.position..] }\n\
+             }\n",
+        )];
+        // The underscore lifetime on the struct is valid Rust syntax.
+        // The impl uses 'a so impl_has_lifetime should still pass.
+        assert_eq!(task.verify(&files).verdict, TaskVerdict::Pass);
+    }
+
+    #[test]
+    fn scenario_08_fails_with_original_code() {
+        let task = Scenario08FixMissingLifetime;
+        let files = task.initial_files();
+        assert_eq!(task.verify(&files).verdict, TaskVerdict::Fail);
+    }
+
+    #[test]
+    fn scenario_08_fails_if_switched_to_string() {
+        let task = Scenario08FixMissingLifetime;
+        let files = vec![(
+            "src/lib.rs",
+            "pub struct TextCursor {\n\
+             \x20   source: String,\n\
+             \x20   position: usize,\n\
+             }\n\
+             \n\
+             impl TextCursor {\n\
+             \x20   pub fn new(source: &str) -> TextCursor {\n\
+             \x20       TextCursor { source: source.to_string(), position: 0 }\n\
+             \x20   }\n\
+             \x20   pub fn peek(&self) -> Option<char> { self.source.chars().nth(self.position) }\n\
+             \x20   pub fn advance(&mut self) {}\n\
+             \x20   pub fn remaining(&self) -> &str { &self.source[self.position..] }\n\
+             }\n",
+        )];
+        assert_eq!(task.verify(&files).verdict, TaskVerdict::Fail);
+    }
+
+    // ── Scenario 09 ─────────────────────────────────────────────────────
+
+    #[test]
+    fn scenario_09_passes_with_dereferenced_copy() {
+        let task = Scenario09FixBorrowConflict;
+        let files = vec![(
+            "src/lib.rs",
+            "use std::collections::HashMap;\n\
+             \n\
+             pub struct Scoreboard {\n\
+             \x20   scores: HashMap<String, i64>,\n\
+             }\n\
+             \n\
+             impl Scoreboard {\n\
+             \x20   pub fn new() -> Scoreboard {\n\
+             \x20       Scoreboard { scores: HashMap::new() }\n\
+             \x20   }\n\
+             \x20   pub fn add_score(&mut self, name: &str, points: i64) {\n\
+             \x20       let current = *self.scores.get(name).unwrap_or(&0);\n\
+             \x20       self.scores.insert(name.to_string(), current + points);\n\
+             \x20   }\n\
+             \x20   pub fn get_score(&self, name: &str) -> i64 {\n\
+             \x20       *self.scores.get(name).unwrap_or(&0)\n\
+             \x20   }\n\
+             \x20   pub fn penalize(&mut self, name: &str, penalty: i64) {\n\
+             \x20       let current = *self.scores.get(name).unwrap_or(&0);\n\
+             \x20       self.scores.insert(name.to_string(), current - penalty);\n\
+             \x20   }\n\
+             }\n",
+        )];
+        assert_eq!(task.verify(&files).verdict, TaskVerdict::Pass);
+    }
+
+    #[test]
+    fn scenario_09_passes_with_entry_api() {
+        let task = Scenario09FixBorrowConflict;
+        let files = vec![(
+            "src/lib.rs",
+            "use std::collections::HashMap;\n\
+             \n\
+             pub struct Scoreboard {\n\
+             \x20   scores: HashMap<String, i64>,\n\
+             }\n\
+             \n\
+             impl Scoreboard {\n\
+             \x20   pub fn new() -> Scoreboard {\n\
+             \x20       Scoreboard { scores: HashMap::new() }\n\
+             \x20   }\n\
+             \x20   pub fn add_score(&mut self, name: &str, points: i64) {\n\
+             \x20       *self.scores.entry(name.to_string()).or_insert(0) += points;\n\
+             \x20   }\n\
+             \x20   pub fn get_score(&self, name: &str) -> i64 {\n\
+             \x20       *self.scores.get(name).unwrap_or(&0)\n\
+             \x20   }\n\
+             \x20   pub fn penalize(&mut self, name: &str, penalty: i64) {\n\
+             \x20       *self.scores.entry(name.to_string()).or_insert(0) -= penalty;\n\
+             \x20   }\n\
+             }\n",
+        )];
+        assert_eq!(task.verify(&files).verdict, TaskVerdict::Pass);
+    }
+
+    #[test]
+    fn scenario_09_fails_with_original_borrow_conflict() {
+        let task = Scenario09FixBorrowConflict;
+        let files = task.initial_files();
+        assert_eq!(task.verify(&files).verdict, TaskVerdict::Fail);
+    }
+
+    // ── Scenario 10 ─────────────────────────────────────────────────────
+
+    #[test]
+    fn scenario_10_passes_with_inline_bounds() {
+        let task = Scenario10FixTraitBound;
+        let files = vec![(
+            "src/lib.rs",
+            "/// A trait for types that can produce a checksum.\n\
+             pub trait Checksum {\n\
+             \x20   /// Return a simple checksum value.\n\
+             \x20   fn checksum(&self) -> u64;\n\
+             }\n\
+             \n\
+             impl Checksum for String {\n\
+             \x20   fn checksum(&self) -> u64 {\n\
+             \x20       self.bytes().fold(0u64, |acc, b| acc.wrapping_add(b as u64))\n\
+             \x20   }\n\
+             }\n\
+             \n\
+             impl Checksum for Vec<u8> {\n\
+             \x20   fn checksum(&self) -> u64 {\n\
+             \x20       self.iter().fold(0u64, |acc, b| acc.wrapping_add(*b as u64))\n\
+             \x20   }\n\
+             }\n\
+             \n\
+             /// Verify that a value's checksum matches the expected value.\n\
+             pub fn verify<T: Checksum>(data: &T, expected: u64) -> bool {\n\
+             \x20   data.checksum() == expected\n\
+             }\n\
+             \n\
+             /// A container that holds a checksummable value.\n\
+             pub struct Container<T: Checksum> {\n\
+             \x20   pub value: T,\n\
+             }\n\
+             \n\
+             impl<T: Checksum> Container<T> {\n\
+             \x20   /// Create a new container.\n\
+             \x20   pub fn new(value: T) -> Container<T> {\n\
+             \x20       Container { value }\n\
+             \x20   }\n\
+             \n\
+             \x20   /// Check if the stored value's checksum matches the expected value.\n\
+             \x20   pub fn validate(&self, expected: u64) -> bool {\n\
+             \x20       self.value.checksum() == expected\n\
+             \x20   }\n\
+             }\n",
+        )];
+        assert_eq!(task.verify(&files).verdict, TaskVerdict::Pass);
+    }
+
+    #[test]
+    fn scenario_10_passes_with_where_clause() {
+        let task = Scenario10FixTraitBound;
+        let files = vec![(
+            "src/lib.rs",
+            "/// A trait for types that can produce a checksum.\n\
+             pub trait Checksum {\n\
+             \x20   /// Return a simple checksum value.\n\
+             \x20   fn checksum(&self) -> u64;\n\
+             }\n\
+             \n\
+             impl Checksum for String {\n\
+             \x20   fn checksum(&self) -> u64 {\n\
+             \x20       self.bytes().fold(0u64, |acc, b| acc.wrapping_add(b as u64))\n\
+             \x20   }\n\
+             }\n\
+             \n\
+             impl Checksum for Vec<u8> {\n\
+             \x20   fn checksum(&self) -> u64 {\n\
+             \x20       self.iter().fold(0u64, |acc, b| acc.wrapping_add(*b as u64))\n\
+             \x20   }\n\
+             }\n\
+             \n\
+             /// Verify that a value's checksum matches the expected value.\n\
+             pub fn verify<T>(data: &T, expected: u64) -> bool\n\
+             where T: Checksum\n\
+             {\n\
+             \x20   data.checksum() == expected\n\
+             }\n\
+             \n\
+             /// A container that holds a checksummable value.\n\
+             pub struct Container<T> where T: Checksum {\n\
+             \x20   pub value: T,\n\
+             }\n\
+             \n\
+             impl<T> Container<T> where T: Checksum {\n\
+             \x20   /// Create a new container.\n\
+             \x20   pub fn new(value: T) -> Container<T> {\n\
+             \x20       Container { value }\n\
+             \x20   }\n\
+             \n\
+             \x20   /// Check if the stored value's checksum matches the expected value.\n\
+             \x20   pub fn validate(&self, expected: u64) -> bool {\n\
+             \x20       self.value.checksum() == expected\n\
+             \x20   }\n\
+             }\n",
+        )];
+        assert_eq!(task.verify(&files).verdict, TaskVerdict::Pass);
+    }
+
+    #[test]
+    fn scenario_10_fails_with_original_code() {
+        let task = Scenario10FixTraitBound;
+        let files = task.initial_files();
+        assert_eq!(task.verify(&files).verdict, TaskVerdict::Fail);
     }
 }
