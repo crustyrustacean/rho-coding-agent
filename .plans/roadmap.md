@@ -10,11 +10,13 @@
 | 2.5: Adaptive-Resolution Context | ✅ Complete | Session tree, resolution levels, calibrated budget, tool-result bounding, amnesia fix, JSONL persistence, extension entries, compaction strategy |
 | 3: Rust Tooling and Tree-Sitter | ✅ Complete | `rho-highlight` crate, structured diagnostics, `CargoCheck`/`CargoClippy`/`CargoTest`/`CargoFix`/`RustcExplain` tools, AST span mapping, `EditFile` node-splitting validation, Rust-aware system prompt, `rho-eval` benchmark suite (5 eval tasks), `rho-bench` harness, shared bootstrapping (`client_factory`, `compose_full_system_prompt`), test suite audit |
 | 3.4: First-Class Frontier Model Support | ✅ Complete | Shared bootstrapping in `rho-core` (`client_factory`, `compose_full_system_prompt`), CLI flags for provider config (`--endpoint`, `--api-key-env`, `--max-iterations`), egress enforcement in `rho-bench`, expanded eval scenarios |
-| 3.5: Rust Standard Library Reference | 🔜 Planned | `RustdocLookup` tool — query local rustdoc via `rustup doc --path`, resolve types/methods/traits, HTML stripping, section filtering |
-| 3.6: crates.io Registry Research | 🔜 Planned | `CratesIoLookup` tool — crate metadata, search, version history, dependency trees via crates.io API |
+| 3.5: Rust Standard Library Reference | ✅ Complete | `RustdocLookup` tool — query local rustdoc via `rustup doc --path`, resolve types/methods/traits, HTML stripping, section filtering |
+| 3.6: crates.io Registry Research | ✅ Complete | `CratesIoLookup` tool — crate metadata, search, version history, dependency trees via crates.io API |
 | 3.7: Multi-Model Benchmark Harness | ✅ Complete | `rho-bench` binary with `CountingClient`, `BenchApprovalGate`, multi-model sweeps (`--models`), `TaskMetrics`, terminal table + JSON output, timestamped result persistence |
 | 3.8: Streaming Support | ✅ Complete | Streaming API (`chat_stream`), SSE parsing, `StreamChunk` accumulation, external provider support (OpenRouter), `rho-bench` streaming-compatible `CountingClient` |
-| 4: Terminal UI | 🔜 In Progress | Rich TUI replacing the bare REPL. Pre-Work 1 (streaming API) and Pre-Work 2 (modularize rust.rs) complete. External provider streaming validated. |
+| 3.9: Rust Standard Library Reference | ✅ Complete | `RustdocLookup` tool — query local rustdoc via `rustup doc --path`, resolve types/methods/traits, HTML stripping, section filtering |
+| 3.10: Hashline Editing | 🔜 Planned | Content-addressed line editing with hash-anchored references. Reliable edits, stale-context detection, token efficiency. Backward compatible with legacy exact-match edits. |
+| 4: Terminal UI | 🔜 Planned | Rich TUI replacing the bare REPL. Pre-Work 1 (streaming API) and Pre-Work 2 (modularize rust.rs) complete. External provider streaming validated. |
 | 5: Extensions and Polish | Planned | Custom tools, prompt composition with budget awareness |
 | 6: LSP | Deferred | rust-analyzer integration |
 
