@@ -34,20 +34,19 @@ enum HashlineOp {
 struct HashlineAnchor {
     /// 1-indexed line number.
     line_num: usize,
-    /// 2-character hash string.
+    /// 4-character hash string.
     hash: String,
 }
 
 impl HashlineAnchor {
-    /// Parse a hashline anchor string (e.g., "2#KT").
+    /// Parse a hashline anchor string (e.g., "2#KTNS").
     fn parse(anchor: &str) -> Option<Self> {
-        let parts: Vec<&str> = anchor.split('#').collect();
-        if parts.len() != 2 {
+        let (line_num_str, hash) = anchor.split_once('#')?;
+        let line_num = line_num_str.parse::<usize>().ok()?;
+        if hash.is_empty() {
             return None;
         }
-        let line_num = parts[0].parse::<usize>().ok()?;
-        let hash = parts[1].to_string();
-        Some(HashlineAnchor { line_num, hash })
+        Some(HashlineAnchor { line_num, hash: hash.to_string() })
     }
 }
 
@@ -87,7 +86,7 @@ impl Tool for ReadFile {
         "Read the text contents of a file within the project. \
          Returns the file's content wrapped in <context> tags. \
          When hashline is enabled (default), each line is prefixed with LINE#HASH: \
-         (e.g., '  9#KT:  console.log(\"world\");') for reliable editing."
+         (e.g., '  9#KTNS:  console.log(\"world\");') for reliable editing."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -443,7 +442,7 @@ impl Tool for EditFile {
          Uses hashline anchors from read_file output (LINE#HASH: prefix). \
          Operations: replace (swap line at anchor), append (insert after), \
          prepend (insert before), delete (remove line). \
-         Example: {op: \"replace\", pos: \"9#KT\", lines: [\"new content\"]}. \
+         Example: {op: \"replace\", pos: \"9#KTNS\", lines: [\"new content\"]}. \
          Hash mismatches fail with fresh hashes for retry. \
          Also supports legacy {old_text, new_text} format."
     }
@@ -477,7 +476,7 @@ impl Tool for EditFile {
                             },
                             "pos": {
                                 "type": "string",
-                                "description": "Hashline format: Anchor position (e.g., '2#KT'). Required for hashline edits."
+                                "description": "Hashline format: Anchor position (e.g., '2#KTNS'). Required for hashline edits."
                             },
                             "end": {
                                 "type": "string",
