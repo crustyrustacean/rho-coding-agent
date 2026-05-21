@@ -977,6 +977,7 @@ impl EditFile {
                     output.push_str("\n<diff>\n");
                     output.push_str(&diff);
                     output.push_str("</diff>");
+                    output.push_str("\nNote: Anchors in diff are fresh. Use for chained edits.");
                 }
                 Ok(ToolOutcome::Immediate(ToolResult::success(output)))
             }
