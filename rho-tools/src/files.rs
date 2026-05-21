@@ -439,11 +439,13 @@ impl Tool for EditFile {
     }
 
     fn description(&self) -> &str {
-        "Apply targeted edits to a file within the project. Supports two formats: \
-         (1) Legacy: old_text/new_text exact-match replacements. \
-         (2) Hashline: {op: \"replace\"|\"append\"|\"prepend\"|\"delete\", pos: \"LINE#HASH\", lines: [...]}. \
-         Hashline anchors are obtained from read_file output (LINE#HASH: prefix). \
-         Hash mismatches fail safely with fresh hashes for retry."
+        "Apply targeted edits to a file within the project. \
+         Uses hashline anchors from read_file output (LINE#HASH: prefix). \
+         Operations: replace (swap line at anchor), append (insert after), \
+         prepend (insert before), delete (remove line). \
+         Example: {op: \"replace\", pos: \"9#KT\", lines: [\"new content\"]}. \
+         Hash mismatches fail with fresh hashes for retry. \
+         Also supports legacy {old_text, new_text} format."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

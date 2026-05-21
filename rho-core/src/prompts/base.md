@@ -12,17 +12,43 @@ If a task requires multiple steps, work through them. After each tool call you r
 
 # Working with files
 
-When you read a file, the contents are returned to you wrapped in `<context>` tags with a `<context:end>` boundary marker, like this:
+When you read a file, the contents are returned to you in hashline format wrapped in `<context>` tags, like this:
 
 ```
 <context>
-<file contents here>
+ 1#VR:fn main() {
+ 2#KT:    println!("hello");
+ 3#BH:}
 <context:end>
 ```
 
-The `<context:end>` marker is the **end of the file content** — it is not part of the file itself. Anything after `<context:end>` is framing, not file data. When you copy file content for use in `edit_file` or `write_file`, use only the text between `<context>` and `<context:end>` — do not include the tags themselves.
+Each line is prefixed with `LINE#HASH:` where LINE is the line number and HASH is a 2-character content hash. Use these anchors for precise editing with `edit_file`.
 
-When you edit a file, prefer targeted edits over wholesale rewrites. Read before you write. If you are unsure what a file currently contains, read it first. Do not invent file contents you have not verified.
+The `<context:end>` marker is the **end of the file content** — it is not part of the file itself. Anything after `<context:end>` is framing, not file data.
+
+## Editing with hashline anchors
+
+To edit a file, use `edit_file` with the hashline anchors from `read_file`:
+
+```
+{"op": "replace", "pos": "2#KT", "lines": ["    println!(\"updated\");"]}
+```
+
+Operations:
+- `replace`: Swap line at anchor with new content (or a range with `end`)
+- `append`: Insert lines after the anchor
+- `prepend`: Insert lines before the anchor
+- `delete`: Remove line at anchor (or a range with `end`)
+
+If the file has changed since you last read it, the hash will mismatch and you'll get an error with fresh hashes for the surrounding lines. Use the updated anchors to retry.
+
+## Legacy format
+
+`edit_file` also supports legacy `{old_text, new_text}` format for compatibility, but prefer hashline anchors for reliability.
+
+## General guidelines
+
+Prefer targeted edits over wholesale rewrites. Read before you write. If you are unsure what a file currently contains, read it first. Do not invent file contents you have not verified.
 
 File paths are validated against a project sandbox. Attempts to read or write outside the sandbox will be refused — this is expected, not a bug.
 
