@@ -1,3 +1,18 @@
+## [0.41.1] - 2026-05-21
+
+### 🐛 Bug Fixes
+
+- *(tools)* **Hashline collision saturation** — expanded hash from 2 characters (256 values, 22% collision rate on a 106-line file) to 4 characters (65,536 values, 1.9% collision rate). Birthday-problem 50% threshold moves from ~19 lines to ~302 lines.
+- *(tools)* **Hashline retry spiral** — replaced hard-fail on hash mismatch with tiered fuzzy anchor matching: exact match → relax on high-information lines → neighborhood search ±5 lines → hard fail with fresh hashes. Eliminates the model round-trip penalty on stale anchors after chained edits.
+- *(tools)* **Diff display bug** — `format_hashline_diff` was showing new content on both `-` and `+` lines of a modification. The `-` line now correctly shows old content.
+- *(tools)* **Fresh anchors block** — successful edits now include a `<fresh-anchors>` block with ±5 lines of freshly-hashed context around changed regions, giving the model actionable anchors for chained edits without re-reading.
+
+### 🧪 Evaluation
+
+- Validated against deepseek-v4-flash via OpenRouter: 8/10 eval scenarios pass (consistent with pre-fix baseline). No hashline-related regressions or stuck loops observed.
+
+---
+
 ## [0.41.0] - 2026-05-21
 
 ### ✨ New Features
