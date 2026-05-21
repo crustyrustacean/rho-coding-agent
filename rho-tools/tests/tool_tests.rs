@@ -1789,3 +1789,57 @@ async fn edit_file_mixed_hashline_and_legacy_edits() {
     let modified = fs::read_to_string(&path).unwrap();
     assert_eq!(modified, "modified line 1\nline 2\nline three\nline 4");
 }
+
+#[tokio::test]
+async fn edit_file_hashline_success_includes_diff() {
+    let (dir, root) = setup();
+    let path = dir.path().join("test.txt");
+    let content = "line 1\nline 2\nline 3\nline 4";
+    fs::write(&path, content).unwrap();
+
+    // Get hash for line 2
+    let read_tool = ReadFile { root: root.clone() };
+    let read_outcome = read_tool
+        .execute(
+            serde_json::json!({
+                "path": path.to_str().unwrap(),
+                "hashline": true
+            }),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let read_output = immediate_output(&read_outcome);
+    let line_2_hash = read_output
+        .lines()
+        .find(|line| line.contains("2#") && line.contains("line 2"))
+        .and_then(|line| line.split('#').nth(1).and_then(|h| h.split(':').next()))
+        .expect("should find hash");
+
+    let edit_tool = EditFile { root };
+    let anchor = format!("2#{line_2_hash}");
+    let edit_args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": [{
+            "op": "replace",
+            "pos": anchor,
+            "lines": ["modified line 2"]
+        }]
+    });
+    let edit_outcome = edit_tool
+        .execute(edit_args, CancellationToken::new())
+        .await
+        .unwrap();
+
+    let output = immediate_output(&edit_outcome);
+    assert!(!immediate_is_error(&edit_outcome), "edit should succeed");
+    assert!(
+        output.contains("<diff>"),
+        "output should include diff: {output}"
+    );
+    assert!(output.contains("</diff>"), "output should close diff tag");
+    assert!(
+        output.contains('+'),
+        "diff should contain added line marker"
+    );
+}

@@ -667,6 +667,90 @@ impl Tool for EditFile {
 }
 
 impl EditFile {
+    /// Generate a terse diff between old and new content with hashline anchors.
+    ///
+    /// Shows ±3 lines of context around each changed region, using hashline
+    /// format for the new content. Lines prefixed with `-` are removed, `+` added.
+    fn format_hashline_diff(old: &str, new: &str) -> String {
+        let old_lines: Vec<&str> = old.lines().collect();
+        let new_lines: Vec<&str> = new.lines().collect();
+        let width = new_lines.len().to_string().len().max(1);
+
+        // Find changed line indices in the new content
+        let mut changed_indices: Vec<usize> = Vec::new();
+        let max_cmp = new_lines.len().min(old_lines.len());
+
+        for i in 0..max_cmp {
+            if old_lines[i] != new_lines[i] {
+                changed_indices.push(i);
+            }
+        }
+        // Added lines at end
+        for i in old_lines.len()..new_lines.len() {
+            changed_indices.push(i);
+        }
+        // Removed lines at end — mark last comparable line as changed
+        if old_lines.len() > new_lines.len() && !new_lines.is_empty() {
+            let last = new_lines.len() - 1;
+            if changed_indices.last() != Some(&last) {
+                changed_indices.push(last);
+            }
+        }
+
+        if changed_indices.is_empty() {
+            return String::new();
+        }
+
+        // Group changes into regions with ±3 context, merge overlapping
+        let ctx = 3;
+        let mut regions: Vec<(usize, usize)> = Vec::new();
+        for &idx in &changed_indices {
+            let start = idx.saturating_sub(ctx);
+            let end = (idx + ctx).min(new_lines.len().saturating_sub(1));
+            if let Some(last) = regions.last_mut()
+                && start <= last.1 + 1
+            {
+                last.1 = last.1.max(end);
+                continue;
+            }
+            regions.push((start, end));
+        }
+
+        let mut diff = String::new();
+        // SAFETY: write! to String is infallible
+        let mut w = |s: &str| {
+            diff.push_str(s);
+        };
+
+        for (ri, &(start, end)) in regions.iter().enumerate() {
+            if ri > 0 {
+                w("  ...\n");
+            }
+            for i in start..=end {
+                if i >= new_lines.len() {
+                    break;
+                }
+                let line_num = i + 1;
+                let hash = compute_line_hash(new_lines[i], line_num);
+                let line_content = new_lines[i];
+                let is_changed = changed_indices.binary_search(&i).is_ok();
+                if is_changed && i < old_lines.len() {
+                    // Modified line — show both old and new
+                    w(&format!("- {line_num:>width$}#{hash}:{line_content}\n"));
+                    let old_hash = compute_line_hash(old_lines[i], line_num);
+                    w(&format!("+ {line_num:>width$}#{old_hash}:{line_content}\n"));
+                } else if is_changed {
+                    // Added line
+                    w(&format!("+ {line_num:>width$}#{hash}:{line_content}\n"));
+                } else {
+                    // Context line
+                    w(&format!("  {line_num:>width$}#{hash}:{line_content}\n"));
+                }
+            }
+        }
+        diff
+    }
+
     /// Apply hashline edits to content in memory.
     ///
     /// Returns the modified content on success, or an error message on failure
@@ -883,11 +967,18 @@ impl EditFile {
                         "edit_file: failed to write `{path_str}`: {e}"
                     ))));
                 }
-                Ok(ToolOutcome::Immediate(ToolResult::success(format!(
+                let mut output = format!(
                     "applied {} hashline edit(s) to {}",
                     edits_arg.len(),
                     path_str
-                ))))
+                );
+                let diff = Self::format_hashline_diff(&content, &modified);
+                if !diff.is_empty() {
+                    output.push_str("\n<diff>\n");
+                    output.push_str(&diff);
+                    output.push_str("</diff>");
+                }
+                Ok(ToolOutcome::Immediate(ToolResult::success(output)))
             }
             Err(msg) => Ok(ToolOutcome::Immediate(ToolResult::error(msg))),
         }
