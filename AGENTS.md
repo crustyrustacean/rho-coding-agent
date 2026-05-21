@@ -41,6 +41,30 @@ cargo xtask test -- --nocapture # Run with stdout visible
 - **git-cliff** — generates `CHANGELOG.md` from conventional commits. Invoked by `cargo xtask changelog <version>`.
 - **cargo-release** — automates version bumping, tagging, and publishing. Run `cargo release <version>` to perform a dry-run; add `--execute` to apply.
 
+## Hashline Editing
+
+`read_file` returns content in hashline format: each line is prefixed with `LINE#HASH:`.
+
+```
+<context>
+ 8#VR:function hello() {
+ 9#KT:  console.log("world");
+10#BH:}
+<context:end>
+```
+
+`edit_file` accepts hashline anchors for precise, content-verified edits:
+
+```json
+{"op": "replace", "pos": "9#KT", "lines": ["  console.log('updated');"]}
+```
+
+Operations: `replace`, `append`, `prepend`, `delete`. Hash mismatches fail with fresh hashes for retry.
+
+The hash is a 2-character string from alphabet `ZPMQVRWSNKTXJBYH` (256 combinations), computed from line content (or line number for non-alphanumeric lines). Implemented in `rho-tools/src/hashline.rs`.
+
+Legacy `old_text`/`new_text` edits still work but prefer hashline.
+
 ## Release Checklist
 
 1. Ensure `cargo xtask ci` passes.

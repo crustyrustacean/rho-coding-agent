@@ -18,16 +18,23 @@
 //! noise filtering.
 //!
 //! [`RustdocTool`] — stdlib documentation lookup from locally installed rustdoc.
+//!
+//! ## Hashline editing (Phase 3.10)
+//!
+//! [`compute_line_hash`] — content-addressed line editing with hash-anchored
+//! references for reliable file edits.
 
 pub mod crates_io;
 pub mod error;
 pub mod files;
+pub mod hashline;
 pub mod rust;
 pub mod shell;
 
 pub use crate::error::ToolError;
 pub use crates_io::CratesIoLookup;
 pub use files::{EditFile, ListDir, ReadFile, WriteFile};
+pub use hashline::compute_line_hash;
 pub use rust::{CargoCheck, CargoClippy, CargoFix, CargoTest, RustcExplain, RustdocTool};
 pub use shell::{CommandDenylist, PowerShellExecutor, RunCommand};
 

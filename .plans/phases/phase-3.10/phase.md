@@ -4,7 +4,7 @@
 
 **Milestone:** The agent reads files with hashlined output, edits using hash anchors, and receives helpful error messages with fresh anchors when files have changed. Backward compatibility with legacy `old_text`/`new_text` edits is maintained.
 
-**Current state (pre-Phase 3.10):** `ReadFile` returns plain content wrapped in `<context>` tags. `EditFile` uses exact-match replacement with `old_text`/`new_text`, ensuring uniqueness and no overlap. No line numbers or content hashes anywhere in the file editing workflow. The model must quote full lines to make edits, leading to token waste and stale-context failures when files change between read and edit operations.
+**Current state (Phase 3.10 complete):** `ReadFile` outputs `LINE#HASH:` format by default. `EditFile` accepts hashline anchors with replace/append/prepend/delete ops. Legacy `old_text`/`new_text` edits still work. Mixed hashline+legacy supported. Hash mismatches fail with fresh ±3-line hashes. Eval suite validated against 4 models (Deepseek v4-Flash, v4-Pro, GLM-5-Turbo, GLM-5.1) with 0 hashline-related regressions.
 
 **Debtmap analysis:** A technical debt analysis was completed using debtmap v0.16.5 before planning this phase:
 - **Overall:** Good - Well-tested core with moderate technical debt (Debt Density: 84.33/1K LOC, Total: 18,086 LOC)

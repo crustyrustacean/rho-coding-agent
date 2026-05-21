@@ -9,6 +9,7 @@ A local coding agent written in Rust. rho runs in your terminal, talks to a mode
 ## Features
 
 - 🔒 **Safety-first** — file sandbox, approval gates, secret redaction, and untrusted-data framing by default
+- ✏️ **Hashline editing** — content-addressed line references (LINE#HASH:) prevent stale-context corruption in file edits
 - 💻 **Cross-platform** — runs on Windows, macOS, and Linux
 - 🐚 **PowerShell-native** — the shell is PowerShell (via `pwsh`); the model generates PowerShell commands, not bash
 - 📂 **Project-aware** — auto-detects project root, loads context files (`AGENTS.md`, `CLAUDE.md`, `.cursorrules`, etc.) with hash-verified trust
@@ -174,7 +175,7 @@ rho treats model output as untrusted and applies defense-in-depth:
 │    rho-core      │  ← Agent kernel: loop, types, traits, config
 └──────────────────┘
    rho-test-helpers   ← Dev-only: mocks, fixtures, tempdir helpers
-   rho-eval            ← Dev-only: behavioural benchmark suite (5 eval tasks)
+   rho-eval            ← Dev-only: behavioural benchmark suite (10 eval tasks)
    rho-bench          ← Dev-only: benchmark harness (multi-model comparison)
 ```
 
@@ -203,7 +204,7 @@ rho/                  # Binary entry point + library crate
 rho-core/             # Agent kernel (loop, types, traits, config)
 rho-tools/            # Built-in tools (files, shell, rust tooling)
 rho-highlight/        # Tree-sitter syntax analysis
-rho-eval/             # Behavioural benchmark suite (5 eval tasks)
+rho-eval/             # Behavioural benchmark suite (10 eval tasks)
 rho-bench/            # Benchmark harness (multi-model comparison)
 rho-test-helpers/     # Shared test utilities (dev-only)
 xtask/                # Dev task runner

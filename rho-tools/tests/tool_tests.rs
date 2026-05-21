@@ -1282,3 +1282,757 @@ async fn cargo_check_edit_file_cargo_check_loop() {
         ToolOutcome::Streamed(_) => panic!("expected immediate"),
     }
 }
+
+// ── Hashline ReadFile Tests (Phase 3.10) ────────────────────────────────────────
+
+#[tokio::test]
+async fn read_file_with_hashline_enabled_outputs_hashline_format() {
+    let (dir, root) = setup();
+    let path = dir.path().join("hello.txt");
+    fs::write(&path, "hello world").unwrap();
+
+    let tool = ReadFile { root };
+    let args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "hashline": true
+    });
+    let outcome = tool.execute(args, CancellationToken::new()).await.unwrap();
+
+    let output = immediate_output(&outcome);
+    assert!(
+        output.contains("<context>"),
+        "output must be wrapped in <context>: {output}"
+    );
+    assert!(
+        output.contains("1#"),
+        "output must contain line number with hash: {output}"
+    );
+    assert!(output.contains("<context:end>"));
+}
+
+#[tokio::test]
+async fn read_file_with_hashline_disabled_outputs_legacy_format() {
+    let (dir, root) = setup();
+    let path = dir.path().join("hello.txt");
+    fs::write(&path, "hello world").unwrap();
+
+    let tool = ReadFile { root };
+    let args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "hashline": false
+    });
+    let outcome = tool.execute(args, CancellationToken::new()).await.unwrap();
+
+    let output = immediate_output(&outcome);
+    assert!(
+        output.contains("<context>"),
+        "output must be wrapped in <context>: {output}"
+    );
+    assert!(
+        output.contains("hello world"),
+        "output must contain file contents"
+    );
+    assert!(
+        !output.contains("1#"),
+        "hashline format must not be present: {output}"
+    );
+    assert!(output.contains("<context:end>"));
+}
+
+#[tokio::test]
+async fn read_file_without_hashline_parameter_defaults_to_hashline_format() {
+    let (dir, root) = setup();
+    let path = dir.path().join("hello.txt");
+    fs::write(&path, "hello world").unwrap();
+
+    let tool = ReadFile { root };
+    let args = serde_json::json!({
+        "path": path.to_str().unwrap()
+        // No hashline parameter - should default to true
+    });
+    let outcome = tool.execute(args, CancellationToken::new()).await.unwrap();
+
+    let output = immediate_output(&outcome);
+    assert!(
+        output.contains("1#"),
+        "default behavior should be hashline format: {output}"
+    );
+}
+
+#[tokio::test]
+async fn read_file_hashline_format_correct_line_number_padding() {
+    let (dir, root) = setup();
+    let path = dir.path().join("many.txt");
+    let content = (1..=100)
+        .map(|i| format!("line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(&path, content).unwrap();
+
+    let tool = ReadFile { root };
+    let args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "hashline": true
+    });
+    let outcome = tool.execute(args, CancellationToken::new()).await.unwrap();
+
+    let output = immediate_output(&outcome);
+    // Line 1 should be "  1#" (width=3 for 100 lines)
+    assert!(
+        output.contains("  1#"),
+        "line 1 should be padded to width 3: {output}"
+    );
+    // Line 100 should be "100#" (width=3)
+    assert!(
+        output.contains("100#"),
+        "line 100 should be padded to width 3: {output}"
+    );
+}
+
+#[tokio::test]
+async fn read_file_hashline_format_empty_file() {
+    let (dir, root) = setup();
+    let path = dir.path().join("empty.txt");
+    fs::write(&path, "").unwrap();
+
+    let tool = ReadFile { root };
+    let args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "hashline": true
+    });
+    let outcome = tool.execute(args, CancellationToken::new()).await.unwrap();
+
+    let output = immediate_output(&outcome);
+    // Empty file should show just framing, no line numbers
+    assert!(
+        output.contains("<context>"),
+        "output must be wrapped in <context>: {output}"
+    );
+    assert!(
+        output.contains("<context:end>"),
+        "output must contain <context:end>: {output}"
+    );
+    // Should not contain any line numbers
+    assert!(
+        !output.contains('#'),
+        "empty file should not contain line numbers: {output}"
+    );
+}
+
+#[tokio::test]
+async fn read_file_hashline_multiline_content() {
+    let (dir, root) = setup();
+    let path = dir.path().join("multi.txt");
+    let content = "function hello() {\n  console.log(\"world\");\n}\n";
+    fs::write(&path, content).unwrap();
+
+    let tool = ReadFile { root };
+    let args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "hashline": true
+    });
+    let outcome = tool.execute(args, CancellationToken::new()).await.unwrap();
+
+    let output = immediate_output(&outcome);
+    assert!(output.contains("1#"), "should have line 1: {output}");
+    assert!(output.contains("2#"), "should have line 2: {output}");
+    assert!(output.contains("3#"), "should have line 3: {output}");
+    assert!(
+        output.contains("function hello() {"),
+        "should contain line 1 content: {output}"
+    );
+    assert!(
+        output.contains("console.log(\"world\");"),
+        "should contain line 2 content: {output}"
+    );
+    assert!(
+        output.contains('}'),
+        "should contain line 3 content: {output}"
+    );
+}
+
+#[tokio::test]
+async fn read_file_hashline_format_preserves_whitespace() {
+    let (dir, root) = setup();
+    let path = dir.path().join("whitespace.txt");
+    let content = "  indented\n\ttabbed\n  mixed\n";
+    fs::write(&path, content).unwrap();
+
+    let tool = ReadFile { root };
+    let args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "hashline": true
+    });
+    let outcome = tool.execute(args, CancellationToken::new()).await.unwrap();
+
+    let output = immediate_output(&outcome);
+    assert!(
+        output.contains("  indented"),
+        "should preserve indentation: {output}"
+    );
+    assert!(
+        output.contains("\ttabbed"),
+        "should preserve tabs: {output}"
+    );
+    assert!(
+        output.contains("  mixed"),
+        "should preserve mixed whitespace: {output}"
+    );
+}
+
+// ── Hashline EditFile Tests (Phase 3.10) ───────────────────────────────────────
+
+#[tokio::test]
+async fn edit_file_hashline_replace_single_line_with_valid_hash() {
+    let (dir, root) = setup();
+    let path = dir.path().join("test.txt");
+    let content = "line 1\nline 2\nline 3";
+    fs::write(&path, content).unwrap();
+
+    // First, read the file to get the hash
+    let read_tool = ReadFile { root: root.clone() };
+    let read_args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "hashline": true
+    });
+    let read_outcome = read_tool
+        .execute(read_args, CancellationToken::new())
+        .await
+        .unwrap();
+    let read_output = immediate_output(&read_outcome);
+
+    // Extract the hash for line 2 (e.g., "1#...:line 1\n2#...:line 2")
+    let line_2_hash = read_output
+        .lines()
+        .find(|line| line.contains("2#") && line.contains("line 2"))
+        .and_then(|line| {
+            line.split('#')
+                .nth(1)
+                .and_then(|hash_part| hash_part.split(':').next())
+        });
+
+    let hash = line_2_hash.expect("should find hash for line 2");
+
+    let edit_tool = EditFile { root };
+    let anchor = format!("2#{hash}");
+    let edit_args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": [{
+            "op": "replace",
+            "pos": anchor,
+            "lines": ["modified line 2"]
+        }]
+    });
+    let edit_outcome = edit_tool
+        .execute(edit_args, CancellationToken::new())
+        .await
+        .unwrap();
+
+    assert!(!immediate_is_error(&edit_outcome), "edit should succeed");
+    let modified = fs::read_to_string(&path).unwrap();
+    assert_eq!(modified, "line 1\nmodified line 2\nline 3");
+}
+
+#[tokio::test]
+async fn edit_file_hashline_mismatch_returns_error_with_fresh_hashes() {
+    let (dir, root) = setup();
+    let path = dir.path().join("test.txt");
+    let content = "original line 2";
+    fs::write(&path, content).unwrap();
+
+    let edit_tool = EditFile { root };
+    // Use an incorrect hash
+    let edit_args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": [{
+            "op": "replace",
+            "pos": "1#ZZ",  // Wrong hash
+            "lines": ["modified"]
+        }]
+    });
+    let edit_outcome = edit_tool
+        .execute(edit_args, CancellationToken::new())
+        .await
+        .unwrap();
+
+    let output = immediate_output(&edit_outcome);
+    assert!(
+        immediate_is_error(&edit_outcome),
+        "edit should fail with hash mismatch"
+    );
+    assert!(
+        output.contains("hash mismatch"),
+        "error should mention hash mismatch"
+    );
+    assert!(
+        output.contains("Fresh hashes"),
+        "error should include fresh hashes context"
+    );
+}
+
+#[tokio::test]
+async fn edit_file_hashline_append_after_anchor() {
+    let (dir, root) = setup();
+    let path = dir.path().join("test.txt");
+    let content = "line 1\nline 2\nline 3";
+    fs::write(&path, content).unwrap();
+
+    // Get hash for line 2
+    let read_tool = ReadFile { root: root.clone() };
+    let read_outcome = read_tool
+        .execute(
+            serde_json::json!({
+                "path": path.to_str().unwrap(),
+                "hashline": true
+            }),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let read_output = immediate_output(&read_outcome);
+    let line_2_hash = read_output
+        .lines()
+        .find(|line| line.contains("2#") && line.contains("line 2"))
+        .and_then(|line| line.split('#').nth(1).and_then(|h| h.split(':').next()))
+        .expect("should find hash");
+
+    let edit_tool = EditFile { root };
+    let anchor = format!("2#{line_2_hash}");
+    let edit_args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": [{
+            "op": "append",
+            "pos": anchor,
+            "lines": ["inserted after line 2"]
+        }]
+    });
+    let edit_outcome = edit_tool
+        .execute(edit_args, CancellationToken::new())
+        .await
+        .unwrap();
+
+    assert!(!immediate_is_error(&edit_outcome), "edit should succeed");
+    let modified = fs::read_to_string(&path).unwrap();
+    assert_eq!(modified, "line 1\nline 2\ninserted after line 2\nline 3");
+}
+
+#[tokio::test]
+async fn edit_file_hashline_prepend_before_anchor() {
+    let (dir, root) = setup();
+    let path = dir.path().join("test.txt");
+    let content = "line 1\nline 2\nline 3";
+    fs::write(&path, content).unwrap();
+
+    // Get hash for line 2
+    let read_tool = ReadFile { root: root.clone() };
+    let read_outcome = read_tool
+        .execute(
+            serde_json::json!({
+                "path": path.to_str().unwrap(),
+                "hashline": true
+            }),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let read_output = immediate_output(&read_outcome);
+    let line_2_hash = read_output
+        .lines()
+        .find(|line| line.contains("2#") && line.contains("line 2"))
+        .and_then(|line| line.split('#').nth(1).and_then(|h| h.split(':').next()))
+        .expect("should find hash");
+
+    let edit_tool = EditFile { root };
+    let anchor = format!("2#{line_2_hash}");
+    let edit_args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": [{
+            "op": "prepend",
+            "pos": anchor,
+            "lines": ["inserted before line 2"]
+        }]
+    });
+    let edit_outcome = edit_tool
+        .execute(edit_args, CancellationToken::new())
+        .await
+        .unwrap();
+
+    assert!(!immediate_is_error(&edit_outcome), "edit should succeed");
+    let modified = fs::read_to_string(&path).unwrap();
+    assert_eq!(modified, "line 1\ninserted before line 2\nline 2\nline 3");
+}
+
+#[tokio::test]
+async fn edit_file_hashline_delete_line_at_anchor() {
+    let (dir, root) = setup();
+    let path = dir.path().join("test.txt");
+    let content = "line 1\nline 2\nline 3\nline 4";
+    fs::write(&path, content).unwrap();
+
+    // Get hash for line 2
+    let read_tool = ReadFile { root: root.clone() };
+    let read_outcome = read_tool
+        .execute(
+            serde_json::json!({
+                "path": path.to_str().unwrap(),
+                "hashline": true
+            }),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let read_output = immediate_output(&read_outcome);
+    let line_2_hash = read_output
+        .lines()
+        .find(|line| line.contains("2#") && line.contains("line 2"))
+        .and_then(|line| line.split('#').nth(1).and_then(|h| h.split(':').next()))
+        .expect("should find hash");
+
+    let edit_tool = EditFile { root };
+    let anchor = format!("2#{line_2_hash}");
+    let edit_args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": [{
+            "op": "delete",
+            "pos": anchor
+        }]
+    });
+    let edit_outcome = edit_tool
+        .execute(edit_args, CancellationToken::new())
+        .await
+        .unwrap();
+
+    assert!(!immediate_is_error(&edit_outcome), "edit should succeed");
+    let modified = fs::read_to_string(&path).unwrap();
+    assert_eq!(modified, "line 1\nline 3\nline 4");
+}
+
+#[tokio::test]
+async fn edit_file_legacy_format_still_works() {
+    let (dir, root) = setup();
+    let path = dir.path().join("test.txt");
+    let content = "hello world";
+    fs::write(&path, content).unwrap();
+
+    let edit_tool = EditFile { root };
+    let edit_args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": [{
+            "old_text": "hello world",
+            "new_text": "hello hashline"
+        }]
+    });
+    let edit_outcome = edit_tool
+        .execute(edit_args, CancellationToken::new())
+        .await
+        .unwrap();
+
+    assert!(
+        !immediate_is_error(&edit_outcome),
+        "legacy edit should succeed"
+    );
+    let modified = fs::read_to_string(&path).unwrap();
+    assert_eq!(modified, "hello hashline");
+}
+
+#[tokio::test]
+async fn edit_file_mixed_hashline_and_legacy_edits() {
+    let (dir, root) = setup();
+    let path = dir.path().join("test.txt");
+    let content = "line 1\nline 2\nline 3\nline 4";
+    fs::write(&path, content).unwrap();
+
+    // Get hash for line 1
+    let read_tool = ReadFile { root: root.clone() };
+    let read_outcome = read_tool
+        .execute(
+            serde_json::json!({
+                "path": path.to_str().unwrap(),
+                "hashline": true
+            }),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let read_output = immediate_output(&read_outcome);
+    let line_1_hash = read_output
+        .lines()
+        .find(|line| line.contains("1#") && line.contains("line 1"))
+        .and_then(|line| line.split('#').nth(1).and_then(|h| h.split(':').next()))
+        .expect("should find hash");
+
+    let edit_tool = EditFile { root };
+    let anchor = format!("1#{line_1_hash}");
+    let edit_args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": [
+            {
+                "op": "replace",
+                "pos": anchor,
+                "lines": ["modified line 1"]
+            },
+            {
+                "old_text": "line 3",
+                "new_text": "line three"
+            }
+        ]
+    });
+    let edit_outcome = edit_tool
+        .execute(edit_args, CancellationToken::new())
+        .await
+        .unwrap();
+
+    assert!(
+        !immediate_is_error(&edit_outcome),
+        "mixed edits should succeed"
+    );
+    let modified = fs::read_to_string(&path).unwrap();
+    assert_eq!(modified, "modified line 1\nline 2\nline three\nline 4");
+}
+
+#[tokio::test]
+async fn edit_file_hashline_success_includes_diff() {
+    let (dir, root) = setup();
+    let path = dir.path().join("test.txt");
+    let content = "line 1\nline 2\nline 3\nline 4";
+    fs::write(&path, content).unwrap();
+
+    // Get hash for line 2
+    let read_tool = ReadFile { root: root.clone() };
+    let read_outcome = read_tool
+        .execute(
+            serde_json::json!({
+                "path": path.to_str().unwrap(),
+                "hashline": true
+            }),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let read_output = immediate_output(&read_outcome);
+    let line_2_hash = read_output
+        .lines()
+        .find(|line| line.contains("2#") && line.contains("line 2"))
+        .and_then(|line| line.split('#').nth(1).and_then(|h| h.split(':').next()))
+        .expect("should find hash");
+
+    let edit_tool = EditFile { root };
+    let anchor = format!("2#{line_2_hash}");
+    let edit_args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": [{
+            "op": "replace",
+            "pos": anchor,
+            "lines": ["modified line 2"]
+        }]
+    });
+    let edit_outcome = edit_tool
+        .execute(edit_args, CancellationToken::new())
+        .await
+        .unwrap();
+
+    let output = immediate_output(&edit_outcome);
+    assert!(!immediate_is_error(&edit_outcome), "edit should succeed");
+    assert!(
+        output.contains("<diff>"),
+        "output should include diff: {output}"
+    );
+    assert!(output.contains("</diff>"), "output should close diff tag");
+    assert!(
+        output.contains('+'),
+        "diff should contain added line marker"
+    );
+}
+
+#[tokio::test]
+async fn edit_file_hashline_invalid_op_returns_error() {
+    let (dir, root) = setup();
+    let path = dir.path().join("test.txt");
+    fs::write(&path, "content").unwrap();
+
+    let edit_tool = EditFile { root };
+    let edit_args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": [{
+            "op": "invalid",
+            "pos": "1#XX",
+            "lines": ["x"]
+        }]
+    });
+    let edit_outcome = edit_tool
+        .execute(edit_args, CancellationToken::new())
+        .await
+        .unwrap();
+
+    let output = immediate_output(&edit_outcome);
+    assert!(immediate_is_error(&edit_outcome), "should fail");
+    assert!(
+        output.contains("invalid op"),
+        "should mention invalid op: {output}"
+    );
+}
+
+#[tokio::test]
+async fn edit_file_hashline_out_of_range_returns_error() {
+    let (dir, root) = setup();
+    let path = dir.path().join("test.txt");
+    fs::write(&path, "line 1\nline 2").unwrap();
+
+    let edit_tool = EditFile { root };
+    let edit_args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": [{
+            "op": "replace",
+            "pos": "99#XX",
+            "lines": ["x"]
+        }]
+    });
+    let edit_outcome = edit_tool
+        .execute(edit_args, CancellationToken::new())
+        .await
+        .unwrap();
+
+    let output = immediate_output(&edit_outcome);
+    assert!(immediate_is_error(&edit_outcome), "should fail");
+    assert!(
+        output.contains("out of range"),
+        "should mention out of range: {output}"
+    );
+}
+
+#[tokio::test]
+async fn edit_file_hashline_invalid_anchor_format() {
+    let (dir, root) = setup();
+    let path = dir.path().join("test.txt");
+    fs::write(&path, "content").unwrap();
+
+    let edit_tool = EditFile { root };
+    let edit_args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": [{
+            "op": "replace",
+            "pos": "invalid",
+            "lines": ["x"]
+        }]
+    });
+    let edit_outcome = edit_tool
+        .execute(edit_args, CancellationToken::new())
+        .await
+        .unwrap();
+
+    let output = immediate_output(&edit_outcome);
+    assert!(immediate_is_error(&edit_outcome), "should fail");
+    assert!(
+        output.contains("invalid anchor"),
+        "should mention invalid anchor: {output}"
+    );
+}
+
+#[tokio::test]
+async fn edit_file_hashline_delete_range() {
+    let (dir, root) = setup();
+    let path = dir.path().join("test.txt");
+    let content = "line 1\nline 2\nline 3\nline 4\nline 5";
+    fs::write(&path, content).unwrap();
+
+    // Get hashes for lines 2 and 4
+    let read_tool = ReadFile { root: root.clone() };
+    let read_outcome = read_tool
+        .execute(
+            serde_json::json!({
+                "path": path.to_str().unwrap(),
+                "hashline": true
+            }),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let read_output = immediate_output(&read_outcome);
+
+    let line_2_hash = read_output
+        .lines()
+        .find(|line| line.contains("2#") && line.contains("line 2"))
+        .and_then(|line| line.split('#').nth(1).and_then(|h| h.split(':').next()))
+        .expect("should find hash for line 2");
+    let line_4_hash = read_output
+        .lines()
+        .find(|line| line.contains("4#") && line.contains("line 4"))
+        .and_then(|line| line.split('#').nth(1).and_then(|h| h.split(':').next()))
+        .expect("should find hash for line 4");
+
+    let edit_tool = EditFile { root };
+    let edit_args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": [{
+            "op": "delete",
+            "pos": format!("2#{line_2_hash}"),
+            "end": format!("4#{line_4_hash}")
+        }]
+    });
+    let edit_outcome = edit_tool
+        .execute(edit_args, CancellationToken::new())
+        .await
+        .unwrap();
+
+    assert!(
+        !immediate_is_error(&edit_outcome),
+        "delete range should succeed"
+    );
+    let modified = fs::read_to_string(&path).unwrap();
+    assert_eq!(modified, "line 1\nline 5");
+}
+
+#[tokio::test]
+async fn edit_file_hashline_replace_range() {
+    let (dir, root) = setup();
+    let path = dir.path().join("test.txt");
+    let content = "line 1\nline 2\nline 3\nline 4\nline 5";
+    fs::write(&path, content).unwrap();
+
+    // Get hashes
+    let read_tool = ReadFile { root: root.clone() };
+    let read_outcome = read_tool
+        .execute(
+            serde_json::json!({
+                "path": path.to_str().unwrap(),
+                "hashline": true
+            }),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let read_output = immediate_output(&read_outcome);
+
+    let line_2_hash = read_output
+        .lines()
+        .find(|line| line.contains("2#") && line.contains("line 2"))
+        .and_then(|line| line.split('#').nth(1).and_then(|h| h.split(':').next()))
+        .expect("hash 2");
+    let line_4_hash = read_output
+        .lines()
+        .find(|line| line.contains("4#") && line.contains("line 4"))
+        .and_then(|line| line.split('#').nth(1).and_then(|h| h.split(':').next()))
+        .expect("hash 4");
+
+    let edit_tool = EditFile { root };
+    let edit_args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": [{
+            "op": "replace",
+            "pos": format!("2#{line_2_hash}"),
+            "end": format!("4#{line_4_hash}"),
+            "lines": ["replaced a", "replaced b"]
+        }]
+    });
+    let edit_outcome = edit_tool
+        .execute(edit_args, CancellationToken::new())
+        .await
+        .unwrap();
+
+    assert!(
+        !immediate_is_error(&edit_outcome),
+        "replace range should succeed"
+    );
+    let modified = fs::read_to_string(&path).unwrap();
+    assert_eq!(modified, "line 1\nreplaced a\nreplaced b\nline 5");
+}

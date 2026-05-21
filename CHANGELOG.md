@@ -1,3 +1,22 @@
+## [0.41.0] - 2026-05-21
+
+### ✨ New Features
+
+- *(tools)* **Hashline editing** — `read_file` now outputs content with `LINE#HASH:` prefix by default, providing content-addressed line references for reliable editing.
+- *(tools)* `edit_file` accepts hashline anchors (`{op, pos, lines}`) for replace, append, prepend, and delete operations. Hash mismatches fail with fresh hashes for the surrounding ±3 lines.
+- *(tools)* Successful hashline edits return a `<diff>` block with hashline anchors for chained editing without re-reading.
+- *(core)* System prompt updated with hashline editing workflow and examples.
+- *(tools)* New module `rho-tools/src/hashline.rs` — custom 2-character hash computation (alphabet `ZPMQVRWSNKTXJBYH`, 256 combinations, zero dependencies).
+
+### 🔄 Changed
+
+- *(tools)* `read_file` default output format is now hashline (opt-out via `hashline: false`).
+- *(tools)* `edit_file` description updated to document hashline operations.
+- *(tools)* Legacy `old_text`/`new_text` format continues to work; mixed hashline+legacy edits supported.
+- *(eval)* Scenario 06 verifier broadened to accept all valid Option-handling patterns (`match`, `if let`, `.copied()`, `.and_modify()`), not just entry-API shortcuts.
+
+---
+
 ## [0.36.9] - 2026-05-17
 
 ### ✨ New Features
