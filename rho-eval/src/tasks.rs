@@ -552,14 +552,22 @@ impl EvalTask for Scenario06RustdocApiLookup {
         }
 
         // A correct fix must handle the Option somehow.
+        // Accept any pattern that explicitly unwraps, matches, or branches on Option.
         let handles_option = lib.contains("or_insert(0)")
             || lib.contains("or_insert_with")
             || lib.contains("unwrap_or(0)")
             || lib.contains("unwrap_or_default")
-            || lib.contains("or_default()");
+            || lib.contains("or_default()")
+            || lib.contains(".copied()")
+            || lib.contains(".copied().")
+            || lib.contains("and_modify(")
+            || lib.contains("match base.get")
+            || lib.contains("match base.entry")
+            || lib.contains("if let Some")
+            || lib.contains("Some(") && lib.contains("None");
 
         if !handles_option {
-            issues.push("no Option handling found (expected or_insert/unwrap_or/etc)");
+            issues.push("no Option handling found (expected or_insert/unwrap_or/match/if let/etc)");
         }
 
         if issues.is_empty() {
@@ -1349,6 +1357,61 @@ mod tests {
              \x20   for (key, val) in other {\n\
              \x20       let existing = base.get(key).copied().unwrap_or(0);\n\
              \x20       base.insert(key.to_string(), existing + val);\n\
+             \x20   }\n\
+             }\n",
+        )];
+        assert_eq!(task.verify(&files).verdict, TaskVerdict::Pass);
+    }
+
+    #[test]
+    fn scenario_06_passes_with_match() {
+        let task = Scenario06RustdocApiLookup;
+        let files = vec![(
+            "src/lib.rs",
+            "use std::collections::HashMap;\n\
+             \n\
+             pub fn merge_sum(base: &mut HashMap<String, i64>, other: &HashMap<String, i64>) {\n\
+             \x20   for (key, val) in other {\n\
+             \x20       match base.get(key) {\n\
+             \x20           Some(existing) => { base.insert(key.to_string(), existing + val); }\n\
+             \x20           None => { base.insert(key.to_string(), *val); }\n\
+             \x20       }\n\
+             \x20   }\n\
+             }\n",
+        )];
+        assert_eq!(task.verify(&files).verdict, TaskVerdict::Pass);
+    }
+
+    #[test]
+    fn scenario_06_passes_with_if_let() {
+        let task = Scenario06RustdocApiLookup;
+        let files = vec![(
+            "src/lib.rs",
+            "use std::collections::HashMap;\n\
+             \n\
+             pub fn merge_sum(base: &mut HashMap<String, i64>, other: &HashMap<String, i64>) {\n\
+             \x20   for (key, val) in other {\n\
+             \x20       if let Some(existing) = base.get(key) {\n\
+             \x20           base.insert(key.to_string(), existing + val);\n\
+             \x20       } else {\n\
+             \x20           base.insert(key.to_string(), *val);\n\
+             \x20       }\n\
+             \x20   }\n\
+             }\n",
+        )];
+        assert_eq!(task.verify(&files).verdict, TaskVerdict::Pass);
+    }
+
+    #[test]
+    fn scenario_06_passes_with_and_modify() {
+        let task = Scenario06RustdocApiLookup;
+        let files = vec![(
+            "src/lib.rs",
+            "use std::collections::HashMap;\n\
+             \n\
+             pub fn merge_sum(base: &mut HashMap<String, i64>, other: &HashMap<String, i64>) {\n\
+             \x20   for (key, val) in other {\n\
+             \x20       base.entry(key.to_string()).and_modify(|v| *v += val).or_insert(*val);\n\
              \x20   }\n\
              }\n",
         )];

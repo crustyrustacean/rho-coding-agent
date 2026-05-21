@@ -175,7 +175,7 @@ rho treats model output as untrusted and applies defense-in-depth:
 │    rho-core      │  ← Agent kernel: loop, types, traits, config
 └──────────────────┘
    rho-test-helpers   ← Dev-only: mocks, fixtures, tempdir helpers
-   rho-eval            ← Dev-only: behavioural benchmark suite (5 eval tasks)
+   rho-eval            ← Dev-only: behavioural benchmark suite (10 eval tasks)
    rho-bench          ← Dev-only: benchmark harness (multi-model comparison)
 ```
 
@@ -204,7 +204,7 @@ rho/                  # Binary entry point + library crate
 rho-core/             # Agent kernel (loop, types, traits, config)
 rho-tools/            # Built-in tools (files, shell, rust tooling)
 rho-highlight/        # Tree-sitter syntax analysis
-rho-eval/             # Behavioural benchmark suite (5 eval tasks)
+rho-eval/             # Behavioural benchmark suite (10 eval tasks)
 rho-bench/            # Benchmark harness (multi-model comparison)
 rho-test-helpers/     # Shared test utilities (dev-only)
 xtask/                # Dev task runner

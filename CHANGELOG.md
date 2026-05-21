@@ -1,4 +1,4 @@
-## [0.40.0] - 2026-05-20
+## [0.41.0] - 2026-05-21
 
 ### ✨ New Features
 
@@ -13,6 +13,7 @@
 - *(tools)* `read_file` default output format is now hashline (opt-out via `hashline: false`).
 - *(tools)* `edit_file` description updated to document hashline operations.
 - *(tools)* Legacy `old_text`/`new_text` format continues to work; mixed hashline+legacy edits supported.
+- *(eval)* Scenario 06 verifier broadened to accept all valid Option-handling patterns (`match`, `if let`, `.copied()`, `.and_modify()`), not just entry-API shortcuts.
 
 ---
 
