@@ -9,6 +9,7 @@ A local coding agent written in Rust. rho runs in your terminal, talks to a mode
 ## Features
 
 - 🔒 **Safety-first** — file sandbox, approval gates, secret redaction, and untrusted-data framing by default
+- ✏️ **Hashline editing** — content-addressed line references (LINE#HASH:) prevent stale-context corruption in file edits
 - 💻 **Cross-platform** — runs on Windows, macOS, and Linux
 - 🐚 **PowerShell-native** — the shell is PowerShell (via `pwsh`); the model generates PowerShell commands, not bash
 - 📂 **Project-aware** — auto-detects project root, loads context files (`AGENTS.md`, `CLAUDE.md`, `.cursorrules`, etc.) with hash-verified trust

@@ -8,6 +8,19 @@
 //!
 //! - Lines with alphanumeric characters: Hash based on line content
 //! - Lines without alphanumerics: Hash based on line number
+//!
+//! # TUI Integration (Phase 4)
+//!
+//! Hashline output can be parsed with the regex `^(\s*)(\d+)#([A-Z]{2}):(.*)$`,
+//! capturing: `[whitespace, line_num, hash, content]`.
+//!
+//! Suggested TUI rendering:
+//! - Line numbers: dimmed
+//! - Hash: dimmed or hidden (toggle with a key)
+//! - Content: normal foreground
+//! - Anchors can be click-to-copy for manual editing
+//!
+//! To strip hashes for display: `line.splitn(3, ':').nth(2)`
 //! - 2-character hash from alphabet: `ZPMQVRWSNKTXJBYH`
 //! - Deterministic: Same input always produces same output
 
@@ -257,6 +270,26 @@ mod tests {
             hash.len(),
             2,
             "Very long line should still produce 2-character hash"
+        );
+    }
+
+    #[test]
+    fn test_performance_10k_lines() {
+        // Generate a 10,000-line file with typical code content
+        let lines: Vec<String> = (1..=10_000)
+            .map(|i| format!("fn function_{i:04}() {{ let x = {i}; }}"))
+            .collect();
+
+        let start = std::time::Instant::now();
+        for (i, line) in lines.iter().enumerate() {
+            let _hash = compute_line_hash(line, i + 1);
+        }
+        let elapsed = start.elapsed();
+
+        // Should be well under 10ms for 10k lines
+        assert!(
+            elapsed.as_millis() < 10,
+            "10k lines took {elapsed:?} — should be < 10ms",
         );
     }
 }
