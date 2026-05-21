@@ -7,11 +7,61 @@
 //! `ignore` crate, and [`EditFile`] with exact-match replacement and validation.
 
 use crate::error::ToolError;
+use crate::hashline::compute_line_hash;
 use async_trait::async_trait;
+use rho_core::newtypes::FilePath;
 use rho_core::{
     Result, SandboxRoot, ToolName, ToolRisk,
     tool::{CancellationToken, Tool, ToolOutcome, ToolResult},
 };
+
+// ── Hashline Edit Types ───────────────────────────────────────────────────────
+
+/// Hashline edit operation type.
+#[derive(Debug, Clone, PartialEq)]
+enum HashlineOp {
+    /// Replace line(s) at anchor position.
+    Replace,
+    /// Insert lines after anchor position.
+    Append,
+    /// Insert lines before anchor position.
+    Prepend,
+    /// Delete line(s) at anchor position.
+    Delete,
+}
+
+/// Parsed hashline anchor: line number and hash.
+struct HashlineAnchor {
+    /// 1-indexed line number.
+    line_num: usize,
+    /// 2-character hash string.
+    hash: String,
+}
+
+impl HashlineAnchor {
+    /// Parse a hashline anchor string (e.g., "2#KT").
+    fn parse(anchor: &str) -> Option<Self> {
+        let parts: Vec<&str> = anchor.split('#').collect();
+        if parts.len() != 2 {
+            return None;
+        }
+        let line_num = parts[0].parse::<usize>().ok()?;
+        let hash = parts[1].to_string();
+        Some(HashlineAnchor { line_num, hash })
+    }
+}
+
+/// Hashline edit with operation type and parameters.
+struct HashlineEdit {
+    /// Operation to perform.
+    op: HashlineOp,
+    /// Starting anchor position.
+    pos: HashlineAnchor,
+    /// Ending anchor for range operations.
+    end: Option<HashlineAnchor>,
+    /// Lines to insert/replace (empty for delete).
+    lines: Vec<String>,
+}
 
 // ── ReadFile ──────────────────────────────────────────────────────────────────
 
@@ -35,7 +85,9 @@ impl Tool for ReadFile {
 
     fn description(&self) -> &str {
         "Read the text contents of a file within the project. \
-         Returns the file's content wrapped in <context> tags."
+         Returns the file's content wrapped in <context> tags. \
+         When hashline is enabled (default), each line is prefixed with LINE#HASH: \
+         (e.g., '  9#KT:  console.log(\"world\");') for reliable editing."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -45,6 +97,10 @@ impl Tool for ReadFile {
                 "path": {
                     "type": "string",
                     "description": "Path to the file to read (relative to the project root)."
+                },
+                "hashline": {
+                    "type": "boolean",
+                    "description": "Enable hashline format (LINE#HASH: prefix). Defaults to true."
                 }
             },
             "required": ["path"]
@@ -66,6 +122,9 @@ impl Tool for ReadFile {
                 name: "path".to_string(),
             })?;
 
+        // hashline defaults to true
+        let hashline = arguments["hashline"].as_bool().unwrap_or(true);
+
         // Validate path is within the sandbox root.
         // Resolve relative paths against the sandbox root before validation.
         let candidate = self.root.path().join(path_str);
@@ -86,11 +145,35 @@ impl Tool for ReadFile {
             }
         };
 
+        let formatted_content = if hashline {
+            // Format with hashline: LINE#HASH:content
+            let lines: Vec<&str> = content.lines().collect();
+            if lines.is_empty() {
+                // Empty file - just return framing
+                String::new()
+            } else {
+                let pad_width = lines.len().to_string().len();
+                let hashlined: Vec<String> = lines
+                    .iter()
+                    .enumerate()
+                    .map(|(i, line)| {
+                        let line_num = i + 1; // 1-indexed
+                        let hash = compute_line_hash(line, line_num);
+                        format!("{line_num:>pad_width$}#{hash}:{line}")
+                    })
+                    .collect();
+                hashlined.join("\n")
+            }
+        } else {
+            // Legacy format - just return content as-is
+            content
+        };
+
         // Wrap in <context> framing — signals to the model that this is data,
         // not instructions. The system prompt reinforces this contract.
         // <context:end> is an explicit boundary marker so the model can
         // distinguish the framing from trailing newlines in the file content.
-        let framed = format!("<context>\n{content}\n<context:end>");
+        let framed = format!("<context>\n{formatted_content}\n<context:end>");
 
         Ok(ToolOutcome::Immediate(ToolResult::success(framed)))
     }
@@ -356,12 +439,11 @@ impl Tool for EditFile {
     }
 
     fn description(&self) -> &str {
-        "Apply targeted exact-match replacements to a file within the project. \
-         Each edit specifies old_text to find and new_text to replace it with. \
-         old_text must be an exact character-for-character copy of the text in the file, \
-         including whitespace and newlines — it is NOT a regex or pattern. \
-         All old_text occurrences must be unique (exactly one match each) and \
-         edits must not overlap. The file is not modified if any edit fails validation."
+        "Apply targeted edits to a file within the project. Supports two formats: \
+         (1) Legacy: old_text/new_text exact-match replacements. \
+         (2) Hashline: {op: \"replace\"|\"append\"|\"prepend\"|\"delete\", pos: \"LINE#HASH\", lines: [...]}. \
+         Hashline anchors are obtained from read_file output (LINE#HASH: prefix). \
+         Hash mismatches fail safely with fresh hashes for retry."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -374,23 +456,37 @@ impl Tool for EditFile {
                 },
                 "edits": {
                     "type": "array",
-                    "description": "List of replacements to apply.",
+                    "description": "List of edits to apply. Two formats supported: legacy {old_text, new_text} and hashline {op, pos, lines}.",
                     "items": {
                         "type": "object",
                         "properties": {
                             "old_text": {
                                 "type": "string",
-                                "description": "The exact literal text to find in the file. \
-                                    Must match character-for-character including whitespace \
-                                    and newlines. Not a regex — do not use \\s, .*, or \
-                                    escape sequences for whitespace."
+                                "description": "Legacy format: The exact literal text to find in the file. Must match character-for-character including whitespace and newlines. Not a regex."
                             },
                             "new_text": {
                                 "type": "string",
-                                "description": "The text to replace old_text with."
+                                "description": "Legacy format: The text to replace old_text with."
+                            },
+                            "op": {
+                                "type": "string",
+                                "enum": ["replace", "append", "prepend", "delete"],
+                                "description": "Hashline format: Operation type (replace/append/prepend/delete). Required for hashline edits."
+                            },
+                            "pos": {
+                                "type": "string",
+                                "description": "Hashline format: Anchor position (e.g., '2#KT'). Required for hashline edits."
+                            },
+                            "end": {
+                                "type": "string",
+                                "description": "Hashline format: End anchor for range operations (e.g., '5#ZT'). Optional."
+                            },
+                            "lines": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Hashline format: Lines to insert or replace with. Required for replace/append/prepend, ignored for delete."
                             }
-                        },
-                        "required": ["old_text", "new_text"]
+                        }
                     }
                 }
             },
@@ -425,7 +521,33 @@ impl Tool for EditFile {
             )));
         }
 
-        // Parse edits from JSON.
+        // Detect edit formats
+        let has_hashline = edits_arg.iter().any(|e| e.get("op").is_some());
+        let has_legacy = edits_arg.iter().any(|e| e.get("old_text").is_some());
+
+        // Validate path is within the sandbox root.
+        // Resolve relative paths against the sandbox root before validation.
+        let candidate = self.root.path().join(path_str);
+        let safe_path = self.root.validate(&candidate)?;
+
+        if cancel.is_cancelled() {
+            return Ok(ToolOutcome::Immediate(ToolResult::error("cancelled")));
+        }
+
+        // Route based on edit format
+        if has_hashline && has_legacy {
+            return self
+                .apply_mixed_edits(path_str, &safe_path, edits_arg, cancel)
+                .await;
+        }
+
+        if has_hashline {
+            return self
+                .apply_hashline_edits(path_str, &safe_path, edits_arg, cancel)
+                .await;
+        }
+
+        // Parse legacy edits from JSON.
         let mut edits = Vec::with_capacity(edits_arg.len());
         for (i, edit_val) in edits_arg.iter().enumerate() {
             let old_text = edit_val["old_text"]
@@ -441,15 +563,6 @@ impl Tool for EditFile {
                 })?
                 .to_owned();
             edits.push(Edit { old_text, new_text });
-        }
-
-        // Validate path is within the sandbox root.
-        // Resolve relative paths against the sandbox root before validation.
-        let candidate = self.root.path().join(path_str);
-        let safe_path = self.root.validate(&candidate)?;
-
-        if cancel.is_cancelled() {
-            return Ok(ToolOutcome::Immediate(ToolResult::error("cancelled")));
         }
 
         // Read the current file content.
@@ -550,6 +663,371 @@ impl Tool for EditFile {
         }
 
         Ok(ToolOutcome::Immediate(ToolResult::success(output)))
+    }
+}
+
+impl EditFile {
+    /// Apply hashline edits to content in memory.
+    ///
+    /// Returns the modified content on success, or an error message on failure
+    /// (hash mismatch, out-of-range, invalid anchor, etc.).
+    /// Parse JSON edit arguments into [`HashlineEdit`] structs.
+    fn parse_hashline_edits(
+        edits_arg: &[serde_json::Value],
+    ) -> std::result::Result<Vec<HashlineEdit>, String> {
+        let mut hashline_edits = Vec::new();
+        for (i, edit_val) in edits_arg.iter().enumerate() {
+            let op_str = edit_val["op"]
+                .as_str()
+                .ok_or_else(|| format!("edit_file: edit {i} missing 'op'"))?;
+
+            let op = match op_str {
+                "replace" => HashlineOp::Replace,
+                "append" => HashlineOp::Append,
+                "prepend" => HashlineOp::Prepend,
+                "delete" => HashlineOp::Delete,
+                other => return Err(format!("edit_file: invalid op '{other}'")),
+            };
+
+            let pos_str = edit_val["pos"]
+                .as_str()
+                .ok_or_else(|| format!("edit_file: edit {i} missing 'pos'"))?;
+
+            let pos = HashlineAnchor::parse(pos_str)
+                .ok_or_else(|| format!("edit_file: edit {i} invalid anchor '{pos_str}'"))?;
+
+            let end = edit_val["end"].as_str().and_then(HashlineAnchor::parse);
+
+            let edit_lines = if op == HashlineOp::Delete {
+                Vec::new()
+            } else {
+                edit_val["lines"]
+                    .as_array()
+                    .ok_or_else(|| format!("edit_file: edit {i} missing 'lines'"))?
+                    .iter()
+                    .map(|v| v.as_str().unwrap_or_default().to_string())
+                    .collect()
+            };
+
+            hashline_edits.push(HashlineEdit {
+                op,
+                pos,
+                end,
+                lines: edit_lines,
+            });
+        }
+        Ok(hashline_edits)
+    }
+
+    /// Validate line numbers and hashes for hashline edits.
+    fn validate_hashline_edits(
+        lines: &[&str],
+        hashline_edits: &[HashlineEdit],
+    ) -> std::result::Result<(), String> {
+        for edit in hashline_edits {
+            if edit.pos.line_num == 0 || edit.pos.line_num > lines.len() {
+                return Err(format!(
+                    "edit_file: anchor line {} is out of range (file has {} lines)",
+                    edit.pos.line_num,
+                    lines.len()
+                ));
+            }
+            if let Some(ref end) = edit.end
+                && (end.line_num == 0 || end.line_num > lines.len())
+            {
+                return Err(format!(
+                    "edit_file: end anchor line {} is out of range (file has {} lines)",
+                    end.line_num,
+                    lines.len()
+                ));
+            }
+        }
+
+        // Validate hashes
+        for edit in hashline_edits {
+            let line_content = lines[edit.pos.line_num - 1]; // 1-indexed
+            let current_hash = compute_line_hash(line_content, edit.pos.line_num);
+
+            if current_hash != edit.pos.hash {
+                return Err(format!(
+                    "edit_file: hash mismatch at anchor {}#{}\n\
+                     Expected line:  {}#{}:{}\n\
+                     Actual line:    {}#{}:{}\n\
+                     \n\
+                     Use updated anchor {}#{} to retry.",
+                    edit.pos.line_num,
+                    edit.pos.hash,
+                    edit.pos.line_num,
+                    edit.pos.hash,
+                    line_content,
+                    edit.pos.line_num,
+                    current_hash,
+                    line_content,
+                    edit.pos.line_num,
+                    current_hash
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Apply parsed hashline edits to content, returning modified content.
+    fn apply_hashline_to_content(
+        content: &str,
+        edits_arg: &[serde_json::Value],
+    ) -> std::result::Result<String, String> {
+        let lines: Vec<&str> = content.lines().collect();
+        if lines.is_empty() {
+            return Err("edit_file: cannot edit empty file".to_string());
+        }
+
+        let hashline_edits = Self::parse_hashline_edits(edits_arg)?;
+        Self::validate_hashline_edits(&lines, &hashline_edits)?;
+
+        // Apply edits from last to first to preserve line numbers
+        let mut modified: Vec<String> =
+            lines.iter().map(std::string::ToString::to_string).collect();
+
+        for edit in hashline_edits.iter().rev() {
+            let idx = edit.pos.line_num - 1; // 0-indexed
+
+            match edit.op {
+                HashlineOp::Replace => {
+                    if let Some(ref end) = edit.end {
+                        let end_idx = end.line_num - 1;
+                        if end_idx < idx {
+                            return Err(format!(
+                                "edit_file: end anchor line {} must be >= pos anchor line {}",
+                                end.line_num, edit.pos.line_num
+                            ));
+                        }
+                        modified.splice(idx..=end_idx, edit.lines.clone());
+                    } else {
+                        modified[idx] = edit.lines.join("\n");
+                    }
+                }
+                HashlineOp::Append => {
+                    if idx < modified.len() {
+                        let insert_pos = idx + 1;
+                        modified.splice(insert_pos..insert_pos, edit.lines.clone());
+                    } else {
+                        modified.extend(edit.lines.clone());
+                    }
+                }
+                HashlineOp::Prepend => {
+                    modified.splice(idx..idx, edit.lines.clone());
+                }
+                HashlineOp::Delete => {
+                    if let Some(ref end) = edit.end {
+                        let end_idx = end.line_num - 1;
+                        if end_idx < idx {
+                            return Err(format!(
+                                "edit_file: end anchor line {} must be >= pos anchor line {}",
+                                end.line_num, edit.pos.line_num
+                            ));
+                        }
+                        modified.drain(idx..=end_idx);
+                    } else {
+                        modified.remove(idx);
+                    }
+                }
+            }
+        }
+
+        Ok(modified.join("\n"))
+    }
+
+    /// Apply pure hashline edits: read, validate, apply, write.
+    async fn apply_hashline_edits(
+        &self,
+        path_str: &str,
+        safe_path: &FilePath,
+        edits_arg: &[serde_json::Value],
+        cancel: CancellationToken,
+    ) -> Result<ToolOutcome> {
+        if cancel.is_cancelled() {
+            return Ok(ToolOutcome::Immediate(ToolResult::error("cancelled")));
+        }
+
+        let content = match tokio::fs::read_to_string(&**safe_path).await {
+            Ok(c) => c,
+            Err(e) => {
+                return Ok(ToolOutcome::Immediate(ToolResult::error(format!(
+                    "edit_file: failed to read `{path_str}`: {e}"
+                ))));
+            }
+        };
+
+        match Self::apply_hashline_to_content(&content, edits_arg) {
+            Ok(modified) => {
+                if let Err(e) = tokio::fs::write(&**safe_path, &modified).await {
+                    return Ok(ToolOutcome::Immediate(ToolResult::error(format!(
+                        "edit_file: failed to write `{path_str}`: {e}"
+                    ))));
+                }
+                Ok(ToolOutcome::Immediate(ToolResult::success(format!(
+                    "applied {} hashline edit(s) to {}",
+                    edits_arg.len(),
+                    path_str
+                ))))
+            }
+            Err(msg) => Ok(ToolOutcome::Immediate(ToolResult::error(msg))),
+        }
+    }
+
+    /// Parse JSON edit arguments into legacy [`Edit`] structs.
+    fn parse_legacy_edits(
+        legacy_args: &[serde_json::Value],
+    ) -> std::result::Result<Vec<Edit>, ToolError> {
+        let mut edits = Vec::with_capacity(legacy_args.len());
+        for (i, edit_val) in legacy_args.iter().enumerate() {
+            let old_text = edit_val["old_text"]
+                .as_str()
+                .ok_or_else(|| ToolError::MissingArgument {
+                    name: format!("edit {i} old_text"),
+                })?
+                .to_owned();
+            let new_text = edit_val["new_text"]
+                .as_str()
+                .ok_or_else(|| ToolError::MissingArgument {
+                    name: format!("edit {i} new_text"),
+                })?
+                .to_owned();
+            edits.push(Edit { old_text, new_text });
+        }
+        Ok(edits)
+    }
+
+    /// Validate and apply legacy `old_text`/`new_text` edits to content.
+    ///
+    /// Returns the modified content, or an error string for the tool.
+    fn apply_legacy_edits_to_content(
+        content: &str,
+        path_str: &str,
+        edits: &[Edit],
+    ) -> std::result::Result<String, String> {
+        let mut match_ranges: Vec<(usize, usize, &Edit)> = Vec::with_capacity(edits.len());
+
+        for edit in edits {
+            let occurrences: Vec<_> = content.match_indices(&edit.old_text).collect();
+            match occurrences.len() {
+                0 => {
+                    let hint = detect_regex_patterns(&edit.old_text).map_or_else(
+                        || {
+                            " Hint: old_text must match the file content exactly, \
+                             character-for-character. \
+                             Use read_file to see the exact content."
+                                .to_owned()
+                        },
+                        |patterns| {
+                            format!(
+                                " Hint: old_text contains regex-like patterns ({patterns}). \
+                                 old_text must be an exact match, not a regex."
+                            )
+                        },
+                    );
+                    return Err(format!(
+                        "edit_file: old_text not found in `{path_str}`: {:?}{hint}",
+                        truncate_for_error(&edit.old_text, 80)
+                    ));
+                }
+                1 => {
+                    let (start, _) = occurrences[0];
+                    let end = start + edit.old_text.len();
+                    match_ranges.push((start, end, edit));
+                }
+                _ => {
+                    return Err(format!(
+                        "edit_file: old_text is ambiguous ({} matches) in `{path_str}`: {:?}",
+                        occurrences.len(),
+                        truncate_for_error(&edit.old_text, 80)
+                    ));
+                }
+            }
+        }
+
+        // Check for overlaps
+        match_ranges.sort_by_key(|(start, _, _)| *start);
+        for window in match_ranges.windows(2) {
+            let (_, end_a, _) = window[0];
+            let (start_b, _, _) = window[1];
+            if start_b < end_a {
+                return Err(
+                    "edit_file: edits overlap — two edits target the same region of the file"
+                        .to_string(),
+                );
+            }
+        }
+
+        // Apply edits from last to first
+        let mut modified = content.to_string();
+        for (start, end, edit) in match_ranges.into_iter().rev() {
+            modified.replace_range(start..end, &edit.new_text);
+        }
+        Ok(modified)
+    }
+
+    /// Apply mixed hashline + legacy edits: hashline first, then legacy.
+    async fn apply_mixed_edits(
+        &self,
+        path_str: &str,
+        safe_path: &FilePath,
+        edits_arg: &[serde_json::Value],
+        cancel: CancellationToken,
+    ) -> Result<ToolOutcome> {
+        if cancel.is_cancelled() {
+            return Ok(ToolOutcome::Immediate(ToolResult::error("cancelled")));
+        }
+
+        let content = match tokio::fs::read_to_string(&**safe_path).await {
+            Ok(c) => c,
+            Err(e) => {
+                return Ok(ToolOutcome::Immediate(ToolResult::error(format!(
+                    "edit_file: failed to read `{path_str}`: {e}"
+                ))));
+            }
+        };
+
+        // Separate hashline and legacy edits
+        let hashline_args: Vec<serde_json::Value> = edits_arg
+            .iter()
+            .filter(|e| e.get("op").is_some())
+            .cloned()
+            .collect();
+        let legacy_args: Vec<serde_json::Value> = edits_arg
+            .iter()
+            .filter(|e| e.get("old_text").is_some())
+            .cloned()
+            .collect();
+
+        // Apply hashline edits first (they reference original line numbers)
+        let intermediate = match Self::apply_hashline_to_content(&content, &hashline_args) {
+            Ok(c) => c,
+            Err(msg) => return Ok(ToolOutcome::Immediate(ToolResult::error(msg))),
+        };
+
+        // Parse legacy edits
+        let edits = Self::parse_legacy_edits(&legacy_args)?;
+
+        // Validate and apply legacy edits to intermediate content
+        let modified = match Self::apply_legacy_edits_to_content(&intermediate, path_str, &edits) {
+            Ok(m) => m,
+            Err(msg) => return Ok(ToolOutcome::Immediate(ToolResult::error(msg))),
+        };
+
+        // Write once
+        if let Err(e) = tokio::fs::write(&**safe_path, &modified).await {
+            return Ok(ToolOutcome::Immediate(ToolResult::error(format!(
+                "edit_file: failed to write `{path_str}`: {e}"
+            ))));
+        }
+
+        Ok(ToolOutcome::Immediate(ToolResult::success(format!(
+            "applied {} hashline + {} legacy edit(s) to {}",
+            hashline_args.len(),
+            legacy_args.len(),
+            path_str
+        ))))
     }
 }
 
