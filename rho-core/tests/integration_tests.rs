@@ -4,10 +4,9 @@
 //! is required.
 
 use rho_core::{
-    AgentConfig, ChatClient, ChatMessage, ContentBlock, ContextManager, RhoError, Session,
-    ToolCallId, ToolName, ToolOutcome, ToolRegistry, ToolResult, ToolRisk,
+    AgentConfig, ChatMessage, ContentBlock, ContextManager, RhoError, Session, ToolCallId,
+    ToolName, ToolOutcome, ToolRegistry, ToolResult, ToolRisk,
     agent::run_loop,
-    client::client_factory,
     config::RhoConfig,
     message::{ModelToolCall, ToolCallFunction},
     request::ChatRequest,
@@ -1588,7 +1587,7 @@ async fn nonempty_stop_remains_message() {
 async fn test_chat_stream() {
     use futures::StreamExt;
 
-    let client = client_factory(&RhoConfig::default(), None, None);
+    let provider = rho_core::provider_factory(&RhoConfig::default(), None, None);
     let request = ChatRequest {
         model: "google/gemma-4-26b-a4b".to_string(),
         messages: vec![],
@@ -1596,7 +1595,7 @@ async fn test_chat_stream() {
         stream: false,
         max_tokens: None,
     };
-    let mut stream = client.chat_stream(request).await.unwrap();
+    let mut stream = provider.chat_client().chat_stream(request).await.unwrap();
 
     while let Some(event) = stream.next().await {
         let event = event.unwrap();

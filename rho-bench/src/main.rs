@@ -170,16 +170,17 @@ async fn resolve_models(cli: &Cli) -> anyhow::Result<Vec<String>> {
     }
 
     // Auto-detect: query the server for loaded models.
-    // Build a client using the configured endpoint and api-key-env for auth.
+    // Build a provider using the configured endpoint and api-key-env for auth.
     let config = rho_core::ConfigLoader::load(&std::env::current_dir().unwrap_or_default())
         .unwrap_or_default();
-    let client = rho_core::client_factory(&config, Some(&cli.endpoint), cli.api_key_env.as_deref());
+    let provider =
+        rho_core::provider_factory(&config, Some(&cli.endpoint), cli.api_key_env.as_deref());
 
     eprintln!("no --models specified, querying server...");
-    let list = client
+    let list = provider
         .list_models()
         .await
-        .map_err(|e| anyhow::anyhow!("cannot query /v1/models at {}: {e}", cli.endpoint))?;
+        .map_err(|e| anyhow::anyhow!("cannot query models at {}: {e}", cli.endpoint))?;
     if list.data.is_empty() {
         anyhow::bail!(
             "no models loaded on the server. Load a model and try again, or specify --models."

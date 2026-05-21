@@ -542,12 +542,14 @@ const DEFAULT_ENDPOINT: &str = "http://localhost:1234/v1/chat/completions";
 
 /// Construct a fully-configured [`LocalChatClient`] from [`RhoConfig`].
 ///
-/// This is the **recommended** way to construct clients in production.
-/// It respects config values, handles API key resolution from environment
-/// variables, and applies CLI overrides.
+/// **Prefer [`provider_factory`](crate::provider_factory) for new code** — it
+/// returns a [`Box<dyn Provider>`](crate::Provider) that encapsulates client
+/// construction, model discovery, and externality checking.
 ///
-/// For quick testing without config, you may use [`new()`], [`with_endpoint()`],
-/// or [`with_endpoint_and_key()`] directly.
+/// This function remains available for:
+/// - Bench harnesses that need a concrete [`LocalChatClient`]
+/// - Tests that bypass the provider abstraction
+/// - Backward compatibility
 ///
 /// Reads `provider.endpoint` and `provider.api_key_env` from config.
 /// CLI overrides for endpoint and api-key-env are applied on top.

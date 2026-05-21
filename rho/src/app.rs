@@ -9,10 +9,10 @@ use crate::gate::ReplApprovalGate;
 use anyhow::Result;
 use rho_core::tool::CancellationToken as Cancel;
 use rho_core::{
-    AgentConfig, ConfigLoader, LocalChatClient, Redactor, RhoConfig, SandboxRoot, Session,
-    TokenBudget, ToolRegistry, client_factory, compose_full_system_prompt,
+    AgentConfig, ConfigLoader, Provider, Redactor, RhoConfig, SandboxRoot, Session, TokenBudget,
+    ToolRegistry, compose_full_system_prompt,
     context_files::{ContextFile, ContextScanner, TrustStore},
-    find_project_root, is_local_endpoint,
+    find_project_root, provider_factory,
 };
 use rho_tools::register_all;
 use std::io::{self, BufRead, Write};
@@ -28,8 +28,8 @@ use tracing_subscriber::EnvFilter;
 pub struct App {
     /// The agent's conversation session (tree-shaped, optionally persisted).
     pub(crate) session: Session,
-    /// The model API client.
-    pub(crate) client: LocalChatClient,
+    /// The model provider (owns the chat client).
+    pub(crate) provider: Box<dyn Provider>,
     /// Registered tools.
     pub(crate) registry: ToolRegistry,
     /// Agent loop configuration.
@@ -50,12 +50,12 @@ impl App {
     /// 1. Initialize tracing
     /// 2. Resolve sandbox root
     /// 3. Load configuration (two-tier TOML)
-    /// 4. Resolve endpoint and check provider compatibility
-    /// 5. Check external provider consent
-    /// 6. Register built-in tools
-    /// 7. Scan project context files (interactive trust workflow)
-    /// 8. Compose the system prompt
-    /// 9. Construct the HTTP client
+    /// 4. Construct provider (endpoint, auth, externality)
+    /// 5. Check provider type compatibility
+    /// 6. Check external provider consent
+    /// 7. Register built-in tools
+    /// 8. Scan project context files (interactive trust workflow)
+    /// 9. Compose the system prompt
     /// 10. Resolve the model identifier
     /// 11. Build agent config with CLI overrides
     /// 12. Build secret redactor
@@ -77,22 +77,25 @@ impl App {
         // ── 3. Config ────────────────────────────────────────────────────
         let config = load_config(&sandbox);
 
-        // ── 4. Endpoint + provider compat ────────────────────────────────
-        let endpoint = resolve_endpoint(&cli, &config);
-        check_provider_compatibility(&endpoint, &config);
+        // ── 4. Provider ──────────────────────────────────────────────────
+        let provider =
+            provider_factory(&config, cli.endpoint.as_deref(), cli.api_key_env.as_deref());
 
-        // ── 5. Provider consent ──────────────────────────────────────────
-        check_provider_consent(&endpoint, &cli)?;
+        // ── 5. Provider type compatibility ──────────────────────────────
+        check_provider_type(&config);
 
-        // ── 6. Tool registry ────────────────────────────────────────────
+        // ── 6. Provider consent ──────────────────────────────────────────
+        check_provider_consent(provider.as_ref(), &cli)?;
+
+        // ── 7. Tool registry ────────────────────────────────────────────
         let mut registry = ToolRegistry::new();
         register_all(&mut registry, sandbox.clone(), &config);
         let tool_schemas = registry.tool_schemas();
 
-        // ── 7. Context files (interactive trust workflow) ────────────────
+        // ── 8. Context files (interactive trust workflow) ────────────────
         let context_files = scan_context_files(&sandbox);
 
-        // ── 8. System prompt ─────────────────────────────────────────────
+        // ── 9. System prompt ─────────────────────────────────────────────
         let system_prompt = compose_full_system_prompt(
             &sandbox,
             &context_files,
@@ -101,11 +104,8 @@ impl App {
             cli.compact,
         );
 
-        // ── 9. Client ────────────────────────────────────────────────────
-        let client = client_factory(&config, cli.endpoint.as_deref(), cli.api_key_env.as_deref());
-
         // ── 10. Model ────────────────────────────────────────────────────
-        let model = resolve_model(&config, cli.model.as_ref(), &client).await?;
+        let model = resolve_model(&config, cli.model.as_ref(), provider.as_ref()).await?;
 
         // ── 11. Agent config ─────────────────────────────────────────────
         let agent_config = build_agent_config(&config, &cli);
@@ -133,7 +133,7 @@ impl App {
 
         Ok(Self {
             session,
-            client,
+            provider,
             registry,
             config: agent_config,
             gate: ReplApprovalGate,
@@ -204,25 +204,11 @@ fn load_config(sandbox: &SandboxRoot) -> RhoConfig {
     })
 }
 
-/// Resolve the API endpoint URL.
+/// Warn if the configured provider type is a known non-OpenAI provider.
 ///
-/// Priority: CLI `--endpoint` → config `provider.endpoint` → localhost default.
-fn resolve_endpoint(cli: &Cli, config: &RhoConfig) -> String {
-    cli.endpoint.clone().unwrap_or_else(|| {
-        config
-            .provider
-            .endpoint
-            .clone()
-            .unwrap_or_else(|| "http://localhost:1234/v1/chat/completions".to_owned())
-    })
-}
-
-/// Check provider type and endpoint path compatibility.
-///
-/// rho only speaks the `OpenAI` Chat Completions wire format. Warns if the
-/// configured `[provider] type` is a known non-OpenAI provider (Anthropic,
-/// Google, etc.) or if the endpoint URL doesn't end with `/chat/completions`.
-fn check_provider_compatibility(endpoint: &str, config: &RhoConfig) {
+/// rho only speaks the `OpenAI` Chat Completions wire format. This check
+/// fires early so the user gets a clear warning before any requests are made.
+fn check_provider_type(config: &RhoConfig) {
     if let Some(ref provider_type) = config.provider.r#type {
         const NON_OPENAI: &[&str] = &[
             "anthropic",
@@ -240,30 +226,20 @@ fn check_provider_compatibility(endpoint: &str, config: &RhoConfig) {
         {
             eprintln!(
                 "warning: provider type \"{provider_type}\" was set, but rho only supports \
-                 OpenAI-compatible endpoints (the Chat Completions API wire format). \
-                 {endpoint}"
+                 OpenAI-compatible endpoints. Requests may fail."
             );
         }
-    }
-    if !endpoint.contains("/chat/completions") && !is_local_endpoint(endpoint) {
-        eprintln!(
-            "warning: endpoint \"{endpoint}\" does not end with /chat/completions, \
-             which is the standard OpenAI-compatible path. rho sends requests in \
-             the OpenAI Chat Completions format. If this endpoint uses a different \
-             API format (e.g. Anthropic Messages, Google GenerateContent), \
-             requests will fail. Use an OpenAI-compatible proxy or verify the endpoint."
-        );
     }
 }
 
 /// Display a consent warning and read confirmation for external providers.
-fn check_provider_consent(endpoint: &str, cli: &Cli) -> Result<()> {
-    if is_local_endpoint(endpoint) || cli.accept_external_provider || cli.endpoint.is_some() {
+fn check_provider_consent(provider: &dyn Provider, cli: &Cli) -> Result<()> {
+    if !provider.is_external() || cli.accept_external_provider || cli.endpoint.is_some() {
         return Ok(());
     }
     eprintln!();
     eprintln!("  ⚠  External provider detected");
-    eprintln!("      Endpoint: {endpoint}");
+    eprintln!("      Provider: {}", provider.name());
     eprintln!();
     eprintln!("      Your prompts and code will be sent to an external server.");
     eprintln!("      This may expose proprietary code, secrets, or other");
@@ -388,11 +364,12 @@ fn build_session(
 
 /// Resolve the model identifier.
 ///
-/// Priority: CLI `--model` → config `agent.model` → auto-detect via `/v1/models`.
+/// Priority: CLI `--model` → config `agent.model` → auto-detect via the
+/// provider's model list.
 async fn resolve_model(
     config: &RhoConfig,
     cli_model: Option<&String>,
-    client: &LocalChatClient,
+    provider: &dyn Provider,
 ) -> Result<String> {
     // 1. CLI flag takes highest priority.
     if let Some(model) = cli_model {
@@ -404,27 +381,24 @@ async fn resolve_model(
         eprintln!("using model from config: {model}");
         return Ok(model.to_owned());
     }
-    // 3. Auto-detect from the server.
-    eprintln!("no model specified, querying server for loaded models...");
-    let configured_endpoint = config.provider.endpoint.as_deref().unwrap_or("");
-    let list = client.list_models().await.map_err(|e| {
-        let hint = if is_local_endpoint(configured_endpoint) {
-            "Load a model in your local server and try again."
+    // 3. Auto-detect from the provider.
+    eprintln!("no model specified, querying provider for available models...");
+    let list = provider.list_models().await.map_err(|e| {
+        let hint = if provider.is_external() {
+            "Specify the model explicitly with --model or in config."
         } else {
-            "This may indicate the endpoint doesn't support /v1/models, \
-             requires authentication, or uses a non-standard model list. \
-             Specify the model explicitly with --model or in config."
+            "Load a model in your local server and try again."
         };
-        anyhow::anyhow!("cannot query /v1/models: {e}\n  {hint}")
+        anyhow::anyhow!("cannot query models: {e}\n  {hint}")
     })?;
     if list.data.is_empty() {
-        let hint = if is_local_endpoint(configured_endpoint) {
-            "Load a model in your local server and try again."
-        } else {
+        let hint = if provider.is_external() {
             "The server returned an empty model list. Specify the model \
              explicitly with --model or in config."
+        } else {
+            "Load a model in your local server and try again."
         };
-        anyhow::bail!("no models loaded on the server. {hint}");
+        anyhow::bail!("no models available from provider. {hint}");
     }
     let model = &list.data[0].id;
     eprintln!("auto-detected model: {model}");

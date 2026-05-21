@@ -9,8 +9,8 @@ use async_trait::async_trait;
 use rho_core::stream::StreamChunk;
 use rho_core::{
     AgentConfig, ApprovalGate, AutoApprovePolicy, ChatClient, ChatRequest, ConfigLoader,
-    LocalChatClient, ModelResponse, ModelResponseStream, ModelToolCall, RhoConfig, SandboxRoot,
-    Session, TokenBudget, ToolRegistry, ToolRisk, compose_full_system_prompt, run_loop,
+    ModelResponse, ModelResponseStream, ModelToolCall, Provider, RhoConfig, SandboxRoot, Session,
+    TokenBudget, ToolRegistry, ToolRisk, compose_full_system_prompt, provider_factory, run_loop,
 };
 use rho_eval::{EvalRun, EvalTask, TaskMetrics, TaskOutcome};
 use rho_tools::register_all;
@@ -28,7 +28,7 @@ impl ApprovalGate for BenchApprovalGate {
 /// A `ChatClient` wrapper that counts token usage across all requests.
 struct CountingClient {
     /// The underlying model client.
-    inner: LocalChatClient,
+    inner: Box<dyn ChatClient>,
     /// Cumulative prompt tokens across all requests.
     prompt_tokens: AtomicU32,
     /// Cumulative completion tokens across all requests.
@@ -39,7 +39,7 @@ struct CountingClient {
 
 impl CountingClient {
     /// Create a new counting client wrapping the given inner client.
-    fn new(inner: LocalChatClient) -> Self {
+    fn new(inner: Box<dyn ChatClient>) -> Self {
         Self {
             inner,
             prompt_tokens: AtomicU32::new(0),
@@ -126,7 +126,7 @@ pub async fn run_benchmarks(
     for model_id in model_ids {
         eprintln!("━━━ Model: {model_id} ━━━");
         let mut run = EvalRun::new(prompt_base, prompt_base).with_model(model_id);
-        let client = rho_core::client_factory(&rho_config, Some(endpoint), api_key_env);
+        let provider = provider_factory(&rho_config, Some(endpoint), api_key_env);
 
         for task in tasks {
             for repeat in 1..=repeats {
@@ -141,7 +141,7 @@ pub async fn run_benchmarks(
                 match run_single_task(
                     task.as_ref(),
                     model_id,
-                    &client,
+                    provider.as_ref(),
                     &rho_config,
                     compact,
                     token_budget,
@@ -194,7 +194,7 @@ pub async fn run_benchmarks(
 async fn run_single_task(
     task: &dyn EvalTask,
     model_id: &str,
-    client: &LocalChatClient,
+    provider: &dyn Provider,
     rho_config: &RhoConfig,
     compact: bool,
     token_budget: Option<u32>,
@@ -240,8 +240,8 @@ async fn run_single_task(
     .with_token_budget(TokenBudget::new(budget))
     .with_redactor(redactor);
 
-    // Wrap the client to count token usage.
-    let counting_client = CountingClient::new((*client).clone());
+    // Wrap the provider's client to count token usage.
+    let counting_client = CountingClient::new(provider.clone_boxed_client());
 
     let gate = BenchApprovalGate;
     let cancel = rho_core::CancellationToken::new();

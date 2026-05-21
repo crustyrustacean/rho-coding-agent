@@ -61,7 +61,7 @@ pub async fn run_repl(app: &mut App) -> Result<()> {
         match rho_core::run_loop(
             &mut app.session,
             input,
-            &app.client,
+            app.provider.chat_client(),
             &app.registry,
             &app.config,
             app.cancel.clone(),
@@ -91,7 +91,7 @@ pub async fn run_prompt_file(mut app: App, path: std::path::PathBuf) -> Result<(
     match rho_core::run_loop(
         &mut app.session,
         &input,
-        &app.client,
+        app.provider.chat_client(),
         &app.registry,
         &app.config,
         app.cancel.clone(),
