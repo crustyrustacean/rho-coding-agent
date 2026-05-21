@@ -1843,3 +1843,196 @@ async fn edit_file_hashline_success_includes_diff() {
         "diff should contain added line marker"
     );
 }
+
+#[tokio::test]
+async fn edit_file_hashline_invalid_op_returns_error() {
+    let (dir, root) = setup();
+    let path = dir.path().join("test.txt");
+    fs::write(&path, "content").unwrap();
+
+    let edit_tool = EditFile { root };
+    let edit_args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": [{
+            "op": "invalid",
+            "pos": "1#XX",
+            "lines": ["x"]
+        }]
+    });
+    let edit_outcome = edit_tool
+        .execute(edit_args, CancellationToken::new())
+        .await
+        .unwrap();
+
+    let output = immediate_output(&edit_outcome);
+    assert!(immediate_is_error(&edit_outcome), "should fail");
+    assert!(
+        output.contains("invalid op"),
+        "should mention invalid op: {output}"
+    );
+}
+
+#[tokio::test]
+async fn edit_file_hashline_out_of_range_returns_error() {
+    let (dir, root) = setup();
+    let path = dir.path().join("test.txt");
+    fs::write(&path, "line 1\nline 2").unwrap();
+
+    let edit_tool = EditFile { root };
+    let edit_args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": [{
+            "op": "replace",
+            "pos": "99#XX",
+            "lines": ["x"]
+        }]
+    });
+    let edit_outcome = edit_tool
+        .execute(edit_args, CancellationToken::new())
+        .await
+        .unwrap();
+
+    let output = immediate_output(&edit_outcome);
+    assert!(immediate_is_error(&edit_outcome), "should fail");
+    assert!(
+        output.contains("out of range"),
+        "should mention out of range: {output}"
+    );
+}
+
+#[tokio::test]
+async fn edit_file_hashline_invalid_anchor_format() {
+    let (dir, root) = setup();
+    let path = dir.path().join("test.txt");
+    fs::write(&path, "content").unwrap();
+
+    let edit_tool = EditFile { root };
+    let edit_args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": [{
+            "op": "replace",
+            "pos": "invalid",
+            "lines": ["x"]
+        }]
+    });
+    let edit_outcome = edit_tool
+        .execute(edit_args, CancellationToken::new())
+        .await
+        .unwrap();
+
+    let output = immediate_output(&edit_outcome);
+    assert!(immediate_is_error(&edit_outcome), "should fail");
+    assert!(
+        output.contains("invalid anchor"),
+        "should mention invalid anchor: {output}"
+    );
+}
+
+#[tokio::test]
+async fn edit_file_hashline_delete_range() {
+    let (dir, root) = setup();
+    let path = dir.path().join("test.txt");
+    let content = "line 1\nline 2\nline 3\nline 4\nline 5";
+    fs::write(&path, content).unwrap();
+
+    // Get hashes for lines 2 and 4
+    let read_tool = ReadFile { root: root.clone() };
+    let read_outcome = read_tool
+        .execute(
+            serde_json::json!({
+                "path": path.to_str().unwrap(),
+                "hashline": true
+            }),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let read_output = immediate_output(&read_outcome);
+
+    let line_2_hash = read_output
+        .lines()
+        .find(|line| line.contains("2#") && line.contains("line 2"))
+        .and_then(|line| line.split('#').nth(1).and_then(|h| h.split(':').next()))
+        .expect("should find hash for line 2");
+    let line_4_hash = read_output
+        .lines()
+        .find(|line| line.contains("4#") && line.contains("line 4"))
+        .and_then(|line| line.split('#').nth(1).and_then(|h| h.split(':').next()))
+        .expect("should find hash for line 4");
+
+    let edit_tool = EditFile { root };
+    let edit_args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": [{
+            "op": "delete",
+            "pos": format!("2#{line_2_hash}"),
+            "end": format!("4#{line_4_hash}")
+        }]
+    });
+    let edit_outcome = edit_tool
+        .execute(edit_args, CancellationToken::new())
+        .await
+        .unwrap();
+
+    assert!(
+        !immediate_is_error(&edit_outcome),
+        "delete range should succeed"
+    );
+    let modified = fs::read_to_string(&path).unwrap();
+    assert_eq!(modified, "line 1\nline 5");
+}
+
+#[tokio::test]
+async fn edit_file_hashline_replace_range() {
+    let (dir, root) = setup();
+    let path = dir.path().join("test.txt");
+    let content = "line 1\nline 2\nline 3\nline 4\nline 5";
+    fs::write(&path, content).unwrap();
+
+    // Get hashes
+    let read_tool = ReadFile { root: root.clone() };
+    let read_outcome = read_tool
+        .execute(
+            serde_json::json!({
+                "path": path.to_str().unwrap(),
+                "hashline": true
+            }),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let read_output = immediate_output(&read_outcome);
+
+    let line_2_hash = read_output
+        .lines()
+        .find(|line| line.contains("2#") && line.contains("line 2"))
+        .and_then(|line| line.split('#').nth(1).and_then(|h| h.split(':').next()))
+        .expect("hash 2");
+    let line_4_hash = read_output
+        .lines()
+        .find(|line| line.contains("4#") && line.contains("line 4"))
+        .and_then(|line| line.split('#').nth(1).and_then(|h| h.split(':').next()))
+        .expect("hash 4");
+
+    let edit_tool = EditFile { root };
+    let edit_args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": [{
+            "op": "replace",
+            "pos": format!("2#{line_2_hash}"),
+            "end": format!("4#{line_4_hash}"),
+            "lines": ["replaced a", "replaced b"]
+        }]
+    });
+    let edit_outcome = edit_tool
+        .execute(edit_args, CancellationToken::new())
+        .await
+        .unwrap();
+
+    assert!(
+        !immediate_is_error(&edit_outcome),
+        "replace range should succeed"
+    );
+    let modified = fs::read_to_string(&path).unwrap();
+    assert_eq!(modified, "line 1\nreplaced a\nreplaced b\nline 5");
+}
