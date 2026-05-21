@@ -97,7 +97,8 @@ pub use client::{
 };
 pub use config::{
     AgentLoopConfig, ApprovalAction, ApprovalConfig, ConfigLoadError, ConfigLoader, ContextConfig,
-    ProviderConfig, RedactionConfig, RhoConfig, SandboxConfig, ShellConfig, SystemPromptConfig,
+    ProviderConfig, ProviderSettings, RedactionConfig, RhoConfig, SandboxConfig, ShellConfig,
+    SystemPromptConfig,
 };
 pub use context::{ContextManager, SlidingWindowContextManager, TokenBudget};
 pub use context_files::{
@@ -111,7 +112,7 @@ pub use error::{Result, RhoError};
 pub use message::{ChatMessage, ContentBlock, ModelToolCall, ToolCallFunction};
 pub use newtypes::{DiagnosticCode, EntryId, FilePath, SessionId, ToolCallId, ToolName};
 pub use prompts::{base_prompt, compact_prompt};
-pub use provider::{OpenAiCompatibleProvider, Provider, provider_factory};
+pub use provider::{OpenAiCompatibleProvider, Provider, ProviderRegistry, provider_factory};
 pub use redact::Redactor;
 pub use request::ChatRequest;
 pub use response::{FinishReason, ModelChoice, ModelResponse, ModelUsage};

@@ -9,10 +9,10 @@ use crate::gate::ReplApprovalGate;
 use anyhow::Result;
 use rho_core::tool::CancellationToken as Cancel;
 use rho_core::{
-    AgentConfig, ConfigLoader, Provider, Redactor, RhoConfig, SandboxRoot, Session, TokenBudget,
-    ToolRegistry, compose_full_system_prompt,
+    AgentConfig, ConfigLoader, Provider, ProviderRegistry, Redactor, RhoConfig, SandboxRoot,
+    Session, TokenBudget, ToolRegistry, compose_full_system_prompt,
     context_files::{ContextFile, ContextScanner, TrustStore},
-    find_project_root, provider_factory,
+    find_project_root,
 };
 use rho_tools::register_all;
 use std::io::{self, BufRead, Write};
@@ -28,8 +28,10 @@ use tracing_subscriber::EnvFilter;
 pub struct App {
     /// The agent's conversation session (tree-shaped, optionally persisted).
     pub(crate) session: Session,
-    /// The model provider (owns the chat client).
-    pub(crate) provider: Box<dyn Provider>,
+    /// The provider registry (owns all configured providers).
+    pub(crate) providers: ProviderRegistry,
+    /// Index of the active provider in the provider registry.
+    pub(crate) active_provider_index: usize,
     /// Registered tools.
     pub(crate) registry: ToolRegistry,
     /// Agent loop configuration.
@@ -50,7 +52,7 @@ impl App {
     /// 1. Initialize tracing
     /// 2. Resolve sandbox root
     /// 3. Load configuration (two-tier TOML)
-    /// 4. Construct provider (endpoint, auth, externality)
+    /// 4. Construct provider registry (endpoint, auth, externality)
     /// 5. Check provider type compatibility
     /// 6. Check external provider consent
     /// 7. Register built-in tools
@@ -77,20 +79,23 @@ impl App {
         // ── 3. Config ────────────────────────────────────────────────────
         let config = load_config(&sandbox);
 
-        // ── 4. Provider ──────────────────────────────────────────────────
-        let provider =
-            provider_factory(&config, cli.endpoint.as_deref(), cli.api_key_env.as_deref());
+        // ── 4. Provider registry ─────────────────────────────────────────
+        let provider_registry = ProviderRegistry::from_config(
+            &config.provider,
+            cli.endpoint.as_deref(),
+            cli.api_key_env.as_deref(),
+        );
 
         // ── 5. Provider type compatibility ──────────────────────────────
         check_provider_type(&config);
 
         // ── 6. Provider consent ──────────────────────────────────────────
-        check_provider_consent(provider.as_ref(), &cli)?;
+        check_provider_consent(&provider_registry, &cli)?;
 
         // ── 7. Tool registry ────────────────────────────────────────────
-        let mut registry = ToolRegistry::new();
-        register_all(&mut registry, sandbox.clone(), &config);
-        let tool_schemas = registry.tool_schemas();
+        let mut tool_registry = ToolRegistry::new();
+        register_all(&mut tool_registry, sandbox.clone(), &config);
+        let tool_schemas = tool_registry.tool_schemas();
 
         // ── 8. Context files (interactive trust workflow) ────────────────
         let context_files = scan_context_files(&sandbox);
@@ -105,7 +110,7 @@ impl App {
         );
 
         // ── 10. Model ────────────────────────────────────────────────────
-        let model = resolve_model(&config, cli.model.as_ref(), provider.as_ref()).await?;
+        let model = resolve_model(&config, cli.model.as_ref(), &provider_registry).await?;
 
         // ── 11. Agent config ─────────────────────────────────────────────
         let agent_config = build_agent_config(&config, &cli);
@@ -133,13 +138,20 @@ impl App {
 
         Ok(Self {
             session,
-            provider,
-            registry,
+            providers: provider_registry,
+            active_provider_index: 0,
+            registry: tool_registry,
             config: agent_config,
             gate: ReplApprovalGate,
             cancel: Cancel::new(),
             prompt_file: cli.prompt_file.clone(),
         })
+    }
+
+    /// Get the currently active provider.
+    #[must_use]
+    pub fn active_provider(&self) -> &dyn Provider {
+        self.providers.providers()[self.active_provider_index].as_ref()
     }
 
     /// Dispatch the agent: prompt-file mode or interactive REPL.
@@ -204,25 +216,27 @@ fn load_config(sandbox: &SandboxRoot) -> RhoConfig {
     })
 }
 
-/// Warn if the configured provider type is a known non-OpenAI provider.
+/// Warn if any configured provider type is a known non-OpenAI provider.
 ///
 /// rho only speaks the `OpenAI` Chat Completions wire format. This check
 /// fires early so the user gets a clear warning before any requests are made.
 fn check_provider_type(config: &RhoConfig) {
-    if let Some(ref provider_type) = config.provider.r#type {
-        const NON_OPENAI: &[&str] = &[
-            "anthropic",
-            "google",
-            "gemini",
-            "cohere",
-            "anyscale",
-            "perplexity",
-            "bedrock",
-            "vertex",
-        ];
-        if NON_OPENAI
-            .iter()
-            .any(|t| provider_type.eq_ignore_ascii_case(t))
+    const NON_OPENAI: &[&str] = &[
+        "anthropic",
+        "google",
+        "gemini",
+        "cohere",
+        "anyscale",
+        "perplexity",
+        "bedrock",
+        "vertex",
+    ];
+
+    for provider_config in &config.provider.providers {
+        if let Some(ref provider_type) = provider_config.r#type
+            && NON_OPENAI
+                .iter()
+                .any(|t| provider_type.eq_ignore_ascii_case(t))
         {
             eprintln!(
                 "warning: provider type \"{provider_type}\" was set, but rho only supports \
@@ -233,17 +247,23 @@ fn check_provider_type(config: &RhoConfig) {
 }
 
 /// Display a consent warning and read confirmation for external providers.
-fn check_provider_consent(provider: &dyn Provider, cli: &Cli) -> Result<()> {
-    if !provider.is_external() || cli.accept_external_provider || cli.endpoint.is_some() {
+///
+/// Shows a single consolidated prompt listing all external providers, not
+/// one prompt per provider.
+fn check_provider_consent(registry: &ProviderRegistry, cli: &Cli) -> Result<()> {
+    let external = registry.external_provider_names();
+
+    if external.is_empty() || cli.accept_external_provider || cli.endpoint.is_some() {
         return Ok(());
     }
+
     eprintln!();
-    eprintln!("  ⚠  External provider detected");
-    eprintln!("      Provider: {}", provider.name());
+    eprintln!("  ⚠  External provider(s) detected");
+    eprintln!("      Providers: {}", external.join(", "));
     eprintln!();
-    eprintln!("      Your prompts and code will be sent to an external server.");
+    eprintln!("      Your prompts and code will be sent to external servers.");
     eprintln!("      This may expose proprietary code, secrets, or other");
-    eprintln!("      sensitive data to the provider and any intermediaries.");
+    eprintln!("      sensitive data to the providers and any intermediaries.");
     eprintln!();
     eprint!("      Continue? [y/N] ");
     io::stderr().flush().ok();
@@ -364,12 +384,12 @@ fn build_session(
 
 /// Resolve the model identifier.
 ///
-/// Priority: CLI `--model` → config `agent.model` → auto-detect via the
-/// provider's model list.
+/// Priority: CLI `--model` → config `agent.model` → auto-detect via all
+/// providers (first model found in config order).
 async fn resolve_model(
     config: &RhoConfig,
     cli_model: Option<&String>,
-    provider: &dyn Provider,
+    registry: &ProviderRegistry,
 ) -> Result<String> {
     // 1. CLI flag takes highest priority.
     if let Some(model) = cli_model {
@@ -381,28 +401,23 @@ async fn resolve_model(
         eprintln!("using model from config: {model}");
         return Ok(model.to_owned());
     }
-    // 3. Auto-detect from the provider.
-    eprintln!("no model specified, querying provider for available models...");
-    let list = provider.list_models().await.map_err(|e| {
-        let hint = if provider.is_external() {
+    // 3. Auto-detect across all providers.
+    eprintln!("no model specified, querying providers for available models...");
+    let all_models = registry.list_all_models().await;
+    if all_models.is_empty() {
+        let hint = if registry.external_provider_names().is_empty() {
+            "Load a model in your local server and try again."
+        } else {
             "Specify the model explicitly with --model or in config."
-        } else {
-            "Load a model in your local server and try again."
         };
-        anyhow::anyhow!("cannot query models: {e}\n  {hint}")
-    })?;
-    if list.data.is_empty() {
-        let hint = if provider.is_external() {
-            "The server returned an empty model list. Specify the model \
-             explicitly with --model or in config."
-        } else {
-            "Load a model in your local server and try again."
-        };
-        anyhow::bail!("no models available from provider. {hint}");
+        anyhow::bail!("no models available from any provider. {hint}");
     }
-    let model = &list.data[0].id;
-    eprintln!("auto-detected model: {model}");
-    Ok(model.clone())
+    let (provider_name, model) = &all_models[0];
+    eprintln!(
+        "auto-detected model: {} (from provider: {})",
+        model.id, provider_name
+    );
+    Ok(model.id.clone())
 }
 
 /// Log token budget diagnostics at startup.

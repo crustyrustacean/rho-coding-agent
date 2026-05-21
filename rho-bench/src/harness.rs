@@ -126,6 +126,7 @@ pub async fn run_benchmarks(
     for model_id in model_ids {
         eprintln!("━━━ Model: {model_id} ━━━");
         let mut run = EvalRun::new(prompt_base, prompt_base).with_model(model_id);
+        #[allow(deprecated)]
         let provider = provider_factory(&rho_config, Some(endpoint), api_key_env);
 
         for task in tasks {

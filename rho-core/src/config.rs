@@ -46,8 +46,8 @@ use std::path::{Path, PathBuf};
 pub struct RhoConfig {
     /// Agent loop settings.
     pub agent: AgentLoopConfig,
-    /// Model provider settings.
-    pub provider: ProviderConfig,
+    /// Model provider settings (one or more providers).
+    pub provider: ProviderSettings,
     /// Per-tool approval policies.
     pub approval: ApprovalConfig,
     /// Shell command safety settings.
@@ -157,9 +157,16 @@ fn default_show_reasoning() -> bool {
 
 // ── ProviderConfig ────────────────────────────────────────────────────────────
 
-/// Model provider selection and connection settings.
+/// Settings for a single model provider.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct ProviderConfig {
+    /// Provider name for display and selection (e.g. `"local"`, `"openrouter"`).
+    ///
+    /// Used by `/model` for disambiguation when multiple providers have the
+    /// same model. Defaults to the provider index (`"0"`, `"1"`, …) if not
+    /// set.
+    #[serde(default)]
+    pub name: Option<String>,
     /// Provider type label — informational only, has no effect on behavior.
     ///
     /// rho uses `endpoint` and `api_key_env` to determine how to connect;
@@ -177,6 +184,53 @@ pub struct ProviderConfig {
     /// to read at runtime.
     #[serde(default)]
     pub api_key_env: Option<String>,
+}
+
+// ── ProviderSettings ──────────────────────────────────────────────────────────
+
+/// Multi-provider configuration.
+///
+/// Wraps an ordered list of [`ProviderConfig`] entries. The first entry is
+/// the default provider used by `--endpoint` and `--api-key-env` overrides.
+///
+/// # Empty settings
+///
+/// When no providers are configured (neither `[[providers]]` nor legacy
+/// `[provider]`), the `ProviderRegistry` falls back to a default localhost
+/// provider at `http://localhost:1234/v1/chat/completions`.
+#[derive(Clone, Debug, Default)]
+pub struct ProviderSettings {
+    /// Ordered list of provider configurations. The first entry is the
+    /// default provider.
+    pub providers: Vec<ProviderConfig>,
+}
+
+impl ProviderSettings {
+    /// The default (first) provider, or `None` if empty.
+    #[must_use]
+    pub fn default_provider(&self) -> Option<&ProviderConfig> {
+        self.providers.first()
+    }
+
+    /// The default provider's endpoint, if configured.
+    #[must_use]
+    pub fn default_endpoint(&self) -> Option<&str> {
+        self.providers.first().and_then(|p| p.endpoint.as_deref())
+    }
+
+    /// The default provider's API key env var, if configured.
+    #[must_use]
+    pub fn default_api_key_env(&self) -> Option<&str> {
+        self.providers
+            .first()
+            .and_then(|p| p.api_key_env.as_deref())
+    }
+
+    /// Whether any providers are configured.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.providers.is_empty()
+    }
 }
 
 // ── ApprovalConfig ────────────────────────────────────────────────────────────
@@ -307,14 +361,21 @@ pub struct SystemPromptConfig {
 ///
 /// All fields are optional so partial configs work naturally. Missing fields
 /// fall through to defaults or to the other config tier.
+///
+/// Supports both the legacy `[provider]` single-table format and the new
+/// `[[providers]]` array-of-tables format. When both are present, the
+/// array format takes precedence.
 #[derive(Clone, Debug, Default, Deserialize)]
 struct WireConfig {
     /// Agent loop settings.
     #[serde(default)]
     agent: Option<WireAgentLoopConfig>,
-    /// Provider settings.
+    /// Legacy single-provider config (`[provider]`).
     #[serde(default)]
     provider: Option<ProviderConfig>,
+    /// New multi-provider config (`[[providers]]`).
+    #[serde(default)]
+    providers: Option<Vec<ProviderConfig>>,
     /// Approval settings.
     #[serde(default)]
     approval: Option<ApprovalConfig>,
@@ -419,6 +480,11 @@ impl ConfigLoader {
     ///
     /// Project-level fields override user-level fields. `None` fields fall
     /// through to the other tier, then to hardcoded defaults.
+    ///
+    /// For providers: project `[[providers]]` > user `[[providers]]` >
+    /// project `[provider]` > user `[provider]` > empty. Project-level
+    /// `[[providers]]` **replaces** user-level `[[providers]]` (same as
+    /// other `Vec` fields — no appending).
     fn merge(user: Option<WireConfig>, project: Option<WireConfig>) -> RhoConfig {
         let user = user.unwrap_or_default();
         let project = project.unwrap_or_default();
@@ -455,13 +521,25 @@ impl ConfigLoader {
                     .unwrap_or(default_show_reasoning()),
             },
             provider: {
-                let up = user.provider.unwrap_or_default();
-                let pp = project.provider.unwrap_or_default();
-                ProviderConfig {
-                    r#type: pp.r#type.or(up.r#type),
-                    endpoint: pp.endpoint.or(up.endpoint),
-                    api_key_env: pp.api_key_env.or(up.api_key_env),
-                }
+                // New `[[providers]]` format takes precedence over legacy `[provider]`.
+                // Project-level replaces user-level (same as other Vec fields).
+                let pp = project.providers.unwrap_or_default();
+                let up = user.providers.unwrap_or_default();
+
+                let entries = if !pp.is_empty() {
+                    pp
+                } else if !up.is_empty() {
+                    up
+                } else {
+                    // Fall back to legacy single-provider config.
+                    let legacy = project.provider.or(user.provider);
+                    match legacy {
+                        Some(p) => vec![p],
+                        None => vec![],
+                    }
+                };
+
+                ProviderSettings { providers: entries }
             },
             approval: project.approval.or(user.approval).unwrap_or_default(),
             shell: ShellConfig {
@@ -562,12 +640,11 @@ fn dirs_home() -> PathBuf {
 impl RhoConfig {
     /// Resolve the API key from the configured environment variable.
     ///
-    /// Returns `None` if `provider.api_key_env` is not set or the env var
-    /// doesn't exist. Returns `Some(key)` if the env var is set.
+    /// Returns `None` if the default provider's `api_key_env` is not set or
+    /// the env var doesn't exist. Returns `Some(key)` if the env var is set.
     pub fn resolve_api_key(&self) -> Option<String> {
         self.provider
-            .api_key_env
-            .as_ref()
+            .default_api_key_env()
             .and_then(|var| std::env::var(var).ok())
     }
 }
@@ -598,9 +675,7 @@ mod tests {
                 assert_eq!(config.agent.retry_budget, 4);
                 assert_eq!(config.agent.initial_backoff_ms, 500);
                 assert_eq!(config.agent.token_budget, 32_768);
-                assert!(config.provider.r#type.is_none());
-                assert!(config.provider.endpoint.is_none());
-                assert!(config.provider.api_key_env.is_none());
+                assert!(config.provider.is_empty());
                 assert!(config.approval.per_tool.is_empty());
                 assert!(config.shell.denied_commands.is_empty());
                 assert!(config.sandbox.enabled);
@@ -662,15 +737,17 @@ extensions = ["Always use PowerShell 7."]
 
                 assert_eq!(config.agent.model.as_deref(), Some("gpt-4o"));
                 assert_eq!(config.agent.max_iterations, 10);
-                assert_eq!(config.provider.r#type.as_deref(), Some("openai"));
+
+                // Legacy [provider] is promoted to single-element ProviderSettings.
+                assert_eq!(config.provider.providers.len(), 1);
+                let p = config.provider.default_provider().unwrap();
+                assert_eq!(p.r#type.as_deref(), Some("openai"));
                 assert_eq!(
-                    config.provider.endpoint.as_deref(),
+                    p.endpoint.as_deref(),
                     Some("https://api.openai.com/v1/chat/completions")
                 );
-                assert_eq!(
-                    config.provider.api_key_env.as_deref(),
-                    Some("OPENAI_API_KEY")
-                );
+                assert_eq!(p.api_key_env.as_deref(), Some("OPENAI_API_KEY"));
+
                 assert_eq!(
                     config.approval.per_tool.get("run_command"),
                     Some(&ApprovalAction::Ask)
@@ -744,10 +821,12 @@ model = "project-model"
         assert_eq!(config.agent.model.as_deref(), Some("project-model"));
         // User max_iterations is preserved (project didn't set it).
         assert_eq!(config.agent.max_iterations, 20);
-        // User provider settings are preserved (project didn't set them).
-        assert_eq!(config.provider.r#type.as_deref(), Some("local"));
+        // User provider settings are preserved (project didn't set provider).
+        assert_eq!(config.provider.providers.len(), 1);
+        let p = config.provider.default_provider().unwrap();
+        assert_eq!(p.r#type.as_deref(), Some("local"));
         assert_eq!(
-            config.provider.endpoint.as_deref(),
+            p.endpoint.as_deref(),
             Some("http://localhost:1234/v1/chat/completions")
         );
     }
@@ -803,18 +882,7 @@ future_unknown_field = "surprise"
         )
         .unwrap();
 
-        // Allow unknown fields by using a permissive parse.
-        // Our WireConfig uses Option fields, so unknown top-level tables
-        // will cause a parse error. We need to decide: silently ignore or error?
-        // For forward compat, we should ignore unknown keys.
-        // toml::from_str does this by default with serde(default).
-        // But unknown tables will error. Let's test the current behavior.
         let result = ConfigLoader::load(dir.path());
-        // Unknown top-level keys cause an error with strict TOML parsing.
-        // This is acceptable — we can add `#[serde(deny_unknown_fields)]` later
-        // or switch to a more lenient approach. For now, unknown tables error.
-        // Actually, serde+toml by default ignores unknown fields.
-        // Let's just verify it works:
         assert!(result.is_ok(), "unknown scalar fields should be ignored");
     }
 
@@ -829,9 +897,11 @@ future_unknown_field = "surprise"
     #[test]
     fn resolve_api_key_returns_none_when_env_var_not_set() {
         let config = RhoConfig {
-            provider: ProviderConfig {
-                api_key_env: Some("RHO_TEST_NONEXISTENT_KEY_12345".to_owned()),
-                ..Default::default()
+            provider: ProviderSettings {
+                providers: vec![ProviderConfig {
+                    api_key_env: Some("RHO_TEST_NONEXISTENT_KEY_12345".to_owned()),
+                    ..Default::default()
+                }],
             },
             ..Default::default()
         };
@@ -1036,9 +1106,12 @@ endpoint = "http://localhost:8080/v1/chat/completions"
                 .unwrap();
 
                 let config = ConfigLoader::load(dir.path()).unwrap();
-                assert_eq!(config.provider.r#type.as_deref(), Some("local"));
+                // Legacy [provider] promoted to single-element ProviderSettings.
+                assert_eq!(config.provider.providers.len(), 1);
+                let p = config.provider.default_provider().unwrap();
+                assert_eq!(p.r#type.as_deref(), Some("local"));
                 assert_eq!(
-                    config.provider.endpoint.as_deref(),
+                    p.endpoint.as_deref(),
                     Some("http://localhost:8080/v1/chat/completions")
                 );
                 // Everything else is default.
@@ -1076,8 +1149,6 @@ custom_patterns = ["my-key-[a-zA-Z0-9]{32}", "token: \\S+"]
 
     #[test]
     fn redaction_project_custom_patterns_replace_user() {
-        // Project-level custom_patterns replaces user-level (no appending),
-        // same as other Vec fields.
         let user_config: WireConfig = toml::from_str(
             r#"
 [redaction]
@@ -1166,5 +1237,162 @@ denied_flag_combos = [["-Quiet", "-Force"]]
             config.shell.denied_flag_combos,
             vec![vec!["-Quiet".to_owned(), "-Force".to_owned()]]
         );
+    }
+
+    // ── Multi-provider config ──────────────────────────────────────────────
+
+    #[test]
+    fn load_multi_provider_config() {
+        let wire: WireConfig = toml::from_str(
+            r#"
+[[providers]]
+name = "local"
+endpoint = "http://localhost:1234/v1/chat/completions"
+
+[[providers]]
+name = "openrouter"
+endpoint = "https://openrouter.ai/api/v1/chat/completions"
+api_key_env = "OPENROUTER_API_KEY"
+"#,
+        )
+        .unwrap();
+
+        assert!(wire.provider.is_none());
+        let providers = wire.providers.unwrap();
+        assert_eq!(providers.len(), 2);
+        assert_eq!(providers[0].name.as_deref(), Some("local"));
+        assert_eq!(
+            providers[0].endpoint.as_deref(),
+            Some("http://localhost:1234/v1/chat/completions")
+        );
+        assert_eq!(providers[1].name.as_deref(), Some("openrouter"));
+        assert_eq!(
+            providers[1].api_key_env.as_deref(),
+            Some("OPENROUTER_API_KEY")
+        );
+    }
+
+    #[test]
+    fn legacy_provider_promoted_to_vec() {
+        let wire: WireConfig = toml::from_str(
+            r#"
+[provider]
+type = "local"
+endpoint = "http://localhost:1234/v1/chat/completions"
+"#,
+        )
+        .unwrap();
+
+        assert!(wire.providers.is_none());
+        let legacy = wire.provider.clone().unwrap();
+        assert_eq!(legacy.r#type.as_deref(), Some("local"));
+
+        // Merge promotes to single-element vec.
+        let config = ConfigLoader::merge(Some(wire), None);
+        assert_eq!(config.provider.providers.len(), 1);
+        assert_eq!(
+            config.provider.default_endpoint(),
+            Some("http://localhost:1234/v1/chat/completions")
+        );
+    }
+
+    #[test]
+    fn providers_array_takes_precedence_over_legacy() {
+        let wire: WireConfig = toml::from_str(
+            r#"
+[provider]
+endpoint = "http://legacy:1234/v1/chat/completions"
+
+[[providers]]
+name = "modern"
+endpoint = "http://modern:1234/v1/chat/completions"
+"#,
+        )
+        .unwrap();
+
+        // Both are present; [[providers]] should win.
+        assert!(wire.provider.is_some());
+        assert!(wire.providers.is_some());
+
+        let config = ConfigLoader::merge(Some(wire), None);
+        assert_eq!(config.provider.providers.len(), 1);
+        assert_eq!(
+            config.provider.default_provider().unwrap().name.as_deref(),
+            Some("modern")
+        );
+    }
+
+    #[test]
+    fn providers_project_replaces_user() {
+        let user_wire: WireConfig = toml::from_str(
+            r#"
+[[providers]]
+name = "user-local"
+endpoint = "http://localhost:1234/v1/chat/completions"
+"#,
+        )
+        .unwrap();
+        let project_wire: WireConfig = toml::from_str(
+            r#"
+[[providers]]
+name = "project-openrouter"
+endpoint = "https://openrouter.ai/api/v1/chat/completions"
+api_key_env = "OPENROUTER_API_KEY"
+"#,
+        )
+        .unwrap();
+
+        let config = ConfigLoader::merge(Some(user_wire), Some(project_wire));
+        // Project replaces user (same as other Vec fields).
+        assert_eq!(config.provider.providers.len(), 1);
+        assert_eq!(
+            config.provider.default_provider().unwrap().name.as_deref(),
+            Some("project-openrouter")
+        );
+    }
+
+    #[test]
+    fn provider_settings_convenience_accessors() {
+        let settings = ProviderSettings {
+            providers: vec![ProviderConfig {
+                name: Some("local".to_owned()),
+                endpoint: Some("http://localhost:1234".to_owned()),
+                api_key_env: Some("LOCAL_KEY".to_owned()),
+                ..Default::default()
+            }],
+        };
+
+        assert!(!settings.is_empty());
+        assert!(settings.default_provider().is_some());
+        assert_eq!(settings.default_endpoint(), Some("http://localhost:1234"));
+        assert_eq!(settings.default_api_key_env(), Some("LOCAL_KEY"));
+
+        let empty = ProviderSettings::default();
+        assert!(empty.is_empty());
+        assert!(empty.default_provider().is_none());
+        assert!(empty.default_endpoint().is_none());
+        assert!(empty.default_api_key_env().is_none());
+    }
+
+    #[test]
+    fn provider_config_name_field_optional() {
+        // Deserialize with name.
+        let with_name: ProviderConfig = toml::from_str(
+            r#"
+name = "openrouter"
+endpoint = "https://openrouter.ai/api/v1/chat/completions"
+"#,
+        )
+        .unwrap();
+        assert_eq!(with_name.name.as_deref(), Some("openrouter"));
+
+        // Deserialize without name.
+        let without_name: ProviderConfig = toml::from_str(
+            r#"
+endpoint = "http://localhost:1234/v1/chat/completions"
+"#,
+        )
+        .unwrap();
+        assert!(without_name.name.is_none());
     }
 }

@@ -550,7 +550,7 @@ fn enabled_redactor_with_custom_pattern_redacts_in_session() {
 fn config_api_key_not_in_plaintext() {
     // API keys are stored as env var references, never in the config struct.
     let config = RhoConfig::default();
-    assert!(config.provider.api_key_env.is_none());
+    assert!(config.provider.is_empty());
     assert!(config.resolve_api_key().is_none());
 }
 

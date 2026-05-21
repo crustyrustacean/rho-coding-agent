@@ -563,7 +563,7 @@ pub fn client_factory(
 ) -> LocalChatClient {
     let endpoint = endpoint_override
         .map(String::from)
-        .or_else(|| config.provider.endpoint.clone())
+        .or_else(|| config.provider.default_endpoint().map(String::from))
         .unwrap_or_else(|| DEFAULT_ENDPOINT.to_owned());
 
     let api_key = resolve_api_key(config, api_key_env_override);
@@ -580,7 +580,7 @@ pub fn client_factory(
 /// Reads the named environment variable and returns the value.
 /// Returns `None` if no env var is configured or the variable is not set.
 pub fn resolve_api_key(config: &RhoConfig, api_key_env_override: Option<&str>) -> Option<String> {
-    let env_var = api_key_env_override.or(config.provider.api_key_env.as_deref())?;
+    let env_var = api_key_env_override.or(config.provider.default_api_key_env())?;
     let key = std::env::var(env_var).ok()?;
     if key.is_empty() { None } else { Some(key) }
 }
@@ -602,6 +602,29 @@ pub fn is_local_endpoint(endpoint: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{ProviderConfig, ProviderSettings};
+
+    /// Helper: create an `RhoConfig` with a single provider having
+    /// only the given field set (everything else default).
+    fn config_with_provider(field: &str, value: String) -> RhoConfig {
+        let pc = match field {
+            "endpoint" => ProviderConfig {
+                endpoint: Some(value),
+                ..Default::default()
+            },
+            "api_key_env" => ProviderConfig {
+                api_key_env: Some(value),
+                ..Default::default()
+            },
+            _ => ProviderConfig::default(),
+        };
+        RhoConfig {
+            provider: ProviderSettings {
+                providers: vec![pc],
+            },
+            ..Default::default()
+        }
+    }
 
     // ── client_factory ───────────────────────────────────────────────────────
 
@@ -626,8 +649,8 @@ mod tests {
 
     #[test]
     fn client_factory_override_beats_config() {
-        let mut config = RhoConfig::default();
-        config.provider.endpoint = Some("http://config.com/v1/chat/completions".to_owned());
+        let config =
+            config_with_provider("endpoint", "http://config.com/v1/chat/completions".into());
         let client = client_factory(
             &config,
             Some("http://override.com/v1/chat/completions"),
@@ -638,16 +661,15 @@ mod tests {
 
     #[test]
     fn client_factory_uses_config_endpoint() {
-        let mut config = RhoConfig::default();
-        config.provider.endpoint = Some("http://config.com/v1/chat/completions".to_owned());
+        let config =
+            config_with_provider("endpoint", "http://config.com/v1/chat/completions".into());
         let client = client_factory(&config, None, None);
         assert_eq!(client.endpoint(), "http://config.com/v1/chat/completions");
     }
 
     #[test]
     fn client_factory_uses_config_api_key() {
-        let mut config = RhoConfig::default();
-        config.provider.api_key_env = Some("RHO_TEST_API_KEY_12345".to_owned());
+        let config = config_with_provider("api_key_env", "RHO_TEST_API_KEY_12345".into());
         temp_env::with_var("RHO_TEST_API_KEY_12345", Some("test-key-value"), || {
             let client = client_factory(&config, None, None);
             assert_eq!(client.api_key().as_deref(), Some("test-key-value"));
@@ -656,8 +678,7 @@ mod tests {
 
     #[test]
     fn client_factory_api_key_override_beats_config() {
-        let mut config = RhoConfig::default();
-        config.provider.api_key_env = Some("CONFIG_KEY".to_owned());
+        let config = config_with_provider("api_key_env", "CONFIG_KEY".into());
         temp_env::with_vars(
             [
                 ("CONFIG_KEY", Some("config-key")),
@@ -680,8 +701,7 @@ mod tests {
 
     #[test]
     fn resolve_api_key_reads_from_config() {
-        let mut config = RhoConfig::default();
-        config.provider.api_key_env = Some("RHO_TEST_KEY_RESOLVE".to_owned());
+        let config = config_with_provider("api_key_env", "RHO_TEST_KEY_RESOLVE".into());
         temp_env::with_var("RHO_TEST_KEY_RESOLVE", Some("secret"), || {
             assert_eq!(resolve_api_key(&config, None), Some("secret".to_owned()));
         });
@@ -689,8 +709,7 @@ mod tests {
 
     #[test]
     fn resolve_api_key_override_beats_config() {
-        let mut config = RhoConfig::default();
-        config.provider.api_key_env = Some("CONFIG_ENV".to_owned());
+        let config = config_with_provider("api_key_env", "CONFIG_ENV".into());
         temp_env::with_vars(
             [
                 ("CONFIG_ENV", Some("config-val")),
@@ -707,8 +726,7 @@ mod tests {
 
     #[test]
     fn resolve_api_key_returns_none_for_empty_value() {
-        let mut config = RhoConfig::default();
-        config.provider.api_key_env = Some("RHO_TEST_EMPTY_KEY".to_owned());
+        let config = config_with_provider("api_key_env", "RHO_TEST_EMPTY_KEY".into());
         temp_env::with_var("RHO_TEST_EMPTY_KEY", Some(""), || {
             assert!(resolve_api_key(&config, None).is_none());
         });
