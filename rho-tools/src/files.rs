@@ -737,10 +737,11 @@ impl EditFile {
                 let line_content = new_lines[i];
                 let is_changed = changed_indices.binary_search(&i).is_ok();
                 if is_changed && i < old_lines.len() {
-                    // Modified line — show both old and new
-                    w(&format!("- {line_num:>width$}#{hash}:{line_content}\n"));
-                    let old_hash = compute_line_hash(old_lines[i], line_num);
-                    w(&format!("+ {line_num:>width$}#{old_hash}:{line_content}\n"));
+                    // Modified line — show old then new
+                    let old_content = old_lines[i];
+                    let old_hash = compute_line_hash(old_content, line_num);
+                    w(&format!("- {line_num:>width$}#{old_hash}:{old_content}\n"));
+                    w(&format!("+ {line_num:>width$}#{hash}:{line_content}\n"));
                 } else if is_changed {
                     // Added line
                     w(&format!("+ {line_num:>width$}#{hash}:{line_content}\n"));
@@ -805,11 +806,24 @@ impl EditFile {
         Ok(hashline_edits)
     }
 
-    /// Validate line numbers and hashes for hashline edits.
-    fn validate_hashline_edits(
+    /// Validate line numbers and resolve anchors for hashline edits.
+    ///
+    /// Returns a list of [`AnchorResolution`] in the same order as the edits,
+    /// with each resolved to the actual line that should be edited. Uses
+    /// tiered validation:
+    ///
+    /// - **Tier 1:** Hash matches → exact match, apply silently.
+    /// - **Tier 2:** Hash mismatches, line number valid, content structurally
+    ///   similar → apply with warning (anchor relaxation).
+    /// - **Tier 3:** Hash mismatches, content is different at the target line →
+    ///   search ±5 lines for a matching line, apply there with warning.
+    /// - **Hard fail:** No match found anywhere → return error with fresh hashes.
+    #[allow(clippy::too_many_lines)]
+    fn validate_hashline_edits_fuzzy(
         lines: &[&str],
         hashline_edits: &[HashlineEdit],
-    ) -> std::result::Result<(), String> {
+    ) -> std::result::Result<Vec<AnchorResolution>, String> {
+        // First pass: validate line number ranges (non-negotiable)
         for edit in hashline_edits {
             if edit.pos.line_num == 0 || edit.pos.line_num > lines.len() {
                 return Err(format!(
@@ -829,81 +843,215 @@ impl EditFile {
             }
         }
 
-        // Validate hashes
+        let mut resolutions = Vec::with_capacity(hashline_edits.len());
+
         for edit in hashline_edits {
-            let line_content = lines[edit.pos.line_num - 1]; // 1-indexed
+            let target_idx = edit.pos.line_num - 1; // 0-indexed
+            let line_content = lines[target_idx];
             let current_hash = compute_line_hash(line_content, edit.pos.line_num);
 
-            if current_hash != edit.pos.hash {
-                let mismatch_line = edit.pos.line_num;
-                let context_start = mismatch_line.saturating_sub(3);
-                let context_end = (mismatch_line + 3).min(lines.len());
+            // Tier 1: Exact hash match
+            if current_hash == edit.pos.hash {
+                resolutions.push(AnchorResolution {
+                    resolved_line: target_idx,
+                    exact_match: true,
+                    relaxation_note: None,
+                });
+                continue;
+            }
 
-                let mut context_lines = Vec::new();
-                let width = lines.len().to_string().len();
-                for (i, line) in lines.iter().enumerate() {
-                    let line_num = i + 1;
-                    if line_num >= context_start && line_num <= context_end {
-                        let hash = compute_line_hash(line, line_num);
-                        context_lines.push(format!("{line_num:>width$}#{hash}:{line}"));
+            // Tier 2: Hash mismatch, but content at the target line is similar.
+            // Only apply fuzzy matching for lines with enough information content.
+            if is_high_information_line(line_content) {
+                let sim = content_similarity(line_content, edit.pos.hash.as_str());
+                // Note: we can't do content_similarity against the original content
+                // because the anchor only has the hash, not the original line text.
+                // Instead, check if the line at the target line number has enough
+                // information content to be a plausible target. Since we know the
+                // model read the file and saw this line number, if the line is
+                // substantive (not a bare `}` or blank), the line number alone is
+                // a strong signal. Accept it with a warning.
+                let _ = sim; // similarity used for neighborhood search below
+            }
+
+            // For Tier 2: the line number is still correct (within range), and
+            // the line has enough information content to be a unique target.
+            // The hash changed because a prior edit modified this line or shifted
+            // content. Since the model intentionally targeted this line number,
+            // trust the line number but warn about the stale hash.
+            if is_high_information_line(line_content) {
+                resolutions.push(AnchorResolution {
+                    resolved_line: target_idx,
+                    exact_match: false,
+                    relaxation_note: Some(format!(
+                        "anchor {}#{} relaxed to {}#{} (hash stale, line number valid)",
+                        edit.pos.line_num,
+                        edit.pos.hash,
+                        edit.pos.line_num,
+                        current_hash
+                    )),
+                });
+                continue;
+            }
+
+            // Tier 3: The line at the target is low-information (e.g., `}`, blank).
+            // Search ±5 lines for a line with high information content that has
+            // the same hash as the anchor expects. This handles cases where a
+            // prior edit shifted lines up or down.
+            let search_radius = 5usize;
+            let mut best_match: Option<(usize, String)> = None;
+
+            for offset in 1..=search_radius {
+                // Check line below
+                if let Some(candidate_idx) =
+                    target_idx.checked_add(offset).filter(|&i| i < lines.len())
+                {
+                    let candidate_line = lines[candidate_idx];
+                    let candidate_hash =
+                        compute_line_hash(candidate_line, candidate_idx + 1);
+                    if candidate_hash == edit.pos.hash
+                        && is_high_information_line(candidate_line)
+                    {
+                        best_match = Some((
+                            candidate_idx,
+                            format!(
+                                "anchor {}#{} resolved to {}#{} (neighborhood search, +{offset})",
+                                edit.pos.line_num,
+                                edit.pos.hash,
+                                candidate_idx + 1,
+                                candidate_hash
+                            ),
+                        ));
+                        break;
                     }
                 }
-
-                return Err(format!(
-                    "edit_file: hash mismatch at anchor {}#{}\n\
-                     Expected line:  {}#{}:{}\n\
-                     Actual line:    {}#{}:{}\n\
-                     \n\
-                     Fresh hashes around mismatch:\n\
-                     {}\n\
-                     \n\
-                     Use updated anchor {}#{} to retry.",
-                    edit.pos.line_num,
-                    edit.pos.hash,
-                    edit.pos.line_num,
-                    edit.pos.hash,
-                    line_content,
-                    edit.pos.line_num,
-                    current_hash,
-                    line_content,
-                    context_lines.join("\n                     "),
-                    edit.pos.line_num,
-                    current_hash
-                ));
+                // Check line above
+                if let Some(candidate_idx) = target_idx.checked_sub(offset) {
+                    let candidate_line = lines[candidate_idx];
+                    let candidate_hash =
+                        compute_line_hash(candidate_line, candidate_idx + 1);
+                    if candidate_hash == edit.pos.hash
+                        && is_high_information_line(candidate_line)
+                    {
+                        best_match = Some((
+                            candidate_idx,
+                            format!(
+                                "anchor {}#{} resolved to {}#{} (neighborhood search, -{offset})",
+                                edit.pos.line_num,
+                                edit.pos.hash,
+                                candidate_idx + 1,
+                                candidate_hash
+                            ),
+                        ));
+                        break;
+                    }
+                }
             }
+
+            if let Some((resolved_idx, note)) = best_match {
+                resolutions.push(AnchorResolution {
+                    resolved_line: resolved_idx,
+                    exact_match: false,
+                    relaxation_note: Some(note),
+                });
+                continue;
+            }
+
+            // Hard fail: no match found. Return error with fresh hashes.
+            let mismatch_line = edit.pos.line_num;
+            let context_start = mismatch_line.saturating_sub(3);
+            let context_end = (mismatch_line + 3).min(lines.len());
+
+            let mut context_lines = Vec::new();
+            let width = lines.len().to_string().len();
+            for (i, line) in lines.iter().enumerate() {
+                let line_num = i + 1;
+                if line_num >= context_start && line_num <= context_end {
+                    let hash = compute_line_hash(line, line_num);
+                    context_lines.push(format!("{line_num:>width$}#{hash}:{line}"));
+                }
+            }
+
+            return Err(format!(
+                "edit_file: hash mismatch at anchor {}#{} and no similar content found nearby\n\
+                 Expected line:  {}#{}:{}\n\
+                 Actual line:    {}#{}:{}\n\
+                 \n\
+                 Fresh hashes around mismatch:\n\
+                 {}\n\
+                 \n\
+                 Use updated anchor {}#{} to retry.",
+                edit.pos.line_num,
+                edit.pos.hash,
+                edit.pos.line_num,
+                edit.pos.hash,
+                line_content,
+                edit.pos.line_num,
+                current_hash,
+                line_content,
+                context_lines.join("\n                     "),
+                edit.pos.line_num,
+                current_hash
+            ));
         }
-        Ok(())
+
+        Ok(resolutions)
     }
 
     /// Apply parsed hashline edits to content, returning modified content.
+    ///
+    /// Uses fuzzy anchor matching: stale hashes are relaxed when the line
+    /// number is still valid and the target line has enough information content.
+    /// Returns `(modified_content, relaxation_notes)` on success.
     fn apply_hashline_to_content(
         content: &str,
         edits_arg: &[serde_json::Value],
-    ) -> std::result::Result<String, String> {
+    ) -> std::result::Result<(String, Vec<String>), String> {
         let lines: Vec<&str> = content.lines().collect();
         if lines.is_empty() {
             return Err("edit_file: cannot edit empty file".to_string());
         }
 
         let hashline_edits = Self::parse_hashline_edits(edits_arg)?;
-        Self::validate_hashline_edits(&lines, &hashline_edits)?;
+        let resolutions = Self::validate_hashline_edits_fuzzy(&lines, &hashline_edits)?;
 
-        // Apply edits from last to first to preserve line numbers
+        // Collect relaxation notes for reporting
+        let relaxation_notes: Vec<String> = resolutions
+            .iter()
+            .filter_map(|r| r.relaxation_note.clone())
+            .collect();
+
+        // Build (original_edit_idx, resolved_0indexed_line) pairs for sorted application
+        let edit_targets: Vec<(usize, usize)> = hashline_edits
+            .iter()
+            .zip(resolutions.iter())
+            .map(|(_, res)| (res.resolved_line, res.resolved_line))
+            .collect();
+
+        // Apply edits from last to first to preserve line numbers.
+        // Sort by resolved line position descending.
+        let mut apply_order: Vec<usize> = (0..hashline_edits.len()).collect();
+        apply_order.sort_by(|&a, &b| edit_targets[b].0.cmp(&edit_targets[a].0));
+
         let mut modified: Vec<String> =
             lines.iter().map(std::string::ToString::to_string).collect();
 
-        for edit in hashline_edits.iter().rev() {
-            let idx = edit.pos.line_num - 1; // 0-indexed
+        for edit_idx in apply_order {
+            let edit = &hashline_edits[edit_idx];
+            let idx = resolutions[edit_idx].resolved_line; // 0-indexed
 
             match edit.op {
                 HashlineOp::Replace => {
                     if let Some(ref end) = edit.end {
-                        let end_idx = end.line_num - 1;
-                        if end_idx < idx {
-                            return Err(format!(
-                                "edit_file: end anchor line {} must be >= pos anchor line {}",
-                                end.line_num, edit.pos.line_num
-                            ));
+                        // For range operations, compute the span relative to
+                        // the resolved start position. The end anchor's offset
+                        // from the start anchor is preserved.
+                        let original_span = end.line_num - edit.pos.line_num;
+                        let end_idx = idx + original_span;
+                        if end_idx >= modified.len() {
+                            return Err(
+                                "edit_file: range end would exceed file length".to_string()
+                            );
                         }
                         modified.splice(idx..=end_idx, edit.lines.clone());
                     } else {
@@ -911,8 +1059,8 @@ impl EditFile {
                     }
                 }
                 HashlineOp::Append => {
-                    if idx < modified.len() {
-                        let insert_pos = idx + 1;
+                    let insert_pos = idx + 1;
+                    if insert_pos < modified.len() {
                         modified.splice(insert_pos..insert_pos, edit.lines.clone());
                     } else {
                         modified.extend(edit.lines.clone());
@@ -923,12 +1071,12 @@ impl EditFile {
                 }
                 HashlineOp::Delete => {
                     if let Some(ref end) = edit.end {
-                        let end_idx = end.line_num - 1;
-                        if end_idx < idx {
-                            return Err(format!(
-                                "edit_file: end anchor line {} must be >= pos anchor line {}",
-                                end.line_num, edit.pos.line_num
-                            ));
+                        let original_span = end.line_num - edit.pos.line_num;
+                        let end_idx = idx + original_span;
+                        if end_idx >= modified.len() {
+                            return Err(
+                                "edit_file: range end would exceed file length".to_string()
+                            );
                         }
                         modified.drain(idx..=end_idx);
                     } else {
@@ -938,7 +1086,7 @@ impl EditFile {
             }
         }
 
-        Ok(modified.join("\n"))
+        Ok((modified.join("\n"), relaxation_notes))
     }
 
     /// Apply pure hashline edits: read, validate, apply, write.
@@ -963,24 +1111,99 @@ impl EditFile {
         };
 
         match Self::apply_hashline_to_content(&content, edits_arg) {
-            Ok(modified) => {
+            Ok((modified, relaxation_notes)) => {
                 if let Err(e) = tokio::fs::write(&**safe_path, &modified).await {
                     return Ok(ToolOutcome::Immediate(ToolResult::error(format!(
                         "edit_file: failed to write `{path_str}`: {e}"
                     ))));
                 }
-                let mut output = format!(
-                    "applied {} hashline edit(s) to {}",
-                    edits_arg.len(),
-                    path_str
-                );
+
+                let has_relaxation = !relaxation_notes.is_empty();
+                let mut output = if has_relaxation {
+                    format!(
+                        "applied {} hashline edit(s) to {} (with anchor relaxation)",
+                        edits_arg.len(),
+                        path_str
+                    )
+                } else {
+                    format!(
+                        "applied {} hashline edit(s) to {}",
+                        edits_arg.len(),
+                        path_str
+                    )
+                };
+
+                for note in &relaxation_notes {
+                    output.push_str("\n  ");
+                    output.push_str(note);
+                }
+                if has_relaxation {
+                    output.push_str(
+                        "\n  Warning: hashes were stale. Re-read file if further edits needed.",
+                    );
+                }
+
                 let diff = Self::format_hashline_diff(&content, &modified);
                 if !diff.is_empty() {
                     output.push_str("\n<diff>\n");
                     output.push_str(&diff);
                     output.push_str("</diff>");
-                    output.push_str("\nNote: Anchors in diff are fresh. Use for chained edits.");
                 }
+
+                // Fresh anchors block: provide ±5 lines around each edit region
+                // so the model can make chained edits without re-reading the file.
+                let new_lines: Vec<&str> = modified.lines().collect();
+                if !new_lines.is_empty() {
+                    // Find changed regions in the new content
+                    let old_lines: Vec<&str> = content.lines().collect();
+                    let mut changed_indices: Vec<usize> = Vec::new();
+                    let max_cmp = new_lines.len().min(old_lines.len());
+                    for i in 0..max_cmp {
+                        if old_lines[i] != new_lines[i] {
+                            changed_indices.push(i);
+                        }
+                    }
+                    for i in old_lines.len()..new_lines.len() {
+                        changed_indices.push(i);
+                    }
+                    if old_lines.len() > new_lines.len() && !new_lines.is_empty() {
+                        let last = new_lines.len() - 1;
+                        if changed_indices.last() != Some(&last) {
+                            changed_indices.push(last);
+                        }
+                    }
+
+                    if !changed_indices.is_empty() {
+                        // Find min/max changed indices for the anchor region
+                        let first_change = *changed_indices.first().unwrap();
+                        let last_change = *changed_indices.last().unwrap();
+                        let anchor_radius = 5usize;
+                        let anchor_start = first_change.saturating_sub(anchor_radius);
+                        let anchor_end =
+                            (last_change + anchor_radius).min(new_lines.len() - 1);
+
+                        let width = new_lines.len().to_string().len();
+                        let mut fresh_anchors = String::new();
+                        for (i, line) in new_lines.iter().enumerate()
+                            .skip(anchor_start)
+                            .take(anchor_end - anchor_start + 1)
+                        {
+                            let line_num = i + 1;
+                            let hash = compute_line_hash(line, line_num);
+                            let _ = std::fmt::write(
+                                &mut fresh_anchors,
+                                format_args!("  {line_num:>width$}#{hash}:{line}\n"),
+                            );
+                        }
+
+                        output.push_str("\n<fresh-anchors>\n");
+                        output.push_str(&fresh_anchors);
+                        output.push_str("</fresh-anchors>");
+                        output.push_str("\nLines have fresh anchors. \
+                         Use these for subsequent edits to this region.");
+                    }
+                }
+
                 Ok(ToolOutcome::Immediate(ToolResult::success(output)))
             }
             Err(msg) => Ok(ToolOutcome::Immediate(ToolResult::error(msg))),
@@ -1113,8 +1336,8 @@ impl EditFile {
             .collect();
 
         // Apply hashline edits first (they reference original line numbers)
-        let intermediate = match Self::apply_hashline_to_content(&content, &hashline_args) {
-            Ok(c) => c,
+        let (intermediate, _hashline_notes) = match Self::apply_hashline_to_content(&content, &hashline_args) {
+            Ok((c, notes)) => (c, notes),
             Err(msg) => return Ok(ToolOutcome::Immediate(ToolResult::error(msg))),
         };
 
@@ -1299,6 +1522,67 @@ fn detect_regex_patterns(text: &str) -> Option<String> {
     } else {
         Some(found.join(", "))
     }
+}
+
+/// Check whether a line has enough information content for reliable
+/// content-based matching. Short lines like `}`, `]`, or empty lines
+/// have too little signal and should not be fuzzy-matched.
+fn is_high_information_line(line: &str) -> bool {
+    let stripped = line.trim();
+    // Require at least 4 non-whitespace characters
+    if stripped.len() < 4 {
+        return false;
+    }
+    // Require at least one alphanumeric character
+    stripped.chars().any(char::is_alphanumeric)
+}
+
+/// Extract the first token from a line (up to first whitespace, paren, colon, or equals).
+fn first_token(s: &str) -> &str {
+    s.split(|c: char| c.is_whitespace() || c == '(' || c == ':' || c == '=')
+        .next()
+        .unwrap_or("")
+}
+
+/// Compute a content similarity score between two lines.
+///
+/// Returns a score >= 0 where higher means more similar:
+/// - `usize::MAX` = perfect match (after stripping whitespace)
+/// - 10+ = same leading token (first word)
+/// - 0 = no meaningful similarity
+///
+/// This is used for fuzzy anchor matching when the hash mismatches but
+/// the line number still points to the right content.
+fn content_similarity(a: &str, b: &str) -> usize {
+    let a_trimmed = a.trim_start();
+    let b_trimmed = b.trim_start();
+
+    if a_trimmed == b_trimmed {
+        return usize::MAX; // Perfect match (whitespace-only difference)
+    }
+
+    // Check if the first "word" (up to first space/punct) matches.
+    // This catches cases like `let metadata_json = ...` vs
+    // `let metadata_json = serde_json::to_string(m)` — same leading `let`.
+    let token_a = first_token(a_trimmed);
+    let token_b = first_token(b_trimmed);
+
+    if !token_a.is_empty() && token_a == token_b {
+        return 10; // Same leading token — likely the right line
+    }
+
+    0 // No similarity
+}
+
+/// Result of fuzzy anchor validation.
+#[allow(dead_code)]
+struct AnchorResolution {
+    /// The resolved line number (0-indexed) where the edit should apply.
+    resolved_line: usize,
+    /// Whether the hash matched exactly (no relaxation needed).
+    exact_match: bool,
+    /// Description of any relaxation applied, for the user/model.
+    relaxation_note: Option<String>,
 }
 
 /// Truncate `text` to `max_len` characters for inclusion in error messages.

@@ -35,6 +35,13 @@ fn immediate_is_error(outcome: &ToolOutcome) -> bool {
     }
 }
 
+fn immediate_is_success(outcome: &ToolOutcome) -> bool {
+    match outcome {
+        ToolOutcome::Immediate(result) => !result.is_error,
+        ToolOutcome::Streamed(_) => panic!("unexpected streamed output"),
+    }
+}
+
 // ── ReadFile ──────────────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -1534,14 +1541,15 @@ async fn edit_file_hashline_replace_single_line_with_valid_hash() {
 }
 
 #[tokio::test]
-async fn edit_file_hashline_mismatch_returns_error_with_fresh_hashes() {
+async fn edit_file_hashline_mismatch_with_high_information_line_applies_with_relaxation() {
     let (dir, root) = setup();
     let path = dir.path().join("test.txt");
     let content = "original line 2";
     fs::write(&path, content).unwrap();
 
     let edit_tool = EditFile { root };
-    // Use an incorrect hash
+    // Use an incorrect hash — but the line is high-information,
+    // so fuzzy matching applies it with relaxation (Tier 2).
     let edit_args = serde_json::json!({
         "path": path.to_str().unwrap(),
         "edits": [{
@@ -1557,8 +1565,48 @@ async fn edit_file_hashline_mismatch_returns_error_with_fresh_hashes() {
 
     let output = immediate_output(&edit_outcome);
     assert!(
+        immediate_is_success(&edit_outcome),
+        "edit should succeed with anchor relaxation"
+    );
+    assert!(
+        output.contains("anchor relaxation"),
+        "output should mention anchor relaxation"
+    );
+    assert!(
+        output.contains("hash stale"),
+        "output should warn about stale hash"
+    );
+    // Verify the edit was actually applied
+    let actual = fs::read_to_string(&path).unwrap();
+    assert_eq!(actual, "modified");
+}
+
+#[tokio::test]
+async fn edit_file_hashline_mismatch_with_low_information_line_hard_fails() {
+    let (dir, root) = setup();
+    let path = dir.path().join("test.txt");
+    // Low-information line: just "}" — not enough signal for fuzzy matching
+    let content = "}";
+    fs::write(&path, content).unwrap();
+
+    let edit_tool = EditFile { root };
+    let edit_args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": [{
+            "op": "replace",
+            "pos": "1#ZZ",  // Wrong hash, and line is too short for fuzzy match
+            "lines": ["modified"]
+        }]
+    });
+    let edit_outcome = edit_tool
+        .execute(edit_args, CancellationToken::new())
+        .await
+        .unwrap();
+
+    let output = immediate_output(&edit_outcome);
+    assert!(
         immediate_is_error(&edit_outcome),
-        "edit should fail with hash mismatch"
+        "edit should hard-fail for low-information line with wrong hash"
     );
     assert!(
         output.contains("hash mismatch"),
@@ -2035,4 +2083,221 @@ async fn edit_file_hashline_replace_range() {
     );
     let modified = fs::read_to_string(&path).unwrap();
     assert_eq!(modified, "line 1\nreplaced a\nreplaced b\nline 5");
+}
+
+// ── Phase A: Fresh Anchors Block ─────────────────────────────────────────────
+
+#[tokio::test]
+async fn edit_file_hashline_success_includes_fresh_anchors_block() {
+    let (dir, root) = setup();
+    let path = dir.path().join("test.txt");
+    let content = "line 1\nline 2\nline 3\nline 4\nline 5";
+    fs::write(&path, content).unwrap();
+
+    // Get hash for line 3
+    let read_tool = ReadFile { root: root.clone() };
+    let read_outcome = read_tool
+        .execute(
+            serde_json::json!({
+                "path": path.to_str().unwrap(),
+                "hashline": true
+            }),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let read_output = immediate_output(&read_outcome);
+    let line_3_hash = read_output
+        .lines()
+        .find(|line| line.contains("3#") && line.contains("line 3"))
+        .and_then(|line| line.split('#').nth(1).and_then(|h| h.split(':').next()))
+        .expect("should find hash for line 3");
+
+    let edit_tool = EditFile { root };
+    let edit_args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": [{
+            "op": "replace",
+            "pos": format!("3#{line_3_hash}"),
+            "lines": ["modified line 3"]
+        }]
+    });
+    let edit_outcome = edit_tool
+        .execute(edit_args, CancellationToken::new())
+        .await
+        .unwrap();
+
+    let output = immediate_output(&edit_outcome);
+    assert!(
+        immediate_is_success(&edit_outcome),
+        "edit should succeed"
+    );
+    assert!(
+        output.contains("<fresh-anchors>"),
+        "output should include fresh-anchors block: {output}"
+    );
+    assert!(
+        output.contains("</fresh-anchors>"),
+        "output should close fresh-anchors tag"
+    );
+    assert!(
+        output.contains("fresh anchors"),
+        "output should mention fresh anchors"
+    );
+}
+
+#[tokio::test]
+async fn edit_file_hashline_chained_edit_with_stale_hash_succeeds() {
+    // Simulates the retry-spiral scenario: make edit A, then use stale
+    // anchors from the original read to make edit B. With fuzzy matching,
+    // edit B should succeed with relaxation (no retry needed).
+    let (dir, root) = setup();
+    let path = dir.path().join("test.txt");
+    let content = "line 1\noriginal line 2\nline 3\nline 4";
+    fs::write(&path, content).unwrap();
+
+    // Step 1: Read file to get original hashes
+    let read_tool = ReadFile { root: root.clone() };
+    let read_outcome = read_tool
+        .execute(
+            serde_json::json!({
+                "path": path.to_str().unwrap(),
+                "hashline": true
+            }),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let read_output = immediate_output(&read_outcome);
+
+    // Extract original hash for line 2
+    let line_2_hash = read_output
+        .lines()
+        .find(|line| line.contains("2#") && line.contains("original line 2"))
+        .and_then(|line| line.split('#').nth(1).and_then(|h| h.split(':').next()))
+        .expect("should find hash for line 2");
+    let _line_4_hash = read_output
+        .lines()
+        .find(|line| line.contains("4#") && line.contains("line 4"))
+        .and_then(|line| line.split('#').nth(1).and_then(|h| h.split(':').next()))
+        .expect("should find hash for line 4");
+
+    // Step 2: Make edit A — replace line 2 (this invalidates line 2's hash)
+    let edit_tool = EditFile { root: root.clone() };
+    let edit_a_args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": [{
+            "op": "replace",
+            "pos": format!("2#{line_2_hash}"),
+            "lines": ["modified line 2"]
+        }]
+    });
+    let edit_a_outcome = edit_tool
+        .execute(edit_a_args, CancellationToken::new())
+        .await
+        .unwrap();
+    assert!(
+        immediate_is_success(&edit_a_outcome),
+        "edit A should succeed"
+    );
+
+    // Step 3: Make edit B using the ORIGINAL (now stale) hash for line 4.
+    // Line 4 hasn't actually changed (line 2 was modified, not line 4),
+    // so the hash is still valid in this case. But let's test the case
+    // where we use a completely wrong hash for a high-information line.
+    let edit_b_args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": [{
+            "op": "replace",
+            "pos": format!("4#ZZ"),  // Stale/wrong hash
+            "lines": ["modified line 4"]
+        }]
+    });
+    let second_edit_outcome = edit_tool
+        .execute(edit_b_args, CancellationToken::new())
+        .await
+        .unwrap();
+
+    let output = immediate_output(&second_edit_outcome);
+    assert!(
+        immediate_is_success(&second_edit_outcome),
+        "edit B should succeed with anchor relaxation (stale hash on high-info line)"
+    );
+    assert!(
+        output.contains("anchor relaxation"),
+        "output should mention anchor relaxation: {output}"
+    );
+    // Verify the edit was applied correctly
+    let final_content = fs::read_to_string(&path).unwrap();
+    assert_eq!(
+        final_content,
+        "line 1\nmodified line 2\nline 3\nmodified line 4"
+    );
+}
+
+#[tokio::test]
+async fn edit_file_hashline_diff_shows_old_content_on_minus_lines() {
+    // Fix 3: The diff's '-' lines should show OLD content, not new content
+    let (dir, root) = setup();
+    let path = dir.path().join("test.txt");
+    let content = "alpha\nbeta\ngamma";
+    fs::write(&path, content).unwrap();
+
+    let read_tool = ReadFile { root: root.clone() };
+    let read_outcome = read_tool
+        .execute(
+            serde_json::json!({
+                "path": path.to_str().unwrap(),
+                "hashline": true
+            }),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let read_output = immediate_output(&read_outcome);
+    let line_2_hash = read_output
+        .lines()
+        .find(|line| line.contains("2#") && line.contains("beta"))
+        .and_then(|line| line.split('#').nth(1).and_then(|h| h.split(':').next()))
+        .expect("should find hash for line 2");
+
+    let edit_tool = EditFile { root };
+    let edit_args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "edits": [{
+            "op": "replace",
+            "pos": format!("2#{line_2_hash}"),
+            "lines": ["BETA"]
+        }]
+    });
+    let edit_outcome = edit_tool
+        .execute(edit_args, CancellationToken::new())
+        .await
+        .unwrap();
+
+    let output = immediate_output(&edit_outcome);
+    assert!(immediate_is_success(&edit_outcome));
+
+    // Extract diff lines
+    let diff_start = output.find("<diff>").expect("should have diff");
+    let diff_end = output.find("</diff>").expect("should close diff");
+    let diff = &output[diff_start..diff_end];
+
+    // The '-' line should contain "beta" (old content)
+    // The '+' line should contain "BETA" (new content)
+    let minus_line = diff.lines().find(|l| l.starts_with('-')).expect("should have - line");
+    let plus_line = diff.lines().find(|l| l.starts_with('+')).expect("should have + line");
+
+    assert!(
+        minus_line.contains("beta"),
+        "'- 'line should show OLD content (beta): {minus_line}"
+    );
+    assert!(
+        !minus_line.contains("BETA"),
+        "'- 'line should NOT show NEW content (BETA): {minus_line}"
+    );
+    assert!(
+        plus_line.contains("BETA"),
+        "'+ 'line should show NEW content (BETA): {plus_line}"
+    );
 }
