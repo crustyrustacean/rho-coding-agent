@@ -46,7 +46,10 @@ impl HashlineAnchor {
         if hash.is_empty() {
             return None;
         }
-        Some(HashlineAnchor { line_num, hash: hash.to_string() })
+        Some(HashlineAnchor {
+            line_num,
+            hash: hash.to_string(),
+        })
     }
 }
 
@@ -884,10 +887,7 @@ impl EditFile {
                     exact_match: false,
                     relaxation_note: Some(format!(
                         "anchor {}#{} relaxed to {}#{} (hash stale, line number valid)",
-                        edit.pos.line_num,
-                        edit.pos.hash,
-                        edit.pos.line_num,
-                        current_hash
+                        edit.pos.line_num, edit.pos.hash, edit.pos.line_num, current_hash
                     )),
                 });
                 continue;
@@ -906,11 +906,8 @@ impl EditFile {
                     target_idx.checked_add(offset).filter(|&i| i < lines.len())
                 {
                     let candidate_line = lines[candidate_idx];
-                    let candidate_hash =
-                        compute_line_hash(candidate_line, candidate_idx + 1);
-                    if candidate_hash == edit.pos.hash
-                        && is_high_information_line(candidate_line)
-                    {
+                    let candidate_hash = compute_line_hash(candidate_line, candidate_idx + 1);
+                    if candidate_hash == edit.pos.hash && is_high_information_line(candidate_line) {
                         best_match = Some((
                             candidate_idx,
                             format!(
@@ -927,11 +924,8 @@ impl EditFile {
                 // Check line above
                 if let Some(candidate_idx) = target_idx.checked_sub(offset) {
                     let candidate_line = lines[candidate_idx];
-                    let candidate_hash =
-                        compute_line_hash(candidate_line, candidate_idx + 1);
-                    if candidate_hash == edit.pos.hash
-                        && is_high_information_line(candidate_line)
-                    {
+                    let candidate_hash = compute_line_hash(candidate_line, candidate_idx + 1);
+                    if candidate_hash == edit.pos.hash && is_high_information_line(candidate_line) {
                         best_match = Some((
                             candidate_idx,
                             format!(
@@ -1048,9 +1042,7 @@ impl EditFile {
                         let original_span = end.line_num - edit.pos.line_num;
                         let end_idx = idx + original_span;
                         if end_idx >= modified.len() {
-                            return Err(
-                                "edit_file: range end would exceed file length".to_string()
-                            );
+                            return Err("edit_file: range end would exceed file length".to_string());
                         }
                         modified.splice(idx..=end_idx, edit.lines.clone());
                     } else {
@@ -1073,9 +1065,7 @@ impl EditFile {
                         let original_span = end.line_num - edit.pos.line_num;
                         let end_idx = idx + original_span;
                         if end_idx >= modified.len() {
-                            return Err(
-                                "edit_file: range end would exceed file length".to_string()
-                            );
+                            return Err("edit_file: range end would exceed file length".to_string());
                         }
                         modified.drain(idx..=end_idx);
                     } else {
@@ -1086,6 +1076,75 @@ impl EditFile {
         }
 
         Ok((modified.join("\n"), relaxation_notes))
+    }
+
+    /// Generate fresh hashline anchors for changed regions.
+    ///
+    /// Compares old and new content, finds changed line indices, then
+    /// emits ±5 lines of context around each change region with fresh
+    /// hashline anchors so the model can make chained edits.
+    fn format_fresh_anchors(old_content: &str, new_content: &str) -> Option<String> {
+        let new_lines: Vec<&str> = new_content.lines().collect();
+        let old_lines: Vec<&str> = old_content.lines().collect();
+
+        if new_lines.is_empty() {
+            return None;
+        }
+
+        // Find changed regions in the new content
+        let mut changed_indices: Vec<usize> = Vec::new();
+        let max_cmp = new_lines.len().min(old_lines.len());
+        for i in 0..max_cmp {
+            if old_lines[i] != new_lines[i] {
+                changed_indices.push(i);
+            }
+        }
+        for i in old_lines.len()..new_lines.len() {
+            changed_indices.push(i);
+        }
+        if old_lines.len() > new_lines.len() && !new_lines.is_empty() {
+            let last = new_lines.len() - 1;
+            if changed_indices.last() != Some(&last) {
+                changed_indices.push(last);
+            }
+        }
+
+        if changed_indices.is_empty() {
+            return None;
+        }
+
+        // Find min/max changed indices for the anchor region
+        let first_change = *changed_indices.first().unwrap();
+        let last_change = *changed_indices.last().unwrap();
+        let anchor_radius = 5usize;
+        let anchor_start = first_change.saturating_sub(anchor_radius);
+        let anchor_end = (last_change + anchor_radius).min(new_lines.len() - 1);
+
+        let width = new_lines.len().to_string().len();
+        let mut fresh_anchors = String::new();
+        for (i, line) in new_lines
+            .iter()
+            .enumerate()
+            .skip(anchor_start)
+            .take(anchor_end - anchor_start + 1)
+        {
+            let line_num = i + 1;
+            let hash = compute_line_hash(line, line_num);
+            let _ = std::fmt::write(
+                &mut fresh_anchors,
+                format_args!("  {line_num:>width$}#{hash}:{line}\n"),
+            );
+        }
+
+        let mut output = String::new();
+        output.push_str("\n<fresh-anchors>\n");
+        output.push_str(&fresh_anchors);
+        output.push_str("</fresh-anchors>");
+        output.push_str(
+            "\nLines have fresh anchors. \
+             Use these for subsequent edits to this region.",
+        );
+        Some(output)
     }
 
     /// Apply pure hashline edits: read, validate, apply, write.
@@ -1149,58 +1208,8 @@ impl EditFile {
                     output.push_str("</diff>");
                 }
 
-                // Fresh anchors block: provide ±5 lines around each edit region
-                // so the model can make chained edits without re-reading the file.
-                let new_lines: Vec<&str> = modified.lines().collect();
-                if !new_lines.is_empty() {
-                    // Find changed regions in the new content
-                    let old_lines: Vec<&str> = content.lines().collect();
-                    let mut changed_indices: Vec<usize> = Vec::new();
-                    let max_cmp = new_lines.len().min(old_lines.len());
-                    for i in 0..max_cmp {
-                        if old_lines[i] != new_lines[i] {
-                            changed_indices.push(i);
-                        }
-                    }
-                    for i in old_lines.len()..new_lines.len() {
-                        changed_indices.push(i);
-                    }
-                    if old_lines.len() > new_lines.len() && !new_lines.is_empty() {
-                        let last = new_lines.len() - 1;
-                        if changed_indices.last() != Some(&last) {
-                            changed_indices.push(last);
-                        }
-                    }
-
-                    if !changed_indices.is_empty() {
-                        // Find min/max changed indices for the anchor region
-                        let first_change = *changed_indices.first().unwrap();
-                        let last_change = *changed_indices.last().unwrap();
-                        let anchor_radius = 5usize;
-                        let anchor_start = first_change.saturating_sub(anchor_radius);
-                        let anchor_end =
-                            (last_change + anchor_radius).min(new_lines.len() - 1);
-
-                        let width = new_lines.len().to_string().len();
-                        let mut fresh_anchors = String::new();
-                        for (i, line) in new_lines.iter().enumerate()
-                            .skip(anchor_start)
-                            .take(anchor_end - anchor_start + 1)
-                        {
-                            let line_num = i + 1;
-                            let hash = compute_line_hash(line, line_num);
-                            let _ = std::fmt::write(
-                                &mut fresh_anchors,
-                                format_args!("  {line_num:>width$}#{hash}:{line}\n"),
-                            );
-                        }
-
-                        output.push_str("\n<fresh-anchors>\n");
-                        output.push_str(&fresh_anchors);
-                        output.push_str("</fresh-anchors>");
-                        output.push_str("\nLines have fresh anchors. \
-                         Use these for subsequent edits to this region.");
-                    }
+                if let Some(anchors) = Self::format_fresh_anchors(&content, &modified) {
+                    output.push_str(&anchors);
                 }
 
                 Ok(ToolOutcome::Immediate(ToolResult::success(output)))
@@ -1335,10 +1344,11 @@ impl EditFile {
             .collect();
 
         // Apply hashline edits first (they reference original line numbers)
-        let (intermediate, _hashline_notes) = match Self::apply_hashline_to_content(&content, &hashline_args) {
-            Ok((c, notes)) => (c, notes),
-            Err(msg) => return Ok(ToolOutcome::Immediate(ToolResult::error(msg))),
-        };
+        let (intermediate, _hashline_notes) =
+            match Self::apply_hashline_to_content(&content, &hashline_args) {
+                Ok((c, notes)) => (c, notes),
+                Err(msg) => return Ok(ToolOutcome::Immediate(ToolResult::error(msg))),
+            };
 
         // Parse legacy edits
         let edits = Self::parse_legacy_edits(&legacy_args)?;

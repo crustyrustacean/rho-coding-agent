@@ -78,7 +78,12 @@ pub fn compute_line_hash(line: &str, line_num: usize) -> String {
     let idx4 = ((seed >> 12) & 0x0F) as usize;
 
     // ALPHABET only contains valid UTF-8 ASCII characters
-    let bytes = [ALPHABET[idx1], ALPHABET[idx2], ALPHABET[idx3], ALPHABET[idx4]];
+    let bytes = [
+        ALPHABET[idx1],
+        ALPHABET[idx2],
+        ALPHABET[idx3],
+        ALPHABET[idx4],
+    ];
     String::from_utf8(bytes.to_vec()).expect("ALPHABET contains valid UTF-8")
 }
 
@@ -139,7 +144,11 @@ mod tests {
     fn test_hash_length() {
         let line = "function hello() {";
         let hash = compute_line_hash(line, 1);
-        assert_eq!(hash.len(), HASH_LEN, "Hash should be exactly {HASH_LEN} characters");
+        assert_eq!(
+            hash.len(),
+            HASH_LEN,
+            "Hash should be exactly {HASH_LEN} characters"
+        );
     }
 
     #[test]
@@ -147,15 +156,75 @@ mod tests {
         let mut seen = std::collections::HashSet::new();
 
         let test_cases = vec![
-            "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
-            "n", "o", "p", "function", "class", "import", "export", "const",
-            "let", "var", "if", "else", "for", "while", "return", "break",
-            "continue", "try", "catch", "finally", "throw", "new", "this",
-            "super", "extends", "static", "public", "private", "protected",
-            "readonly", "async", "await", "yield", "typeof", "instanceof",
-            "void", "null", "undefined", "true", "false", "0", "1", "2", "3",
-            "4", "5", "6", "7", "8", "9", "hello world", "foo bar baz",
-            "test", "example", "sample", "demo",
+            "a",
+            "b",
+            "c",
+            "d",
+            "e",
+            "f",
+            "g",
+            "h",
+            "i",
+            "j",
+            "k",
+            "l",
+            "m",
+            "n",
+            "o",
+            "p",
+            "function",
+            "class",
+            "import",
+            "export",
+            "const",
+            "let",
+            "var",
+            "if",
+            "else",
+            "for",
+            "while",
+            "return",
+            "break",
+            "continue",
+            "try",
+            "catch",
+            "finally",
+            "throw",
+            "new",
+            "this",
+            "super",
+            "extends",
+            "static",
+            "public",
+            "private",
+            "protected",
+            "readonly",
+            "async",
+            "await",
+            "yield",
+            "typeof",
+            "instanceof",
+            "void",
+            "null",
+            "undefined",
+            "true",
+            "false",
+            "0",
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "9",
+            "hello world",
+            "foo bar baz",
+            "test",
+            "example",
+            "sample",
+            "demo",
         ];
 
         for (i, line) in test_cases.iter().enumerate() {
@@ -188,27 +257,43 @@ mod tests {
     #[test]
     fn test_empty_line() {
         let hash = compute_line_hash("", 1);
-        assert_eq!(hash.len(), HASH_LEN, "Empty line should still produce {HASH_LEN}-character hash");
+        assert_eq!(
+            hash.len(),
+            HASH_LEN,
+            "Empty line should still produce {HASH_LEN}-character hash"
+        );
     }
 
     #[test]
     fn test_whitespace_only_line() {
         let hash = compute_line_hash("    ", 1);
-        assert_eq!(hash.len(), HASH_LEN, "Whitespace-only line should still produce {HASH_LEN}-character hash");
+        assert_eq!(
+            hash.len(),
+            HASH_LEN,
+            "Whitespace-only line should still produce {HASH_LEN}-character hash"
+        );
     }
 
     #[test]
     fn test_unicode_line() {
         let line = "const café = ☕;";
         let hash = compute_line_hash(line, 1);
-        assert_eq!(hash.len(), HASH_LEN, "Unicode line should still produce {HASH_LEN}-character hash");
+        assert_eq!(
+            hash.len(),
+            HASH_LEN,
+            "Unicode line should still produce {HASH_LEN}-character hash"
+        );
     }
 
     #[test]
     fn test_very_long_line() {
         let line = "a".repeat(1000);
         let hash = compute_line_hash(&line, 1);
-        assert_eq!(hash.len(), HASH_LEN, "Very long line should still produce {HASH_LEN}-character hash");
+        assert_eq!(
+            hash.len(),
+            HASH_LEN,
+            "Very long line should still produce {HASH_LEN}-character hash"
+        );
     }
 
     #[test]

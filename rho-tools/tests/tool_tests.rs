@@ -2128,10 +2128,7 @@ async fn edit_file_hashline_success_includes_fresh_anchors_block() {
         .unwrap();
 
     let output = immediate_output(&edit_outcome);
-    assert!(
-        immediate_is_success(&edit_outcome),
-        "edit should succeed"
-    );
+    assert!(immediate_is_success(&edit_outcome), "edit should succeed");
     assert!(
         output.contains("<fresh-anchors>"),
         "output should include fresh-anchors block: {output}"
@@ -2285,8 +2282,14 @@ async fn edit_file_hashline_diff_shows_old_content_on_minus_lines() {
 
     // The '-' line should contain "beta" (old content)
     // The '+' line should contain "BETA" (new content)
-    let minus_line = diff.lines().find(|l| l.starts_with('-')).expect("should have - line");
-    let plus_line = diff.lines().find(|l| l.starts_with('+')).expect("should have + line");
+    let minus_line = diff
+        .lines()
+        .find(|l| l.starts_with('-'))
+        .expect("should have - line");
+    let plus_line = diff
+        .lines()
+        .find(|l| l.starts_with('+'))
+        .expect("should have + line");
 
     assert!(
         minus_line.contains("beta"),
