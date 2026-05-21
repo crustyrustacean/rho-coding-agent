@@ -749,10 +749,27 @@ impl EditFile {
             let current_hash = compute_line_hash(line_content, edit.pos.line_num);
 
             if current_hash != edit.pos.hash {
+                let mismatch_line = edit.pos.line_num;
+                let context_start = mismatch_line.saturating_sub(3);
+                let context_end = (mismatch_line + 3).min(lines.len());
+
+                let mut context_lines = Vec::new();
+                let width = lines.len().to_string().len();
+                for (i, line) in lines.iter().enumerate() {
+                    let line_num = i + 1;
+                    if line_num >= context_start && line_num <= context_end {
+                        let hash = compute_line_hash(line, line_num);
+                        context_lines.push(format!("{line_num:>width$}#{hash}:{line}"));
+                    }
+                }
+
                 return Err(format!(
                     "edit_file: hash mismatch at anchor {}#{}\n\
                      Expected line:  {}#{}:{}\n\
                      Actual line:    {}#{}:{}\n\
+                     \n\
+                     Fresh hashes around mismatch:\n\
+                     {}\n\
                      \n\
                      Use updated anchor {}#{} to retry.",
                     edit.pos.line_num,
@@ -763,6 +780,7 @@ impl EditFile {
                     edit.pos.line_num,
                     current_hash,
                     line_content,
+                    context_lines.join("\n                     "),
                     edit.pos.line_num,
                     current_hash
                 ));

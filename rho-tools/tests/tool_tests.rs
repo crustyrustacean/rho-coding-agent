@@ -1564,6 +1564,10 @@ async fn edit_file_hashline_mismatch_returns_error_with_fresh_hashes() {
         output.contains("hash mismatch"),
         "error should mention hash mismatch"
     );
+    assert!(
+        output.contains("Fresh hashes"),
+        "error should include fresh hashes context"
+    );
 }
 
 #[tokio::test]
