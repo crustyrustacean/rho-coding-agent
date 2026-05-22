@@ -396,6 +396,11 @@ const MAX_SUGGESTIONS: usize = 5;
 /// When a model is explicitly specified (via CLI or config), it is
 /// validated against the providers' model lists. If the model is not
 /// found, fuzzy suggestions are shown and an error is returned.
+///
+/// When the model list cannot be obtained (e.g. `/v1/models` is not
+/// supported or all providers are unreachable), the user-specified model
+/// is accepted verbatim with a warning — this avoids blocking valid
+/// workflows on providers that simply don't advertise their models.
 async fn resolve_model(
     config: &RhoConfig,
     cli_model: Option<&String>,
@@ -435,8 +440,12 @@ async fn resolve_model(
 
 /// Validate a user-specified model against the available model list.
 ///
-/// If the model is found exactly, returns its ID. If not found, shows
-/// fuzzy suggestions and returns an error.
+/// Three outcomes:
+/// 1. Exact match found → use it, report the provider.
+/// 2. Models were discovered but the specified one isn't present →
+///    show fuzzy suggestions and available models, then error.
+/// 3. No models could be discovered (empty list) → accept the model
+///    verbatim with a warning (provider may not support `/v1/models`).
 fn validate_and_resolve(model: &str, source: &str, available: &[(&str, String)]) -> Result<String> {
     use std::fmt::Write;
     // Exact match (case-sensitive).
@@ -445,32 +454,43 @@ fn validate_and_resolve(model: &str, source: &str, available: &[(&str, String)])
         return Ok(model_id.to_owned());
     }
 
-    // Not found — build a helpful error with fuzzy suggestions.
+    // No models discovered — fall back to accepting the model verbatim.
+    // Some providers (especially external ones) don't support `/v1/models`
+    // or it may be unavailable due to auth/network issues.
+    if available.is_empty() {
+        eprintln!(
+            "warning: could not list models from any provider; \
+             accepting model from {source}: {model}"
+        );
+        return Ok(model.to_owned());
+    }
+
+    // Models were discovered but the specified one wasn't found —
+    // build a helpful error with fuzzy suggestions.
     let suggestions = crate::model_match::fuzzy_match(model, available, FUZZY_THRESHOLD);
 
     let mut msg = format!("model \"{model}\" not found on any provider.\n");
 
-    if !available.is_empty() {
-        if !suggestions.is_empty() {
-            msg.push_str("\nDid you mean:\n");
-            msg.push_str(&crate::model_match::format_suggestions(
-                &suggestions,
-                MAX_SUGGESTIONS,
-            ));
-            msg.push('\n');
-        }
-        msg.push_str("\nAvailable models:\n");
-        let mut current_provider = "";
-        for (provider_name, model_id) in available {
-            if *provider_name != current_provider {
-                if !current_provider.is_empty() {
-                    msg.push('\n');
-                }
-                let _ = writeln!(msg, "  [{provider_name}]");
-                current_provider = provider_name;
+    if !suggestions.is_empty() {
+        msg.push_str("\nDid you mean:\n");
+        msg.push_str(&crate::model_match::format_suggestions(
+            &suggestions,
+            MAX_SUGGESTIONS,
+        ));
+        msg.push('\n');
+    }
+
+    msg.push_str("\nAvailable models:\n");
+    let mut current_provider = "";
+    for (provider_name, model_id) in available {
+        if *provider_name != current_provider {
+            if !current_provider.is_empty() {
+                msg.push('\n');
             }
-            let _ = writeln!(msg, "    {model_id}");
+            let _ = writeln!(msg, "  [{provider_name}]");
+            current_provider = provider_name;
         }
+        let _ = writeln!(msg, "    {model_id}");
     }
 
     anyhow::bail!("{msg}")
