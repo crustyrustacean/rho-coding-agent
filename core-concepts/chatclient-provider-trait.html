@@ -209,7 +209,9 @@ let client = LocalChatClient::with_endpoint_and_key(
 <h3 id="bearer-authentication"><a class="header" href="#bearer-authentication">Bearer authentication</a></h3>
 <p>When an API key is provided via <code>api_key_env</code> in config (or <code>with_endpoint_and_key</code> in code), it is sent as an <code>Authorization: Bearer &lt;key&gt;</code> header with every request. Local endpoints typically don't need this. See <a href="../providers.html">External Providers</a> for setup details.</p>
 <h3 id="provider-consent"><a class="header" href="#provider-consent">Provider consent</a></h3>
-<p>The binary (<code>rho</code>) checks whether the configured endpoint is local before connecting. Non-local endpoints (e.g., <code>api.openai.com</code>) trigger an interactive consent warning. Use <code>--accept-external-provider</code> to skip this in automated workflows, or <code>--endpoint</code> (which implies consent since the user explicitly chose the target).</p>
+<p>The binary (<code>rho</code>) checks whether the configured endpoint is local before connecting. Non-local endpoints (e.g., <code>api.openai.com</code>) trigger an interactive consent warning that lists the external provider(s) by name. If no local server is detected, the warning also notes this. Use <code>--accept-external-provider</code> to skip this in automated workflows, or <code>--endpoint</code> (which implies consent since the user explicitly chose the target).</p>
+<h3 id="model-picker"><a class="header" href="#model-picker">Model picker</a></h3>
+<p>When no models can be auto-detected (all providers unreachable or <code>/v1/models</code> unsupported), rho offers an interactive model picker with curated models from Anthropic, OpenAI, and z.ai. The user can also enter a model ID manually. This fallback only fires when neither <code>--model</code> nor <code>agent.model</code> is set and auto-detection fails.</p>
 <h2 id="model-resolution"><a class="header" href="#model-resolution">Model resolution</a></h2>
 <p>The model identifier is resolved in priority order:</p>
 <ol>

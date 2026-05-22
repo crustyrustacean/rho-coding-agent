@@ -188,7 +188,20 @@
 <h3 id="local-model-default"><a class="header" href="#local-model-default">Local model (default)</a></h3>
 <p>No configuration needed — just start a local server on <code>localhost:1234</code> and run <code>rho</code>. It will auto-detect the loaded model.</p>
 <h3 id="external-provider"><a class="header" href="#external-provider">External provider</a></h3>
-<p>Create <code>.rho/config.toml</code> in your project root with the endpoint and API key env var. See <a href="./providers.html">External Providers</a> for worked examples.</p>
+<p>Create <code>~/.rho/config.toml</code> with the endpoint and API key env var. See <a href="./providers.html">External Providers</a> for worked examples.</p>
+<h3 id="no-server-running"><a class="header" href="#no-server-running">No server running?</a></h3>
+<p>If you run <code>rho</code> with no local server and no configured external provider, you'll see a getting-started guide with setup instructions.</p>
+<p>If you have an external provider configured but rho cannot list models (e.g. the API key is wrong or the endpoint is slow), rho offers an interactive model picker:</p>
+<pre><code class="language-text">  Select a model to use:
+
+    [1] Claude Sonnet 4        (Anthropic)
+    [2] GPT-4o                 (OpenAI)
+    [3] GLM-5                  (z.ai)
+    [0] Enter model ID manually
+
+  Choice:
+</code></pre>
+<p>You can also skip the picker entirely with <code>--model &lt;id&gt;</code>.</p>
 <h2 id="build"><a class="header" href="#build">Build</a></h2>
 <pre><code class="language-sh">cargo build --release -p rho
 </code></pre>
@@ -202,7 +215,8 @@ rho --ephemeral       # in-memory mode, no session file
 <li>Auto-detects the project root by walking up from the current directory looking for markers.</li>
 <li>Loads configuration from <code>~/.rho/config.toml</code> and <code>.rho/config.toml</code>.</li>
 <li>Scans for project context files (<code>AGENTS.md</code>, etc.) and prompts for trust on first encounter.</li>
-<li>Connects to the model server and auto-detects the loaded model (unless <code>--model</code> is specified).</li>
+<li>Checks provider consent for external endpoints.</li>
+<li>Connects to the model server and auto-detects the loaded model (unless <code>--model</code> is specified). If no model can be found, rho offers an interactive model picker.</li>
 <li>Creates a session (persisted to <code>~/.rho/sessions/</code> by default, or in-memory with <code>--ephemeral</code>).</li>
 <li>Enters the REPL. Type your request, and the agent loop runs until the model produces a final text reply.</li>
 </ol>
@@ -225,6 +239,8 @@ rho --ephemeral       # in-memory mode, no session file
 <h2 id="repl-commands"><a class="header" href="#repl-commands">REPL commands</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Command</th><th>Description</th></tr></thead><tbody>
 <tr><td><code>/clear</code></td><td>Branch back to the system message (preserves old tree on disk)</td></tr>
+<tr><td><code>/models</code></td><td>List all models across all providers</td></tr>
+<tr><td><code>/model &lt;id&gt;</code></td><td>Switch to a model (fuzzy match or <code>provider/model</code> syntax)</td></tr>
 <tr><td><code>/quit</code></td><td>Exit rho</td></tr>
 </tbody></table>
 </div>

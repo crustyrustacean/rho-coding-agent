@@ -246,13 +246,18 @@ rho --accept-external-provider
 </code></pre>
 <h2 id="provider-consent"><a class="header" href="#provider-consent">Provider consent</a></h2>
 <p>When connecting to a non-local endpoint, rho displays an interactive consent warning before any data leaves your machine:</p>
-<pre><code class="language-text">  ⚠  External provider detected
-      Endpoint: https://api.openai.com/v1/chat/completions
+<pre><code class="language-text">  ⚠  No local model server detected
+  ⚠  External provider(s) configured:
+      - openrouter
 
-      Your prompts and code will be sent to an external server.
+      Your prompts and code will be sent to external servers.
+      This may expose proprietary code, secrets, or other
+      sensitive data to the providers and any intermediaries.
+
       Continue? [y/N]
 </code></pre>
-<p>This prompt fires automatically for config-driven external endpoints. It is <strong>skipped</strong> when you use <code>--endpoint</code> on the CLI (explicit endpoint implies consent) or <code>--accept-external-provider</code>.</p>
+<p>If rho also has a local provider (e.g. LM Studio is running alongside an external provider), the "No local model server detected" header is omitted.</p>
+<p>The consent prompt fires automatically for config-driven external endpoints. It is <strong>skipped</strong> when you use <code>--endpoint</code> on the CLI (explicit endpoint implies consent) or <code>--accept-external-provider</code>.</p>
 <h2 id="specifying-the-model"><a class="header" href="#specifying-the-model">Specifying the model</a></h2>
 <p>There are three ways to set the model, in priority order:</p>
 <ol>
@@ -261,6 +266,21 @@ rho --accept-external-provider
 <li><strong>Auto-detection</strong> — query the server's <code>/v1/models</code> endpoint and use the first loaded model</li>
 </ol>
 <p>Auto-detection works for local servers (LM Studio, Ollama) where <code>/v1/models</code> is reliable. For external providers, <strong>always specify the model explicitly</strong> with <code>--model</code> or in config.</p>
+<h3 id="interactive-model-picker"><a class="header" href="#interactive-model-picker">Interactive model picker</a></h3>
+<p>When rho has an external provider configured but cannot list models (e.g. <code>/v1/models</code> times out, the API key is wrong, or the provider doesn't support model listing), rho offers an interactive model picker instead of aborting:</p>
+<pre><code class="language-text">  Could not list models from: openrouter
+  Select a model to use:
+
+    [1] Claude Sonnet 4        (Anthropic)
+    [2] GPT-4o                 (OpenAI)
+    [3] GLM-5                  (z.ai)
+    [0] Enter model ID manually
+
+  Choice:
+</code></pre>
+<p>The picker offers one recommended model from each of Anthropic, OpenAI, and z.ai. Selecting <code>[0]</code> lets you type any model ID. You can also type a model ID directly instead of a number.</p>
+<p>The curated models use <code>OpenRouter</code> model IDs (e.g. <code>anthropic/claude-sonnet-4</code>) which work with any <code>OpenRouter</code>-compatible endpoint. For direct OpenAI or Anthropic API access, use <code>[0]</code> to enter the native model ID (e.g. <code>gpt-4o</code> or <code>claude-sonnet-4-20250514</code>).</p>
+<p>To skip the picker entirely, specify <code>--model</code> on the CLI or set <code>agent.model</code> in config.</p>
 <h2 id="cli-flags-for-provider-configuration"><a class="header" href="#cli-flags-for-provider-configuration">CLI flags for provider configuration</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Flag</th><th>Config override</th><th>Description</th></tr></thead><tbody>
 <tr><td><code>--endpoint &lt;URL&gt;</code></td><td><code>provider.endpoint</code></td><td>API endpoint URL</td></tr>
@@ -352,14 +372,16 @@ token_budget = 131072
 <p>Run rho with <code>RUST_LOG=info</code> to see budget diagnostics at startup:</p>
 <pre><code>budget: 131072T context, 4096T reserve, 126976T prompt (4700T system + 2000T schema = 6700T overhead, 120276T for conversation)
 </code></pre>
-<h2 id="the-providertype-field"><a class="header" href="#the-providertype-field">The <code>provider.type</code> field</a></h2>
+<h2 id="the-providertype-and-providername-fields"><a class="header" href="#the-providertype-and-providername-fields">The <code>provider.type</code> and <code>provider.name</code> fields</a></h2>
 <p>The <code>type</code> field in <code>[provider]</code> is <strong>informational only</strong> — it has no effect on behavior. rho uses <code>endpoint</code> and <code>api_key_env</code> to determine how to connect; it doesn't branch on <code>type</code>.</p>
+<p>However, if <code>name</code> is not set, rho uses <code>type</code> as the display name for the provider (shown in the consent prompt and <code>/models</code> output). If neither <code>name</code> nor <code>type</code> is set, rho derives the name from the endpoint hostname (e.g. <code>openrouter.ai</code> → <code>openrouter.ai</code>). Only if none of these are available does it fall back to the provider index (<code>0</code>, <code>1</code>, …).</p>
 <pre><code class="language-toml">[provider]
-endpoint = "https://..." # this is what actually matters
-api_key_env = "OPENAI_API_KEY"
-# type is optional — set it for your own bookkeeping or omit it
+name = "my-openrouter"    # explicit name (optional)
+type = "openrouter"        # used as display name if name is not set
+endpoint = "https://..."    # this is what actually matters
+api_key_env = "OPENROUTER_API_KEY"
 </code></pre>
-<p><strong>However</strong>, if you set <code>type</code> to a known non-OpenAI-compatible provider name (e.g. <code>"anthropic"</code>, <code>"google"</code>, <code>"bedrock"</code>), rho will print a warning at startup. This is a safety net — the real check is that your endpoint accepts and returns the OpenAI Chat Completions format.</p>
+<p>If <code>type</code> is set to a known non-OpenAI-compatible provider name (e.g. <code>"anthropic"</code>, <code>"google"</code>, <code>"bedrock"</code>), rho will print a warning at startup. This is a safety net — the real check is that your endpoint accepts and returns the OpenAI Chat Completions format.</p>
 <h2 id="privacy-considerations"><a class="header" href="#privacy-considerations">Privacy considerations</a></h2>
 <p>When you use an external provider, <strong>your entire conversation</strong> — including file contents read by the agent, shell command output, and your instructions — is sent to the provider's servers. Review the provider's privacy policy before use.</p>
 <p>The consent prompt reminds you of this on every startup for config-driven external endpoints.</p>
