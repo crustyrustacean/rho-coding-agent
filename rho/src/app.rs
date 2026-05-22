@@ -434,7 +434,7 @@ async fn resolve_model(
     }
     // 3. Auto-detect across all providers.
     if available.is_empty() {
-        return Err(no_models_error(config, registry));
+        return no_models_fallback(config, registry);
     }
     let (provider_name, model_id) = &available[0];
     eprintln!("auto-detected model: {model_id} (from provider: {provider_name})");
@@ -486,23 +486,35 @@ fn validate_and_resolve(model: &str, source: &str, available: &[(&str, String)])
     model.to_owned()
 }
 
-/// Build an actionable error when no models are available from any provider.
+/// Popular models offered by the interactive model picker.
 ///
-/// Two distinct scenarios need different guidance:
+/// Each entry is (display name, provider family, model ID). The model IDs
+/// use `OpenRouter`'s `provider/model` format which is the most common
+/// multi-model endpoint. For direct OpenAI/Anthropic use, the user should
+/// configure the right endpoint in their config.
+const PICKER_MODELS: &[(&str, &str, &str)] = &[
+    ("Claude Sonnet 4", "Anthropic", "anthropic/claude-sonnet-4"),
+    ("GPT-4o", "OpenAI", "openai/gpt-4o"),
+    ("GLM-5", "z.ai", "z-ai/glm-5"),
+];
+
+/// Handle the case where no models could be discovered from any provider.
+///
+/// Two distinct scenarios:
 ///
 /// 1. **Zero-config** — no providers configured, only the default localhost
-///    fallback exists, and it's unreachable. The user needs a "getting started"
-///    guide showing all three setup paths (local server, config file, CLI flags).
+///    fallback exists, and it's unreachable. Returns an error with a
+///    getting-started guide.
 ///
 /// 2. **Configured but unreachable** — one or more providers are configured
-///    but none could be contacted. The user needs a targeted hint to check
-///    their endpoint, API key, or specify a model explicitly.
-fn no_models_error(config: &RhoConfig, registry: &ProviderRegistry) -> anyhow::Error {
+///    but none could list models. Offers an interactive model picker with
+///    popular models, falling back to manual entry.
+fn no_models_fallback(config: &RhoConfig, registry: &ProviderRegistry) -> Result<String> {
     let is_zero_config =
         config.provider.is_empty() && registry.external_provider_names().is_empty();
 
     if is_zero_config {
-        return anyhow::anyhow!(
+        return Err(anyhow::anyhow!(
             "\n\
              No model provider detected.\n\
              \n\
@@ -526,17 +538,79 @@ fn no_models_error(config: &RhoConfig, registry: &ProviderRegistry) -> anyhow::E
                3. Use CLI flags:\n\
              \n\
                       rho --endpoint <url> --api-key-env <VAR> --model <id>"
-        );
+        ));
     }
 
     // One or more providers are configured but none could list models.
+    // Offer an interactive model picker.
+    pick_model_interactively(registry)
+}
+
+/// Interactive model picker for when no models could be auto-detected.
+///
+/// Shows a numbered menu of popular models, plus an option to type a
+/// model ID manually. Reads the user's choice from stdin and returns
+/// the selected model ID.
+fn pick_model_interactively(registry: &ProviderRegistry) -> Result<String> {
     let names: Vec<&str> = registry.providers().iter().map(|p| p.name()).collect();
-    anyhow::anyhow!(
-        "no models available from provider(s): {}. \
-         Check that the endpoint is reachable and the API key is set. \
-         You can also specify a model explicitly with --model or in config.",
-        names.join(", ")
-    )
+    eprintln!();
+    eprintln!("  Could not list models from: {}", names.join(", "));
+    eprintln!("  Select a model to use:");
+    eprintln!();
+
+    for (i, (display_name, family, _id)) in PICKER_MODELS.iter().enumerate() {
+        eprintln!(
+            "    [{idx}] {name:<22} ({family})",
+            idx = i + 1,
+            name = display_name,
+            family = family
+        );
+    }
+    eprintln!("    [0] Enter model ID manually");
+    eprintln!();
+    eprint!("  Choice: ");
+    io::stderr().flush().ok();
+
+    let mut line = String::new();
+    let ok = io::stdin().lock().read_line(&mut line).is_ok();
+    if !ok {
+        return Err(anyhow::anyhow!("could not read model choice from stdin"));
+    }
+
+    let choice = line.trim();
+
+    // Manual entry.
+    if choice == "0" {
+        eprint!("  Model ID: ");
+        io::stderr().flush().ok();
+        let mut manual = String::new();
+        if io::stdin().lock().read_line(&mut manual).is_ok() {
+            let model_id = manual.trim().to_owned();
+            if !model_id.is_empty() {
+                eprintln!("  using model: {model_id}");
+                return Ok(model_id);
+            }
+        }
+        return Err(anyhow::anyhow!("no model ID entered"));
+    }
+
+    // Numeric selection from the list.
+    if let Ok(idx) = choice.parse::<usize>()
+        && idx >= 1
+        && idx <= PICKER_MODELS.len()
+    {
+        let (display_name, _family, model_id) = PICKER_MODELS[idx - 1];
+        eprintln!("  using model: {model_id} ({display_name})");
+        return Ok(model_id.to_owned());
+    }
+
+    // If the user typed a model ID directly (not a number), accept it.
+    if !choice.is_empty() {
+        eprintln!("  using model: {choice}");
+        return Ok(choice.to_owned());
+    }
+
+    Err(anyhow::anyhow!("no model selected"))
 }
 
 /// Log token budget diagnostics at startup.

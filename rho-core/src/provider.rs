@@ -586,12 +586,10 @@ mod tests {
     #[test]
     fn registry_name_falls_back_to_index_when_no_endpoint() {
         let settings = ProviderSettings {
-            providers: vec![
-                ProviderConfig {
-                    // No name, no type, no endpoint — falls back to index.
-                    ..Default::default()
-                },
-            ],
+            providers: vec![ProviderConfig {
+                // No name, no type, no endpoint — falls back to index.
+                ..Default::default()
+            }],
         };
         let registry = ProviderRegistry::from_config(&settings, None, None);
         assert_eq!(registry.default().name(), "0");
