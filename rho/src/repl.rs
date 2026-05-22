@@ -38,16 +38,22 @@ use std::{
 
 /// Observer that prints agent events to the REPL.
 ///
-/// Streams reasoning deltas and tool activity to stderr so the user can
+/// Streams reasoning deltas and tool activity to stdout so the user can
 /// see what the model is doing while it works. Text deltas from the final
 /// response are suppressed here — the complete text is printed once by the
 /// REPL after `run_loop` returns.
+///
+/// Writes to stdout (not stderr) to avoid terminals that render stderr
+/// in a different color.
 struct ReplObserver;
 
 impl AgentObserver for ReplObserver {
     fn on_state_change(&self, state: AgentState) {
         match state {
-            AgentState::Thinking => eprint!("\n⏳ "),
+            AgentState::Thinking => {
+                print!("\n⏳ ");
+                let _ = io::stdout().flush();
+            }
             AgentState::AwaitingApproval | AgentState::ExecutingTool | AgentState::Idle => {}
         }
     }
@@ -59,7 +65,8 @@ impl AgentObserver for ReplObserver {
     }
 
     fn on_reasoning_delta(&self, delta: &str) {
-        eprint!("{delta}");
+        print!("{delta}");
+        let _ = io::stdout().flush();
     }
 
     fn on_tool_call(&self, name: &str, arguments: &str) {
@@ -70,7 +77,7 @@ impl AgentObserver for ReplObserver {
         } else {
             arguments.to_owned()
         };
-        eprintln!("\n→ {name}: {preview}");
+        println!("\n→ {name}: {preview}");
     }
 
     fn on_tool_result(&self, name: &str, result: &ToolResult) {
@@ -81,12 +88,12 @@ impl AgentObserver for ReplObserver {
             } else {
                 result.output.clone()
             };
-            eprintln!("✗ {name}: {preview}");
+            println!("✗ {name}: {preview}");
         }
     }
 
     fn on_tool_denied(&self, name: &str) {
-        eprintln!("⊘ {name}: denied");
+        println!("⊘ {name}: denied");
     }
 
     fn on_approval_requested(&self, tool_name: &str, risk: ToolRisk) {
@@ -95,7 +102,7 @@ impl AgentObserver for ReplObserver {
             ToolRisk::Write => "write",
             ToolRisk::Destructive => "destructive",
         };
-        eprintln!("⚠ {tool_name} ({risk_label}) requires approval");
+        println!("⚠ {tool_name} ({risk_label}) requires approval");
     }
 }
 
@@ -106,6 +113,7 @@ impl AgentObserver for ReplObserver {
 /// Reads lines from stdin, dispatches slash commands, and drives the agent
 /// loop for user messages. Handles `/quit`, `/clear`, `/models`, `/model`,
 /// `/paste`, and empty-input graceful exit on EOF.
+#[allow(clippy::too_many_lines)]
 pub async fn run_repl(app: &mut App) -> Result<()> {
     loop {
         print!("User: ");
@@ -153,7 +161,10 @@ pub async fn run_repl(app: &mut App) -> Result<()> {
                 continue;
             }
             "/paste" | "/paste " => {
-                let file_arg = input.strip_prefix("/paste ").map(str::trim).filter(|s| !s.is_empty());
+                let file_arg = input
+                    .strip_prefix("/paste ")
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty());
                 let pasted = if let Some(path) = file_arg {
                     // /paste <file> — read content from a file
                     match fs::read_to_string(path) {
