@@ -418,11 +418,11 @@ async fn resolve_model(
 
     // 1. CLI flag takes highest priority.
     if let Some(model) = cli_model {
-        return validate_and_resolve(model, "--model", &available);
+        return Ok(validate_and_resolve(model, "--model", &available));
     }
     // 2. Config.
     if let Some(model) = config.agent.model.as_deref() {
-        return validate_and_resolve(model, "config", &available);
+        return Ok(validate_and_resolve(model, "config", &available));
     }
     // 3. Auto-detect across all providers.
     if available.is_empty() {
@@ -443,15 +443,14 @@ async fn resolve_model(
 /// Three outcomes:
 /// 1. Exact match found → use it, report the provider.
 /// 2. Models were discovered but the specified one isn't present →
-///    show fuzzy suggestions and available models, then error.
+///    show fuzzy suggestions as a warning, then accept the model.
 /// 3. No models could be discovered (empty list) → accept the model
 ///    verbatim with a warning (provider may not support `/v1/models`).
-fn validate_and_resolve(model: &str, source: &str, available: &[(&str, String)]) -> Result<String> {
-    use std::fmt::Write;
+fn validate_and_resolve(model: &str, source: &str, available: &[(&str, String)]) -> String {
     // Exact match (case-sensitive).
     if let Some((provider_name, model_id)) = crate::model_match::find_exact(model, available) {
         eprintln!("using model from {source}: {model_id} (provider: {provider_name})");
-        return Ok(model_id.to_owned());
+        return model_id.to_owned();
     }
 
     // No models discovered — fall back to accepting the model verbatim.
@@ -462,38 +461,26 @@ fn validate_and_resolve(model: &str, source: &str, available: &[(&str, String)])
             "warning: could not list models from any provider; \
              accepting model from {source}: {model}"
         );
-        return Ok(model.to_owned());
+        return model.to_owned();
     }
 
     // Models were discovered but the specified one wasn't found —
-    // build a helpful error with fuzzy suggestions.
+    // show fuzzy suggestions as a warning, but still accept the model.
+    // The provider may accept IDs not advertised in `/v1/models`, and
+    // the API will return a proper error if the model is truly invalid.
+    eprintln!("warning: model \"{model}\" not found in provider model list.");
+
     let suggestions = crate::model_match::fuzzy_match(model, available, FUZZY_THRESHOLD);
-
-    let mut msg = format!("model \"{model}\" not found on any provider.\n");
-
     if !suggestions.is_empty() {
-        msg.push_str("\nDid you mean:\n");
-        msg.push_str(&crate::model_match::format_suggestions(
-            &suggestions,
-            MAX_SUGGESTIONS,
-        ));
-        msg.push('\n');
+        eprintln!("Did you mean:");
+        eprintln!(
+            "{}",
+            crate::model_match::format_suggestions(&suggestions, MAX_SUGGESTIONS)
+        );
     }
 
-    msg.push_str("\nAvailable models:\n");
-    let mut current_provider = "";
-    for (provider_name, model_id) in available {
-        if *provider_name != current_provider {
-            if !current_provider.is_empty() {
-                msg.push('\n');
-            }
-            let _ = writeln!(msg, "  [{provider_name}]");
-            current_provider = provider_name;
-        }
-        let _ = writeln!(msg, "    {model_id}");
-    }
-
-    anyhow::bail!("{msg}")
+    eprintln!("continuing with model from {source}: {model}");
+    model.to_owned()
 }
 
 /// Log token budget diagnostics at startup.
