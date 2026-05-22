@@ -174,10 +174,19 @@ impl ProviderRegistry {
                 .iter()
                 .enumerate()
                 .map(|(i, config)| {
-                    let name = config
-                        .name
-                        .as_deref()
-                        .unwrap_or_else(|| i.to_string().leak());
+                    let name: &str = config.name.as_deref().unwrap_or_else(|| {
+                        config.r#type.as_deref().unwrap_or_else(|| {
+                            config
+                                .endpoint
+                                .as_deref()
+                                .and_then(|ep| {
+                                    reqwest::Url::parse(ep).ok().and_then(|u| {
+                                        u.host_str().map(|h| h.to_owned().leak() as &str)
+                                    })
+                                })
+                                .unwrap_or_else(|| i.to_string().leak())
+                        })
+                    });
 
                     let endpoint = if i == 0 {
                         endpoint_override
@@ -554,24 +563,38 @@ mod tests {
     }
 
     #[test]
-    fn registry_default_name_from_index() {
+    fn registry_default_name_from_endpoint_host() {
         let settings = ProviderSettings {
             providers: vec![
                 ProviderConfig {
-                    // No name set.
+                    // No name set — derives from endpoint host.
                     endpoint: Some("http://localhost:1234/v1/chat/completions".to_owned()),
                     ..Default::default()
                 },
                 ProviderConfig {
-                    // No name set.
+                    // No name set — derives from endpoint host.
                     endpoint: Some("http://other:1234/v1/chat/completions".to_owned()),
                     ..Default::default()
                 },
             ],
         };
         let registry = ProviderRegistry::from_config(&settings, None, None);
+        assert_eq!(registry.default().name(), "localhost");
+        assert_eq!(registry.get("other").unwrap().name(), "other");
+    }
+
+    #[test]
+    fn registry_name_falls_back_to_index_when_no_endpoint() {
+        let settings = ProviderSettings {
+            providers: vec![
+                ProviderConfig {
+                    // No name, no type, no endpoint — falls back to index.
+                    ..Default::default()
+                },
+            ],
+        };
+        let registry = ProviderRegistry::from_config(&settings, None, None);
         assert_eq!(registry.default().name(), "0");
-        assert_eq!(registry.get("1").unwrap().name(), "1");
     }
 
     // ── provider_factory ──────────────────────────────────────────────────────

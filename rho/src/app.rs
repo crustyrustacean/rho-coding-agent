@@ -248,8 +248,9 @@ fn check_provider_type(config: &RhoConfig) {
 
 /// Display a consent warning and read confirmation for external providers.
 ///
-/// Shows a single consolidated prompt listing all external providers, not
-/// one prompt per provider.
+/// Shows a single consolidated prompt listing all external providers with
+/// their names and endpoints. If the registry has no local provider at all
+/// (only external), the warning also notes that no local model was detected.
 fn check_provider_consent(registry: &ProviderRegistry, cli: &Cli) -> Result<()> {
     let external = registry.external_provider_names();
 
@@ -257,9 +258,16 @@ fn check_provider_consent(registry: &ProviderRegistry, cli: &Cli) -> Result<()> 
         return Ok(());
     }
 
+    let has_local = registry.providers().iter().any(|p| !p.is_external());
+
     eprintln!();
-    eprintln!("  ⚠  External provider(s) detected");
-    eprintln!("      Providers: {}", external.join(", "));
+    if !has_local {
+        eprintln!("  ⚠  No local model server detected");
+    }
+    eprintln!("  ⚠  External provider(s) configured:");
+    for provider in registry.providers().iter().filter(|p| p.is_external()) {
+        eprintln!("      - {}", provider.name());
+    }
     eprintln!();
     eprintln!("      Your prompts and code will be sent to external servers.");
     eprintln!("      This may expose proprietary code, secrets, or other");
