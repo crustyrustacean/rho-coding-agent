@@ -426,12 +426,7 @@ async fn resolve_model(
     }
     // 3. Auto-detect across all providers.
     if available.is_empty() {
-        let hint = if registry.external_provider_names().is_empty() {
-            "Load a model in your local server and try again."
-        } else {
-            "Specify the model explicitly with --model or in config."
-        };
-        anyhow::bail!("no models available from any provider. {hint}");
+        return Err(no_models_error(config, registry));
     }
     let (provider_name, model_id) = &available[0];
     eprintln!("auto-detected model: {model_id} (from provider: {provider_name})");
@@ -481,6 +476,59 @@ fn validate_and_resolve(model: &str, source: &str, available: &[(&str, String)])
 
     eprintln!("continuing with model from {source}: {model}");
     model.to_owned()
+}
+
+/// Build an actionable error when no models are available from any provider.
+///
+/// Two distinct scenarios need different guidance:
+///
+/// 1. **Zero-config** — no providers configured, only the default localhost
+///    fallback exists, and it's unreachable. The user needs a "getting started"
+///    guide showing all three setup paths (local server, config file, CLI flags).
+///
+/// 2. **Configured but unreachable** — one or more providers are configured
+///    but none could be contacted. The user needs a targeted hint to check
+///    their endpoint, API key, or specify a model explicitly.
+fn no_models_error(config: &RhoConfig, registry: &ProviderRegistry) -> anyhow::Error {
+    let is_zero_config =
+        config.provider.is_empty() && registry.external_provider_names().is_empty();
+
+    if is_zero_config {
+        return anyhow::anyhow!(
+            "\n\
+             No model provider detected.\n\
+             \n\
+             rho could not reach a local model server and no external\n\
+             provider is configured.\n\
+             \n\
+             To get started, either:\n\
+             \n\
+               1. Start a local model server (LM Studio, Ollama) on\n\
+                  localhost:1234, then run rho again.\n\
+             \n\
+               2. Configure an external provider in ~/.rho/config.toml:\n\
+             \n\
+                      [provider]\n\
+                      endpoint = \"https://openrouter.ai/api/v1/chat/completions\"\n\
+                      api_key_env = \"OPENROUTER_API_KEY\"\n\
+             \n\
+                      [agent]\n\
+                      model = \"gpt-4o\"\n\
+             \n\
+               3. Use CLI flags:\n\
+             \n\
+                      rho --endpoint <url> --api-key-env <VAR> --model <id>"
+        );
+    }
+
+    // One or more providers are configured but none could list models.
+    let names: Vec<&str> = registry.providers().iter().map(|p| p.name()).collect();
+    anyhow::anyhow!(
+        "no models available from provider(s): {}. \
+         Check that the endpoint is reachable and the API key is set. \
+         You can also specify a model explicitly with --model or in config.",
+        names.join(", ")
+    )
 }
 
 /// Log token budget diagnostics at startup.
