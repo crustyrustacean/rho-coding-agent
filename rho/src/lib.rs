@@ -7,4 +7,5 @@
 pub mod app;
 pub mod cli;
 pub(crate) mod gate;
+pub(crate) mod model_match;
 pub(crate) mod repl;

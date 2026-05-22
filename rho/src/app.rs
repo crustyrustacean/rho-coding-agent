@@ -382,29 +382,45 @@ fn build_session(
     }
 }
 
+/// The minimum fuzzy similarity score to include a suggestion.
+const FUZZY_THRESHOLD: f64 = 0.5;
+
+/// Maximum number of fuzzy suggestions to display.
+const MAX_SUGGESTIONS: usize = 5;
+
 /// Resolve the model identifier.
 ///
 /// Priority: CLI `--model` → config `agent.model` → auto-detect via all
 /// providers (first model found in config order).
+///
+/// When a model is explicitly specified (via CLI or config), it is
+/// validated against the providers' model lists. If the model is not
+/// found, fuzzy suggestions are shown and an error is returned.
 async fn resolve_model(
     config: &RhoConfig,
     cli_model: Option<&String>,
     registry: &ProviderRegistry,
 ) -> Result<String> {
+    // Query all providers for available models upfront (needed for
+    // validation and auto-detect alike).
+    let all_models = registry.list_all_models().await;
+
+    // Build a flat list of (provider_name, model_id) strings for matching.
+    let available: Vec<(&str, String)> = all_models
+        .iter()
+        .map(|(provider, info)| (*provider, info.id.clone()))
+        .collect();
+
     // 1. CLI flag takes highest priority.
     if let Some(model) = cli_model {
-        eprintln!("using model from --model: {model}");
-        return Ok(model.to_owned());
+        return validate_and_resolve(model, "--model", &available);
     }
     // 2. Config.
     if let Some(model) = config.agent.model.as_deref() {
-        eprintln!("using model from config: {model}");
-        return Ok(model.to_owned());
+        return validate_and_resolve(model, "config", &available);
     }
     // 3. Auto-detect across all providers.
-    eprintln!("no model specified, querying providers for available models...");
-    let all_models = registry.list_all_models().await;
-    if all_models.is_empty() {
+    if available.is_empty() {
         let hint = if registry.external_provider_names().is_empty() {
             "Load a model in your local server and try again."
         } else {
@@ -412,12 +428,52 @@ async fn resolve_model(
         };
         anyhow::bail!("no models available from any provider. {hint}");
     }
-    let (provider_name, model) = &all_models[0];
-    eprintln!(
-        "auto-detected model: {} (from provider: {})",
-        model.id, provider_name
-    );
-    Ok(model.id.clone())
+    let (provider_name, model_id) = &available[0];
+    eprintln!("auto-detected model: {model_id} (from provider: {provider_name})");
+    Ok(model_id.clone())
+}
+
+/// Validate a user-specified model against the available model list.
+///
+/// If the model is found exactly, returns its ID. If not found, shows
+/// fuzzy suggestions and returns an error.
+fn validate_and_resolve(model: &str, source: &str, available: &[(&str, String)]) -> Result<String> {
+    use std::fmt::Write;
+    // Exact match (case-sensitive).
+    if let Some((provider_name, model_id)) = crate::model_match::find_exact(model, available) {
+        eprintln!("using model from {source}: {model_id} (provider: {provider_name})");
+        return Ok(model_id.to_owned());
+    }
+
+    // Not found — build a helpful error with fuzzy suggestions.
+    let suggestions = crate::model_match::fuzzy_match(model, available, FUZZY_THRESHOLD);
+
+    let mut msg = format!("model \"{model}\" not found on any provider.\n");
+
+    if !available.is_empty() {
+        if !suggestions.is_empty() {
+            msg.push_str("\nDid you mean:\n");
+            msg.push_str(&crate::model_match::format_suggestions(
+                &suggestions,
+                MAX_SUGGESTIONS,
+            ));
+            msg.push('\n');
+        }
+        msg.push_str("\nAvailable models:\n");
+        let mut current_provider = "";
+        for (provider_name, model_id) in available {
+            if *provider_name != current_provider {
+                if !current_provider.is_empty() {
+                    msg.push('\n');
+                }
+                let _ = writeln!(msg, "  [{provider_name}]");
+                current_provider = provider_name;
+            }
+            let _ = writeln!(msg, "    {model_id}");
+        }
+    }
+
+    anyhow::bail!("{msg}")
 }
 
 /// Log token budget diagnostics at startup.
