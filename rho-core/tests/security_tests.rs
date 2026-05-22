@@ -4,7 +4,8 @@
 //! secret redaction, and project context file trust.
 
 use rho_core::{
-    AgentConfig, ChatMessage, RhoConfig, Session, ToolCallId, ToolName, ToolRegistry, ToolRisk,
+    AgentConfig, ChatMessage, NopObserver, RhoConfig, Session, ToolCallId, ToolName, ToolRegistry,
+    ToolRisk,
     agent::run_loop,
     approval::{ApprovalPolicy, DefaultApprovalPolicy},
     context_files::{ContextScanner, compose_system_prompt},
@@ -63,6 +64,7 @@ async fn denied_tool_gets_denial_message_fed_back() {
         &config,
         CancellationToken::new(),
         &AutoDenyGate,
+        &NopObserver,
     )
     .await
     .unwrap();
@@ -117,6 +119,7 @@ async fn approved_tool_executes() {
         &config,
         CancellationToken::new(),
         &AutoApproveGate,
+        &NopObserver,
     )
     .await
     .unwrap();

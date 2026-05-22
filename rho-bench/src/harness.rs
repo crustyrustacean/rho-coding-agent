@@ -9,8 +9,9 @@ use async_trait::async_trait;
 use rho_core::stream::StreamChunk;
 use rho_core::{
     AgentConfig, ApprovalGate, AutoApprovePolicy, ChatClient, ChatRequest, ConfigLoader,
-    ModelResponse, ModelResponseStream, ModelToolCall, Provider, RhoConfig, SandboxRoot, Session,
-    TokenBudget, ToolRegistry, ToolRisk, compose_full_system_prompt, provider_factory, run_loop,
+    ModelResponse, ModelResponseStream, ModelToolCall, NopObserver, Provider, RhoConfig,
+    SandboxRoot, Session, TokenBudget, ToolRegistry, ToolRisk, compose_full_system_prompt,
+    provider_factory, run_loop,
 };
 use rho_eval::{EvalRun, EvalTask, TaskMetrics, TaskOutcome};
 use rho_tools::register_all;
@@ -257,6 +258,7 @@ async fn run_single_task(
         &agent_config,
         cancel,
         &gate,
+        &NopObserver,
     )
     .await;
     let elapsed = start.elapsed();

@@ -17,8 +17,8 @@
 
 use rho_core::{
     AgentConfig, ChatMessage, ContentBlock, ContextManager, MechanicalCompactionStrategy,
-    ModelResponse, Session, SlidingWindowContextManager, TokenBudget, ToolCallId, ToolName,
-    ToolResult,
+    ModelResponse, NopObserver, Session, SlidingWindowContextManager, TokenBudget, ToolCallId,
+    ToolName, ToolResult,
     agent::run_loop,
     message::{ModelToolCall, ToolCallFunction},
     session::{
@@ -331,6 +331,7 @@ async fn branching_old_branch_unreachable_from_leaf() {
         &config,
         CancellationToken::new(),
         &AutoApproveGate,
+        &NopObserver,
     )
     .await
     .unwrap();
@@ -519,6 +520,7 @@ async fn amnesia_reproducer_secret_survives() {
         &config,
         CancellationToken::new(),
         &AutoApproveGate,
+        &NopObserver,
     )
     .await
     .unwrap();
@@ -777,6 +779,7 @@ async fn compact_and_resume_model_response_appended_after_compaction() {
         &config,
         CancellationToken::new(),
         &AutoApproveGate,
+        &NopObserver,
     )
     .await
     .unwrap();
@@ -916,6 +919,7 @@ async fn multi_tool_call_compaction_preserves_integrity() {
         &config,
         CancellationToken::new(),
         &AutoApproveGate,
+        &NopObserver,
     )
     .await
     .unwrap();
@@ -931,6 +935,7 @@ async fn multi_tool_call_compaction_preserves_integrity() {
             &config,
             CancellationToken::new(),
             &AutoApproveGate,
+            &NopObserver,
         )
         .await
         .unwrap();
@@ -968,6 +973,7 @@ async fn estimator_converges_within_20_percent_by_third_round_trip() {
             &config,
             CancellationToken::new(),
             &AutoApproveGate,
+            &NopObserver,
         )
         .await
         .unwrap();
@@ -1145,6 +1151,7 @@ async fn tool_call_turn_integrity_after_branch() {
         &config,
         CancellationToken::new(),
         &AutoApproveGate,
+        &NopObserver,
     )
     .await
     .unwrap();
@@ -1172,6 +1179,7 @@ async fn tool_call_turn_integrity_after_branch() {
             &config,
             CancellationToken::new(),
             &AutoApproveGate,
+            &NopObserver,
         )
         .await
         .unwrap();

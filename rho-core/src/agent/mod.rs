@@ -18,10 +18,54 @@ use crate::response::FinishReason;
 use crate::session::Session;
 use crate::stream::AccumulatedToolCall;
 use crate::stream::StreamChunk;
-use crate::tool::{CancellationToken, Tool, ToolRegistry, ToolResult};
+use crate::tool::{CancellationToken, Tool, ToolRegistry, ToolResult, ToolRisk};
 use futures::StreamExt;
 use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
+
+// ── AgentObserver ─────────────────────────────────────────────────────────────
+
+/// Receives live events from the agent loop.
+///
+/// Implementations can render progress to a REPL, TUI, or test harness.
+/// The agent loop calls these methods at every state transition and as
+/// stream deltas arrive from the model.
+///
+/// All methods receive `&str` references (not owned values) so observers
+/// can be zero-allocation when they choose to ignore events.
+pub trait AgentObserver: Send + Sync {
+    /// The agent entered a new [`AgentState`].
+    fn on_state_change(&self, _state: AgentState) {}
+
+    /// Incremental text content from the model's streaming response.
+    ///
+    /// May be called many times per loop iteration as deltas arrive.
+    fn on_text_delta(&self, _delta: &str) {}
+
+    /// Incremental reasoning / chain-of-thought content from the model.
+    ///
+    /// May be called many times per loop iteration as deltas arrive.
+    fn on_reasoning_delta(&self, _delta: &str) {}
+
+    /// The model requested a tool call with the given name and arguments.
+    fn on_tool_call(&self, _name: &str, _arguments: &str) {}
+
+    /// A tool finished executing and produced this result.
+    fn on_tool_result(&self, _name: &str, _result: &ToolResult) {}
+
+    /// A tool call was denied by the approval gate.
+    fn on_tool_denied(&self, _name: &str) {}
+
+    /// A tool call requires human approval with the given risk level.
+    fn on_approval_requested(&self, _tool_name: &str, _risk: ToolRisk) {}
+}
+
+/// A no-op observer that discards all events.
+///
+/// Use this as the observer when no live output is needed (tests, benchmarks).
+pub struct NopObserver;
+
+impl AgentObserver for NopObserver {}
 
 // ── State and error types ─────────────────────────────────────────────────────
 
@@ -206,7 +250,12 @@ impl AgentConfig {
 ///
 /// The current imperative structure is correct and sufficient for Phase 2.
 #[tracing::instrument(skip_all, fields(input_len = message.len()))]
-#[allow(unused_variables, unused_assignments, clippy::too_many_lines)]
+#[allow(
+    unused_variables,
+    unused_assignments,
+    clippy::too_many_arguments,
+    clippy::too_many_lines
+)]
 pub async fn run_loop(
     session: &mut Session,
     message: &str,
@@ -215,6 +264,7 @@ pub async fn run_loop(
     config: &AgentConfig,
     cancel: CancellationToken,
     gate: &dyn ApprovalGate,
+    observer: &dyn AgentObserver,
 ) -> Result<String> {
     info!("run_loop called with message: {}", message);
     session.append_user_message(message);
@@ -226,6 +276,7 @@ pub async fn run_loop(
     // these are forward-looking assignments, not dead code.
     #[allow(unused_assignments)]
     let mut state = AgentState::Thinking;
+    observer.on_state_change(AgentState::Thinking);
     let mut iterations = 0u32;
 
     // Stuck-loop detection: track how many consecutive times each
@@ -244,7 +295,7 @@ pub async fn run_loop(
             return Err(AgentError::Cancelled.into());
         }
 
-        let response = send_with_retry_streaming(session, client, config).await?;
+        let response = send_with_retry_streaming(session, client, config, observer).await?;
 
         iterations += 1;
         if iterations > config.max_iterations {
@@ -266,6 +317,7 @@ pub async fn run_loop(
                     );
                 }
                 state = AgentState::Idle;
+                observer.on_state_change(AgentState::Idle);
                 return Ok(if reasoning_content.is_empty() {
                     text
                 } else if config.show_reasoning {
@@ -372,26 +424,34 @@ pub async fn run_loop(
                         .get_by_name(&call.function.name)
                         .map_or(crate::tool::ToolRisk::Destructive, Tool::risk);
 
+                    // Notify observer about the tool call.
+                    observer.on_tool_call(&call.function.name, &call.function.arguments);
+
                     // ── AwaitingApproval ──────────────────────────────────────
                     if config
                         .approval_policy
                         .requires_approval(&call.function.name, risk)
                     {
                         state = AgentState::AwaitingApproval;
+                        observer.on_state_change(AgentState::AwaitingApproval);
+                        observer.on_approval_requested(&call.function.name, risk);
                         let approved = gate.request_approval(&call, risk).await;
                         if !approved {
                             debug!(tool_name = %call.function.name, action = "denied");
+                            observer.on_tool_denied(&call.function.name);
                             let _ = session.append_tool_result(
                                 call_id,
                                 &ToolResult::error("Tool call denied by user."),
                             );
                             state = AgentState::Thinking;
+                            observer.on_state_change(AgentState::Thinking);
                             continue;
                         }
                     }
 
                     // ── ExecutingTool ─────────────────────────────────────────
                     state = AgentState::ExecutingTool;
+                    observer.on_state_change(AgentState::ExecutingTool);
                     let result = match registry.execute(&call, cancel.clone()).await {
                         Ok(r) => r,
                         Err(e) => {
@@ -404,6 +464,7 @@ pub async fn run_loop(
                             let _ = session
                                 .append_tool_result(call_id, &ToolResult::error(format!("{e}")));
                             state = AgentState::Thinking;
+                            observer.on_state_change(AgentState::Thinking);
                             continue;
                         }
                     };
@@ -448,8 +509,10 @@ pub async fn run_loop(
                         }
                     }
 
+                    observer.on_tool_result(&call.function.name, &result);
                     let _ = session.append_tool_result(call_id, &result);
                     state = AgentState::Thinking;
+                    observer.on_state_change(AgentState::Thinking);
                 }
             }
         }
@@ -470,12 +533,13 @@ async fn send_with_retry_streaming(
     session: &mut Session,
     client: &dyn ChatClient,
     config: &AgentConfig,
+    observer: &dyn AgentObserver,
 ) -> Result<AssistantResponse> {
     info!("send_with_retry_streaming called - starting retry loop");
     let mut attempts = 0u32;
     let mut last_error: Option<RhoError> = None;
     loop {
-        match send_streaming(session, client).await {
+        match send_streaming(session, client, observer).await {
             Ok(r) => return Ok(r),
             Err(e) => match TransitionError::from_error(e) {
                 TransitionError::Retryable(re) if attempts < config.retry_budget => {
@@ -536,6 +600,7 @@ fn build_tool_calls(tc_list: &[AccumulatedToolCall]) -> Result<Vec<ModelToolCall
 async fn send_streaming(
     session: &mut Session,
     client: &dyn ChatClient,
+    observer: &dyn AgentObserver,
 ) -> Result<AssistantResponse> {
     let fitted = session.path_messages();
     info!(
@@ -565,6 +630,12 @@ async fn send_streaming(
     while let Some(result) = stream.next().await {
         match result {
             Ok(chunk) => {
+                // Forward deltas to the observer as they arrive.
+                match &chunk {
+                    StreamChunk::TextDelta(delta) => observer.on_text_delta(delta),
+                    StreamChunk::ReasoningDelta(delta) => observer.on_reasoning_delta(delta),
+                    _ => {}
+                }
                 debug!("Received stream chunk: {:?}", chunk);
                 chunks.push(chunk);
             }

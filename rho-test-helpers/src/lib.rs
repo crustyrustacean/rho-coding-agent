@@ -31,7 +31,10 @@ use async_trait::async_trait;
 use rho_core::{
     AgentConfig, CancellationToken, ChatClient, ChatMessage, ChatRequest, ModelResponse, RhoError,
     SandboxRoot, Session, ShellExecutor, ShellOutput, Tool, ToolName, ToolOutcome, ToolRegistry,
-    ToolResult, TrustStore, agent::run_loop, approval::ApprovalGate, message::ModelToolCall,
+    ToolResult, TrustStore,
+    agent::{NopObserver, run_loop},
+    approval::ApprovalGate,
+    message::ModelToolCall,
     tool::ToolRisk,
 };
 use std::path::{Path, PathBuf};
@@ -824,6 +827,7 @@ pub async fn single_text_turn(
         &config,
         CancellationToken::new(),
         &AutoApproveGate,
+        &NopObserver,
     )
     .await
     .unwrap()
@@ -858,6 +862,7 @@ pub async fn single_tool_turn(
         &config,
         CancellationToken::new(),
         &AutoApproveGate,
+        &NopObserver,
     )
     .await
     .unwrap();

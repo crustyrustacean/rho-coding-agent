@@ -12,10 +12,78 @@
 
 use crate::app::App;
 use anyhow::Result;
+use rho_core::{AgentObserver, AgentState, ToolResult, ToolRisk};
 use std::{
     fs,
     io::{self, Write},
 };
+
+// ── ReplObserver ──────────────────────────────────────────────────────────────
+
+/// Observer that prints agent events to the REPL.
+///
+/// Streams reasoning deltas and tool activity to stderr so the user can
+/// see what the model is doing while it works. Text deltas from the final
+/// response are suppressed here — the complete text is printed once by the
+/// REPL after `run_loop` returns.
+struct ReplObserver;
+
+impl AgentObserver for ReplObserver {
+    fn on_state_change(&self, state: AgentState) {
+        match state {
+            AgentState::Thinking => eprint!("\n⏳ "),
+            AgentState::AwaitingApproval | AgentState::ExecutingTool | AgentState::Idle => {}
+        }
+    }
+
+    fn on_text_delta(&self, _delta: &str) {
+        // Intentionally suppressed — the full text is printed by the REPL
+        // after run_loop returns. Streaming partial text would interleave
+        // with tool activity output.
+    }
+
+    fn on_reasoning_delta(&self, delta: &str) {
+        eprint!("{delta}");
+    }
+
+    fn on_tool_call(&self, name: &str, arguments: &str) {
+        // Show a compact one-line summary of the tool call.
+        // Truncate arguments to keep it readable.
+        let preview = if arguments.len() > 120 {
+            format!("{}…", &arguments[..120])
+        } else {
+            arguments.to_owned()
+        };
+        eprintln!("\n→ {name}: {preview}");
+    }
+
+    fn on_tool_result(&self, name: &str, result: &ToolResult) {
+        if result.is_error {
+            // Show a short error summary.
+            let preview = if result.output.len() > 100 {
+                format!("{}…", &result.output[..100])
+            } else {
+                result.output.clone()
+            };
+            eprintln!("✗ {name}: {preview}");
+        }
+    }
+
+    fn on_tool_denied(&self, name: &str) {
+        eprintln!("⊘ {name}: denied");
+    }
+
+    fn on_approval_requested(&self, tool_name: &str, risk: ToolRisk) {
+        let risk_label = match risk {
+            ToolRisk::Read => "read",
+            ToolRisk::Write => "write",
+            ToolRisk::Destructive => "destructive",
+        };
+        eprintln!("⚠ {tool_name} ({risk_label}) requires approval");
+    }
+}
+
+// ── REPL ──────────────────────────────────────────────────────────────────────
 
 /// Run the interactive REPL loop.
 ///
@@ -81,11 +149,12 @@ pub async fn run_repl(app: &mut App) -> Result<()> {
             &app.config,
             app.cancel.clone(),
             &app.gate,
+            &ReplObserver,
         )
         .await
         {
-            Ok(reply) => println!("Assistant: {reply}"),
-            Err(e) => eprintln!("Error: {e}"),
+            Ok(reply) => println!("\nAssistant: {reply}"),
+            Err(e) => eprintln!("\nError: {e}"),
         }
     }
 
@@ -112,11 +181,12 @@ pub async fn run_prompt_file(mut app: App, path: std::path::PathBuf) -> Result<(
         &app.config,
         app.cancel.clone(),
         &app.gate,
+        &ReplObserver,
     )
     .await
     {
-        Ok(reply) => println!("Assistant: {reply}"),
-        Err(e) => eprintln!("Error: {e}"),
+        Ok(reply) => println!("\nAssistant: {reply}"),
+        Err(e) => eprintln!("\nError: {e}"),
     }
 
     app.session.close("prompt file completed");
