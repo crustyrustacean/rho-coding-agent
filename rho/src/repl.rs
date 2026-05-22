@@ -9,13 +9,29 @@
 //! - `/clear` — branch back to the system message
 //! - `/models` — list all models across all providers
 //! - `/model <id>` — switch to a model (fuzzy match or `provider/model` syntax)
+//! - `/paste` — read multi-line input from stdin (Ctrl-D to finish)
+//! - `/paste <file>` — read input from a file as if pasted
+//!
+//! ## Multi-line input
+//!
+//! The `/paste` command switches the REPL into multi-line mode. This is
+//! useful for pasting code snippets, error messages, or any content that
+//! spans multiple lines. In most terminals, you can just type `/paste`
+//! then Ctrl-Shift-V (or right-click paste), then press Enter twice
+//! (or Ctrl-D) to finish.
+//!
+//! End-of-input can be triggered three ways:
+//! 1. **Ctrl-D** (Unix/macOS) or **Ctrl-Z** (Windows) — sends EOF
+//! 2. **Empty line** after at least one line of content
+//! 3. **A line containing only `---`** — explicit sentinel
+//!
 
 use crate::app::App;
 use anyhow::Result;
 use rho_core::{AgentObserver, AgentState, ToolResult, ToolRisk};
 use std::{
     fs,
-    io::{self, Write},
+    io::{self, BufRead, Write},
 };
 
 // ── ReplObserver ──────────────────────────────────────────────────────────────
@@ -89,7 +105,7 @@ impl AgentObserver for ReplObserver {
 ///
 /// Reads lines from stdin, dispatches slash commands, and drives the agent
 /// loop for user messages. Handles `/quit`, `/clear`, `/models`, `/model`,
-/// and empty-input graceful exit on EOF.
+/// `/paste`, and empty-input graceful exit on EOF.
 pub async fn run_repl(app: &mut App) -> Result<()> {
     loop {
         print!("User: ");
@@ -134,6 +150,54 @@ pub async fn run_repl(app: &mut App) -> Result<()> {
             }
             _ if input.starts_with("/model ") => {
                 switch_model(app, input.strip_prefix("/model ").unwrap().trim()).await;
+                continue;
+            }
+            "/paste" | "/paste " => {
+                let file_arg = input.strip_prefix("/paste ").map(str::trim).filter(|s| !s.is_empty());
+                let pasted = if let Some(path) = file_arg {
+                    // /paste <file> — read content from a file
+                    match fs::read_to_string(path) {
+                        Ok(content) => content,
+                        Err(e) => {
+                            eprintln!("Error: cannot read `{path}`: {e}");
+                            continue;
+                        }
+                    }
+                } else {
+                    // /paste — read multi-line from stdin
+                    match read_multiline_input() {
+                        Ok(Some(text)) => text,
+                        Ok(None) => {
+                            // User cancelled (Ctrl-C or immediate EOF)
+                            continue;
+                        }
+                        Err(e) => {
+                            eprintln!("Error: {e}");
+                            continue;
+                        }
+                    }
+                };
+
+                if pasted.trim().is_empty() {
+                    continue;
+                }
+
+                let client = app.active_provider().clone_boxed_client();
+                match rho_core::run_loop(
+                    &mut app.session,
+                    pasted.trim(),
+                    client.as_ref(),
+                    &app.registry,
+                    &app.config,
+                    app.cancel.clone(),
+                    &app.gate,
+                    &ReplObserver,
+                )
+                .await
+                {
+                    Ok(reply) => println!("\nAssistant: {reply}"),
+                    Err(e) => eprintln!("\nError: {e}"),
+                }
                 continue;
             }
             "" => continue,
@@ -285,4 +349,63 @@ async fn switch_model(app: &mut App, query: &str) {
             }
         }
     }
+}
+
+/// Sentinel line that terminates multi-line paste mode.
+const PASTE_SENTINEL: &str = "---";
+
+/// Read multi-line input from stdin until the user signals end-of-input.
+///
+/// Returns `Ok(Some(text))` with the accumulated text, `Ok(None)` if the
+/// user cancelled (immediate EOF with no content), or `Err` on I/O failure.
+///
+/// Three ways to terminate:
+/// 1. **Ctrl-D** (Unix/macOS) or **Ctrl-Z** (Windows) — sends EOF
+/// 2. **Empty line** after at least one line of content
+/// 3. **A line containing only `---`** — explicit sentinel
+fn read_multiline_input() -> anyhow::Result<Option<String>> {
+    eprintln!("  Entering paste mode. Paste your text, then:");
+    eprintln!("    • Press Enter twice (empty line) to finish");
+    eprintln!("    • Type --- on its own line to finish");
+    eprintln!("    • Press Ctrl-D / Ctrl-Z to finish");
+    eprint!("  paste> ");
+    io::stderr().flush().ok();
+
+    let stdin = io::stdin();
+    let mut lines: Vec<String> = Vec::new();
+
+    for line_result in stdin.lock().lines() {
+        let line = match line_result {
+            Ok(l) => l,
+            Err(e) => return Err(anyhow::anyhow!("read error: {e}")),
+        };
+
+        // Explicit sentinel
+        if line.trim() == PASTE_SENTINEL && !lines.is_empty() {
+            eprintln!("  [paste: {} line(s)]", lines.len());
+            break;
+        }
+
+        // Empty line after content — terminate
+        if line.is_empty() && !lines.is_empty() {
+            eprintln!("  [paste: {} line(s)]", lines.len());
+            break;
+        }
+
+        // Skip leading empty lines
+        if line.is_empty() {
+            continue;
+        }
+
+        lines.push(line);
+        eprint!("  ...   ");
+        io::stderr().flush().ok();
+    }
+
+    if lines.is_empty() {
+        // No content read at all (immediate EOF or only whitespace)
+        return Ok(None);
+    }
+
+    Ok(Some(lines.join("\n")))
 }

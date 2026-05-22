@@ -83,6 +83,7 @@ See [Sessions](./core-concepts/sessions.md) for details.
 | `/clear` | Branch back to the system message (preserves old tree on disk) |
 | `/models` | List all models across all providers |
 | `/model <id>` | Switch to a model (fuzzy match or `provider/model` syntax) |
+| `/paste` | Enter multi-line paste mode (or `/paste <file>` to read from a file) |
 | `/quit` | Exit rho |
 
 ## Next Steps

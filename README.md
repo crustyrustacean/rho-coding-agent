@@ -93,6 +93,9 @@ Options:
 | Command | Action |
 |---|---|
 | `/clear` | Reset conversation history (keeps system prompt) |
+| `/models` | List all models across all providers |
+| `/model <id>` | Switch to a model (fuzzy match or `provider/model` syntax) |
+| `/paste` | Enter multi-line paste mode (or `/paste <file>` to read from a file) |
 | `/quit` | Exit the agent |
 
 ## Configuration
