@@ -43,9 +43,12 @@ stuck_loop_threshold = 3
 show_reasoning = false
 
 [provider]
+# Provider name — shown in consent prompt and /models output.
+# If not set, rho uses the 'type' field, then the endpoint hostname.
+# name = "my-provider"
+
 # Provider type label — informational only, has no effect on behavior.
-# Set to anything for your own bookkeeping, or omit entirely.
-# The endpoint URL and api_key_env are what actually matter.
+# Used as display name if 'name' is not set.
 # type = "local"
 
 # API endpoint URL (default: http://localhost:1234/v1/chat/completions)

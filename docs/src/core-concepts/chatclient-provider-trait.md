@@ -36,7 +36,11 @@ When an API key is provided via `api_key_env` in config (or `with_endpoint_and_k
 
 ### Provider consent
 
-The binary (`rho`) checks whether the configured endpoint is local before connecting. Non-local endpoints (e.g., `api.openai.com`) trigger an interactive consent warning. Use `--accept-external-provider` to skip this in automated workflows, or `--endpoint` (which implies consent since the user explicitly chose the target).
+The binary (`rho`) checks whether the configured endpoint is local before connecting. Non-local endpoints (e.g., `api.openai.com`) trigger an interactive consent warning that lists the external provider(s) by name. If no local server is detected, the warning also notes this. Use `--accept-external-provider` to skip this in automated workflows, or `--endpoint` (which implies consent since the user explicitly chose the target).
+
+### Model picker
+
+When no models can be auto-detected (all providers unreachable or `/v1/models` unsupported), rho offers an interactive model picker with curated models from Anthropic, OpenAI, and z.ai. The user can also enter a model ID manually. This fallback only fires when neither `--model` nor `agent.model` is set and auto-detection fails.
 
 ## Model resolution
 

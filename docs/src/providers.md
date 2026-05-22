@@ -92,14 +92,20 @@ rho --accept-external-provider
 When connecting to a non-local endpoint, rho displays an interactive consent warning before any data leaves your machine:
 
 ```text
-  ⚠  External provider detected
-      Endpoint: https://api.openai.com/v1/chat/completions
+  ⚠  No local model server detected
+  ⚠  External provider(s) configured:
+      - openrouter
 
-      Your prompts and code will be sent to an external server.
+      Your prompts and code will be sent to external servers.
+      This may expose proprietary code, secrets, or other
+      sensitive data to the providers and any intermediaries.
+
       Continue? [y/N]
 ```
 
-This prompt fires automatically for config-driven external endpoints. It is **skipped** when you use `--endpoint` on the CLI (explicit endpoint implies consent) or `--accept-external-provider`.
+If rho also has a local provider (e.g. LM Studio is running alongside an external provider), the "No local model server detected" header is omitted.
+
+The consent prompt fires automatically for config-driven external endpoints. It is **skipped** when you use `--endpoint` on the CLI (explicit endpoint implies consent) or `--accept-external-provider`.
 
 ## Specifying the model
 
@@ -110,6 +116,28 @@ There are three ways to set the model, in priority order:
 3. **Auto-detection** — query the server's `/v1/models` endpoint and use the first loaded model
 
 Auto-detection works for local servers (LM Studio, Ollama) where `/v1/models` is reliable. For external providers, **always specify the model explicitly** with `--model` or in config.
+
+### Interactive model picker
+
+When rho has an external provider configured but cannot list models (e.g. `/v1/models` times out, the API key is wrong, or the provider doesn't support model listing), rho offers an interactive model picker instead of aborting:
+
+```text
+  Could not list models from: openrouter
+  Select a model to use:
+
+    [1] Claude Sonnet 4        (Anthropic)
+    [2] GPT-4o                 (OpenAI)
+    [3] GLM-5                  (z.ai)
+    [0] Enter model ID manually
+
+  Choice:
+```
+
+The picker offers one recommended model from each of Anthropic, OpenAI, and z.ai. Selecting `[0]` lets you type any model ID. You can also type a model ID directly instead of a number.
+
+The curated models use `OpenRouter` model IDs (e.g. `anthropic/claude-sonnet-4`) which work with any `OpenRouter`-compatible endpoint. For direct OpenAI or Anthropic API access, use `[0]` to enter the native model ID (e.g. `gpt-4o` or `claude-sonnet-4-20250514`).
+
+To skip the picker entirely, specify `--model` on the CLI or set `agent.model` in config.
 
 ## CLI flags for provider configuration
 
@@ -246,18 +274,21 @@ Run rho with `RUST_LOG=info` to see budget diagnostics at startup:
 budget: 131072T context, 4096T reserve, 126976T prompt (4700T system + 2000T schema = 6700T overhead, 120276T for conversation)
 ```
 
-## The `provider.type` field
+## The `provider.type` and `provider.name` fields
 
 The `type` field in `[provider]` is **informational only** — it has no effect on behavior. rho uses `endpoint` and `api_key_env` to determine how to connect; it doesn't branch on `type`.
 
+However, if `name` is not set, rho uses `type` as the display name for the provider (shown in the consent prompt and `/models` output). If neither `name` nor `type` is set, rho derives the name from the endpoint hostname (e.g. `openrouter.ai` → `openrouter.ai`). Only if none of these are available does it fall back to the provider index (`0`, `1`, …).
+
 ```toml
 [provider]
-endpoint = "https://..." # this is what actually matters
-api_key_env = "OPENAI_API_KEY"
-# type is optional — set it for your own bookkeeping or omit it
+name = "my-openrouter"    # explicit name (optional)
+type = "openrouter"        # used as display name if name is not set
+endpoint = "https://..."    # this is what actually matters
+api_key_env = "OPENROUTER_API_KEY"
 ```
 
-**However**, if you set `type` to a known non-OpenAI-compatible provider name (e.g. `"anthropic"`, `"google"`, `"bedrock"`), rho will print a warning at startup. This is a safety net — the real check is that your endpoint accepts and returns the OpenAI Chat Completions format.
+If `type` is set to a known non-OpenAI-compatible provider name (e.g. `"anthropic"`, `"google"`, `"bedrock"`), rho will print a warning at startup. This is a safety net — the real check is that your endpoint accepts and returns the OpenAI Chat Completions format.
 
 ## Privacy considerations
 
