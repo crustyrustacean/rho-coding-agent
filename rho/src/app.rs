@@ -16,7 +16,7 @@ use rho_core::{
 };
 use rho_tools::register_all;
 use std::io::{self, BufRead, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing_subscriber::EnvFilter;
 
 // ── App ───────────────────────────────────────────────────────────────────────
@@ -319,8 +319,9 @@ fn build_token_budget(config: &RhoConfig, cli: &Cli) -> TokenBudget {
 
 /// Construct the session.
 ///
-/// Three paths:
-/// - `--session <path>` — resume from a JSONL file (with stale-CWD detection)
+/// Four paths:
+/// - `--continue` / `-c` — resume the most recent session for this project
+/// - `--session <path>` — resume from a specific JSONL file (with stale-CWD detection)
 /// - `--ephemeral` — in-memory session, no disk I/O
 /// - Default — persisted session at `~/.rho/sessions/<project-hash>/`
 fn build_session(
@@ -332,38 +333,14 @@ fn build_session(
     token_budget: TokenBudget,
     redactor: Redactor,
 ) -> Result<Session> {
-    if let Some(ref path) = cli.session {
-        // Resume an existing session from JSONL
+    if cli.r#continue {
+        let path = rho_core::find_latest_session(sandbox.path())
+            .ok_or_else(|| anyhow::anyhow!("no previous sessions found for this project"))?;
+        eprintln!("resuming latest session: {}", path.display());
+        resume_session(&path, model, tool_schemas, sandbox, token_budget, redactor)
+    } else if let Some(ref path) = cli.session {
         eprintln!("resuming session from: {}", path.display());
-        let mut s = Session::open(path.as_path())
-            .map_err(|e| anyhow::anyhow!("failed to open session: {e}"))?;
-
-        // Detect stale CWD.
-        let session_cwd = s.header().cwd.clone();
-        let current_cwd = sandbox.path();
-        if session_cwd != current_cwd {
-            if !session_cwd.as_os_str().is_empty() && !session_cwd.exists() {
-                eprintln!(
-                    "warning: session's working directory no longer exists\n  \
-                     session: {}\n  current: {}\n  continuing with current directory",
-                    session_cwd.display(),
-                    current_cwd.display()
-                );
-            } else {
-                eprintln!(
-                    "warning: session was created in a different directory\n  \
-                     session: {}\n  current: {}\n  continuing with current directory",
-                    session_cwd.display(),
-                    current_cwd.display()
-                );
-            }
-        }
-
-        s.set_model(model);
-        s.set_token_budget(token_budget);
-        s.set_redactor(redactor);
-        s.set_tools(tool_schemas.to_vec());
-        Ok(s)
+        resume_session(path, model, tool_schemas, sandbox, token_budget, redactor)
     } else if cli.ephemeral {
         let s = Session::in_memory(
             model,
@@ -386,8 +363,57 @@ fn build_session(
         if let Some(path) = s.save_path() {
             eprintln!("session: {}", path.display());
         }
+        // Show a hint if there are previous sessions for this project.
+        let previous = rho_core::list_sessions(sandbox.path());
+        if !previous.is_empty() {
+            eprintln!(
+                "  ({} previous session(s) for this project — use rho -c to resume the latest)",
+                previous.len()
+            );
+        }
         Ok(s)
     }
+}
+
+/// Resume a session from a JSONL file with stale-CWD detection.
+///
+/// Shared between `--continue` and `--session <path>`.
+fn resume_session(
+    path: &Path,
+    model: &str,
+    tool_schemas: &[rho_core::ToolSchema],
+    sandbox: &SandboxRoot,
+    token_budget: TokenBudget,
+    redactor: Redactor,
+) -> Result<Session> {
+    let mut s = Session::open(path).map_err(|e| anyhow::anyhow!("failed to open session: {e}"))?;
+
+    // Detect stale CWD.
+    let session_cwd = s.header().cwd.clone();
+    let current_cwd = sandbox.path();
+    if session_cwd != current_cwd {
+        if !session_cwd.as_os_str().is_empty() && !session_cwd.exists() {
+            eprintln!(
+                "warning: session's working directory no longer exists\n  \
+                 session: {}\n  current: {}\n  continuing with current directory",
+                session_cwd.display(),
+                current_cwd.display()
+            );
+        } else {
+            eprintln!(
+                "warning: session was created in a different directory\n  \
+                 session: {}\n  current: {}\n  continuing with current directory",
+                session_cwd.display(),
+                current_cwd.display()
+            );
+        }
+    }
+
+    s.set_model(model);
+    s.set_token_budget(token_budget);
+    s.set_redactor(redactor);
+    s.set_tools(tool_schemas.to_vec());
+    Ok(s)
 }
 
 /// The minimum fuzzy similarity score to include a suggestion.

@@ -156,6 +156,10 @@ pub async fn run_repl(app: &mut App) -> Result<()> {
                 list_models(app).await;
                 continue;
             }
+            "/sessions" => {
+                list_sessions(app);
+                continue;
+            }
             _ if input.starts_with("/model ") => {
                 switch_model(app, input.strip_prefix("/model ").unwrap().trim()).await;
                 continue;
@@ -360,6 +364,87 @@ async fn switch_model(app: &mut App, query: &str) {
             }
         }
     }
+}
+
+/// Maximum number of sessions to display in `/sessions`.
+const MAX_SESSIONS_SHOWN: usize = 10;
+
+/// List recent sessions for this project.
+///
+/// Shows up to [`MAX_SESSIONS_SHOWN`] sessions sorted by modification time
+/// (most recent first). Marks the session that `rho -c` would resume.
+fn list_sessions(app: &App) {
+    let cwd = app.session.header().cwd.clone();
+    let sessions = rho_core::list_sessions(&cwd);
+
+    if sessions.is_empty() {
+        println!("No previous sessions for this project.");
+        return;
+    }
+
+    println!("  Recent sessions:");
+    let count = sessions.len().min(MAX_SESSIONS_SHOWN);
+    for (i, meta) in sessions.iter().take(count).enumerate() {
+        let datetime = format_mtime(meta.mtime);
+        let size_kb = std::fs::metadata(&meta.path).map_or(0, |m| m.len() / 1024);
+        let latest = if i == 0 { "  \u{2190} latest" } else { "" };
+        println!(
+            "    [{idx}] {datetime}  {size_kb:>5} KB  {entries:>3} entries{latest}",
+            idx = i + 1,
+            entries = meta.entry_count,
+        );
+    }
+
+    let remaining = sessions.len().saturating_sub(count);
+    if remaining > 0 {
+        println!("    ... and {remaining} more");
+    }
+    println!();
+    println!("  Resume with: rho -c");
+}
+
+/// Format a filesystem modification time for display.
+///
+/// Shows the UTC date and time in `YYYY-MM-DD HH:MM` format.
+/// Falls back to the epoch if the time cannot be converted.
+fn format_mtime(mtime: std::time::SystemTime) -> String {
+    let secs = mtime
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    format_local_time(secs)
+}
+
+/// Convert Unix epoch seconds to a `YYYY-MM-DD HH:MM` string.
+///
+/// UTC-based formatter (no timezone dependency). Good enough for a session
+/// listing where exact local time isn't critical.
+fn format_local_time(epoch_secs: u64) -> String {
+    let days_since_epoch = epoch_secs / 86_400;
+    let time_of_day = epoch_secs % 86_400;
+    let hours = time_of_day / 3600;
+    let minutes = (time_of_day % 3600) / 60;
+
+    // Compute year/month/day from days since 1970-01-01.
+    // Algorithm from http://howardhinnant.github.io/date_algorithms.html
+    #[allow(clippy::cast_possible_truncation)]
+    let (year, month, day) = civil_from_days(days_since_epoch as i32);
+    format!("{year:04}-{month:02}-{day:02} {hours:02}:{minutes:02}")
+}
+
+/// Convert days since Unix epoch to (year, month, day).
+///
+/// Based on Howard Hinnant's civil calendar algorithm.
+#[allow(clippy::cast_sign_loss)]
+fn civil_from_days(z: i32) -> (i32, u32, u32) {
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    (y + i32::from(m <= 2), m as u32, d as u32)
 }
 
 /// Sentinel line that terminates multi-line paste mode.

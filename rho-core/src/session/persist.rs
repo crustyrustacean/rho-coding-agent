@@ -113,6 +113,132 @@ fn dirs_home() -> PathBuf {
         .map_or_else(|_| PathBuf::from("/tmp"), PathBuf::from)
 }
 
+// ── Session discovery ──────────────────────────────────────────────────────────
+
+/// Lightweight metadata about a saved session, extracted from its JSONL file.
+///
+/// Used by `list_sessions` and `find_latest_session` to enumerate sessions
+/// without loading the full entry tree into memory.
+#[derive(Clone, Debug)]
+pub struct SessionMetadata {
+    /// Session ID (8-char hex).
+    pub id: String,
+    /// When the session was created (from the JSONL header).
+    pub created_at: std::time::SystemTime,
+    /// The working directory the session was started in.
+    pub cwd: PathBuf,
+    /// Total number of entries in the file (line count minus header).
+    pub entry_count: usize,
+    /// Filesystem modification time — used for recency sorting.
+    pub mtime: std::time::SystemTime,
+    /// Full path to the JSONL file.
+    pub path: PathBuf,
+}
+
+/// List all saved sessions for the given project directory, sorted by
+/// modification time (most recent first).
+///
+/// Reads only the header line of each JSONL file — does not parse entry
+/// lines. Files with corrupt or missing headers are skipped with a warning.
+///
+/// Returns an empty vector if the session directory doesn't exist.
+pub fn list_sessions(cwd: &Path) -> Vec<SessionMetadata> {
+    let hash = project_hash(cwd);
+    let session_dir = dirs_home().join(".rho").join("sessions").join(hash);
+
+    let Ok(entries) = std::fs::read_dir(&session_dir) else {
+        return Vec::new();
+    };
+
+    let mut results: Vec<SessionMetadata> = entries
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let path = entry.path();
+
+            // Only consider .jsonl files.
+            if path.extension().is_none_or(|ext| ext != "jsonl") {
+                return None;
+            }
+
+            read_session_metadata(&path)
+        })
+        .collect();
+
+    // Sort by filesystem mtime, most recent first.
+    results.sort_by_key(|b| std::cmp::Reverse(b.mtime));
+    results
+}
+
+/// Return the path to the most recent session for the given project directory.
+///
+/// Scans `~/.rho/sessions/<project-hash>/` and returns the JSONL file with
+/// the most recent filesystem modification time. Returns `None` if the
+/// directory doesn't exist or is empty.
+pub fn find_latest_session(cwd: &Path) -> Option<PathBuf> {
+    list_sessions(cwd).first().map(|m| m.path.clone())
+}
+
+/// Extract lightweight metadata from a single JSONL session file.
+///
+/// Reads only the header line and counts remaining non-empty lines.
+/// Returns `None` if the file cannot be read or the header is corrupt.
+fn read_session_metadata(path: &Path) -> Option<SessionMetadata> {
+    let file = std::fs::File::open(path).ok()?;
+    let mut reader = std::io::BufReader::new(file);
+
+    // Read and parse the header line.
+    let mut header_line = String::new();
+    let bytes = reader.read_line(&mut header_line).ok()?;
+    if bytes == 0 {
+        warn!(path = %path.display(), "empty session file, skipping");
+        return None;
+    }
+
+    let header_jsonl: JsonlLine = serde_json::from_str(header_line.trim()).ok()?;
+    let JsonlLine::Header {
+        id,
+        version: _,
+        created_at_secs,
+        cwd,
+        parent_session: _,
+    } = header_jsonl
+    else {
+        warn!(path = %path.display(), "first line is not a header, skipping");
+        return None;
+    };
+
+    // Count remaining non-empty lines (entries).
+    let mut entry_count: usize = 0;
+    let mut line = String::new();
+    loop {
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {
+                if !line.trim().is_empty() {
+                    entry_count += 1;
+                }
+            }
+        }
+    }
+
+    // Get filesystem modification time.
+    let mtime = std::fs::metadata(path)
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+
+    Some(SessionMetadata {
+        id,
+        created_at: std::time::SystemTime::UNIX_EPOCH
+            + std::time::Duration::from_secs(created_at_secs),
+        cwd: PathBuf::from(cwd),
+        entry_count,
+        mtime,
+        path: path.to_path_buf(),
+    })
+}
+
 // ── Persistence methods on Session ────────────────────────────────────────────
 
 /// Persistence state tracked alongside the session tree.
@@ -429,4 +555,166 @@ pub fn compute_save_path(header: &SessionHeader) -> PathBuf {
         .duration_since(std::time::SystemTime::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
     default_save_path(&header.cwd, &header.id.to_string(), created_at_secs)
+}
+
+#[cfg(test)]
+#[allow(clippy::duration_suboptimal_units)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    /// Create a fake session JSONL file in the given directory.
+    ///
+    /// Returns the path to the created file.
+    fn create_test_session(dir: &Path, id: &str, created_at_secs: u64, entries: usize) -> PathBuf {
+        let filename = format!("{created_at_secs}_{id}.jsonl");
+        let path = dir.join(filename);
+        let mut file = std::fs::File::create(&path).unwrap();
+        let header = serde_json::json!({
+            "type": "Header",
+            "id": id,
+            "version": 1,
+            "created_at_secs": created_at_secs,
+            "cwd": "/tmp/test",
+            "parent_session": null
+        });
+        writeln!(file, "{header}").unwrap();
+        for i in 0..entries {
+            let entry_id = format!("{i:08x}");
+            let entry = serde_json::json!({
+                "type": "Entry",
+                "id": entry_id,
+                "parent_id": null,
+                "timestamp": {"secs_since_epoch": created_at_secs, "nanos_since_epoch": 0},
+                "resolution": "Full",
+                "payload": {"type": "Message"}
+            });
+            writeln!(file, "{entry}").unwrap();
+        }
+        path
+    }
+
+    #[test]
+    fn list_sessions_returns_empty_for_nonexistent_directory() {
+        let cwd = Path::new("/tmp/nonexistent_rho_test_12345");
+        let result = list_sessions(cwd);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn list_sessions_returns_empty_for_empty_directory() {
+        let dir = std::env::temp_dir().join("rho_test_list_empty");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let result = list_sessions(&dir);
+        assert!(result.is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn list_sessions_returns_sessions_sorted_by_mtime() {
+        let base = std::env::temp_dir().join("rho_test_list_sorted");
+        let _ = std::fs::remove_dir_all(&base);
+
+        // Create a fake session directory with the right project hash.
+        let hash = project_hash(&base);
+        let session_dir = dirs_home().join(".rho").join("sessions").join(&hash);
+        let _ = std::fs::remove_dir_all(&session_dir);
+        std::fs::create_dir_all(&session_dir).unwrap();
+
+        // Create two sessions with different timestamps.
+        let _older = create_test_session(&session_dir, "aaa11111", 1000, 5);
+        let _newer = create_test_session(&session_dir, "bbb22222", 2000, 10);
+
+        // Touch the older file so it has a more recent mtime.
+        let older_path = session_dir.join("1000_aaa11111.jsonl");
+        let newer_path = session_dir.join("2000_bbb22222.jsonl");
+
+        // On some systems, file creation order determines mtime.
+        // Explicitly set mtimes to guarantee ordering.
+        let older_time =
+            std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(50 * 60);
+        let newer_time =
+            std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(67 * 60);
+        std::fs::File::open(&older_path)
+            .and_then(|f| f.set_modified(older_time))
+            .ok();
+        std::fs::File::open(&newer_path)
+            .and_then(|f| f.set_modified(newer_time))
+            .ok();
+
+        let result = list_sessions(&base);
+        assert_eq!(result.len(), 2);
+        // Most recent mtime first.
+        assert_eq!(result[0].id, "bbb22222");
+        assert_eq!(result[1].id, "aaa11111");
+
+        // Verify metadata is populated.
+        assert_eq!(result[0].entry_count, 10);
+        assert_eq!(result[1].entry_count, 5);
+        assert_eq!(result[0].cwd, PathBuf::from("/tmp/test"));
+
+        let _ = std::fs::remove_dir_all(&session_dir);
+    }
+
+    #[test]
+    fn find_latest_returns_none_when_no_sessions() {
+        let cwd = Path::new("/tmp/nonexistent_rho_test_99999");
+        assert!(find_latest_session(cwd).is_none());
+    }
+
+    #[test]
+    fn find_latest_returns_most_recent_session() {
+        let base = std::env::temp_dir().join("rho_test_find_latest");
+        let _ = std::fs::remove_dir_all(&base);
+
+        let hash = project_hash(&base);
+        let session_dir = dirs_home().join(".rho").join("sessions").join(&hash);
+        let _ = std::fs::remove_dir_all(&session_dir);
+        std::fs::create_dir_all(&session_dir).unwrap();
+
+        let _old = create_test_session(&session_dir, "ccc33333", 5000, 3);
+        let _new = create_test_session(&session_dir, "ddd44444", 6000, 7);
+
+        // Set mtimes so the second is newer.
+        let new_path = session_dir.join("6000_ddd44444.jsonl");
+        let newer_time =
+            std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(167 * 60);
+        std::fs::File::open(&new_path)
+            .and_then(|f| f.set_modified(newer_time))
+            .ok();
+
+        let result = find_latest_session(&base);
+        assert!(result.is_some());
+        let path = result.unwrap();
+        assert!(path.to_string_lossy().contains("ddd44444"));
+
+        let _ = std::fs::remove_dir_all(&session_dir);
+    }
+
+    #[test]
+    fn list_sessions_skips_non_jsonl_files() {
+        let base = std::env::temp_dir().join("rho_test_skip_files");
+        let _ = std::fs::remove_dir_all(&base);
+
+        let hash = project_hash(&base);
+        let session_dir = dirs_home().join(".rho").join("sessions").join(&hash);
+        let _ = std::fs::remove_dir_all(&session_dir);
+        std::fs::create_dir_all(&session_dir).unwrap();
+
+        // Create a valid session.
+        let _ = create_test_session(&session_dir, "eee55555", 7000, 2);
+        // Create a non-JSONL file.
+        std::fs::write(session_dir.join("readme.txt"), "not a session").unwrap();
+        // Create an empty file.
+        std::fs::File::create(session_dir.join("empty.jsonl")).unwrap();
+
+        let result = list_sessions(&base);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "eee55555");
+
+        let _ = std::fs::remove_dir_all(&session_dir);
+    }
 }

@@ -89,6 +89,7 @@ pub use compaction::{CompactionStrategy, MechanicalCompactionStrategy};
 pub use entry::{CompactionSummary, Entry, EntryPayload, EntryResolution};
 pub use estimator::{HeuristicEstimator, TokenEstimator};
 pub use persist::PersistState;
+pub use persist::{SessionMetadata, find_latest_session, list_sessions};
 pub use persist::{default_save_path, open_session, project_hash};
 
 use serde::Serialize;

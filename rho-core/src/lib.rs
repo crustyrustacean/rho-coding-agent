@@ -121,7 +121,7 @@ pub use schema::ToolSchema;
 pub use session::{
     CompactionStrategy, CompactionSummary, Entry, EntryPayload, EntryResolution, ExtensionEntry,
     ExtensionMessageEntry, HeuristicEstimator, MechanicalCompactionStrategy, PersistState, Session,
-    SessionHeader, TokenEstimator,
+    SessionHeader, SessionMetadata, TokenEstimator, find_latest_session, list_sessions,
 };
 pub use shell::{ShellExecutor, ShellOutput};
 pub use tool::{

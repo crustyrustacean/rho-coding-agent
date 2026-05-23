@@ -6,6 +6,7 @@ use std::path::PathBuf;
 /// rho — a local coding agent.
 #[derive(Debug, Parser)]
 #[command(version, about)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct Cli {
     /// Model identifier.
     ///
@@ -80,12 +81,22 @@ pub struct Cli {
     #[arg(long)]
     pub prompt_file: Option<PathBuf>,
 
+    /// Resume the most recent session for this project.
+    ///
+    /// Scans `~/.rho/sessions/` for the latest JSONL file matching the
+    /// current project directory and resumes it. Equivalent to `--session
+    /// <path>` but finds the path automatically.
+    ///
+    /// Exits with an error if no previous sessions exist.
+    #[arg(short, long, conflicts_with_all = ["session", "ephemeral"])]
+    pub r#continue: bool,
+
     /// Resume a previous session from a JSONL file.
     ///
     /// When specified, rho loads the session from the given path instead of
     /// creating a new one. Use this to continue a conversation that was
     /// interrupted or to inspect a session's history.
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["continue", "ephemeral"])]
     pub session: Option<PathBuf>,
 
     /// Run in ephemeral mode — no session file is written to disk.
@@ -93,6 +104,6 @@ pub struct Cli {
     /// All conversation state lives only in memory and is lost when rho
     /// exits. Useful for one-shot commands, CI pipelines, or when you
     /// don't want `.rho/sessions/` clutter.
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["continue", "session"])]
     pub ephemeral: bool,
 }
