@@ -22,7 +22,9 @@ rho runs on Windows, macOS, and Linux. PowerShell 7+ (`pwsh`) is the primary she
 - Execute shell commands with a safety denylist
 - Run `cargo check`, `cargo clippy`, `cargo test`, `cargo fix`, and `rustc --explain` with structured output
 - Detect syntax node splits during edits via tree-sitter
-- Manage conversation state across sessions with tree-structured persistence
+- Manage conversation state across sessions with tree-structured persistence and session discovery
+- Observe agent activity in real time (reasoning, tool calls, errors) via the `AgentObserver` trait
 - Compact old conversation turns to stay within context limits
+- Monitor context window usage with a live status bar and `/status` REPL command
 
 This book documents the architecture, security model, configuration, and development of rho.

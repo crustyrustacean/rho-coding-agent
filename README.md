@@ -85,6 +85,7 @@ Options:
       --token-budget <TOKEN_BUDGET>      Context window token budget (default: 32768)
       --prompt-file <FILE>               Read a prompt from a file, then exit
       --session <PATH>                   Resume a previous session from a JSONL file
+  -c, --continue                         Resume the most recent session for this project
       --ephemeral                        Run without disk persistence
 ```
 
@@ -96,6 +97,8 @@ Options:
 | `/models` | List all models across all providers |
 | `/model <id>` | Switch to a model (fuzzy match or `provider/model` syntax) |
 | `/paste` | Enter multi-line paste mode (or `/paste <file>` to read from a file) |
+| `/sessions` | List recent sessions for this project |
+| `/status` | Show context window usage |
 | `/quit` | Exit the agent |
 
 ## Configuration

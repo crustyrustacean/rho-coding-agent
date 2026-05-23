@@ -120,3 +120,4 @@ All config values can be overridden by CLI flags. CLI flags take highest priorit
 | System prompt | `--system` |
 | Compact prompt | `--compact` |
 | Provider consent | `--accept-external-provider` |
+| Session resume | `--session` or `-c` |

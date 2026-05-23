@@ -30,6 +30,7 @@ pub async fn run_loop(
     config: &AgentConfig,
     cancel: CancellationToken,
     gate: &dyn ApprovalGate,
+    observer: &dyn AgentObserver,
 ) -> Result<String>
 ```
 
@@ -42,6 +43,30 @@ pub async fn run_loop(
    - **Tool calls** → for each call, check approval, execute, append the result, then loop back to Thinking.
 
 All tool calls in a single model response are executed **sequentially**. Each result is appended before the session is re-sent to the model. Parallel execution is a future optimisation.
+
+## AgentObserver
+
+The `AgentObserver` trait receives live events from the agent loop so that a REPL, TUI, or test harness can render progress as it happens.
+
+```rust
+pub trait AgentObserver: Send + Sync {
+    fn on_state_change(&self, _state: AgentState) {}
+    fn on_text_delta(&self, _delta: &str) {}
+    fn on_reasoning_delta(&self, _delta: &str) {}
+    fn on_tool_call(&self, _name: &str, _arguments: &str) {}
+    fn on_tool_result(&self, _name: &str, _result: &ToolResult) {}
+    fn on_tool_denied(&self, _name: &str) {}
+    fn on_approval_requested(&self, _tool_name: &str, _risk: ToolRisk) {}
+}
+```
+
+All methods have default no-op implementations, so observers only need to override the events they care about. The REPL's `ReplObserver` streams reasoning deltas and tool activity to stdout so the user can see what the model is doing in real time. For tests, benchmarks, and headless use, `NopObserver` discards all events.
+
+The observer is called:
+- At every state transition (`on_state_change`)
+- As streaming deltas arrive (`on_text_delta`, `on_reasoning_delta`)
+- Before and after each tool call (`on_tool_call`, `on_tool_result`, `on_tool_denied`)
+- When approval is requested (`on_approval_requested`)
 
 ## Retry with backoff
 

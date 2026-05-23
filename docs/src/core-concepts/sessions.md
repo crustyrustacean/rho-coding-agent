@@ -45,13 +45,44 @@ Example JSONL file:
 {"type":"Entry","id":"e5f6a7b8","parent_id":"a1b2c3d4","timestamp":{...},"resolution":"Full","payload":{"Message":{"content":"fix the bug","role":"user"}}}
 ```
 
+## Session discovery
+
+rho can scan saved sessions without loading the full entry tree. This enables session listing and quick-resume features.
+
+### `find_latest_session(cwd)`
+
+Returns the path to the most recently modified JSONL file for the given project directory. Used by `rho -c` to auto-resume. Reads only the header line — does not parse entry lines.
+
+### `list_sessions(cwd)`
+
+Returns all saved sessions for the project, sorted by filesystem modification time (most recent first). Each result includes:
+
+| Field | Description |
+|---|---|
+| `id` | Session ID (8-char hex) |
+| `created_at` | Creation timestamp from the JSONL header |
+| `cwd` | Working directory the session was started in |
+| `entry_count` | Number of entries (lines minus header) |
+| `mtime` | Filesystem modification time |
+| `path` | Full path to the JSONL file |
+
+The `/sessions` REPL command uses this to display the 10 most recent sessions, marking which one `rho -c` will resume.
+
 ### Resuming a session
 
-Use `--session <path>` to load a previously saved session:
+Use `rho -c` to resume the most recent session for the current project:
+
+```sh
+rho -c
+```
+
+Or resume a specific session with `--session <path>`:
 
 ```sh
 rho --session ~/.rho/sessions/abcdef1234567890/1777859536_4b021d5d.jsonl
 ```
+
+The `-c`, `--session`, and `--ephemeral` flags are mutually exclusive (enforced at parse time by clap).
 
 The resumed session picks up where it left off. The model, token budget, redactor, and tool set are updated from the current configuration so a session started with one model can be continued with another.
 
@@ -64,6 +95,42 @@ rho --ephemeral
 ```
 
 All conversation state lives only in memory and is lost when rho exits. Useful for one-shot commands, CI pipelines, or when you don't want session files accumulating.
+
+### Startup hint
+
+When rho creates a new persisted session, it checks for previous sessions for the same project. If any exist, it prints a hint:
+
+```text
+session: /home/user/.rho/sessions/abcdef12/1777859536_4b021d5d.jsonl
+  (3 previous session(s) for this project — use rho -c to resume the latest)
+```
+
+## Context stats
+
+The `ContextStats` struct provides a snapshot of context window usage, available through `Session::context_stats()`:
+
+```rust
+pub struct ContextStats {
+    pub context_window: usize,
+    pub completion_reserve: usize,
+    pub estimated_used: usize,
+    pub message_count: usize,
+    pub entry_count: usize,
+    pub path_entry_count: usize,
+}
+```
+
+Key methods:
+- `utilization_percent()` — context utilization as 0–100% (based on prompt budget)
+- `estimated_remaining()` — remaining tokens in the prompt budget (saturates at 0)
+
+The REPL prints a compact one-line status bar after every turn:
+
+```text
+[████████████░░░░░░░░] 12.3k/32k tokens (50%) │ 12.3k remaining │ 10 messages
+```
+
+Color-coded green (<60%), yellow (60–80%), red (>80%). The `/status` REPL command (aliased as `/context`) shows a detailed multi-line breakdown including system prompt overhead, tool schema overhead, and conversation token breakdown.
 
 ## Entry types
 
@@ -104,7 +171,7 @@ This prevents a single verbose tool call from consuming the entire context windo
 
 ## The `/clear` command
 
-In the REPL, `/clear` branches back to the system message entry. This has the same practical effect as clearing the conversation, but the old tree is preserved on disk. You can resume the old branch later with `--session`.
+In the REPL, `/clear` branches back to the system message entry. This has the same practical effect as clearing the conversation, but the old tree is preserved on disk. You can resume the old branch later with `rho -c` or `--session`.
 
 ## Session API
 
@@ -113,7 +180,8 @@ The `Session` type in `rho-core` exposes:
 - **Constructors**: `Session::new()` (persisted), `Session::in_memory()` (no disk I/O), `Session::open(path)` (resume from JSONL)
 - **Appenders**: `append_user_message()`, `append_assistant_message()`, `append_tool_result()`, `append_tool_call()`
 - **Navigation**: `path_to_root()`, `children()`, `leaf()`, `branch_to()`, `branch_with_summary()`
-- **Context**: `path_messages()` (messages along the current branch), `send_current(client)` (send to model with context fitting)
+- **Context**: `path_messages()` (messages along the current branch), `send_current(client)` (send to model with context fitting), `context_stats()` (usage snapshot)
 - **Compaction**: `compact_older_than()` (compact entries older than a threshold)
+- **Discovery**: `find_latest_session(cwd)`, `list_sessions(cwd)` (header-only session scanning)
 - **Extensions**: `write_custom_state()`, `read_custom_state()`, `write_custom_message()`, `read_custom_message()`
 - **Persistence**: `save_path()`, `flush()`

@@ -73,17 +73,19 @@ Duplicate tool names panic at registration (fast-fail, programming error). Execu
 
 ## Built-in tools
 
-rho ships with 11 built-in tools, all registered in `rho-tools::register_all()`:
+rho ships with 13 built-in tools, all registered in `rho-tools::register_all()`:
 
 | Tool | Risk | Description |
 |---|---|---|
 | `read_file` | Read | Read file contents, wrapped in `<context>` framing |
 | `write_file` | Write | Create or overwrite files within the sandbox |
 | `list_dir` | Read | `.gitignore`-aware directory listing |
-| `edit_file` | Write | Exact-match replacements with node-splitting validation |
+| `edit_file` | Write | Hashline-anchor replacements with node-splitting validation |
 | `run_command` | Destructive | Execute shell commands with denylist enforcement |
 | `cargo_check` | Read | Structured compiler diagnostics |
 | `cargo_clippy` | Read | Structured lint diagnostics |
 | `cargo_test` | Read | Structured test pass/fail results |
 | `cargo_fix` | Write | Apply machine-applicable compiler/clippy suggestions |
 | `rustc_explain` | Read | Look up detailed explanations for error codes |
+| `rustdoc_lookup` | Read | Look up Rust standard library documentation |
+| `crates_io_lookup` | Read | Search and inspect crate metadata on crates.io |

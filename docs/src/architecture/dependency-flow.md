@@ -40,9 +40,7 @@ xtask ────────────────────────�
 | `clap` | `rho`, `rho-bench` | CLI argument parsing |
 | `tracing` | `rho-core`, `rho-bench` | Structured logging |
 | `chrono` | `rho-bench`, `rho-eval` | ISO 8601 timestamps in results |
-| `anyhow` | `rho-core` | Error handling |
 | `thiserror` | `rho-core` | Error type derivation |
-
 ## What this buys you
 
 The layered structure means:

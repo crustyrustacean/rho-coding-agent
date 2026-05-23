@@ -41,11 +41,13 @@ cargo build --release -p rho
 ## Run
 
 ```sh
+
 rho                    # auto-detect model, persist session to disk
 rho -m my-model       # specify a model
+rho -c                 # resume the most recent session for this project
+rho --session <path>   # resume a specific session
 rho --ephemeral       # in-memory mode, no session file
 ```
-
 On startup, rho:
 
 1. Auto-detects the project root by walking up from the current directory looking for markers.
@@ -53,8 +55,8 @@ On startup, rho:
 3. Scans for project context files (`AGENTS.md`, etc.) and prompts for trust on first encounter.
 4. Checks provider consent for external endpoints.
 5. Connects to the model server and auto-detects the loaded model (unless `--model` is specified). If no model can be found, rho offers an interactive model picker.
-5. Creates a session (persisted to `~/.rho/sessions/` by default, or in-memory with `--ephemeral`).
-6. Enters the REPL. Type your request, and the agent loop runs until the model produces a final text reply.
+6. Creates a session (persisted to `~/.rho/sessions/` by default, or in-memory with `--ephemeral`). If previous sessions exist, a hint is printed.
+7. Enters the REPL. Type your request, and the agent loop runs until the model produces a final text reply.
 
 ## CLI flags
 
@@ -66,13 +68,15 @@ On startup, rho:
 | `--root <ROOT>` | Project root / sandbox root |
 | `--token-budget <N>` | Context window token budget (default: 32768) |
 | `--prompt-file <FILE>` | Read a prompt from a file, then exit |
-| `--session <PATH>` | Resume a previous session from a JSONL file |
+| `-c, --continue` | Resume the most recent session for this project |
+| `--session <PATH>` | Resume a specific session from a JSONL file |
 | `--ephemeral` | Run without disk persistence |
 | `--accept-external-provider` | Skip consent prompt for non-local providers |
-
 ## Session persistence
 
-By default, every rho invocation creates a new JSONL session file under `~/.rho/sessions/<project-hash>/`. Sessions survive process restarts — use `--session <path>` to resume one.
+By default, every rho invocation creates a new JSONL session file under `~/.rho/sessions/<project-hash>/`. Sessions survive process restarts — use `rho -c` to resume the latest session or `--session <path>` to resume a specific one.
+
+The `/sessions` REPL command lists the 10 most recent sessions with timestamps, sizes, and entry counts. The latest session is marked so you know which one `rho -c` will pick.
 
 See [Sessions](./core-concepts/sessions.md) for details.
 
@@ -84,6 +88,8 @@ See [Sessions](./core-concepts/sessions.md) for details.
 | `/models` | List all models across all providers |
 | `/model <id>` | Switch to a model (fuzzy match or `provider/model` syntax) |
 | `/paste` | Enter multi-line paste mode (or `/paste <file>` to read from a file) |
+| `/sessions` | List recent sessions for this project |
+| `/status` | Show detailed context window usage breakdown |
 | `/quit` | Exit rho |
 
 ## Next Steps

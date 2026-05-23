@@ -54,5 +54,23 @@ Tool schemas (the JSON descriptions sent to the model so it knows what tools are
 - **Per-model calibration**: an exponential moving average (α=0.3) that learns the real tokens-per-character ratio from model responses.
 - **Bootstrap ratios**: built-in starting ratios for common model families (Gemma, Qwen, Claude, GPT-4, Llama).
 - **Substring matching**: falls back to character-level estimation for non-ASCII text.
-
 The estimator converges to within 10% accuracy by the third model call in most cases.
+
+## Context status bar
+
+The REPL displays a compact one-line status bar after every turn showing estimated token usage:
+
+```text
+[████████████░░░░░░░░] 12.3k/32k tokens (50%) │ 12.3k remaining │ 10 messages
+```
+
+The bar is color-coded by utilization: green (<60%), yellow (60–80%), red (>80%). This gives a quick at-a-glance sense of how much context window remains.
+
+For a detailed breakdown, the `/status` REPL command (aliased as `/context`) shows:
+
+- Context window size and completion reserve
+- Prompt budget (context window minus reserve)
+- System prompt and tool schema overhead
+- Conversation tokens
+- Estimated used/remaining/percentage
+- Message count, path entry count, total entries

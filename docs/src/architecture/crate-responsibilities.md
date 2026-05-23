@@ -4,19 +4,21 @@
 
 The REPL loop, CLI argument parsing, tool wiring, and system prompt assembly. Constructs a `Session`, connects to the model via `LocalChatClient`, and drives the agent loop. Handles CLI dispatch (REPL mode, prompt-file mode, session resume, ephemeral mode).
 
-Key responsibilities: provider consent check, model resolution, startup budget diagnostics, shell-specific prompt extensions.
+Key responsibilities: provider consent check, model resolution, startup budget diagnostics, shell-specific prompt extensions, session discovery (`rho -c`), and live observer output (reasoning deltas, tool activity).
 
 ## `rho-core`
 
-The kernel: agent loop state machine, session management (tree persistence, compaction, branching), context window management (sliding window, token estimation), tool registry and traits, approval gates, secret redaction, file sandbox, model client trait, configuration loading, and all shared types.
+The kernel: agent loop state machine (with `AgentObserver` for live output), session management (tree persistence, compaction, branching, session discovery), context window management (sliding window, token estimation, `ContextStats`), tool registry and traits, approval gates, secret redaction, file sandbox, model client trait, configuration loading, and all shared types.
 
-Key types: `Session`, `AgentConfig`, `ToolRegistry`, `Tool`, `ChatClient`, `ContextManager`, `TokenBudget`, `SandboxRoot`, `Redactor`, `RhoConfig`.
+Key types: `Session`, `AgentConfig`, `AgentObserver`, `NopObserver`, `ContextStats`, `SessionMetadata`, `ToolRegistry`, `Tool`, `ChatClient`, `ContextManager`, `TokenBudget`, `SandboxRoot`, `Redactor`, `RhoConfig`.
+
 
 ## `rho-highlight`
 
 Tree-sitter-based syntax analysis. Provides `parse()`, `highlight()`, and `node_at()` for Rust source code. Used by `EditFile` for node-splitting validation and by the TUI (Phase 4) for syntax highlighting.
 
 Key types: `Language`, `Highlight`, `NodeInfo`.
+
 
 ## `rho-tools`
 
@@ -25,6 +27,7 @@ Built-in tool implementations:
 - **File tools:** `ReadFile`, `WriteFile`, `ListDir`, `EditFile`
 - **Shell tools:** `RunCommand`, `PowerShellExecutor`, `CommandDenylist`
 - **Rust tools:** `CargoCheck`, `CargoClippy`, `CargoTest`, `CargoFix`, `RustcExplain`
+- **Lookup tools:** `RustdocTool`, `CratesIoLookup`
 
 Each implements the `Tool` trait from `rho-core`.
 

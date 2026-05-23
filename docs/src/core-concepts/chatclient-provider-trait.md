@@ -30,7 +30,7 @@ let client = LocalChatClient::with_endpoint_and_key(
 );
 ```
 
-### Bearer authentication
+### [REDACTED]
 
 When an API key is provided via `api_key_env` in config (or `with_endpoint_and_key` in code), it is sent as an `Authorization: Bearer <key>` header with every request. Local endpoints typically don't need this. See [External Providers](../providers.md) for setup details.
 
@@ -63,4 +63,15 @@ Auto-detection works well for local servers where `/v1/models` is reliable. **Fo
 
 ## Streaming
 
-`ToolOutcome::Streamed` is declared for future streaming support (Phase 4). The current implementation uses synchronous request → full response.
+The client supports SSE streaming (`stream: true`) for the Chat Completions API. Streaming chunks are accumulated into a full `ModelResponse` before being returned to the agent loop. During streaming, `StreamChunk::TextDelta` and `StreamChunk::ReasoningDelta` events are forwarded to the `AgentObserver` in real time, enabling live progress output in the REPL.
+
+## Multi-provider support
+
+rho can manage multiple providers simultaneously via the `ProviderRegistry` and `Provider` trait:
+
+- Each provider has a name, type, endpoint, and optional API key.
+- The registry scans all providers to find which one serves a given model.
+- `/models` lists all models across all configured providers.
+- `/model <id>` switches to a model, automatically selecting the right provider.
+
+See [External Providers](../providers.md) for configuration details.
