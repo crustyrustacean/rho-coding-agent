@@ -152,11 +152,7 @@ mod tests {
 
     #[test]
     fn shell_output_strips_ansi_on_construction() {
-        let out = ShellOutput::new(
-            "\x1b[32mok\x1b[0m",
-            "\x1b[31;1merr\x1b[0m",
-            0,
-        );
+        let out = ShellOutput::new("\x1b[32mok\x1b[0m", "\x1b[31;1merr\x1b[0m", 0);
         assert_eq!(out.stdout, "ok");
         assert_eq!(out.stderr, "err");
     }
