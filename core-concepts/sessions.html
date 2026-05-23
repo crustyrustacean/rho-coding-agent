@@ -212,16 +212,63 @@
 {"type":"Entry","id":"a1b2c3d4","parent_id":null,"timestamp":{...},"resolution":"Full","payload":{"Message":{"content":"you are a coding assistant","role":"system"}}}
 {"type":"Entry","id":"e5f6a7b8","parent_id":"a1b2c3d4","timestamp":{...},"resolution":"Full","payload":{"Message":{"content":"fix the bug","role":"user"}}}
 </code></pre>
+<h2 id="session-discovery"><a class="header" href="#session-discovery">Session discovery</a></h2>
+<p>rho can scan saved sessions without loading the full entry tree. This enables session listing and quick-resume features.</p>
+<h3 id="find_latest_sessioncwd"><a class="header" href="#find_latest_sessioncwd"><code>find_latest_session(cwd)</code></a></h3>
+<p>Returns the path to the most recently modified JSONL file for the given project directory. Used by <code>rho -c</code> to auto-resume. Reads only the header line — does not parse entry lines.</p>
+<h3 id="list_sessionscwd"><a class="header" href="#list_sessionscwd"><code>list_sessions(cwd)</code></a></h3>
+<p>Returns all saved sessions for the project, sorted by filesystem modification time (most recent first). Each result includes:</p>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>id</code></td><td>Session ID (8-char hex)</td></tr>
+<tr><td><code>created_at</code></td><td>Creation timestamp from the JSONL header</td></tr>
+<tr><td><code>cwd</code></td><td>Working directory the session was started in</td></tr>
+<tr><td><code>entry_count</code></td><td>Number of entries (lines minus header)</td></tr>
+<tr><td><code>mtime</code></td><td>Filesystem modification time</td></tr>
+<tr><td><code>path</code></td><td>Full path to the JSONL file</td></tr>
+</tbody></table>
+</div>
+<p>The <code>/sessions</code> REPL command uses this to display the 10 most recent sessions, marking which one <code>rho -c</code> will resume.</p>
 <h3 id="resuming-a-session"><a class="header" href="#resuming-a-session">Resuming a session</a></h3>
-<p>Use <code>--session &lt;path&gt;</code> to load a previously saved session:</p>
+<p>Use <code>rho -c</code> to resume the most recent session for the current project:</p>
+<pre><code class="language-sh">rho -c
+</code></pre>
+<p>Or resume a specific session with <code>--session &lt;path&gt;</code>:</p>
 <pre><code class="language-sh">rho --session ~/.rho/sessions/abcdef1234567890/1777859536_4b021d5d.jsonl
 </code></pre>
+<p>The <code>-c</code>, <code>--session</code>, and <code>--ephemeral</code> flags are mutually exclusive (enforced at parse time by clap).</p>
 <p>The resumed session picks up where it left off. The model, token budget, redactor, and tool set are updated from the current configuration so a session started with one model can be continued with another.</p>
 <h3 id="ephemeral-mode"><a class="header" href="#ephemeral-mode">Ephemeral mode</a></h3>
 <p>Use <code>--ephemeral</code> to run without any disk persistence:</p>
 <pre><code class="language-sh">rho --ephemeral
 </code></pre>
 <p>All conversation state lives only in memory and is lost when rho exits. Useful for one-shot commands, CI pipelines, or when you don't want session files accumulating.</p>
+<h3 id="startup-hint"><a class="header" href="#startup-hint">Startup hint</a></h3>
+<p>When rho creates a new persisted session, it checks for previous sessions for the same project. If any exist, it prints a hint:</p>
+<pre><code class="language-text">session: /home/user/.rho/sessions/abcdef12/1777859536_4b021d5d.jsonl
+  (3 previous session(s) for this project — use rho -c to resume the latest)
+</code></pre>
+<h2 id="context-stats"><a class="header" href="#context-stats">Context stats</a></h2>
+<p>The <code>ContextStats</code> struct provides a snapshot of context window usage, available through <code>Session::context_stats()</code>:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub struct ContextStats {
+    pub context_window: usize,
+    pub completion_reserve: usize,
+    pub estimated_used: usize,
+    pub message_count: usize,
+    pub entry_count: usize,
+    pub path_entry_count: usize,
+}
+<span class="boring">}</span></code></pre></pre>
+<p>Key methods:</p>
+<ul>
+<li><code>utilization_percent()</code> — context utilization as 0–100% (based on prompt budget)</li>
+<li><code>estimated_remaining()</code> — remaining tokens in the prompt budget (saturates at 0)</li>
+</ul>
+<p>The REPL prints a compact one-line status bar after every turn:</p>
+<pre><code class="language-text">[████████████░░░░░░░░] 12.3k/32k tokens (50%) │ 12.3k remaining │ 10 messages
+</code></pre>
+<p>Color-coded green (&lt;60%), yellow (60–80%), red (&gt;80%). The <code>/status</code> REPL command (aliased as <code>/context</code>) shows a detailed multi-line breakdown including system prompt overhead, tool schema overhead, and conversation token breakdown.</p>
 <h2 id="entry-types"><a class="header" href="#entry-types">Entry types</a></h2>
 <p>Each entry in the tree has a <code>payload</code> that describes what it represents:</p>
 <div class="table-wrapper"><table><thead><tr><th>Payload</th><th>Description</th></tr></thead><tbody>
@@ -254,15 +301,16 @@
 </ul>
 <p>This prevents a single verbose tool call from consuming the entire context window.</p>
 <h2 id="the-clear-command"><a class="header" href="#the-clear-command">The <code>/clear</code> command</a></h2>
-<p>In the REPL, <code>/clear</code> branches back to the system message entry. This has the same practical effect as clearing the conversation, but the old tree is preserved on disk. You can resume the old branch later with <code>--session</code>.</p>
+<p>In the REPL, <code>/clear</code> branches back to the system message entry. This has the same practical effect as clearing the conversation, but the old tree is preserved on disk. You can resume the old branch later with <code>rho -c</code> or <code>--session</code>.</p>
 <h2 id="session-api"><a class="header" href="#session-api">Session API</a></h2>
 <p>The <code>Session</code> type in <code>rho-core</code> exposes:</p>
 <ul>
 <li><strong>Constructors</strong>: <code>Session::new()</code> (persisted), <code>Session::in_memory()</code> (no disk I/O), <code>Session::open(path)</code> (resume from JSONL)</li>
 <li><strong>Appenders</strong>: <code>append_user_message()</code>, <code>append_assistant_message()</code>, <code>append_tool_result()</code>, <code>append_tool_call()</code></li>
 <li><strong>Navigation</strong>: <code>path_to_root()</code>, <code>children()</code>, <code>leaf()</code>, <code>branch_to()</code>, <code>branch_with_summary()</code></li>
-<li><strong>Context</strong>: <code>path_messages()</code> (messages along the current branch), <code>send_current(client)</code> (send to model with context fitting)</li>
+<li><strong>Context</strong>: <code>path_messages()</code> (messages along the current branch), <code>send_current(client)</code> (send to model with context fitting), <code>context_stats()</code> (usage snapshot)</li>
 <li><strong>Compaction</strong>: <code>compact_older_than()</code> (compact entries older than a threshold)</li>
+<li><strong>Discovery</strong>: <code>find_latest_session(cwd)</code>, <code>list_sessions(cwd)</code> (header-only session scanning)</li>
 <li><strong>Extensions</strong>: <code>write_custom_state()</code>, <code>read_custom_state()</code>, <code>write_custom_message()</code>, <code>read_custom_message()</code></li>
 <li><strong>Persistence</strong>: <code>save_path()</code>, <code>flush()</code></li>
 </ul>

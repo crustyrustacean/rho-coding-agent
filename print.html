@@ -196,8 +196,10 @@
 <li>Execute shell commands with a safety denylist</li>
 <li>Run <code>cargo check</code>, <code>cargo clippy</code>, <code>cargo test</code>, <code>cargo fix</code>, and <code>rustc --explain</code> with structured output</li>
 <li>Detect syntax node splits during edits via tree-sitter</li>
-<li>Manage conversation state across sessions with tree-structured persistence</li>
+<li>Manage conversation state across sessions with tree-structured persistence and session discovery</li>
+<li>Observe agent activity in real time (reasoning, tool calls, errors) via the <code>AgentObserver</code> trait</li>
 <li>Compact old conversation turns to stay within context limits</li>
+<li>Monitor context window usage with a live status bar and <code>/status</code> REPL command</li>
 </ul>
 <p>This book documents the architecture, security model, configuration, and development of rho.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="getting-started"><a class="header" href="#getting-started">Getting Started</a></h1>
@@ -227,8 +229,11 @@
 <pre><code class="language-sh">cargo build --release -p rho
 </code></pre>
 <h2 id="run"><a class="header" href="#run">Run</a></h2>
-<pre><code class="language-sh">rho                    # auto-detect model, persist session to disk
+<pre><code class="language-sh">
+rho                    # auto-detect model, persist session to disk
 rho -m my-model       # specify a model
+rho -c                 # resume the most recent session for this project
+rho --session &lt;path&gt;   # resume a specific session
 rho --ephemeral       # in-memory mode, no session file
 </code></pre>
 <p>On startup, rho:</p>
@@ -238,7 +243,7 @@ rho --ephemeral       # in-memory mode, no session file
 <li>Scans for project context files (<code>AGENTS.md</code>, etc.) and prompts for trust on first encounter.</li>
 <li>Checks provider consent for external endpoints.</li>
 <li>Connects to the model server and auto-detects the loaded model (unless <code>--model</code> is specified). If no model can be found, rho offers an interactive model picker.</li>
-<li>Creates a session (persisted to <code>~/.rho/sessions/</code> by default, or in-memory with <code>--ephemeral</code>).</li>
+<li>Creates a session (persisted to <code>~/.rho/sessions/</code> by default, or in-memory with <code>--ephemeral</code>). If previous sessions exist, a hint is printed.</li>
 <li>Enters the REPL. Type your request, and the agent loop runs until the model produces a final text reply.</li>
 </ol>
 <h2 id="cli-flags"><a class="header" href="#cli-flags">CLI flags</a></h2>
@@ -249,13 +254,15 @@ rho --ephemeral       # in-memory mode, no session file
 <tr><td><code>--root &lt;ROOT&gt;</code></td><td>Project root / sandbox root</td></tr>
 <tr><td><code>--token-budget &lt;N&gt;</code></td><td>Context window token budget (default: 32768)</td></tr>
 <tr><td><code>--prompt-file &lt;FILE&gt;</code></td><td>Read a prompt from a file, then exit</td></tr>
-<tr><td><code>--session &lt;PATH&gt;</code></td><td>Resume a previous session from a JSONL file</td></tr>
+<tr><td><code>-c, --continue</code></td><td>Resume the most recent session for this project</td></tr>
+<tr><td><code>--session &lt;PATH&gt;</code></td><td>Resume a specific session from a JSONL file</td></tr>
 <tr><td><code>--ephemeral</code></td><td>Run without disk persistence</td></tr>
 <tr><td><code>--accept-external-provider</code></td><td>Skip consent prompt for non-local providers</td></tr>
 </tbody></table>
 </div>
 <h2 id="session-persistence"><a class="header" href="#session-persistence">Session persistence</a></h2>
-<p>By default, every rho invocation creates a new JSONL session file under <code>~/.rho/sessions/&lt;project-hash&gt;/</code>. Sessions survive process restarts — use <code>--session &lt;path&gt;</code> to resume one.</p>
+<p>By default, every rho invocation creates a new JSONL session file under <code>~/.rho/sessions/&lt;project-hash&gt;/</code>. Sessions survive process restarts — use <code>rho -c</code> to resume the latest session or <code>--session &lt;path&gt;</code> to resume a specific one.</p>
+<p>The <code>/sessions</code> REPL command lists the 10 most recent sessions with timestamps, sizes, and entry counts. The latest session is marked so you know which one <code>rho -c</code> will pick.</p>
 <p>See <a href="./core-concepts/sessions.html">Sessions</a> for details.</p>
 <h2 id="repl-commands"><a class="header" href="#repl-commands">REPL commands</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Command</th><th>Description</th></tr></thead><tbody>
@@ -263,6 +270,8 @@ rho --ephemeral       # in-memory mode, no session file
 <tr><td><code>/models</code></td><td>List all models across all providers</td></tr>
 <tr><td><code>/model &lt;id&gt;</code></td><td>Switch to a model (fuzzy match or <code>provider/model</code> syntax)</td></tr>
 <tr><td><code>/paste</code></td><td>Enter multi-line paste mode (or <code>/paste &lt;file&gt;</code> to read from a file)</td></tr>
+<tr><td><code>/sessions</code></td><td>List recent sessions for this project</td></tr>
+<tr><td><code>/status</code></td><td>Show detailed context window usage breakdown</td></tr>
 <tr><td><code>/quit</code></td><td>Exit rho</td></tr>
 </tbody></table>
 </div>
@@ -366,10 +375,10 @@ rho --ephemeral       # in-memory mode, no session file
 <div style="break-before: page; page-break-before: always;"></div><h1 id="crate-responsibilities"><a class="header" href="#crate-responsibilities">Crate Responsibilities</a></h1>
 <h2 id="rho-binary"><a class="header" href="#rho-binary"><code>rho</code> (binary)</a></h2>
 <p>The REPL loop, CLI argument parsing, tool wiring, and system prompt assembly. Constructs a <code>Session</code>, connects to the model via <code>LocalChatClient</code>, and drives the agent loop. Handles CLI dispatch (REPL mode, prompt-file mode, session resume, ephemeral mode).</p>
-<p>Key responsibilities: provider consent check, model resolution, startup budget diagnostics, shell-specific prompt extensions.</p>
+<p>Key responsibilities: provider consent check, model resolution, startup budget diagnostics, shell-specific prompt extensions, session discovery (<code>rho -c</code>), and live observer output (reasoning deltas, tool activity).</p>
 <h2 id="rho-core"><a class="header" href="#rho-core"><code>rho-core</code></a></h2>
-<p>The kernel: agent loop state machine, session management (tree persistence, compaction, branching), context window management (sliding window, token estimation), tool registry and traits, approval gates, secret redaction, file sandbox, model client trait, configuration loading, and all shared types.</p>
-<p>Key types: <code>Session</code>, <code>AgentConfig</code>, <code>ToolRegistry</code>, <code>Tool</code>, <code>ChatClient</code>, <code>ContextManager</code>, <code>TokenBudget</code>, <code>SandboxRoot</code>, <code>Redactor</code>, <code>RhoConfig</code>.</p>
+<p>The kernel: agent loop state machine (with <code>AgentObserver</code> for live output), session management (tree persistence, compaction, branching, session discovery), context window management (sliding window, token estimation, <code>ContextStats</code>), tool registry and traits, approval gates, secret redaction, file sandbox, model client trait, configuration loading, and all shared types.</p>
+<p>Key types: <code>Session</code>, <code>AgentConfig</code>, <code>AgentObserver</code>, <code>NopObserver</code>, <code>ContextStats</code>, <code>SessionMetadata</code>, <code>ToolRegistry</code>, <code>Tool</code>, <code>ChatClient</code>, <code>ContextManager</code>, <code>TokenBudget</code>, <code>SandboxRoot</code>, <code>Redactor</code>, <code>RhoConfig</code>.</p>
 <h2 id="rho-highlight"><a class="header" href="#rho-highlight"><code>rho-highlight</code></a></h2>
 <p>Tree-sitter-based syntax analysis. Provides <code>parse()</code>, <code>highlight()</code>, and <code>node_at()</code> for Rust source code. Used by <code>EditFile</code> for node-splitting validation and by the TUI (Phase 4) for syntax highlighting.</p>
 <p>Key types: <code>Language</code>, <code>Highlight</code>, <code>NodeInfo</code>.</p>
@@ -379,6 +388,7 @@ rho --ephemeral       # in-memory mode, no session file
 <li><strong>File tools:</strong> <code>ReadFile</code>, <code>WriteFile</code>, <code>ListDir</code>, <code>EditFile</code></li>
 <li><strong>Shell tools:</strong> <code>RunCommand</code>, <code>PowerShellExecutor</code>, <code>CommandDenylist</code></li>
 <li><strong>Rust tools:</strong> <code>CargoCheck</code>, <code>CargoClippy</code>, <code>CargoTest</code>, <code>CargoFix</code>, <code>RustcExplain</code></li>
+<li><strong>Lookup tools:</strong> <code>RustdocTool</code>, <code>CratesIoLookup</code></li>
 </ul>
 <p>Each implements the <code>Tool</code> trait from <code>rho-core</code>.</p>
 <h2 id="rho-test-helpers"><a class="header" href="#rho-test-helpers"><code>rho-test-helpers</code></a></h2>
@@ -425,7 +435,6 @@ xtask ────────────────────────�
 <tr><td><code>clap</code></td><td><code>rho</code>, <code>rho-bench</code></td><td>CLI argument parsing</td></tr>
 <tr><td><code>tracing</code></td><td><code>rho-core</code>, <code>rho-bench</code></td><td>Structured logging</td></tr>
 <tr><td><code>chrono</code></td><td><code>rho-bench</code>, <code>rho-eval</code></td><td>ISO 8601 timestamps in results</td></tr>
-<tr><td><code>anyhow</code></td><td><code>rho-core</code></td><td>Error handling</td></tr>
 <tr><td><code>thiserror</code></td><td><code>rho-core</code></td><td>Error type derivation</td></tr>
 </tbody></table>
 </div>
@@ -475,6 +484,7 @@ Idle (done)
     config: &amp;AgentConfig,
     cancel: CancellationToken,
     gate: &amp;dyn ApprovalGate,
+    observer: &amp;dyn AgentObserver,
 ) -&gt; Result&lt;String&gt;
 <span class="boring">}</span></code></pre></pre>
 <p><code>run_loop</code> takes a <code>Session</code> (not a <code>Conversation</code> — the session type was introduced in Phase 2.5). It:</p>
@@ -489,6 +499,28 @@ Idle (done)
 </li>
 </ol>
 <p>All tool calls in a single model response are executed <strong>sequentially</strong>. Each result is appended before the session is re-sent to the model. Parallel execution is a future optimisation.</p>
+<h2 id="agentobserver"><a class="header" href="#agentobserver">AgentObserver</a></h2>
+<p>The <code>AgentObserver</code> trait receives live events from the agent loop so that a REPL, TUI, or test harness can render progress as it happens.</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub trait AgentObserver: Send + Sync {
+    fn on_state_change(&amp;self, _state: AgentState) {}
+    fn on_text_delta(&amp;self, _delta: &amp;str) {}
+    fn on_reasoning_delta(&amp;self, _delta: &amp;str) {}
+    fn on_tool_call(&amp;self, _name: &amp;str, _arguments: &amp;str) {}
+    fn on_tool_result(&amp;self, _name: &amp;str, _result: &amp;ToolResult) {}
+    fn on_tool_denied(&amp;self, _name: &amp;str) {}
+    fn on_approval_requested(&amp;self, _tool_name: &amp;str, _risk: ToolRisk) {}
+}
+<span class="boring">}</span></code></pre></pre>
+<p>All methods have default no-op implementations, so observers only need to override the events they care about. The REPL's <code>ReplObserver</code> streams reasoning deltas and tool activity to stdout so the user can see what the model is doing in real time. For tests, benchmarks, and headless use, <code>NopObserver</code> discards all events.</p>
+<p>The observer is called:</p>
+<ul>
+<li>At every state transition (<code>on_state_change</code>)</li>
+<li>As streaming deltas arrive (<code>on_text_delta</code>, <code>on_reasoning_delta</code>)</li>
+<li>Before and after each tool call (<code>on_tool_call</code>, <code>on_tool_result</code>, <code>on_tool_denied</code>)</li>
+<li>When approval is requested (<code>on_approval_requested</code>)</li>
+</ul>
 <h2 id="retry-with-backoff"><a class="header" href="#retry-with-backoff">Retry with backoff</a></h2>
 <p>Transient HTTP errors (503, 429, connection refused) are retried with exponential backoff. The retry budget is configurable via <code>AgentConfig</code>. If the budget is exhausted, <code>run_loop</code> returns <code>RhoError::RetryBudgetExhausted</code>.</p>
 <h2 id="cancellation"><a class="header" href="#cancellation">Cancellation</a></h2>
@@ -560,18 +592,20 @@ let result = registry.execute(&amp;call, cancel).await?;
 <span class="boring">}</span></code></pre></pre>
 <p>Duplicate tool names panic at registration (fast-fail, programming error). Execution returns <code>RhoError::ToolNotFound</code> if the model requests an unregistered tool.</p>
 <h2 id="built-in-tools"><a class="header" href="#built-in-tools">Built-in tools</a></h2>
-<p>rho ships with 11 built-in tools, all registered in <code>rho-tools::register_all()</code>:</p>
+<p>rho ships with 13 built-in tools, all registered in <code>rho-tools::register_all()</code>:</p>
 <div class="table-wrapper"><table><thead><tr><th>Tool</th><th>Risk</th><th>Description</th></tr></thead><tbody>
 <tr><td><code>read_file</code></td><td>Read</td><td>Read file contents, wrapped in <code>&lt;context&gt;</code> framing</td></tr>
 <tr><td><code>write_file</code></td><td>Write</td><td>Create or overwrite files within the sandbox</td></tr>
 <tr><td><code>list_dir</code></td><td>Read</td><td><code>.gitignore</code>-aware directory listing</td></tr>
-<tr><td><code>edit_file</code></td><td>Write</td><td>Exact-match replacements with node-splitting validation</td></tr>
+<tr><td><code>edit_file</code></td><td>Write</td><td>Hashline-anchor replacements with node-splitting validation</td></tr>
 <tr><td><code>run_command</code></td><td>Destructive</td><td>Execute shell commands with denylist enforcement</td></tr>
 <tr><td><code>cargo_check</code></td><td>Read</td><td>Structured compiler diagnostics</td></tr>
 <tr><td><code>cargo_clippy</code></td><td>Read</td><td>Structured lint diagnostics</td></tr>
 <tr><td><code>cargo_test</code></td><td>Read</td><td>Structured test pass/fail results</td></tr>
 <tr><td><code>cargo_fix</code></td><td>Write</td><td>Apply machine-applicable compiler/clippy suggestions</td></tr>
 <tr><td><code>rustc_explain</code></td><td>Read</td><td>Look up detailed explanations for error codes</td></tr>
+<tr><td><code>rustdoc_lookup</code></td><td>Read</td><td>Look up Rust standard library documentation</td></tr>
+<tr><td><code>crates_io_lookup</code></td><td>Read</td><td>Search and inspect crate metadata on crates.io</td></tr>
 </tbody></table>
 </div><div style="break-before: page; page-break-before: always;"></div><h1 id="chatclient-provider-trait"><a class="header" href="#chatclient-provider-trait">ChatClient Provider Trait</a></h1>
 <p>The <code>ChatClient</code> trait abstracts the model API. It defines how rho talks to LLMs — any OpenAI-compatible endpoint can be plugged in.</p>
@@ -600,7 +634,7 @@ let client = LocalChatClient::with_endpoint_and_key(
     Some("sk-...".into()),
 );
 <span class="boring">}</span></code></pre></pre>
-<h3 id="bearer-authentication"><a class="header" href="#bearer-authentication">Bearer authentication</a></h3>
+<h3 id="redacted"><a class="header" href="#redacted">[REDACTED]</a></h3>
 <p>When an API key is provided via <code>api_key_env</code> in config (or <code>with_endpoint_and_key</code> in code), it is sent as an <code>Authorization: Bearer &lt;key&gt;</code> header with every request. Local endpoints typically don't need this. See <a href="core-concepts/../providers.html">External Providers</a> for setup details.</p>
 <h3 id="provider-consent"><a class="header" href="#provider-consent">Provider consent</a></h3>
 <p>The binary (<code>rho</code>) checks whether the configured endpoint is local before connecting. Non-local endpoints (e.g., <code>api.openai.com</code>) trigger an interactive consent warning that lists the external provider(s) by name. If no local server is detected, the warning also notes this. Use <code>--accept-external-provider</code> to skip this in automated workflows, or <code>--endpoint</code> (which implies consent since the user explicitly chose the target).</p>
@@ -623,7 +657,16 @@ let client = LocalChatClient::with_endpoint_and_key(
 </tbody></table>
 </div>
 <h2 id="streaming"><a class="header" href="#streaming">Streaming</a></h2>
-<p><code>ToolOutcome::Streamed</code> is declared for future streaming support (Phase 4). The current implementation uses synchronous request → full response.</p>
+<p>The client supports SSE streaming (<code>stream: true</code>) for the Chat Completions API. Streaming chunks are accumulated into a full <code>ModelResponse</code> before being returned to the agent loop. During streaming, <code>StreamChunk::TextDelta</code> and <code>StreamChunk::ReasoningDelta</code> events are forwarded to the <code>AgentObserver</code> in real time, enabling live progress output in the REPL.</p>
+<h2 id="multi-provider-support"><a class="header" href="#multi-provider-support">Multi-provider support</a></h2>
+<p>rho can manage multiple providers simultaneously via the <code>ProviderRegistry</code> and <code>Provider</code> trait:</p>
+<ul>
+<li>Each provider has a name, type, endpoint, and optional API key.</li>
+<li>The registry scans all providers to find which one serves a given model.</li>
+<li><code>/models</code> lists all models across all configured providers.</li>
+<li><code>/model &lt;id&gt;</code> switches to a model, automatically selecting the right provider.</li>
+</ul>
+<p>See <a href="core-concepts/../providers.html">External Providers</a> for configuration details.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="approval-policy"><a class="header" href="#approval-policy">Approval Policy</a></h1>
 <p>The approval policy sits between the model's tool call and its execution. It decides whether a tool call needs human confirmation, and the approval gate presents that decision to the user.</p>
 <h2 id="two-part-system"><a class="header" href="#two-part-system">Two-part system</a></h2>
@@ -710,9 +753,23 @@ pub trait ApprovalGate: Send + Sync {
 <ul>
 <li><strong>Per-model calibration</strong>: an exponential moving average (α=0.3) that learns the real tokens-per-character ratio from model responses.</li>
 <li><strong>Bootstrap ratios</strong>: built-in starting ratios for common model families (Gemma, Qwen, Claude, GPT-4, Llama).</li>
-<li><strong>Substring matching</strong>: falls back to character-level estimation for non-ASCII text.</li>
+<li><strong>Substring matching</strong>: falls back to character-level estimation for non-ASCII text.
+The estimator converges to within 10% accuracy by the third model call in most cases.</li>
 </ul>
-<p>The estimator converges to within 10% accuracy by the third model call in most cases.</p>
+<h2 id="context-status-bar"><a class="header" href="#context-status-bar">Context status bar</a></h2>
+<p>The REPL displays a compact one-line status bar after every turn showing estimated token usage:</p>
+<pre><code class="language-text">[████████████░░░░░░░░] 12.3k/32k tokens (50%) │ 12.3k remaining │ 10 messages
+</code></pre>
+<p>The bar is color-coded by utilization: green (&lt;60%), yellow (60–80%), red (&gt;80%). This gives a quick at-a-glance sense of how much context window remains.</p>
+<p>For a detailed breakdown, the <code>/status</code> REPL command (aliased as <code>/context</code>) shows:</p>
+<ul>
+<li>Context window size and completion reserve</li>
+<li>Prompt budget (context window minus reserve)</li>
+<li>System prompt and tool schema overhead</li>
+<li>Conversation tokens</li>
+<li>Estimated used/remaining/percentage</li>
+<li>Message count, path entry count, total entries</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="sessions"><a class="header" href="#sessions">Sessions</a></h1>
 <p>A <strong>session</strong> is rho's unit of persistent conversation state. It replaces the older flat <code>Conversation</code> type with a tree-structured model where every turn, tool call, and compaction is an entry in an append-only log.</p>
 <h2 id="why-sessions"><a class="header" href="#why-sessions">Why sessions?</a></h2>
@@ -746,16 +803,63 @@ pub trait ApprovalGate: Send + Sync {
 {"type":"Entry","id":"a1b2c3d4","parent_id":null,"timestamp":{...},"resolution":"Full","payload":{"Message":{"content":"you are a coding assistant","role":"system"}}}
 {"type":"Entry","id":"e5f6a7b8","parent_id":"a1b2c3d4","timestamp":{...},"resolution":"Full","payload":{"Message":{"content":"fix the bug","role":"user"}}}
 </code></pre>
+<h2 id="session-discovery"><a class="header" href="#session-discovery">Session discovery</a></h2>
+<p>rho can scan saved sessions without loading the full entry tree. This enables session listing and quick-resume features.</p>
+<h3 id="find_latest_sessioncwd"><a class="header" href="#find_latest_sessioncwd"><code>find_latest_session(cwd)</code></a></h3>
+<p>Returns the path to the most recently modified JSONL file for the given project directory. Used by <code>rho -c</code> to auto-resume. Reads only the header line — does not parse entry lines.</p>
+<h3 id="list_sessionscwd"><a class="header" href="#list_sessionscwd"><code>list_sessions(cwd)</code></a></h3>
+<p>Returns all saved sessions for the project, sorted by filesystem modification time (most recent first). Each result includes:</p>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>id</code></td><td>Session ID (8-char hex)</td></tr>
+<tr><td><code>created_at</code></td><td>Creation timestamp from the JSONL header</td></tr>
+<tr><td><code>cwd</code></td><td>Working directory the session was started in</td></tr>
+<tr><td><code>entry_count</code></td><td>Number of entries (lines minus header)</td></tr>
+<tr><td><code>mtime</code></td><td>Filesystem modification time</td></tr>
+<tr><td><code>path</code></td><td>Full path to the JSONL file</td></tr>
+</tbody></table>
+</div>
+<p>The <code>/sessions</code> REPL command uses this to display the 10 most recent sessions, marking which one <code>rho -c</code> will resume.</p>
 <h3 id="resuming-a-session"><a class="header" href="#resuming-a-session">Resuming a session</a></h3>
-<p>Use <code>--session &lt;path&gt;</code> to load a previously saved session:</p>
+<p>Use <code>rho -c</code> to resume the most recent session for the current project:</p>
+<pre><code class="language-sh">rho -c
+</code></pre>
+<p>Or resume a specific session with <code>--session &lt;path&gt;</code>:</p>
 <pre><code class="language-sh">rho --session ~/.rho/sessions/abcdef1234567890/1777859536_4b021d5d.jsonl
 </code></pre>
+<p>The <code>-c</code>, <code>--session</code>, and <code>--ephemeral</code> flags are mutually exclusive (enforced at parse time by clap).</p>
 <p>The resumed session picks up where it left off. The model, token budget, redactor, and tool set are updated from the current configuration so a session started with one model can be continued with another.</p>
 <h3 id="ephemeral-mode"><a class="header" href="#ephemeral-mode">Ephemeral mode</a></h3>
 <p>Use <code>--ephemeral</code> to run without any disk persistence:</p>
 <pre><code class="language-sh">rho --ephemeral
 </code></pre>
 <p>All conversation state lives only in memory and is lost when rho exits. Useful for one-shot commands, CI pipelines, or when you don't want session files accumulating.</p>
+<h3 id="startup-hint"><a class="header" href="#startup-hint">Startup hint</a></h3>
+<p>When rho creates a new persisted session, it checks for previous sessions for the same project. If any exist, it prints a hint:</p>
+<pre><code class="language-text">session: /home/user/.rho/sessions/abcdef12/1777859536_4b021d5d.jsonl
+  (3 previous session(s) for this project — use rho -c to resume the latest)
+</code></pre>
+<h2 id="context-stats"><a class="header" href="#context-stats">Context stats</a></h2>
+<p>The <code>ContextStats</code> struct provides a snapshot of context window usage, available through <code>Session::context_stats()</code>:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub struct ContextStats {
+    pub context_window: usize,
+    pub completion_reserve: usize,
+    pub estimated_used: usize,
+    pub message_count: usize,
+    pub entry_count: usize,
+    pub path_entry_count: usize,
+}
+<span class="boring">}</span></code></pre></pre>
+<p>Key methods:</p>
+<ul>
+<li><code>utilization_percent()</code> — context utilization as 0–100% (based on prompt budget)</li>
+<li><code>estimated_remaining()</code> — remaining tokens in the prompt budget (saturates at 0)</li>
+</ul>
+<p>The REPL prints a compact one-line status bar after every turn:</p>
+<pre><code class="language-text">[████████████░░░░░░░░] 12.3k/32k tokens (50%) │ 12.3k remaining │ 10 messages
+</code></pre>
+<p>Color-coded green (&lt;60%), yellow (60–80%), red (&gt;80%). The <code>/status</code> REPL command (aliased as <code>/context</code>) shows a detailed multi-line breakdown including system prompt overhead, tool schema overhead, and conversation token breakdown.</p>
 <h2 id="entry-types"><a class="header" href="#entry-types">Entry types</a></h2>
 <p>Each entry in the tree has a <code>payload</code> that describes what it represents:</p>
 <div class="table-wrapper"><table><thead><tr><th>Payload</th><th>Description</th></tr></thead><tbody>
@@ -788,15 +892,16 @@ pub trait ApprovalGate: Send + Sync {
 </ul>
 <p>This prevents a single verbose tool call from consuming the entire context window.</p>
 <h2 id="the-clear-command"><a class="header" href="#the-clear-command">The <code>/clear</code> command</a></h2>
-<p>In the REPL, <code>/clear</code> branches back to the system message entry. This has the same practical effect as clearing the conversation, but the old tree is preserved on disk. You can resume the old branch later with <code>--session</code>.</p>
+<p>In the REPL, <code>/clear</code> branches back to the system message entry. This has the same practical effect as clearing the conversation, but the old tree is preserved on disk. You can resume the old branch later with <code>rho -c</code> or <code>--session</code>.</p>
 <h2 id="session-api"><a class="header" href="#session-api">Session API</a></h2>
 <p>The <code>Session</code> type in <code>rho-core</code> exposes:</p>
 <ul>
 <li><strong>Constructors</strong>: <code>Session::new()</code> (persisted), <code>Session::in_memory()</code> (no disk I/O), <code>Session::open(path)</code> (resume from JSONL)</li>
 <li><strong>Appenders</strong>: <code>append_user_message()</code>, <code>append_assistant_message()</code>, <code>append_tool_result()</code>, <code>append_tool_call()</code></li>
 <li><strong>Navigation</strong>: <code>path_to_root()</code>, <code>children()</code>, <code>leaf()</code>, <code>branch_to()</code>, <code>branch_with_summary()</code></li>
-<li><strong>Context</strong>: <code>path_messages()</code> (messages along the current branch), <code>send_current(client)</code> (send to model with context fitting)</li>
+<li><strong>Context</strong>: <code>path_messages()</code> (messages along the current branch), <code>send_current(client)</code> (send to model with context fitting), <code>context_stats()</code> (usage snapshot)</li>
 <li><strong>Compaction</strong>: <code>compact_older_than()</code> (compact entries older than a threshold)</li>
+<li><strong>Discovery</strong>: <code>find_latest_session(cwd)</code>, <code>list_sessions(cwd)</code> (header-only session scanning)</li>
 <li><strong>Extensions</strong>: <code>write_custom_state()</code>, <code>read_custom_state()</code>, <code>write_custom_message()</code>, <code>read_custom_message()</code></li>
 <li><strong>Persistence</strong>: <code>save_path()</code>, <code>flush()</code></li>
 </ul>
@@ -1083,6 +1188,7 @@ api_key_env = "OPENAI_API_KEY"
 <tr><td>System prompt</td><td><code>--system</code></td></tr>
 <tr><td>Compact prompt</td><td><code>--compact</code></td></tr>
 <tr><td>Provider consent</td><td><code>--accept-external-provider</code></td></tr>
+<tr><td>Session resume</td><td><code>--session</code> or <code>-c</code></td></tr>
 </tbody></table>
 </div><div style="break-before: page; page-break-before: always;"></div><h1 id="external-providers-1"><a class="header" href="#external-providers-1">External Providers</a></h1>
 <p>rho's <code>LocalChatClient</code> speaks the <strong>OpenAI Chat Completions wire format</strong> (<code>POST /v1/chat/completions</code>). It works with any endpoint that implements this format — including local servers (LM Studio, Ollama) and external providers that offer an OpenAI-compatible API.</p>
@@ -1557,9 +1663,8 @@ impl EvalTask for MyNewTask {
 <tr><td><code>toml</code></td><td>Config parsing</td><td>Standard for TOML in Rust</td></tr>
 <tr><td><code>clap</code></td><td>CLI parsing</td><td>De-facto standard; derives-based API</td></tr>
 <tr><td><code>tracing</code></td><td>Structured logging</td><td>De-facto standard; <code>log</code>-compatible</td></tr>
-<tr><td><code>anyhow</code></td><td>Error handling</td><td>Ergonomic error type for application code</td></tr>
-<tr><td><code>thiserror</code></td><td>Error derive macros</td><td>Clean <code>RhoError</code> definition</td></tr>
 <tr><td><code>async-trait</code></td><td>Async trait support</td><td>Required for <code>Box&lt;dyn Tool&gt;</code></td></tr>
+<tr><td><code>thiserror</code></td><td>Error derive macros</td><td>Clean <code>RhoError</code> definition</td></tr>
 <tr><td><code>ignore</code></td><td><code>.gitignore</code> walking</td><td>From ripgrep; mature, well-maintained</td></tr>
 <tr><td><code>tree-sitter</code> + grammars</td><td>Syntax analysis</td><td>Standard for tree-sitter in Rust</td></tr>
 <tr><td><code>which</code></td><td>Executable detection</td><td>Small, focused, no replacement needed</td></tr>
@@ -1569,12 +1674,12 @@ impl EvalTask for MyNewTask {
 <div class="table-wrapper"><table><thead><tr><th>Avoided</th><th>Why</th></tr></thead><tbody>
 <tr><td><code>scraper</code> (HTML parsing)</td><td>Not yet needed; regex-based extraction suffices for now</td></tr>
 <tr><td><code>ureq</code> (minimal HTTP)</td><td><code>reqwest</code> already in tree; adding a second HTTP client is fragmentation</td></tr>
-<tr><td><code>chrono</code></td><td><code>std::time::SystemTime</code> is sufficient for session timestamps</td></tr>
+<tr><td><code>anyhow</code></td><td>Error handling</td></tr>
 <tr><td><code>rand</code></td><td>UUID generation uses <code>uuid</code> crate only in test helpers (dev-only)</td></tr>
 <tr><td><code>clap-cargo</code></td><td>Manual <code>cargo_metadata</code> integration avoided; <code>--version</code> from <code>clap</code> derive</td></tr>
 </tbody></table>
 </div><div style="break-before: page; page-break-before: always;"></div><h1 id="roadmap"><a class="header" href="#roadmap">Roadmap</a></h1>
-<p>rho is developed in phases, each building on the last. The current version is <strong>0.31.1</strong>.</p>
+<p>rho is developed in phases, each building on the last. The current version is <strong>0.46.0</strong>.</p>
 <h2 id="phase-summary"><a class="header" href="#phase-summary">Phase summary</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Phase</th><th>Status</th><th>Summary</th></tr></thead><tbody>
 <tr><td>1a: The Agent Loop</td><td>✅ Complete</td><td>Agent loop, tool registry, <code>ChatClient</code> trait, conversation management</td></tr>
@@ -1582,8 +1687,12 @@ impl EvalTask for MyNewTask {
 <tr><td>2: Shell, File Tools &amp; Cross-Platform</td><td>✅ Complete</td><td>PowerShell-native shell, file tools, config loader, command denylist, cross-platform</td></tr>
 <tr><td>2.5: Adaptive-Resolution Context</td><td>✅ Complete</td><td>Session tree, resolution levels, calibrated budget, tool-result bounding, amnesia fix, JSONL persistence</td></tr>
 <tr><td>3: Rust Tooling and Tree-Sitter</td><td>✅ Complete</td><td><code>rho-highlight</code>, structured diagnostics, <code>CargoCheck</code>/<code>Clippy</code>/<code>Test</code>/<code>Fix</code>/<code>RustcExplain</code>, node-splitting validation, <code>rho-eval</code> benchmark suite, <code>rho-bench</code> multi-model harness</td></tr>
-<tr><td>3.5: Rust Standard Library Reference</td><td>📋 Planned</td><td>Local rustdoc lookup tool for stdlib API docs</td></tr>
-<tr><td>3.6: crates.io Research</td><td>📋 Planned</td><td>Crate metadata lookup, search, version history, dependency inspection</td></tr>
+<tr><td>3.5: Rust Standard Library Reference</td><td>✅ Complete</td><td>Local rustdoc lookup tool for stdlib API docs</td></tr>
+<tr><td>3.6: crates.io Research</td><td>✅ Complete</td><td>Crate metadata lookup, search, version history, dependency inspection</td></tr>
+<tr><td>3.8: Hashline Editing</td><td>✅ Complete</td><td>Content-addressed line references with fuzzy anchor matching</td></tr>
+<tr><td>3.9: Streaming &amp; Live Output</td><td>✅ Complete</td><td>SSE streaming, <code>AgentObserver</code> trait, REPL live output, <code>ReplObserver</code></td></tr>
+<tr><td>3.10: Multi-Provider &amp; Model Picker</td><td>✅ Complete</td><td><code>Provider</code> trait, <code>ProviderRegistry</code>, interactive model picker, <code>/models</code>, <code>/model</code></td></tr>
+<tr><td>3.11: Session Discovery &amp; Context Visibility</td><td>✅ Complete</td><td><code>find_latest_session()</code>, <code>list_sessions()</code>, <code>rho -c</code>, <code>/sessions</code>, <code>/status</code>, context status bar</td></tr>
 <tr><td>4: Terminal UI</td><td>🔜 Next</td><td>Rich TUI replacing the bare REPL</td></tr>
 <tr><td>5: Extensions and Polish</td><td>Planned</td><td>Custom tools, prompt composition with budget awareness</td></tr>
 <tr><td>6: LSP</td><td>Deferred</td><td>rust-analyzer integration</td></tr>
@@ -1600,11 +1709,19 @@ impl EvalTask for MyNewTask {
 <p>Session tree (replacing flat <code>Conversation</code>), resolution levels (<code>Full</code>/<code>Compacted</code>/<code>Attached</code>), calibrated token estimation with exponential moving average, tool-result bounding to prevent single-output context overflow, and JSONL persistence with auto-flush.</p>
 <h3 id="phase-3--rust-tooling-and-tree-sitter"><a class="header" href="#phase-3--rust-tooling-and-tree-sitter">Phase 3 — Rust Tooling and Tree-Sitter</a></h3>
 <p><code>rho-highlight</code> crate with tree-sitter parsing, <code>node_at()</code> position lookup, and token classification. Structured compiler diagnostics (<code>CargoCheck</code>, <code>CargoClippy</code>, <code>CargoTest</code>, <code>CargoFix</code>, <code>CargoExplain</code>). <code>EditFile</code> node-splitting validation. <code>rho-eval</code> benchmark suite with 5 validated end-to-end scenarios. <code>rho-bench</code> harness for multi-model comparison with token usage, wall time, and JSON result persistence.</p>
-<h2 id="upcoming-phases"><a class="header" href="#upcoming-phases">Upcoming phases</a></h2>
 <h3 id="phase-35--rust-standard-library-reference"><a class="header" href="#phase-35--rust-standard-library-reference">Phase 3.5 — Rust Standard Library Reference</a></h3>
-<p>A <code>RustdocLookup</code> tool that reads locally installed rustdoc HTML via <code>rustup doc --path</code>. Zero network dependency. Supports type, method, trait, and function lookups. See <a href="development/../../../1.%20Planning/Phase%203.5/Phase%203.5%20%E2%80%94%20Rust%20Standard%20Library%20Reference.html">Phase 3.5 planning note</a>.</p>
+<p>A <code>RustdocLookup</code> tool that reads locally installed rustdoc HTML via <code>rustup doc --path</code>. Zero network dependency. Supports type, method, trait, and function lookups.</p>
 <h3 id="phase-36--cratesio-research"><a class="header" href="#phase-36--cratesio-research">Phase 3.6 — crates.io Research</a></h3>
-<p>A <code>CratesIoLookup</code> tool for crate metadata, search, version history, and dependency tree inspection. Dedicated Rust HTTP client (not a shell escape). See <a href="development/../../../1.%20Planning/Phase%203.6/Phase%203.6%20%E2%80%94%20crates.io%20Registry%20Research.html">Phase 3.6 planning note</a>.</p>
+<p>A <code>CratesIoLookup</code> tool for crate metadata, search, version history, and dependency tree inspection. Dedicated Rust HTTP client (not a shell escape).</p>
+<h3 id="phase-38--hashline-editing"><a class="header" href="#phase-38--hashline-editing">Phase 3.8 — Hashline Editing</a></h3>
+<p>Content-addressed line references (<code>LINE#HASH:</code>) for reliable file editing. ReadFile returns content in hashline format. EditFile supports hashline-anchor operations (replace, append, prepend, delete). Fuzzy anchor matching for resilience when the file has changed since the last read.</p>
+<h3 id="phase-39--streaming--live-output"><a class="header" href="#phase-39--streaming--live-output">Phase 3.9 — Streaming &amp; Live Output</a></h3>
+<p>SSE streaming for the Chat Completions API. <code>AgentObserver</code> trait with 7 event methods for real-time progress rendering. <code>NopObserver</code> for tests/benchmarks. <code>ReplObserver</code> streams reasoning deltas and tool activity to stdout in the REPL.</p>
+<h3 id="phase-310--multi-provider--model-picker"><a class="header" href="#phase-310--multi-provider--model-picker">Phase 3.10 — Multi-Provider &amp; Model Picker</a></h3>
+<p><code>Provider</code> trait for unified provider abstraction. <code>ProviderRegistry</code> manages multiple providers and routes model requests. Interactive model picker with curated models from Anthropic, OpenAI, and z.ai when auto-detection fails. <code>/models</code> and <code>/model</code> REPL commands for browsing and switching models at runtime.</p>
+<h3 id="phase-311--session-discovery--context-visibility"><a class="header" href="#phase-311--session-discovery--context-visibility">Phase 3.11 — Session Discovery &amp; Context Visibility</a></h3>
+<p>Session discovery functions (<code>find_latest_session</code>, <code>list_sessions</code>) for lightweight header-only session scanning. <code>rho -c</code> / <code>--continue</code> flag to auto-resume the most recent session. <code>/sessions</code> REPL command listing recent sessions with timestamps, sizes, and entry counts. <code>ContextStats</code> struct for context window usage snapshots. Live status bar after every REPL turn with color-coded utilization. <code>/status</code> REPL command for detailed context breakdown.</p>
+<h2 id="upcoming-phases"><a class="header" href="#upcoming-phases">Upcoming phases</a></h2>
 <h3 id="phase-4--terminal-ui"><a class="header" href="#phase-4--terminal-ui">Phase 4 — Terminal UI</a></h3>
 <p>Rich TUI replacing the bare REPL. Streaming output, approval prompts with rich previews, diagnostic panels, syntax highlighting. Built on <code>ratatui</code>/<code>crossterm</code>. See <a href="development/../../../1.%20Planning/Phase%204/Phase%204%20Readiness%20Assessment.html">Phase 4 readiness assessment</a>.</p>
 <h3 id="phase-5--extensions-and-polish"><a class="header" href="#phase-5--extensions-and-polish">Phase 5 — Extensions and Polish</a></h3>

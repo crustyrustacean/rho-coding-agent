@@ -206,8 +206,11 @@
 <pre><code class="language-sh">cargo build --release -p rho
 </code></pre>
 <h2 id="run"><a class="header" href="#run">Run</a></h2>
-<pre><code class="language-sh">rho                    # auto-detect model, persist session to disk
+<pre><code class="language-sh">
+rho                    # auto-detect model, persist session to disk
 rho -m my-model       # specify a model
+rho -c                 # resume the most recent session for this project
+rho --session &lt;path&gt;   # resume a specific session
 rho --ephemeral       # in-memory mode, no session file
 </code></pre>
 <p>On startup, rho:</p>
@@ -217,7 +220,7 @@ rho --ephemeral       # in-memory mode, no session file
 <li>Scans for project context files (<code>AGENTS.md</code>, etc.) and prompts for trust on first encounter.</li>
 <li>Checks provider consent for external endpoints.</li>
 <li>Connects to the model server and auto-detects the loaded model (unless <code>--model</code> is specified). If no model can be found, rho offers an interactive model picker.</li>
-<li>Creates a session (persisted to <code>~/.rho/sessions/</code> by default, or in-memory with <code>--ephemeral</code>).</li>
+<li>Creates a session (persisted to <code>~/.rho/sessions/</code> by default, or in-memory with <code>--ephemeral</code>). If previous sessions exist, a hint is printed.</li>
 <li>Enters the REPL. Type your request, and the agent loop runs until the model produces a final text reply.</li>
 </ol>
 <h2 id="cli-flags"><a class="header" href="#cli-flags">CLI flags</a></h2>
@@ -228,13 +231,15 @@ rho --ephemeral       # in-memory mode, no session file
 <tr><td><code>--root &lt;ROOT&gt;</code></td><td>Project root / sandbox root</td></tr>
 <tr><td><code>--token-budget &lt;N&gt;</code></td><td>Context window token budget (default: 32768)</td></tr>
 <tr><td><code>--prompt-file &lt;FILE&gt;</code></td><td>Read a prompt from a file, then exit</td></tr>
-<tr><td><code>--session &lt;PATH&gt;</code></td><td>Resume a previous session from a JSONL file</td></tr>
+<tr><td><code>-c, --continue</code></td><td>Resume the most recent session for this project</td></tr>
+<tr><td><code>--session &lt;PATH&gt;</code></td><td>Resume a specific session from a JSONL file</td></tr>
 <tr><td><code>--ephemeral</code></td><td>Run without disk persistence</td></tr>
 <tr><td><code>--accept-external-provider</code></td><td>Skip consent prompt for non-local providers</td></tr>
 </tbody></table>
 </div>
 <h2 id="session-persistence"><a class="header" href="#session-persistence">Session persistence</a></h2>
-<p>By default, every rho invocation creates a new JSONL session file under <code>~/.rho/sessions/&lt;project-hash&gt;/</code>. Sessions survive process restarts — use <code>--session &lt;path&gt;</code> to resume one.</p>
+<p>By default, every rho invocation creates a new JSONL session file under <code>~/.rho/sessions/&lt;project-hash&gt;/</code>. Sessions survive process restarts — use <code>rho -c</code> to resume the latest session or <code>--session &lt;path&gt;</code> to resume a specific one.</p>
+<p>The <code>/sessions</code> REPL command lists the 10 most recent sessions with timestamps, sizes, and entry counts. The latest session is marked so you know which one <code>rho -c</code> will pick.</p>
 <p>See <a href="./core-concepts/sessions.html">Sessions</a> for details.</p>
 <h2 id="repl-commands"><a class="header" href="#repl-commands">REPL commands</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Command</th><th>Description</th></tr></thead><tbody>
@@ -242,6 +247,8 @@ rho --ephemeral       # in-memory mode, no session file
 <tr><td><code>/models</code></td><td>List all models across all providers</td></tr>
 <tr><td><code>/model &lt;id&gt;</code></td><td>Switch to a model (fuzzy match or <code>provider/model</code> syntax)</td></tr>
 <tr><td><code>/paste</code></td><td>Enter multi-line paste mode (or <code>/paste &lt;file&gt;</code> to read from a file)</td></tr>
+<tr><td><code>/sessions</code></td><td>List recent sessions for this project</td></tr>
+<tr><td><code>/status</code></td><td>Show detailed context window usage breakdown</td></tr>
 <tr><td><code>/quit</code></td><td>Exit rho</td></tr>
 </tbody></table>
 </div>

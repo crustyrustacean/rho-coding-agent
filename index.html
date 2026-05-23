@@ -198,8 +198,10 @@
 <li>Execute shell commands with a safety denylist</li>
 <li>Run <code>cargo check</code>, <code>cargo clippy</code>, <code>cargo test</code>, <code>cargo fix</code>, and <code>rustc --explain</code> with structured output</li>
 <li>Detect syntax node splits during edits via tree-sitter</li>
-<li>Manage conversation state across sessions with tree-structured persistence</li>
+<li>Manage conversation state across sessions with tree-structured persistence and session discovery</li>
+<li>Observe agent activity in real time (reasoning, tool calls, errors) via the <code>AgentObserver</code> trait</li>
 <li>Compact old conversation turns to stay within context limits</li>
+<li>Monitor context window usage with a live status bar and <code>/status</code> REPL command</li>
 </ul>
 <p>This book documents the architecture, security model, configuration, and development of rho.</p>
 

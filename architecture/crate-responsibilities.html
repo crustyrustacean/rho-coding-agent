@@ -182,10 +182,10 @@
                         <h1 id="crate-responsibilities"><a class="header" href="#crate-responsibilities">Crate Responsibilities</a></h1>
 <h2 id="rho-binary"><a class="header" href="#rho-binary"><code>rho</code> (binary)</a></h2>
 <p>The REPL loop, CLI argument parsing, tool wiring, and system prompt assembly. Constructs a <code>Session</code>, connects to the model via <code>LocalChatClient</code>, and drives the agent loop. Handles CLI dispatch (REPL mode, prompt-file mode, session resume, ephemeral mode).</p>
-<p>Key responsibilities: provider consent check, model resolution, startup budget diagnostics, shell-specific prompt extensions.</p>
+<p>Key responsibilities: provider consent check, model resolution, startup budget diagnostics, shell-specific prompt extensions, session discovery (<code>rho -c</code>), and live observer output (reasoning deltas, tool activity).</p>
 <h2 id="rho-core"><a class="header" href="#rho-core"><code>rho-core</code></a></h2>
-<p>The kernel: agent loop state machine, session management (tree persistence, compaction, branching), context window management (sliding window, token estimation), tool registry and traits, approval gates, secret redaction, file sandbox, model client trait, configuration loading, and all shared types.</p>
-<p>Key types: <code>Session</code>, <code>AgentConfig</code>, <code>ToolRegistry</code>, <code>Tool</code>, <code>ChatClient</code>, <code>ContextManager</code>, <code>TokenBudget</code>, <code>SandboxRoot</code>, <code>Redactor</code>, <code>RhoConfig</code>.</p>
+<p>The kernel: agent loop state machine (with <code>AgentObserver</code> for live output), session management (tree persistence, compaction, branching, session discovery), context window management (sliding window, token estimation, <code>ContextStats</code>), tool registry and traits, approval gates, secret redaction, file sandbox, model client trait, configuration loading, and all shared types.</p>
+<p>Key types: <code>Session</code>, <code>AgentConfig</code>, <code>AgentObserver</code>, <code>NopObserver</code>, <code>ContextStats</code>, <code>SessionMetadata</code>, <code>ToolRegistry</code>, <code>Tool</code>, <code>ChatClient</code>, <code>ContextManager</code>, <code>TokenBudget</code>, <code>SandboxRoot</code>, <code>Redactor</code>, <code>RhoConfig</code>.</p>
 <h2 id="rho-highlight"><a class="header" href="#rho-highlight"><code>rho-highlight</code></a></h2>
 <p>Tree-sitter-based syntax analysis. Provides <code>parse()</code>, <code>highlight()</code>, and <code>node_at()</code> for Rust source code. Used by <code>EditFile</code> for node-splitting validation and by the TUI (Phase 4) for syntax highlighting.</p>
 <p>Key types: <code>Language</code>, <code>Highlight</code>, <code>NodeInfo</code>.</p>
@@ -195,6 +195,7 @@
 <li><strong>File tools:</strong> <code>ReadFile</code>, <code>WriteFile</code>, <code>ListDir</code>, <code>EditFile</code></li>
 <li><strong>Shell tools:</strong> <code>RunCommand</code>, <code>PowerShellExecutor</code>, <code>CommandDenylist</code></li>
 <li><strong>Rust tools:</strong> <code>CargoCheck</code>, <code>CargoClippy</code>, <code>CargoTest</code>, <code>CargoFix</code>, <code>RustcExplain</code></li>
+<li><strong>Lookup tools:</strong> <code>RustdocTool</code>, <code>CratesIoLookup</code></li>
 </ul>
 <p>Each implements the <code>Tool</code> trait from <code>rho-core</code>.</p>
 <h2 id="rho-test-helpers"><a class="header" href="#rho-test-helpers"><code>rho-test-helpers</code></a></h2>

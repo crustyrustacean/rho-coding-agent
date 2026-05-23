@@ -206,7 +206,7 @@ let client = LocalChatClient::with_endpoint_and_key(
     Some("sk-...".into()),
 );
 <span class="boring">}</span></code></pre></pre>
-<h3 id="bearer-authentication"><a class="header" href="#bearer-authentication">Bearer authentication</a></h3>
+<h3 id="redacted"><a class="header" href="#redacted">[REDACTED]</a></h3>
 <p>When an API key is provided via <code>api_key_env</code> in config (or <code>with_endpoint_and_key</code> in code), it is sent as an <code>Authorization: Bearer &lt;key&gt;</code> header with every request. Local endpoints typically don't need this. See <a href="../providers.html">External Providers</a> for setup details.</p>
 <h3 id="provider-consent"><a class="header" href="#provider-consent">Provider consent</a></h3>
 <p>The binary (<code>rho</code>) checks whether the configured endpoint is local before connecting. Non-local endpoints (e.g., <code>api.openai.com</code>) trigger an interactive consent warning that lists the external provider(s) by name. If no local server is detected, the warning also notes this. Use <code>--accept-external-provider</code> to skip this in automated workflows, or <code>--endpoint</code> (which implies consent since the user explicitly chose the target).</p>
@@ -229,7 +229,16 @@ let client = LocalChatClient::with_endpoint_and_key(
 </tbody></table>
 </div>
 <h2 id="streaming"><a class="header" href="#streaming">Streaming</a></h2>
-<p><code>ToolOutcome::Streamed</code> is declared for future streaming support (Phase 4). The current implementation uses synchronous request → full response.</p>
+<p>The client supports SSE streaming (<code>stream: true</code>) for the Chat Completions API. Streaming chunks are accumulated into a full <code>ModelResponse</code> before being returned to the agent loop. During streaming, <code>StreamChunk::TextDelta</code> and <code>StreamChunk::ReasoningDelta</code> events are forwarded to the <code>AgentObserver</code> in real time, enabling live progress output in the REPL.</p>
+<h2 id="multi-provider-support"><a class="header" href="#multi-provider-support">Multi-provider support</a></h2>
+<p>rho can manage multiple providers simultaneously via the <code>ProviderRegistry</code> and <code>Provider</code> trait:</p>
+<ul>
+<li>Each provider has a name, type, endpoint, and optional API key.</li>
+<li>The registry scans all providers to find which one serves a given model.</li>
+<li><code>/models</code> lists all models across all configured providers.</li>
+<li><code>/model &lt;id&gt;</code> switches to a model, automatically selecting the right provider.</li>
+</ul>
+<p>See <a href="../providers.html">External Providers</a> for configuration details.</p>
 
                     </main>
 

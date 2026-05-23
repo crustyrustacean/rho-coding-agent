@@ -219,9 +219,23 @@
 <ul>
 <li><strong>Per-model calibration</strong>: an exponential moving average (α=0.3) that learns the real tokens-per-character ratio from model responses.</li>
 <li><strong>Bootstrap ratios</strong>: built-in starting ratios for common model families (Gemma, Qwen, Claude, GPT-4, Llama).</li>
-<li><strong>Substring matching</strong>: falls back to character-level estimation for non-ASCII text.</li>
+<li><strong>Substring matching</strong>: falls back to character-level estimation for non-ASCII text.
+The estimator converges to within 10% accuracy by the third model call in most cases.</li>
 </ul>
-<p>The estimator converges to within 10% accuracy by the third model call in most cases.</p>
+<h2 id="context-status-bar"><a class="header" href="#context-status-bar">Context status bar</a></h2>
+<p>The REPL displays a compact one-line status bar after every turn showing estimated token usage:</p>
+<pre><code class="language-text">[████████████░░░░░░░░] 12.3k/32k tokens (50%) │ 12.3k remaining │ 10 messages
+</code></pre>
+<p>The bar is color-coded by utilization: green (&lt;60%), yellow (60–80%), red (&gt;80%). This gives a quick at-a-glance sense of how much context window remains.</p>
+<p>For a detailed breakdown, the <code>/status</code> REPL command (aliased as <code>/context</code>) shows:</p>
+<ul>
+<li>Context window size and completion reserve</li>
+<li>Prompt budget (context window minus reserve)</li>
+<li>System prompt and tool schema overhead</li>
+<li>Conversation tokens</li>
+<li>Estimated used/remaining/percentage</li>
+<li>Message count, path entry count, total entries</li>
+</ul>
 
                     </main>
 
