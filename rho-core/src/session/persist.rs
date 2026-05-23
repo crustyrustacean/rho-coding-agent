@@ -678,10 +678,16 @@ mod tests {
         let _old = create_test_session(&session_dir, "ccc33333", 5000, 3);
         let _new = create_test_session(&session_dir, "ddd44444", 6000, 7);
 
-        // Set mtimes so the second is newer.
+        // Set mtimes so the second is definitively newer.
+        let old_path = session_dir.join("5000_ccc33333.jsonl");
         let new_path = session_dir.join("6000_ddd44444.jsonl");
+        let older_time =
+            std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(50 * 60);
         let newer_time =
             std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(167 * 60);
+        std::fs::File::open(&old_path)
+            .and_then(|f| f.set_modified(older_time))
+            .ok();
         std::fs::File::open(&new_path)
             .and_then(|f| f.set_modified(newer_time))
             .ok();
