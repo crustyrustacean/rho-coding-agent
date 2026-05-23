@@ -33,10 +33,14 @@ pub struct ShellOutput {
 
 impl ShellOutput {
     /// Create a new `ShellOutput`.
+    ///
+    /// ANSI escape sequences (e.g. colour codes from `cargo`) are stripped
+    /// from both `stdout` and `stderr` so that tool results render as plain
+    /// text in the REPL instead of injecting terminal colour changes.
     pub fn new(stdout: impl Into<String>, stderr: impl Into<String>, exit_code: i32) -> Self {
         Self {
-            stdout: stdout.into(),
-            stderr: stderr.into(),
+            stdout: strip_ansi(&stdout.into()),
+            stderr: strip_ansi(&stderr.into()),
             exit_code,
         }
     }
@@ -81,9 +85,81 @@ pub trait ShellExecutor: Send + Sync {
     ) -> Result<ShellOutput>;
 }
 
+/// Strip ANSI escape sequences from a string.
+///
+/// Handles the common `ESC [ <params> <letter>` pattern used by terminals
+/// for colour, cursor movement, etc.
+fn strip_ansi(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' {
+            if chars.peek() == Some(&'[') {
+                chars.next(); // consume '['
+                // Consume parameter bytes (0x30–0x3f: digits and semicolons).
+                while let Some(&c) = chars.peek() {
+                    if ('0'..='?').contains(&c) || c == ';' {
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+                // Consume intermediate bytes (0x20–0x2f).
+                while let Some(&c) = chars.peek() {
+                    if (' '..='/').contains(&c) {
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+                // Consume the final byte (0x40–0x7e).
+                if chars.peek().is_some_and(|c| ('@'..'~').contains(c)) {
+                    chars.next();
+                }
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strip_ansi_removes_color_codes() {
+        let input = "\x1b[31;1merror\x1b[0m: something failed";
+        assert_eq!(strip_ansi(input), "error: something failed");
+    }
+
+    #[test]
+    fn strip_ansi_preserves_plain_text() {
+        assert_eq!(strip_ansi("hello world"), "hello world");
+    }
+
+    #[test]
+    fn strip_ansi_handles_empty_string() {
+        assert_eq!(strip_ansi(""), "");
+    }
+
+    #[test]
+    fn strip_ansi_handles_nested_codes() {
+        let input = "\x1b[1m\x1b[31mred bold\x1b[0m normal";
+        assert_eq!(strip_ansi(input), "red bold normal");
+    }
+
+    #[test]
+    fn shell_output_strips_ansi_on_construction() {
+        let out = ShellOutput::new(
+            "\x1b[32mok\x1b[0m",
+            "\x1b[31;1merr\x1b[0m",
+            0,
+        );
+        assert_eq!(out.stdout, "ok");
+        assert_eq!(out.stderr, "err");
+    }
 
     #[test]
     fn shell_output_new_constructs_fields() {
