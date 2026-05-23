@@ -16,6 +16,7 @@
 | 3.8: Streaming Support | ✅ Complete | Streaming API (`chat_stream`), SSE parsing, `StreamChunk` accumulation, external provider support (OpenRouter), `rho-bench` streaming-compatible `CountingClient` |
 | 3.9: Rust Standard Library Reference | ✅ Complete | `RustdocLookup` tool — query local rustdoc via `rustup doc --path`, resolve types/methods/traits, HTML stripping, section filtering |
 | 3.10: Hashline Editing | 🔜 Planned | Content-addressed line editing with hash-anchored references. Reliable edits, stale-context detection, token efficiency. Backward compatible with legacy exact-match edits. |
+| Session Discovery & Context Visibility | ✅ Complete | `rho -c` session resumption, `/sessions` REPL command, context window status bar after every turn, `/status` detailed breakdown, `ContextStats` API, `list_sessions`/`find_latest_session` in rho-core |
 | 4: Terminal UI | 🔜 Planned | Rich TUI replacing the bare REPL. Pre-Work 1 (streaming API) and Pre-Work 2 (modularize rust.rs) complete. External provider streaming validated. |
 | 5: Extensions and Polish | Planned | Custom tools, prompt composition with budget awareness |
 | 6: LSP | Deferred | rust-analyzer integration |
@@ -254,6 +255,7 @@ Each phase produces a runnable agent. No phase requires a rewrite of the previou
 | 3.6: crates.io Registry Research | [`phases/phase-3.6/`](phases/phase-3.6/) | `CratesIoLookup` tool — crate metadata, search, version history, dependency trees via crates.io API. 🔜 **Planned** |
 | 3.7: Multi-Model Benchmark Harness | [`phases/phase-3.7-COMPLETE/`](phases/phase-3.7-COMPLETE/) | `rho-bench` binary with `CountingClient`, multi-model sweeps, `TaskMetrics`, terminal table + JSON output. ✅ **Complete** |
 | 3.8: Streaming Support | [`phases/phase-3.8-COMPLETE/`](phases/phase-3.8-COMPLETE/) | Streaming API, SSE parsing, `StreamChunk` accumulation, external provider support (OpenRouter). ✅ **Complete** |
+| Session Discovery & Context Visibility | [`phases/phase-session-discovery-COMPLETE/`](phases/phase-session-discovery-COMPLETE/) | `rho -c` resume, `/sessions` listing, context status bar, `/status` breakdown. ✅ **Complete** |
 | 4: Terminal UI | [`phases/phase-4/`](phases/phase-4/) | Rich TUI with approval prompts, streaming, session navigation. 🔜 **In Progress** |
 | 5: Extensions and Polish | [`phases/phase-5/`](phases/phase-5/) | Custom tools, config, prompt composition |
 | 6: LSP (Future) | [`phases/phase-6/`](phases/phase-6/) | rust-analyzer LSP integration (deferred) |
@@ -366,7 +368,7 @@ These are choices that seem right now but may need adjustment as we build:
 
 2. **Approval model** — Phase 1b introduces `ApprovalPolicy` with a default that requires approval for destructive operations. Phase 4 enhances the UX (rich preview, single-keypress, batch approval). Per-tool config-driven policy lands in Phase 2. A trust-on-first-use model could be added later.
 
-**Workspace version:** 0.36.8
+**Workspace version:** 0.46.0
 
 3. **Streaming** — ✅ Complete (Phase 3.8): `ChatClient::chat_stream` returns `Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>>` with a default impl that wraps `chat`. `LocalChatClient` implements real SSE parsing with line buffering. `run_loop` always uses the streaming path. `StreamChunk` enum carries `TextDelta`, `ReasoningDelta`, `ToolCallDelta`, `Done`. `StreamChunk::accumulate()` reconstructs `AssistantResponse`. SSE parser handles external providers (OpenRouter) — tool-call deltas checked first, empty content strings skipped to avoid blocking `Done` chunks. `rho-bench`'s `CountingClient` delegates `chat_stream()` to the inner client. Validated against DeepSeek v4 Flash, GLM 5.1, Gemini 2.0 Flash, and Gemma 4 26B via OpenRouter. `ToolOutcome::Streamed` remains for tool-side streaming in a future phase.
 
