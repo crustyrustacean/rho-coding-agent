@@ -108,6 +108,54 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use tracing::warn;
 
+// ── ContextStats ─────────────────────────────────────────────────────────────
+
+/// A snapshot of context window usage.
+///
+/// Returned by [`Session::context_stats`] so the REPL and TUI can display
+/// how full the context window is, how many entries are in the active path,
+/// and how much budget remains for conversation.
+#[derive(Clone, Debug)]
+pub struct ContextStats {
+    /// Total context window size (tokens).
+    pub context_window: usize,
+    /// Tokens reserved for the model's completion.
+    pub completion_reserve: usize,
+    /// Estimated tokens consumed by the fitted messages (system + conversation).
+    pub estimated_used: usize,
+    /// Number of messages in the fitted path (after eviction).
+    pub message_count: usize,
+    /// Total entries in the session tree (including compacted/attached).
+    pub entry_count: usize,
+    /// Entries in the active leaf-to-root path.
+    pub path_entry_count: usize,
+}
+
+impl ContextStats {
+    /// Estimated remaining tokens in the prompt budget.
+    ///
+    /// This is `prompt_budget - estimated_used`. Negative values (i.e.
+    /// over-budget) saturate to zero.
+    pub fn estimated_remaining(&self) -> usize {
+        let prompt_budget = self.context_window.saturating_sub(self.completion_reserve);
+        prompt_budget.saturating_sub(self.estimated_used)
+    }
+
+    /// Context utilization as a percentage (0–100).
+    ///
+    /// Based on estimated usage relative to the prompt budget.
+    pub fn utilization_percent(&self) -> u8 {
+        let prompt_budget = self.context_window.saturating_sub(self.completion_reserve);
+        if prompt_budget == 0 {
+            return 100;
+        }
+        let pct = (self.estimated_used as u64 * 100 / prompt_budget as u64).min(100);
+        #[allow(clippy::cast_possible_truncation)]
+        let result = pct as u8;
+        result
+    }
+}
+
 // ── SessionHeader ─────────────────────────────────────────────────────────────
 
 /// Metadata about a session's identity and origin.
@@ -1001,6 +1049,29 @@ impl Session {
         // for calibration. The estimator's calibrate() will correct the
         // ratio anyway.
         messages.iter().map(approximate_tokens).sum()
+    }
+
+    /// Compute estimated context window usage statistics.
+    ///
+    /// Returns a [`ContextStats`] snapshot describing how full the context
+    /// window is, how many entries are in the active conversation path,
+    /// and how much budget remains.
+    ///
+    /// Uses the session's calibrated estimator for the best available
+    /// approximation. The fitted messages are the ones that would actually
+    /// be sent to the model (after eviction).
+    pub fn context_stats(&self) -> ContextStats {
+        let budget = self.token_budget;
+        let messages = self.path_messages();
+        let used = Self::estimate_messages_tokens(&messages);
+        ContextStats {
+            context_window: budget.context_window,
+            completion_reserve: budget.completion_reserve,
+            estimated_used: used,
+            message_count: messages.len(),
+            entry_count: self.entries.len(),
+            path_entry_count: self.path_to_root().len(),
+        }
     }
 
     // ── Append operations ─────────────────────────────────────────────────
@@ -3877,5 +3948,50 @@ mod tests {
             "should have system + user entries, got {}",
             reopened.entry_count()
         );
+    }
+
+    #[test]
+    fn context_stats_utilization_calculation() {
+        let stats = crate::session::ContextStats {
+            context_window: 32_768,
+            completion_reserve: 8192,
+            estimated_used: 12_288,
+            message_count: 10,
+            entry_count: 15,
+            path_entry_count: 12,
+        };
+        // prompt_budget = 32_768 - 8192 = 24_576
+        // utilization = 12_288 / 24_576 = 50%
+        assert_eq!(stats.utilization_percent(), 50);
+        // remaining = 24_576 - 12_288 = 12_288
+        assert_eq!(stats.estimated_remaining(), 12_288);
+    }
+
+    #[test]
+    fn context_stats_zero_budget() {
+        let stats = crate::session::ContextStats {
+            context_window: 0,
+            completion_reserve: 0,
+            estimated_used: 0,
+            message_count: 0,
+            entry_count: 0,
+            path_entry_count: 0,
+        };
+        assert_eq!(stats.utilization_percent(), 100); // zero budget = full
+        assert_eq!(stats.estimated_remaining(), 0);
+    }
+
+    #[test]
+    fn context_stats_over_budget() {
+        let stats = crate::session::ContextStats {
+            context_window: 1000,
+            completion_reserve: 200,
+            estimated_used: 1500, // over budget
+            message_count: 5,
+            entry_count: 5,
+            path_entry_count: 5,
+        };
+        assert_eq!(stats.utilization_percent(), 100); // capped at 100
+        assert_eq!(stats.estimated_remaining(), 0); // saturates at 0
     }
 }

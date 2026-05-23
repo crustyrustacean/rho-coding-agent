@@ -160,6 +160,10 @@ pub async fn run_repl(app: &mut App) -> Result<()> {
                 list_sessions(app);
                 continue;
             }
+            "/status" | "/context" => {
+                show_context_stats(app);
+                continue;
+            }
             _ if input.starts_with("/model ") => {
                 switch_model(app, input.strip_prefix("/model ").unwrap().trim()).await;
                 continue;
@@ -213,6 +217,7 @@ pub async fn run_repl(app: &mut App) -> Result<()> {
                     Ok(reply) => println!("\nAssistant: {reply}"),
                     Err(e) => eprintln!("\nError: {e}"),
                 }
+                print_context_bar(&app.session);
                 continue;
             }
             "" => continue,
@@ -235,6 +240,7 @@ pub async fn run_repl(app: &mut App) -> Result<()> {
             Ok(reply) => println!("\nAssistant: {reply}"),
             Err(e) => eprintln!("\nError: {e}"),
         }
+        print_context_bar(&app.session);
     }
 
     Ok(())
@@ -401,6 +407,93 @@ fn list_sessions(app: &App) {
     }
     println!();
     println!("  Resume with: rho -c");
+}
+
+/// Print a compact one-line context usage bar after each turn.
+///
+/// Shows estimated context utilization with a visual bar, message count,
+/// and remaining budget. Designed to be glanced at quickly.
+fn print_context_bar(session: &rho_core::Session) {
+    let stats = session.context_stats();
+    let pct = stats.utilization_percent();
+    #[allow(clippy::cast_precision_loss)]
+    let used_k = stats.estimated_used as f64 / 1000.0;
+    #[allow(clippy::cast_precision_loss)]
+    let window_k = stats.context_window as f64 / 1000.0;
+    #[allow(clippy::cast_precision_loss)]
+    let remaining_k = stats.estimated_remaining() as f64 / 1000.0;
+
+    // Visual bar: 20 chars wide.
+    let filled = (pct as usize * 20 / 100).min(20);
+    let empty = 20 - filled;
+    let bar: String = "█".repeat(filled) + &"░".repeat(empty);
+
+    // Color code: green < 60%, yellow 60-80%, red > 80%.
+    let (color, reset) = if pct < 60 {
+        ("\x1b[32m", "\x1b[0m") // green
+    } else if pct < 80 {
+        ("\x1b[33m", "\x1b[0m") // yellow
+    } else {
+        ("\x1b[31m", "\x1b[0m") // red
+    };
+
+    println!(
+        "{color}[{bar}]{reset} {used_k:.1}k/{window_k:.0}k tokens ({pct}%) │ \
+         {remaining_k:.1}k remaining │ {msg} messages",
+        msg = stats.message_count,
+    );
+}
+
+/// Show detailed context status (the `/status` command).
+///
+/// Prints a multi-line breakdown of context usage including system prompt
+/// overhead, tool schema overhead, and conversation breakdown.
+#[allow(clippy::uninlined_format_args)]
+fn show_context_stats(app: &App) {
+    let stats = app.session.context_stats();
+    let prompt_budget = stats
+        .context_window
+        .saturating_sub(stats.completion_reserve);
+    let system_overhead = app.session.system_overhead();
+    let schema_overhead = app.session.schema_overhead();
+    let msg_budget = app.session.message_budget();
+
+    println!("  Context Window Status");
+    println!("  ─────────────────────");
+    println!("  Context window:     {:>8} tokens", stats.context_window);
+    println!(
+        "  Completion reserve: {:>8} tokens",
+        stats.completion_reserve
+    );
+    println!("  Prompt budget:      {:>8} tokens", prompt_budget);
+    println!();
+    println!("  System prompt:      {:>8} tokens", system_overhead);
+    println!("  Tool schemas:       {:>8} tokens", schema_overhead);
+    let conv_tokens = stats
+        .estimated_used
+        .saturating_sub(system_overhead)
+        .saturating_sub(schema_overhead);
+    println!(
+        "  Conversation:       {:>8} tokens (estimated)",
+        conv_tokens
+    );
+    println!("  ─────────────────────");
+    println!("  Estimated used:     {:>8} tokens", stats.estimated_used);
+    println!(
+        "  Estimated remaining:{:>8} tokens",
+        stats.estimated_remaining()
+    );
+    println!("  Utilization:        {:>8}%", stats.utilization_percent());
+    println!();
+    println!("  Messages (fitted):  {:>8}", stats.message_count);
+    println!("  Path entries:       {:>8}", stats.path_entry_count);
+    println!("  Total entries:      {:>8}", stats.entry_count);
+    println!("  Message budget:     {:>8} tokens", msg_budget);
+    println!();
+    println!("  Model: {}", app.session.model());
+    if let Some(path) = app.session.save_path() {
+        println!("  Session: {}", path.display());
+    }
 }
 
 /// Format a filesystem modification time for display.
