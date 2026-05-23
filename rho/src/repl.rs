@@ -178,7 +178,7 @@ pub async fn run_repl(app: &mut App) -> Result<()> {
                     match fs::read_to_string(path) {
                         Ok(content) => content,
                         Err(e) => {
-                            eprintln!("Error: cannot read `{path}`: {e}");
+                            println!("Error: cannot read `{path}`: {e}");
                             continue;
                         }
                     }
@@ -191,7 +191,7 @@ pub async fn run_repl(app: &mut App) -> Result<()> {
                             continue;
                         }
                         Err(e) => {
-                            eprintln!("Error: {e}");
+                            println!("Error: {e}");
                             continue;
                         }
                     }
@@ -215,7 +215,7 @@ pub async fn run_repl(app: &mut App) -> Result<()> {
                 .await
                 {
                     Ok(reply) => println!("\nAssistant: {reply}"),
-                    Err(e) => eprintln!("\nError: {e}"),
+                    Err(e) => println!("\nError: {e}"),
                 }
                 print_context_bar(&app.session);
                 continue;
@@ -238,7 +238,7 @@ pub async fn run_repl(app: &mut App) -> Result<()> {
         .await
         {
             Ok(reply) => println!("\nAssistant: {reply}"),
-            Err(e) => eprintln!("\nError: {e}"),
+            Err(e) => println!("\nError: {e}"),
         }
         print_context_bar(&app.session);
     }
@@ -255,7 +255,7 @@ pub async fn run_repl(app: &mut App) -> Result<()> {
 pub async fn run_prompt_file(mut app: App, path: std::path::PathBuf) -> Result<()> {
     let input = fs::read_to_string(&path)
         .map_err(|e| anyhow::anyhow!("cannot read prompt file `{}`: {e}", path.display()))?;
-    eprintln!("using prompt file: {}", path.display());
+    println!("using prompt file: {}", path.display());
 
     let client = app.active_provider().clone_boxed_client();
     match rho_core::run_loop(
@@ -271,7 +271,7 @@ pub async fn run_prompt_file(mut app: App, path: std::path::PathBuf) -> Result<(
     .await
     {
         Ok(reply) => println!("\nAssistant: {reply}"),
-        Err(e) => eprintln!("\nError: {e}"),
+        Err(e) => println!("\nError: {e}"),
     }
 
     app.session.close("prompt file completed");
@@ -553,12 +553,12 @@ const PASTE_SENTINEL: &str = "---";
 /// 2. **Empty line** after at least one line of content
 /// 3. **A line containing only `---`** — explicit sentinel
 fn read_multiline_input() -> anyhow::Result<Option<String>> {
-    eprintln!("  Entering paste mode. Paste your text, then:");
-    eprintln!("    • Press Enter twice (empty line) to finish");
-    eprintln!("    • Type --- on its own line to finish");
-    eprintln!("    • Press Ctrl-D / Ctrl-Z to finish");
-    eprint!("  paste> ");
-    io::stderr().flush().ok();
+    println!("  Entering paste mode. Paste your text, then:");
+    println!("    • Press Enter twice (empty line) to finish");
+    println!("    • Type --- on its own line to finish");
+    println!("    • Press Ctrl-D / Ctrl-Z to finish");
+    print!("  paste> ");
+    io::stdout().flush().ok();
 
     let stdin = io::stdin();
     let mut lines: Vec<String> = Vec::new();
@@ -571,13 +571,13 @@ fn read_multiline_input() -> anyhow::Result<Option<String>> {
 
         // Explicit sentinel
         if line.trim() == PASTE_SENTINEL && !lines.is_empty() {
-            eprintln!("  [paste: {} line(s)]", lines.len());
+            println!("  [paste: {} line(s)]", lines.len());
             break;
         }
 
         // Empty line after content — terminate
         if line.is_empty() && !lines.is_empty() {
-            eprintln!("  [paste: {} line(s)]", lines.len());
+            println!("  [paste: {} line(s)]", lines.len());
             break;
         }
 
@@ -587,8 +587,8 @@ fn read_multiline_input() -> anyhow::Result<Option<String>> {
         }
 
         lines.push(line);
-        eprint!("  ...   ");
-        io::stderr().flush().ok();
+        print!("  ...   ");
+        io::stdout().flush().ok();
     }
 
     if lines.is_empty() {
