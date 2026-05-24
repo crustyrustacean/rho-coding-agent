@@ -54,42 +54,51 @@ pub trait ChatClient: Send + Sync {
 
 /// Convert rho-core's [`ChatMessage`] into rho-ai's [`rho_ai::LlmMessage`].
 fn to_llm_messages(messages: Vec<ChatMessage>) -> Vec<rho_ai::LlmMessage> {
-    messages.into_iter().map(|m| match m {
-        ChatMessage::System { content } => {
-            let text = content_into_string(content);
-            rho_ai::LlmMessage::System(text)
-        }
-        ChatMessage::User { content } => {
-            let text = content_into_string(content);
-            rho_ai::LlmMessage::User(text)
-        }
-        ChatMessage::Assistant { content, tool_calls } => {
-            let text = if content.is_empty() {
-                None
-            } else {
-                Some(content_into_string(content))
-            };
-            let tc: Vec<rho_ai::ToolCall> = tool_calls
-                .into_iter()
-                .map(|tc| rho_ai::ToolCall {
-                    id: tc.id.to_string(),
-                    name: tc.function.name.to_string(),
-                    arguments: tc.function.arguments,
-                })
-                .collect();
-            rho_ai::LlmMessage::Assistant {
-                content: text,
-                tool_calls: tc,
+    messages
+        .into_iter()
+        .map(|m| match m {
+            ChatMessage::System { content } => {
+                let text = content_into_string(content);
+                rho_ai::LlmMessage::System(text)
             }
-        }
-        ChatMessage::Tool { tool_call_id, content } => {
-            let text = content_into_string(content);
-            rho_ai::LlmMessage::Tool {
-                tool_call_id: tool_call_id.to_string(),
-                content: text,
+            ChatMessage::User { content } => {
+                let text = content_into_string(content);
+                rho_ai::LlmMessage::User(text)
             }
-        }
-    }).collect()
+            ChatMessage::Assistant {
+                content,
+                tool_calls,
+            } => {
+                let text = if content.is_empty() {
+                    None
+                } else {
+                    Some(content_into_string(content))
+                };
+                let tc: Vec<rho_ai::ToolCall> = tool_calls
+                    .into_iter()
+                    .map(|tc| rho_ai::ToolCall {
+                        id: tc.id.to_string(),
+                        name: tc.function.name.to_string(),
+                        arguments: tc.function.arguments,
+                    })
+                    .collect();
+                rho_ai::LlmMessage::Assistant {
+                    content: text,
+                    tool_calls: tc,
+                }
+            }
+            ChatMessage::Tool {
+                tool_call_id,
+                content,
+            } => {
+                let text = content_into_string(content);
+                rho_ai::LlmMessage::Tool {
+                    tool_call_id: tool_call_id.to_string(),
+                    content: text,
+                }
+            }
+        })
+        .collect()
 }
 
 /// Convert rho-core's [`ToolSchema`](crate::schema::ToolSchema) into rho-ai's
@@ -111,11 +120,14 @@ fn to_llm_tools(tools: Vec<crate::schema::ToolSchema>) -> Vec<rho_ai::ToolDefini
 fn content_into_string(blocks: Vec<crate::message::ContentBlock>) -> String {
     blocks
         .into_iter()
-        .filter_map(|b| match b {
-            crate::message::ContentBlock::Text { text } => Some(text),
+        .map(|b| match b {
+            crate::message::ContentBlock::Text { text } => text,
         })
-        .collect::<Vec<_>>()
-        .join("")
+        .reduce(|mut acc, s| {
+            acc.push_str(&s);
+            acc
+        })
+        .unwrap_or_default()
 }
 
 // ── StreamEvent → StreamChunk conversion ─────────────────────────────────────
@@ -127,20 +139,11 @@ fn content_into_string(blocks: Vec<crate::message::ContentBlock>) -> String {
 fn adapt_event_stream(
     events: rho_ai::EventStream,
 ) -> impl Stream<Item = Result<StreamChunk>> + Send {
+    #[derive(Default)]
     struct ToolAcc {
         id: Option<String>,
         name: Option<String>,
         arguments: String,
-    }
-
-    impl Default for ToolAcc {
-        fn default() -> Self {
-            Self {
-                id: None,
-                name: None,
-                arguments: String::new(),
-            }
-        }
     }
 
     let mut tool_accs: Vec<ToolAcc> = Vec::new();
@@ -217,18 +220,9 @@ fn adapt_event_stream(
 // ── Accumulate StreamEvents into a ModelResponse (for non-streaming chat) ─────
 
 /// Accumulate a stream of `StreamEvent`s into a `ModelResponse`.
-async fn accumulate_response(
-    events: rho_ai::EventStream,
-    model: &str,
-) -> Result<ModelResponse> {
+#[allow(clippy::too_many_lines)]
+async fn accumulate_response(events: rho_ai::EventStream, model: &str) -> Result<ModelResponse> {
     use rho_ai::StreamEvent;
-
-    let mut text = String::new();
-    let mut reasoning = String::new();
-    let mut tool_calls = Vec::new();
-    let mut finish_reason = FinishReason::Stop;
-    let mut input_tokens = 0u64;
-    let mut output_tokens = 0u64;
 
     // Track tool calls being accumulated.
     struct ToolAcc {
@@ -236,6 +230,13 @@ async fn accumulate_response(
         name: String,
         arguments: String,
     }
+
+    let mut text = String::new();
+    let mut reasoning = String::new();
+    let mut tool_calls = Vec::new();
+    let mut finish_reason = FinishReason::Stop;
+    let mut input_tokens = 0u64;
+    let mut output_tokens = 0u64;
     let mut tool_acc_map: std::collections::HashMap<usize, ToolAcc> =
         std::collections::HashMap::new();
 
@@ -245,11 +246,14 @@ async fn accumulate_response(
             Ok(StreamEvent::Text(t)) => text.push_str(&t),
             Ok(StreamEvent::Reasoning(r)) => reasoning.push_str(&r),
             Ok(StreamEvent::ToolUseStart { index, id, name }) => {
-                tool_acc_map.insert(index, ToolAcc {
-                    id,
-                    name,
-                    arguments: String::new(),
-                });
+                tool_acc_map.insert(
+                    index,
+                    ToolAcc {
+                        id,
+                        name,
+                        arguments: String::new(),
+                    },
+                );
             }
             Ok(StreamEvent::ToolUseInputDelta { index, delta }) => {
                 if let Some(acc) = tool_acc_map.get_mut(&index) {
@@ -279,7 +283,7 @@ async fn accumulate_response(
     // If not (some providers may not emit them), use accumulated deltas.
     if tool_calls.is_empty() {
         let mut indices: Vec<_> = tool_acc_map.keys().copied().collect();
-        indices.sort();
+        indices.sort_unstable();
         for idx in indices {
             if let Some(acc) = tool_acc_map.remove(&idx) {
                 tool_calls.push(rho_ai::ToolCall {
@@ -325,7 +329,7 @@ async fn accumulate_response(
             total_tokens: usize::try_from(input_tokens + output_tokens).unwrap_or(0),
             completion_tokens_details: None,
         },
-        stats: Default::default(),
+        stats: crate::response::ModelStats::default(),
         system_fingerprint: String::new(),
     })
 }
@@ -390,9 +394,8 @@ impl RhoAiClient {
     /// Returns an error if the endpoint URL cannot be parsed or the request
     /// fails.
     pub async fn list_models(&self) -> Result<ModelList> {
-        let mut models_url = url::Url::parse(&self.endpoint).map_err(|e| {
-            crate::error::RhoError::Client(ClientError::UrlParse(e))
-        })?;
+        let mut models_url = url::Url::parse(&self.endpoint)
+            .map_err(|e| crate::error::RhoError::Client(ClientError::UrlParse(e)))?;
         models_url.set_path("/v1/models");
         let client = reqwest::Client::new();
         let mut req = client.get(models_url);
@@ -421,12 +424,13 @@ impl ChatClient for RhoAiClient {
         let event_stream = if llm_tools.is_empty() {
             service.chat_stream(llm_messages).await
         } else {
-            service.chat_stream_with_tools(llm_messages, llm_tools).await
+            service
+                .chat_stream_with_tools(llm_messages, llm_tools)
+                .await
         };
 
-        let event_stream = event_stream.map_err(|e| {
-            crate::error::RhoError::Client(ClientError::from(e))
-        })?;
+        let event_stream =
+            event_stream.map_err(|e| crate::error::RhoError::Client(ClientError::from(e)))?;
 
         let response = accumulate_response(event_stream, &request.model).await?;
 
@@ -453,12 +457,13 @@ impl ChatClient for RhoAiClient {
         let event_stream = if llm_tools.is_empty() {
             service.chat_stream(llm_messages).await
         } else {
-            service.chat_stream_with_tools(llm_messages, llm_tools).await
+            service
+                .chat_stream_with_tools(llm_messages, llm_tools)
+                .await
         };
 
-        let event_stream = event_stream.map_err(|e| {
-            crate::error::RhoError::Client(ClientError::from(e))
-        })?;
+        let event_stream =
+            event_stream.map_err(|e| crate::error::RhoError::Client(ClientError::from(e)))?;
 
         let adapted = adapt_event_stream(event_stream);
         Ok(Box::pin(adapted))
@@ -764,7 +769,10 @@ mod tests {
         }];
         let llm = to_llm_messages(msgs);
         match &llm[0] {
-            rho_ai::LlmMessage::Assistant { content, tool_calls } => {
+            rho_ai::LlmMessage::Assistant {
+                content,
+                tool_calls,
+            } => {
                 assert!(content.is_none());
                 assert_eq!(tool_calls.len(), 1);
                 assert_eq!(tool_calls[0].id, "call_1");
@@ -779,7 +787,10 @@ mod tests {
         let msgs = vec![ChatMessage::tool_result(ToolCallId::new("c1"), "ok")];
         let llm = to_llm_messages(msgs);
         match &llm[0] {
-            rho_ai::LlmMessage::Tool { tool_call_id, content } => {
+            rho_ai::LlmMessage::Tool {
+                tool_call_id,
+                content,
+            } => {
                 assert_eq!(tool_call_id, "c1");
                 assert_eq!(content, "ok");
             }

@@ -91,9 +91,7 @@ impl ProviderError {
             Self::HttpStatus { retryable, .. } => *retryable,
             Self::Http { source } => {
                 // Retry on connection errors, timeouts, etc.
-                source.is_connect()
-                    || source.is_timeout()
-                    || source.is_request()
+                source.is_connect() || source.is_timeout() || source.is_request()
             }
             _ => false,
         }

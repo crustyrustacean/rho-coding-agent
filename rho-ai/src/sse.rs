@@ -18,6 +18,7 @@ pub(crate) struct SseParser {
 }
 
 impl SseParser {
+    /// Create a new parser.
     pub(crate) fn new() -> Self {
         Self::default()
     }
@@ -31,7 +32,9 @@ impl SseParser {
         self.buffer.push_str(chunk);
 
         while let Some(newline_pos) = self.buffer.find('\n') {
-            let line = self.buffer[..newline_pos].trim_end_matches('\r').to_string();
+            let line = self.buffer[..newline_pos]
+                .trim_end_matches('\r')
+                .to_string();
             self.buffer = self.buffer[newline_pos + 1..].to_string();
 
             if line.is_empty() {

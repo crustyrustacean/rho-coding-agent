@@ -29,7 +29,7 @@ impl Default for RetryConfig {
         Self {
             max_retries: 5,
             base_delay: Duration::from_secs(2),
-            max_delay: Duration::from_secs(60),
+            max_delay: Duration::from_mins(1),
         }
     }
 }
@@ -38,7 +38,8 @@ impl Default for RetryConfig {
 ///
 /// `delay = min(max_delay, base_delay * 2^attempt) * random(0..1)`
 fn backoff_delay(config: &RetryConfig, attempt: u32) -> Duration {
-    let exponential = config.base_delay.as_secs_f64() * 2_f64.powi(attempt as i32);
+    let exponential =
+        config.base_delay.as_secs_f64() * 2_f64.powi(i32::try_from(attempt).unwrap_or(i32::MAX));
     let capped = exponential.min(config.max_delay.as_secs_f64());
     // Full jitter: random in [0, capped]
     let jitter = capped * fastrand::f64();
@@ -47,7 +48,9 @@ fn backoff_delay(config: &RetryConfig, attempt: u32) -> Duration {
 
 /// An [`LlmService`] that wraps another service with retry logic.
 pub struct RetryingService {
+    /// The underlying service to retry.
     inner: Arc<dyn LlmService>,
+    /// Retry configuration.
     config: RetryConfig,
 }
 
@@ -60,6 +63,7 @@ impl RetryingService {
 
 /// State for tracking retries across the original attempt + retries.
 struct RetryState {
+    /// Number of retries performed so far.
     attempt: u32,
 }
 
@@ -81,7 +85,6 @@ async fn retry_stream(
                 let delay = backoff_delay(config, s.attempt);
                 drop(s);
                 tokio::time::sleep(delay).await;
-                continue;
             }
             Err(e) if e.is_retryable() => {
                 return Err(ProviderError::RetryBudgetExhausted {
@@ -102,11 +105,15 @@ impl LlmService for RetryingService {
         let config = self.config.clone();
         let inner = self.inner.clone();
 
-        retry_stream(&config, || {
-            let inner = inner.clone();
-            let messages = messages.clone();
-            Box::pin(async move { inner.chat_stream(messages).await })
-        }, &state)
+        retry_stream(
+            &config,
+            || {
+                let inner = inner.clone();
+                let messages = messages.clone();
+                Box::pin(async move { inner.chat_stream(messages).await })
+            },
+            &state,
+        )
         .await
     }
 
@@ -119,12 +126,16 @@ impl LlmService for RetryingService {
         let config = self.config.clone();
         let inner = self.inner.clone();
 
-        retry_stream(&config, || {
-            let inner = inner.clone();
-            let messages = messages.clone();
-            let tools = tools.clone();
-            Box::pin(async move { inner.chat_stream_with_tools(messages, tools).await })
-        }, &state)
+        retry_stream(
+            &config,
+            || {
+                let inner = inner.clone();
+                let messages = messages.clone();
+                let tools = tools.clone();
+                Box::pin(async move { inner.chat_stream_with_tools(messages, tools).await })
+            },
+            &state,
+        )
         .await
     }
 }
@@ -133,8 +144,11 @@ impl LlmService for RetryingService {
 mod fastrand {
     use std::sync::atomic::{AtomicU64, Ordering};
 
+    /// PRNG state seed.
     static STATE: AtomicU64 = AtomicU64::new(0x1234_5678);
 
+    /// Returns a pseudo-random `f64` in `[0, 1)`.
+    #[must_use]
     pub fn f64() -> f64 {
         let state = STATE.fetch_add(0x9e37_79b9, Ordering::Relaxed);
         // xorshift64
@@ -142,7 +156,7 @@ mod fastrand {
         z ^= z << 13;
         z ^= z >> 7;
         z ^= z << 17;
-        z as f64 / u64::MAX as f64
+        f64::from_bits(z >> 12 | 0x3FF0_0000_0000_0000) - 1.0
     }
 }
 
@@ -180,6 +194,6 @@ mod tests {
         let config = RetryConfig::default();
         assert_eq!(config.max_retries, 5);
         assert_eq!(config.base_delay, Duration::from_secs(2));
-        assert_eq!(config.max_delay, Duration::from_secs(60));
+        assert_eq!(config.max_delay, Duration::from_mins(1));
     }
 }

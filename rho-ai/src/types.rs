@@ -14,9 +14,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone)]
 pub enum LlmMessage {
     /// System prompt. Providers handle placement differently:
-    /// - OpenAI: first message with `role: "system"`
-    /// - Anthropic: top-level `system` field
-    /// - Google: top-level `systemInstruction`
+    /// - `OpenAI`: first message with `role: "system"`
+    /// - `Anthropic`: top-level `system` field
+    /// - `Google`: top-level `systemInstruction`
     System(String),
 
     /// User message.
@@ -65,7 +65,11 @@ pub struct ToolDefinition {
 impl ToolDefinition {
     /// Creates a new tool definition.
     #[must_use]
-    pub fn new(name: impl Into<String>, description: impl Into<String>, parameters: serde_json::Value) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        description: impl Into<String>,
+        parameters: serde_json::Value,
+    ) -> Self {
         Self {
             name: name.into(),
             description: description.into(),
@@ -83,7 +87,7 @@ pub enum StreamEvent {
     /// A text content token.
     Text(String),
 
-    /// A reasoning/thinking token (e.g., DeepSeek's thinking, Anthropic's extended thinking).
+    /// A reasoning/thinking token (e.g., `DeepSeek`'s thinking, `Anthropic`'s extended thinking).
     Reasoning(String),
 
     /// A tool call is starting.
@@ -180,7 +184,11 @@ pub struct ProviderConfig {
 impl ProviderConfig {
     /// Creates a new provider configuration.
     #[must_use]
-    pub fn new(model: impl Into<String>, api_key: impl Into<String>, base_url: impl Into<String>) -> Self {
+    pub fn new(
+        model: impl Into<String>,
+        api_key: impl Into<String>,
+        base_url: impl Into<String>,
+    ) -> Self {
         Self {
             model: model.into(),
             api_key: api_key.into(),
@@ -192,10 +200,10 @@ impl ProviderConfig {
 /// Which provider backend to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Backend {
-    /// OpenAI and any compatible server (DeepSeek, xAI, Groq, OpenRouter, Ollama, LM Studio, etc.).
+    /// `OpenAI` and any compatible server (`DeepSeek`, `xAI`, `Groq`, `OpenRouter`, `Ollama`, `LM Studio`, etc.).
     OpenAi,
-    /// Anthropic (Claude models).
+    /// `Anthropic` (`Claude` models).
     Anthropic,
-    /// Google Gemini.
+    /// `Google Gemini`.
     Google,
 }

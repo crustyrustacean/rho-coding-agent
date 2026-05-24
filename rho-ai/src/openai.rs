@@ -1,8 +1,8 @@
 //! OpenAI-compatible provider.
 //!
-//! Implements [`LlmService`] for any server that speaks the OpenAI
-//! Chat Completions wire format (OpenAI, DeepSeek, xAI, Groq,
-//! OpenRouter, Ollama, LM Studio, etc.).
+//! Implements [`LlmService`] for any server that speaks the `OpenAI`
+//! Chat Completions wire format (`OpenAI`, `DeepSeek`, `xAI`, `Groq`,
+//! `OpenRouter`, `Ollama`, `LM Studio`, etc.).
 
 use crate::error::ProviderError;
 use crate::service::{EventStream, LlmService};
@@ -27,59 +27,87 @@ use tracing::{debug, warn};
 /// The request body sent to the `OpenAI` Chat Completions endpoint.
 #[derive(Debug, Serialize)]
 struct ChatCompletionRequest {
+    /// The model identifier.
     model: String,
+    /// The conversation messages.
     messages: Vec<WireMessage>,
+    /// Tool definitions (omitted when empty).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<WireTool>,
+    /// Whether to stream the response.
     stream: bool,
 }
 
-/// A message in the OpenAI wire format.
+/// A message in the `OpenAI` wire format.
 #[derive(Debug, Serialize)]
 #[serde(tag = "role")]
 #[serde(rename_all = "lowercase")]
 enum WireMessage {
-    System { content: String },
-    User { content: String },
+    /// System instruction.
+    System {
+        /// The system prompt text.
+        content: String,
+    },
+    /// User message.
+    User {
+        /// The user's input text.
+        content: String,
+    },
+    /// Assistant message.
     Assistant {
+        /// Text content (omitted when `None`).
         #[serde(skip_serializing_if = "Option::is_none")]
         content: Option<String>,
+        /// Tool calls requested by the assistant (omitted when empty).
         #[serde(skip_serializing_if = "Vec::is_empty")]
         tool_calls: Vec<WireToolCall>,
     },
+    /// Tool execution result.
     Tool {
+        /// The ID of the tool call this result corresponds to.
         tool_call_id: String,
+        /// The tool's output text.
         content: String,
     },
 }
 
-/// A tool call in the OpenAI wire format.
+/// A tool call in the `OpenAI` wire format.
 #[derive(Debug, Serialize)]
 struct WireToolCall {
+    /// Unique identifier for this tool call.
     id: String,
+    /// Always `"function"`.
     r#type: String,
+    /// The function details.
     function: WireFunction,
 }
 
 /// The function portion of a tool call.
 #[derive(Debug, Serialize)]
 struct WireFunction {
+    /// The function name.
     name: String,
+    /// JSON-encoded arguments string.
     arguments: String,
 }
 
-/// A tool definition in the OpenAI wire format.
+/// A tool definition in the `OpenAI` wire format.
 #[derive(Debug, Serialize)]
 struct WireTool {
+    /// Always `"function"`.
     r#type: String,
+    /// The function details.
     function: WireToolFunction,
 }
 
 /// The function portion of a tool definition.
 #[derive(Debug, Serialize)]
 struct WireToolFunction {
+    /// The function name.
     name: String,
+    /// Human-readable description.
     description: String,
+    /// JSON Schema for the parameters.
     parameters: serde_json::Value,
 }
 
@@ -88,8 +116,10 @@ struct WireToolFunction {
 /// A single SSE chunk from the streaming API.
 #[derive(Debug, Deserialize)]
 struct SseChunk {
+    /// The completion choices (usually one).
     #[serde(default)]
     choices: Vec<SseChoice>,
+    /// Usage statistics (present in the final chunk).
     #[serde(default)]
     usage: Option<SseUsage>,
 }
@@ -97,20 +127,26 @@ struct SseChunk {
 /// A single choice within an SSE chunk.
 #[derive(Debug, Deserialize)]
 struct SseChoice {
+    /// The incremental delta content.
     delta: SseDelta,
+    /// The finish reason (present in the final chunk for this choice).
     finish_reason: Option<String>,
 }
 
 /// The delta content within an SSE choice.
 #[derive(Debug, Default, Deserialize)]
 struct SseDelta {
+    /// The assistant role (present in the first chunk only).
     #[serde(default)]
     #[allow(dead_code)]
     role: Option<String>,
+    /// Incremental text content.
     #[serde(default)]
     content: Option<String>,
+    /// Incremental reasoning/thinking content.
     #[serde(default)]
     reasoning_content: Option<String>,
+    /// Incremental tool call deltas.
     #[serde(default)]
     tool_calls: Option<Vec<SseToolCallDelta>>,
 }
@@ -118,9 +154,12 @@ struct SseDelta {
 /// A tool call delta within an SSE choice.
 #[derive(Debug, Deserialize)]
 struct SseToolCallDelta {
+    /// Index of this tool call in the batch.
     index: usize,
+    /// Tool call ID (present in the first delta for this index).
     #[serde(default)]
     id: Option<String>,
+    /// Function name and/or arguments delta.
     #[serde(default)]
     function: Option<SseFunctionDelta>,
 }
@@ -128,8 +167,10 @@ struct SseToolCallDelta {
 /// A function delta within a tool call delta.
 #[derive(Debug, Default, Deserialize)]
 struct SseFunctionDelta {
+    /// Function name (present in the first delta for this tool call).
     #[serde(default)]
     name: Option<String>,
+    /// JSON arguments fragment.
     #[serde(default)]
     arguments: Option<String>,
 }
@@ -137,15 +178,17 @@ struct SseFunctionDelta {
 /// Usage statistics (present in the final chunk when `stream_options.include_usage`).
 #[derive(Debug, Deserialize)]
 struct SseUsage {
+    /// Tokens in the prompt.
     #[serde(default)]
     prompt_tokens: u64,
+    /// Tokens in the completion.
     #[serde(default)]
     completion_tokens: u64,
 }
 
 // ── Request builder ───────────────────────────────────────────────────────────
 
-/// Convert unified messages into OpenAI wire-format messages.
+/// Convert unified messages into `OpenAI` wire-format messages.
 fn build_messages(messages: Vec<LlmMessage>) -> Vec<WireMessage> {
     messages
         .into_iter()
@@ -183,7 +226,7 @@ fn build_messages(messages: Vec<LlmMessage>) -> Vec<WireMessage> {
         .collect()
 }
 
-/// Convert unified tool definitions into OpenAI wire-format tools.
+/// Convert unified tool definitions into `OpenAI` wire-format tools.
 fn build_tools(tools: Vec<ToolDefinition>) -> Vec<WireTool> {
     tools
         .into_iter()
@@ -208,19 +251,24 @@ fn completions_url(base_url: &str) -> String {
 
 /// Accumulator for tool call arguments across SSE deltas.
 ///
-/// OpenAI streams tool calls in chunks: the first delta carries `id` + `name`,
+/// `OpenAI` streams tool calls in chunks: the first delta carries `id` + `name`,
 /// subsequent deltas carry `arguments` fragments. We accumulate these per-index
 /// and emit `StreamEvent::ToolUseComplete` once all deltas for an index are
 /// collected (signalled by `finish_reason`).
 #[derive(Debug, Default)]
 struct ToolCallAccumulator {
+    /// Accumulated tool calls indexed by position.
     calls: Vec<AccumulatedToolCall>,
 }
 
+/// A partially accumulated tool call.
 #[derive(Debug, Default)]
 struct AccumulatedToolCall {
+    /// The tool call ID (set on the first delta).
     id: Option<String>,
+    /// The function name (set on the first delta).
     name: Option<String>,
+    /// Accumulated JSON arguments fragments.
     arguments: String,
 }
 
@@ -234,7 +282,8 @@ impl ToolCallAccumulator {
         arguments_delta: Option<String>,
     ) {
         if self.calls.len() <= index {
-            self.calls.resize_with(index + 1, AccumulatedToolCall::default);
+            self.calls
+                .resize_with(index + 1, AccumulatedToolCall::default);
         }
         let tc = &mut self.calls[index];
         if let Some(id) = id {
@@ -268,14 +317,11 @@ impl ToolCallAccumulator {
     }
 }
 
-/// Parse a single SSE JSON payload into stream events.
+/// Convert a rho-ai `SseChunk` into [`StreamEvent`]s.
 ///
 /// Returns a vector because one SSE chunk can produce multiple events
 /// (e.g., text delta + done).
-fn parse_sse_chunk(
-    chunk: &SseChunk,
-    tool_acc: &mut ToolCallAccumulator,
-) -> Vec<StreamEvent> {
+fn parse_sse_chunk(chunk: &SseChunk, tool_acc: &mut ToolCallAccumulator) -> Vec<StreamEvent> {
     let mut events = Vec::new();
 
     let Some(choice) = chunk.choices.first() else {
@@ -380,7 +426,9 @@ fn parse_sse_chunk(
 /// let events = service.chat_stream(messages).await?;
 /// ```
 pub struct OpenAiService {
+    /// The HTTP client.
     http: Client,
+    /// Provider configuration (model, API key, base URL).
     config: ProviderConfig,
 }
 
@@ -474,6 +522,7 @@ struct OpenAiSseStream {
 }
 
 impl OpenAiSseStream {
+    /// Create a new stream wrapping the given byte source.
     fn new(
         byte_stream: Pin<
             Box<dyn futures::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send>,
@@ -509,7 +558,10 @@ impl OpenAiSseStream {
             let sse_chunk = match serde_json::from_str::<SseChunk>(data) {
                 Ok(c) => c,
                 Err(e) => {
-                    warn!("failed to parse SSE chunk: {e}; payload: {}", &data[..data.len().min(200)]);
+                    warn!(
+                        "failed to parse SSE chunk: {e}; payload: {}",
+                        &data[..data.len().min(200)]
+                    );
                     continue;
                 }
             };
@@ -734,7 +786,7 @@ mod tests {
             choices: vec![SseChoice {
                 delta: SseDelta {
                     role: None,
-                    content: Some("".into()),
+                    content: Some(String::new()),
                     reasoning_content: None,
                     tool_calls: None,
                 },
@@ -1068,7 +1120,13 @@ mod tests {
         assert_eq!(events.len(), 3);
         assert!(matches!(&events[0], StreamEvent::Text(t) if t == "Hello"));
         assert!(matches!(&events[1], StreamEvent::Text(t) if t == " world"));
-        assert!(matches!(&events[2], StreamEvent::Done { reason: StopReason::EndTurn, .. }));
+        assert!(matches!(
+            &events[2],
+            StreamEvent::Done {
+                reason: StopReason::EndTurn,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -1082,10 +1140,25 @@ mod tests {
         let events = stream.parse_chunk(sse_data);
         // Expect: ToolUseStart, ToolUseInputDelta, ToolUseComplete, Done(ToolUse)
         assert!(events.len() >= 4);
-        assert!(matches!(&events[0], StreamEvent::ToolUseStart { index: 0, .. }));
-        assert!(matches!(&events[1], StreamEvent::ToolUseInputDelta { index: 0, .. }));
-        assert!(matches!(&events[2], StreamEvent::ToolUseComplete { index: 0, .. }));
-        assert!(matches!(&events[3], StreamEvent::Done { reason: StopReason::ToolUse, .. }));
+        assert!(matches!(
+            &events[0],
+            StreamEvent::ToolUseStart { index: 0, .. }
+        ));
+        assert!(matches!(
+            &events[1],
+            StreamEvent::ToolUseInputDelta { index: 0, .. }
+        ));
+        assert!(matches!(
+            &events[2],
+            StreamEvent::ToolUseComplete { index: 0, .. }
+        ));
+        assert!(matches!(
+            &events[3],
+            StreamEvent::Done {
+                reason: StopReason::ToolUse,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -1144,7 +1217,12 @@ mod tests {
     #[test]
     fn accumulator_drain_clears_state() {
         let mut acc = ToolCallAccumulator::default();
-        acc.feed_delta(0, Some("id1".into()), Some("name1".into()), Some(r#"{"a":1}"#.into()));
+        acc.feed_delta(
+            0,
+            Some("id1".into()),
+            Some("name1".into()),
+            Some(r#"{"a":1}"#.into()),
+        );
         let events = acc.drain();
         assert_eq!(events.len(), 1);
         // Second drain should be empty
@@ -1160,7 +1238,13 @@ mod tests {
         let events = acc.drain();
         assert_eq!(events.len(), 2);
         // Index 0 and 2 present, index 1 was never started
-        assert!(matches!(&events[0], StreamEvent::ToolUseComplete { index: 0, .. }));
-        assert!(matches!(&events[1], StreamEvent::ToolUseComplete { index: 2, .. }));
+        assert!(matches!(
+            &events[0],
+            StreamEvent::ToolUseComplete { index: 0, .. }
+        ));
+        assert!(matches!(
+            &events[1],
+            StreamEvent::ToolUseComplete { index: 2, .. }
+        ));
     }
 }

@@ -3,9 +3,9 @@
 //! Unified LLM provider abstraction for the rho coding agent.
 //!
 //! Provides a single [`LlmService`] trait backed by three provider families:
-//! - **OpenAI-compatible** — OpenAI, DeepSeek, xAI, Groq, OpenRouter, Ollama, LM Studio, etc.
-//! - **Anthropic** — Claude models via the Messages API
-//! - **Google** — Gemini models via the Generative AI API
+//! - **OpenAI-compatible** — `OpenAI`, `DeepSeek`, `xAI`, `Groq`, `OpenRouter`, `Ollama`, `LM Studio`, etc.
+//! - **Anthropic** — `Claude` models via the Messages API
+//! - **Google** — `Gemini` models via the Generative AI API
 //!
 //! ## Architecture
 //!
@@ -15,7 +15,7 @@
 //! - [`LlmMessage`] — chat messages (System, User, Assistant, Tool)
 //! - [`ToolCall`] — tool calls from the LLM
 //! - [`ToolDefinition`] — tool schemas presented to the LLM
-//! - [`StreamEvent`] — response stream events (Text, Reasoning, ToolUse*, Done)
+//! - [`StreamEvent`] — response stream events (`Text`, `Reasoning`, `ToolUse*`, `Done`)
 //!
 //! ## Quick Start
 //!
