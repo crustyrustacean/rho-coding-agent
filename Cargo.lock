@@ -1457,6 +1457,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rho-ai"
+version = "0.46.3"
+dependencies = [
+ "async-trait",
+ "futures",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "rho-bench"
 version = "0.46.3"
 dependencies = [
