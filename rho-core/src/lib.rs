@@ -14,7 +14,7 @@
 //! | [`request`] | [`ChatRequest`] |
 //! | [`response`] | [`ModelResponse`], [`FinishReason`], etc. |
 //! | [`tool`] | [`Tool`] trait, [`ToolRegistry`], [`ToolRisk`], [`ToolResult`], [`CancellationToken`] |
-//! | [`client`] | [`ChatClient`] trait, [`LocalChatClient`] |
+//! | [`client`] | [`ChatClient`] trait, [`RhoAiClient`] |
 //! | [`context`] | [`ContextManager`] trait, [`SlidingWindowContextManager`], [`TokenBudget`] |
 //! | [`conversation`] | [`AssistantResponse`] |
 //! | [`session`] | [`Entry`], [`EntryPayload`], [`EntryResolution`], [`CompactionSummary`], [`ExtensionEntry`], [`ExtensionMessageEntry`] |
@@ -50,7 +50,7 @@
 //! [`ToolResult`]: tool::ToolResult
 //! [`CancellationToken`]: tool::CancellationToken
 //! [`ChatClient`]: client::ChatClient
-//! [`LocalChatClient`]: client::LocalChatClient
+//! [`RhoAiClient`]: client::RhoAiClient
 //! [`ContextManager`]: context::ContextManager
 //! [`SlidingWindowContextManager`]: context::SlidingWindowContextManager
 //! [`TokenBudget`]: context::TokenBudget

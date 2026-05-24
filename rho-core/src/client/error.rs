@@ -1,5 +1,5 @@
 //! Error types for the [`ChatClient`](super::ChatClient) trait and
-//! [`LocalChatClient`](super::LocalChatClient) implementation.
+//! [`RhoAiClient`](super::RhoAiClient) implementation.
 //!
 //! This module defines [`ClientError`] for HTTP/API related errors, with a
 //! [`Retryable`] trait implementation to determine retry semantics.
