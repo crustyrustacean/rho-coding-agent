@@ -104,6 +104,36 @@ impl Retryable for ClientError {
 /// A specialised `Result` type for client operations.
 pub type ClientResult<T> = std::result::Result<T, ClientError>;
 
+// ── Conversion from rho-ai ProviderError ──────────────────────────────────────
+
+impl From<rho_ai::ProviderError> for ClientError {
+    fn from(err: rho_ai::ProviderError) -> Self {
+        match err {
+            rho_ai::ProviderError::Http { source } => ClientError::Http(source),
+            rho_ai::ProviderError::HttpStatus { status, body, retryable: _ } => {
+                ClientError::HttpError {
+                    status,
+                    message: body.unwrap_or_default(),
+                }
+                // Note: retryable is preserved at the ProviderError level.
+                // ClientError::Retryable checks the status code.
+            }
+            rho_ai::ProviderError::Sse { message } => ClientError::HttpError {
+                status: 0,
+                message,
+            },
+            rho_ai::ProviderError::Response { message, .. } => ClientError::HttpError {
+                status: 0,
+                message,
+            },
+            rho_ai::ProviderError::RetryBudgetExhausted { last_error } => {
+                let attempts = 0; // We don't have the count from rho-ai
+                ClientError::retry_budget_exhausted(attempts, (*last_error).into())
+            }
+        }
+    }
+}
+
 // Backward compatibility: convert ClientError to RhoError
 impl From<ClientError> for crate::error::RhoError {
     fn from(error: ClientError) -> Self {

@@ -826,8 +826,8 @@ fn http_error_not_retryable_for_client_errors() {
 /// Connection-refused errors have no HTTP status code, which
 /// [`RhoError::is_retryable`] classifies as retryable.
 async fn retryable_http_error() -> RhoError {
-    use rho_core::{ChatClient, LocalChatClient};
-    let client = LocalChatClient::with_endpoint("http://127.0.0.1:1/");
+    use rho_core::{ChatClient, RhoAiClient};
+    let client = RhoAiClient::new("test", "http://127.0.0.1:1/", None);
     let request = rho_core::ChatRequest {
         model: String::new(),
         messages: vec![],
@@ -1090,14 +1090,14 @@ async fn cancellation_propagates_into_running_tool() {
     );
 }
 
-// ── LocalChatClient error handling ──────────────────────────────────────────
+// ── RhoAiClient error handling ──────────────────────────────────────────
 
 #[tokio::test]
-async fn local_chat_client_returns_http_error_when_server_unreachable() {
-    use rho_core::{ChatClient, ChatRequest, LocalChatClient};
+async fn rho_ai_client_returns_http_error_when_server_unreachable() {
+    use rho_core::{ChatClient, ChatRequest, RhoAiClient};
     use std::time::Duration;
 
-    let client = LocalChatClient::with_endpoint("http://10.255.255.1/v1/chat/completions");
+    let client = RhoAiClient::new("test", "http://10.255.255.1/v1/chat/completions", None);
     let request = ChatRequest {
         model: "test".to_owned(),
         messages: vec![ChatMessage::user_text("hello")],

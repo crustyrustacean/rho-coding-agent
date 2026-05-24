@@ -10,7 +10,7 @@
 //!
 //! [`ChatClient`]: crate::client::ChatClient
 
-use crate::client::{ChatClient, LocalChatClient, ModelInfo, ModelList};
+use crate::client::{ChatClient, ModelInfo, ModelList, RhoAiClient};
 use crate::config::ProviderSettings;
 use crate::error::Result;
 use async_trait::async_trait;
@@ -62,7 +62,7 @@ pub trait Provider: Send + Sync {
 
 /// An OpenAI-compatible provider.
 ///
-/// Wraps a [`LocalChatClient`] and implements [`Provider`]. Supports any
+/// Wraps a [`RhoAiClient`] and implements [`Provider`]. Supports any
 /// server that speaks the `OpenAI` Chat Completions wire format — local
 /// servers (`LM Studio`, `Ollama`) and external providers (`OpenRouter`,
 /// `OpenAI`, `Groq`, `DeepInfra`, etc.).
@@ -80,7 +80,7 @@ pub struct OpenAiCompatibleProvider {
     /// Human-readable provider name.
     name: String,
     /// The underlying chat client.
-    client: LocalChatClient,
+    client: RhoAiClient,
     /// Whether this provider is external (non-localhost).
     is_external: bool,
 }
@@ -99,10 +99,7 @@ impl OpenAiCompatibleProvider {
     ) -> Self {
         let endpoint_str = endpoint.into();
         let is_external = !crate::client::is_local_endpoint(&endpoint_str);
-        let client = match api_key {
-            Some(key) => LocalChatClient::with_endpoint_and_key(endpoint_str, Some(key)),
-            None => LocalChatClient::with_endpoint(endpoint_str),
-        };
+        let client = RhoAiClient::new("default", &endpoint_str, api_key);
         Self {
             name: name.into(),
             client,
@@ -121,7 +118,7 @@ impl Provider for OpenAiCompatibleProvider {
         self.is_external
     }
 
-    async fn list_models(&self) -> Result<ModelList> {
+    async fn list_models(&self) -> Result<crate::client::ModelList> {
         self.client.list_models().await
     }
 
