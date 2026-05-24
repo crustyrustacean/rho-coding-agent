@@ -6,7 +6,7 @@
 use rho_core::{
     AgentConfig, ChatMessage, NopObserver, RhoConfig, Session, ToolCallId, ToolName, ToolRegistry,
     ToolRisk,
-    agent::run_loop,
+    agent::{LoopParams, run_loop},
     approval::{ApprovalPolicy, DefaultApprovalPolicy},
     context_files::{ContextScanner, compose_system_prompt},
     tool::CancellationToken,
@@ -56,18 +56,17 @@ async fn denied_tool_gets_denial_message_fed_back() {
     let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
 
     // AutoDenyGate always says no.
-    let result = run_loop(
-        &mut session,
-        "do the destructive thing",
-        &client,
-        &registry,
-        &config,
-        CancellationToken::new(),
-        &AutoDenyGate,
-        &NopObserver,
-    )
-    .await
-    .unwrap();
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
+        cancel: CancellationToken::new(),
+        gate: &AutoDenyGate,
+        observer: &NopObserver,
+    };
+    let result = run_loop(&mut session, "do the destructive thing", &params)
+        .await
+        .unwrap();
 
     assert_eq!(result, "understood, skipping");
 
@@ -111,18 +110,15 @@ async fn approved_tool_executes() {
     let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
 
     // AutoApproveGate always says yes.
-    let result = run_loop(
-        &mut session,
-        "do it",
-        &client,
-        &registry,
-        &config,
-        CancellationToken::new(),
-        &AutoApproveGate,
-        &NopObserver,
-    )
-    .await
-    .unwrap();
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
+        cancel: CancellationToken::new(),
+        gate: &AutoApproveGate,
+        observer: &NopObserver,
+    };
+    let result = run_loop(&mut session, "do it", &params).await.unwrap();
 
     assert_eq!(result, "done");
 

@@ -19,7 +19,7 @@ use rho_core::{
     AgentConfig, ChatMessage, ContentBlock, ContextManager, MechanicalCompactionStrategy,
     ModelResponse, NopObserver, Session, SlidingWindowContextManager, TokenBudget, ToolCallId,
     ToolName, ToolResult,
-    agent::run_loop,
+    agent::{LoopParams, run_loop},
     message::{ModelToolCall, ToolCallFunction},
     session::{
         CompactionSummary, Entry, EntryPayload, EntryResolution, HeuristicEstimator, TokenEstimator,
@@ -323,18 +323,15 @@ async fn branching_old_branch_unreachable_from_leaf() {
         text_response("reply A"),
     ]);
     let config = AgentConfig::default();
-    let _ = run_loop(
-        &mut session,
-        "hello",
-        &client,
-        &registry,
-        &config,
-        CancellationToken::new(),
-        &AutoApproveGate,
-        &NopObserver,
-    )
-    .await
-    .unwrap();
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
+        cancel: CancellationToken::new(),
+        gate: &AutoApproveGate,
+        observer: &NopObserver,
+    };
+    let _ = run_loop(&mut session, "hello", &params).await.unwrap();
 
     // Find the user entry id
     let user_id = session
@@ -512,15 +509,18 @@ async fn amnesia_reproducer_secret_survives() {
     let config = AgentConfig::default();
     let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
 
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
+        cancel: CancellationToken::new(),
+        gate: &AutoApproveGate,
+        observer: &NopObserver,
+    };
     let result = run_loop(
         &mut session,
         "read the file secret.txt and tell me the secret code",
-        &client,
-        &registry,
-        &config,
-        CancellationToken::new(),
-        &AutoApproveGate,
-        &NopObserver,
+        &params,
     )
     .await
     .unwrap();
@@ -771,18 +771,17 @@ async fn compact_and_resume_model_response_appended_after_compaction() {
     let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp")
         .with_token_budget(TokenBudget::new(2048));
 
-    let result = run_loop(
-        &mut session,
-        "what is the answer?",
-        &client,
-        &registry,
-        &config,
-        CancellationToken::new(),
-        &AutoApproveGate,
-        &NopObserver,
-    )
-    .await
-    .unwrap();
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
+        cancel: CancellationToken::new(),
+        gate: &AutoApproveGate,
+        observer: &NopObserver,
+    };
+    let result = run_loop(&mut session, "what is the answer?", &params)
+        .await
+        .unwrap();
 
     assert_eq!(result, "the answer is 42");
 
@@ -911,34 +910,32 @@ async fn multi_tool_call_compaction_preserves_integrity() {
     let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp")
         .with_token_budget(TokenBudget::new(2048));
 
-    let _ = run_loop(
-        &mut session,
-        "read files A and B",
-        &client,
-        &registry,
-        &config,
-        CancellationToken::new(),
-        &AutoApproveGate,
-        &NopObserver,
-    )
-    .await
-    .unwrap();
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
+        cancel: CancellationToken::new(),
+        gate: &AutoApproveGate,
+        observer: &NopObserver,
+    };
+    let _ = run_loop(&mut session, "read files A and B", &params)
+        .await
+        .unwrap();
 
     // Add more turns to force pressure
     for i in 0..10 {
         let c = MockChatClient::new(vec![text_response(format!("reply {i}"))]);
-        let _ = run_loop(
-            &mut session,
-            &format!("msg {i} filler text"),
-            &c,
-            &registry,
-            &config,
-            CancellationToken::new(),
-            &AutoApproveGate,
-            &NopObserver,
-        )
-        .await
-        .unwrap();
+        let params = LoopParams {
+            client: &c,
+            registry: &registry,
+            config: &config,
+            cancel: CancellationToken::new(),
+            gate: &AutoApproveGate,
+            observer: &NopObserver,
+        };
+        let _ = run_loop(&mut session, &format!("msg {i} filler text"), &params)
+            .await
+            .unwrap();
     }
 
     let messages = session.path_messages();
@@ -965,15 +962,18 @@ async fn estimator_converges_within_20_percent_by_third_round_trip() {
     let mut session = Session::in_memory("converge-model", None, registry.tool_schemas(), "/tmp");
 
     for i in 0..5 {
+        let params = LoopParams {
+            client: &client,
+            registry: &registry,
+            config: &config,
+            cancel: CancellationToken::new(),
+            gate: &AutoApproveGate,
+            observer: &NopObserver,
+        };
         let _ = run_loop(
             &mut session,
             &format!("round {i} with enough content to produce ~1000 tokens"),
-            &client,
-            &registry,
-            &config,
-            CancellationToken::new(),
-            &AutoApproveGate,
-            &NopObserver,
+            &params,
         )
         .await
         .unwrap();
@@ -1143,18 +1143,15 @@ async fn tool_call_turn_integrity_after_branch() {
     let config = AgentConfig::default();
     let mut session = Session::in_memory("m", Some("sys"), registry.tool_schemas(), "/tmp");
 
-    let _ = run_loop(
-        &mut session,
-        "do it",
-        &client,
-        &registry,
-        &config,
-        CancellationToken::new(),
-        &AutoApproveGate,
-        &NopObserver,
-    )
-    .await
-    .unwrap();
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
+        cancel: CancellationToken::new(),
+        gate: &AutoApproveGate,
+        observer: &NopObserver,
+    };
+    let _ = run_loop(&mut session, "do it", &params).await.unwrap();
 
     // Take a different branch
     // Actually branch to a point before the tool call
@@ -1171,18 +1168,17 @@ async fn tool_call_turn_integrity_after_branch() {
     // Add more turns on the new branch
     for i in 0..5 {
         let c = MockChatClient::new(vec![text_response(format!("reply {i}"))]);
-        let _ = run_loop(
-            &mut session,
-            &format!("msg {i}"),
-            &c,
-            &registry,
-            &config,
-            CancellationToken::new(),
-            &AutoApproveGate,
-            &NopObserver,
-        )
-        .await
-        .unwrap();
+        let params = LoopParams {
+            client: &c,
+            registry: &registry,
+            config: &config,
+            cancel: CancellationToken::new(),
+            gate: &AutoApproveGate,
+            observer: &NopObserver,
+        };
+        let _ = run_loop(&mut session, &format!("msg {i}"), &params)
+            .await
+            .unwrap();
     }
 
     let messages = session.path_messages();

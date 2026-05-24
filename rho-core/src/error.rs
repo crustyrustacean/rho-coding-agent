@@ -1,6 +1,6 @@
 //! Error types for rho-core.
 
-use crate::agent::error::AgentError;
+use crate::agent::AgentError;
 use crate::client::error::ClientError;
 use crate::sandbox::SandboxError;
 use crate::session::error::SessionError;

@@ -9,9 +9,9 @@ use async_trait::async_trait;
 use rho_core::stream::StreamChunk;
 use rho_core::{
     AgentConfig, ApprovalGate, AutoApprovePolicy, ChatClient, ChatRequest, ConfigLoader,
-    ModelResponse, ModelResponseStream, ModelToolCall, NopObserver, Provider, RhoConfig,
-    SandboxRoot, Session, TokenBudget, ToolRegistry, ToolRisk, compose_full_system_prompt,
-    provider_factory, run_loop,
+    LoopParams, ModelResponse, ModelResponseStream, ModelToolCall, NopObserver, Provider,
+    RhoConfig, SandboxRoot, Session, TokenBudget, ToolRegistry, ToolRisk,
+    compose_full_system_prompt, provider_factory, run_loop,
 };
 use rho_eval::{EvalRun, EvalTask, TaskMetrics, TaskOutcome};
 use rho_tools::register_all;
@@ -250,17 +250,15 @@ async fn run_single_task(
 
     // Run the agent loop and measure time.
     let start = Instant::now();
-    let result = run_loop(
-        &mut session,
-        task.user_prompt(),
-        &counting_client,
-        &registry,
-        &agent_config,
+    let params = LoopParams {
+        client: &counting_client,
+        registry: &registry,
+        config: &agent_config,
         cancel,
-        &gate,
-        &NopObserver,
-    )
-    .await;
+        gate: &gate,
+        observer: &NopObserver,
+    };
+    let result = run_loop(&mut session, task.user_prompt(), &params).await;
     let elapsed = start.elapsed();
 
     // Extract metrics from the counting client.

@@ -202,18 +202,15 @@ pub async fn run_repl(app: &mut App) -> Result<()> {
                 }
 
                 let client = app.active_provider().clone_boxed_client();
-                match rho_core::run_loop(
-                    &mut app.session,
-                    pasted.trim(),
-                    client.as_ref(),
-                    &app.registry,
-                    &app.config,
-                    app.cancel.clone(),
-                    &app.gate,
-                    &ReplObserver,
-                )
-                .await
-                {
+                let params = rho_core::LoopParams {
+                    client: client.as_ref(),
+                    registry: &app.registry,
+                    config: &app.config,
+                    cancel: app.cancel.clone(),
+                    gate: &app.gate,
+                    observer: &ReplObserver,
+                };
+                match rho_core::run_loop(&mut app.session, pasted.trim(), &params).await {
                     Ok(reply) => println!("\nAssistant: {reply}"),
                     Err(e) => println!("\nError: {e}"),
                 }
@@ -225,18 +222,15 @@ pub async fn run_repl(app: &mut App) -> Result<()> {
         }
 
         let client = app.active_provider().clone_boxed_client();
-        match rho_core::run_loop(
-            &mut app.session,
-            input,
-            client.as_ref(),
-            &app.registry,
-            &app.config,
-            app.cancel.clone(),
-            &app.gate,
-            &ReplObserver,
-        )
-        .await
-        {
+        let params = rho_core::LoopParams {
+            client: client.as_ref(),
+            registry: &app.registry,
+            config: &app.config,
+            cancel: app.cancel.clone(),
+            gate: &app.gate,
+            observer: &ReplObserver,
+        };
+        match rho_core::run_loop(&mut app.session, input, &params).await {
             Ok(reply) => println!("\nAssistant: {reply}"),
             Err(e) => println!("\nError: {e}"),
         }
@@ -258,18 +252,15 @@ pub async fn run_prompt_file(mut app: App, path: std::path::PathBuf) -> Result<(
     println!("using prompt file: {}", path.display());
 
     let client = app.active_provider().clone_boxed_client();
-    match rho_core::run_loop(
-        &mut app.session,
-        &input,
-        client.as_ref(),
-        &app.registry,
-        &app.config,
-        app.cancel.clone(),
-        &app.gate,
-        &ReplObserver,
-    )
-    .await
-    {
+    let params = rho_core::LoopParams {
+        client: client.as_ref(),
+        registry: &app.registry,
+        config: &app.config,
+        cancel: app.cancel.clone(),
+        gate: &app.gate,
+        observer: &ReplObserver,
+    };
+    match rho_core::run_loop(&mut app.session, &input, &params).await {
         Ok(reply) => println!("\nAssistant: {reply}"),
         Err(e) => println!("\nError: {e}"),
     }

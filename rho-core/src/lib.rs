@@ -87,7 +87,10 @@ pub mod stream;
 pub mod tool;
 
 // Convenience re-exports for the most commonly used types
-pub use agent::{AgentConfig, AgentObserver, AgentState, NopObserver, TransitionError, run_loop};
+pub use agent::{
+    AgentConfig, AgentError, AgentObserver, AgentState, LoopParams, NopObserver, TransitionError,
+    run_loop,
+};
 pub use approval::{
     ApprovalGate, ApprovalPolicy, AutoApprovePolicy, ConfigApprovalPolicy, DefaultApprovalPolicy,
 };

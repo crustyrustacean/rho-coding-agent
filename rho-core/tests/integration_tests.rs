@@ -6,7 +6,7 @@
 use rho_core::{
     AgentConfig, ChatMessage, ContentBlock, ContextManager, NopObserver, RhoError, Session,
     ToolCallId, ToolName, ToolOutcome, ToolRegistry, ToolResult, ToolRisk,
-    agent::run_loop,
+    agent::{LoopParams, run_loop},
     config::RhoConfig,
     message::{ModelToolCall, ToolCallFunction},
     request::ChatRequest,
@@ -190,18 +190,17 @@ async fn assistant_tool_call_message_persisted_before_tool_result() {
     let config = AgentConfig::default();
     let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
 
-    let result = run_loop(
-        &mut session,
-        "do something",
-        &client,
-        &registry,
-        &config,
-        CancellationToken::new(),
-        &AutoApproveGate,
-        &NopObserver,
-    )
-    .await
-    .unwrap();
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
+        cancel: CancellationToken::new(),
+        gate: &AutoApproveGate,
+        observer: &NopObserver,
+    };
+    let result = run_loop(&mut session, "do something", &params)
+        .await
+        .unwrap();
 
     assert_eq!(result, "all done");
 
@@ -250,18 +249,17 @@ async fn multiple_tool_calls_executed_sequentially() {
     let config = AgentConfig::default();
     let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
 
-    let result = run_loop(
-        &mut session,
-        "do two things",
-        &client,
-        &registry,
-        &config,
-        CancellationToken::new(),
-        &AutoApproveGate,
-        &NopObserver,
-    )
-    .await
-    .unwrap();
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
+        cancel: CancellationToken::new(),
+        gate: &AutoApproveGate,
+        observer: &NopObserver,
+    };
+    let result = run_loop(&mut session, "do two things", &params)
+        .await
+        .unwrap();
 
     assert_eq!(result, "all done");
 
@@ -325,18 +323,17 @@ async fn multi_tool_call_persistence_invariant() {
     let config = AgentConfig::default();
     let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
 
-    let _ = run_loop(
-        &mut session,
-        "do two things",
-        &client,
-        &registry,
-        &config,
-        CancellationToken::new(),
-        &AutoApproveGate,
-        &NopObserver,
-    )
-    .await
-    .unwrap();
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
+        cancel: CancellationToken::new(),
+        gate: &AutoApproveGate,
+        observer: &NopObserver,
+    };
+    let _ = run_loop(&mut session, "do two things", &params)
+        .await
+        .unwrap();
 
     let requests = client.requests();
     let second = &requests[1];
@@ -379,18 +376,17 @@ async fn mixed_approval_with_multi_tool_call() {
     let config = AgentConfig::default(); // DefaultApprovalPolicy: Read auto, Write needs approval
     let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
 
-    let result = run_loop(
-        &mut session,
-        "read then write",
-        &client,
-        &registry,
-        &config,
-        CancellationToken::new(),
-        &AutoDenyGate, // deny all approval requests
-        &NopObserver,
-    )
-    .await
-    .unwrap();
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
+        cancel: CancellationToken::new(),
+        gate: &AutoDenyGate, // deny all approval requests,
+        observer: &NopObserver,
+    };
+    let result = run_loop(&mut session, "read then write", &params)
+        .await
+        .unwrap();
 
     assert_eq!(result, "understood");
 
@@ -472,18 +468,17 @@ async fn all_tool_calls_denied_still_feeds_results_and_resends() {
     let config = AgentConfig::default();
     let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
 
-    let result = run_loop(
-        &mut session,
-        "write two files",
-        &client,
-        &registry,
-        &config,
-        CancellationToken::new(),
-        &AutoDenyGate,
-        &NopObserver,
-    )
-    .await
-    .unwrap();
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
+        cancel: CancellationToken::new(),
+        gate: &AutoDenyGate,
+        observer: &NopObserver,
+    };
+    let result = run_loop(&mut session, "write two files", &params)
+        .await
+        .unwrap();
 
     assert_eq!(result, "okay, won't write");
 
@@ -539,24 +534,20 @@ async fn cancellation_between_tool_calls_in_batch() {
         cancel_clone.cancel();
     });
 
-    let err = run_loop(
-        &mut session,
-        "do two things",
-        &client,
-        &registry,
-        &config,
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
         cancel,
-        &AutoApproveGate,
-        &NopObserver,
-    )
-    .await
-    .unwrap_err();
+        gate: &AutoApproveGate,
+        observer: &NopObserver,
+    };
+    let err = run_loop(&mut session, "do two things", &params)
+        .await
+        .unwrap_err();
 
     assert!(
-        matches!(
-            err,
-            RhoError::Agent(rho_core::agent::error::AgentError::Cancelled)
-        ),
+        matches!(err, RhoError::Agent(rho_core::agent::AgentError::Cancelled)),
         "expected cancellation error, got: {err}"
     );
 
@@ -587,23 +578,20 @@ async fn empty_tool_calls_vec_returns_error() {
     let config = AgentConfig::default();
     let mut session = Session::in_memory("mock", None, vec![], "/tmp");
 
-    let err = run_loop(
-        &mut session,
-        "hello",
-        &client,
-        &registry,
-        &config,
-        CancellationToken::new(),
-        &AutoApproveGate,
-        &NopObserver,
-    )
-    .await
-    .unwrap_err();
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
+        cancel: CancellationToken::new(),
+        gate: &AutoApproveGate,
+        observer: &NopObserver,
+    };
+    let err = run_loop(&mut session, "hello", &params).await.unwrap_err();
 
     assert!(
         matches!(
             err,
-            RhoError::Agent(rho_core::agent::error::AgentError::ProtocolViolation(_))
+            RhoError::Agent(rho_core::agent::AgentError::ProtocolViolation(_))
         ),
         "expected ProtocolViolation error for empty tool_calls, got: {err}"
     );
@@ -630,23 +618,22 @@ async fn iteration_count_includes_multi_tool_call_response() {
     };
     let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
 
-    let err = run_loop(
-        &mut session,
-        "loop forever",
-        &client,
-        &registry,
-        &config,
-        CancellationToken::new(),
-        &AutoApproveGate,
-        &NopObserver,
-    )
-    .await
-    .unwrap_err();
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
+        cancel: CancellationToken::new(),
+        gate: &AutoApproveGate,
+        observer: &NopObserver,
+    };
+    let err = run_loop(&mut session, "loop forever", &params)
+        .await
+        .unwrap_err();
 
     assert!(
         matches!(
             err,
-            RhoError::Agent(rho_core::agent::error::AgentError::MaxIterationsExceeded(5))
+            RhoError::Agent(rho_core::agent::AgentError::MaxIterationsExceeded(5))
         ),
         "expected MaxIterationsExceeded(5), got: {err}"
     );
@@ -669,23 +656,22 @@ async fn loop_terminates_after_max_iterations() {
     };
     let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
 
-    let err = run_loop(
-        &mut session,
-        "loop forever",
-        &client,
-        &registry,
-        &config,
-        CancellationToken::new(),
-        &AutoApproveGate,
-        &NopObserver,
-    )
-    .await
-    .unwrap_err();
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
+        cancel: CancellationToken::new(),
+        gate: &AutoApproveGate,
+        observer: &NopObserver,
+    };
+    let err = run_loop(&mut session, "loop forever", &params)
+        .await
+        .unwrap_err();
 
     assert!(
         matches!(
             err,
-            rho_core::RhoError::Agent(rho_core::agent::error::AgentError::MaxIterationsExceeded(5))
+            rho_core::RhoError::Agent(rho_core::agent::AgentError::MaxIterationsExceeded(5))
         ),
         "expected MaxIterationsExceeded(5), got: {err}"
     );
@@ -713,18 +699,17 @@ async fn stuck_loop_injects_nudge_after_threshold() {
     };
     let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
 
-    let reply = run_loop(
-        &mut session,
-        "do something",
-        &client,
-        &registry,
-        &config,
-        CancellationToken::new(),
-        &AutoApproveGate,
-        &NopObserver,
-    )
-    .await
-    .unwrap();
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
+        cancel: CancellationToken::new(),
+        gate: &AutoApproveGate,
+        observer: &NopObserver,
+    };
+    let reply = run_loop(&mut session, "do something", &params)
+        .await
+        .unwrap();
 
     assert_eq!(reply, "I see the nudge, stopping.");
 
@@ -760,23 +745,20 @@ async fn stuck_loop_disabled_when_threshold_is_zero() {
     };
     let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
 
-    let err = run_loop(
-        &mut session,
-        "loop",
-        &client,
-        &registry,
-        &config,
-        CancellationToken::new(),
-        &AutoApproveGate,
-        &NopObserver,
-    )
-    .await
-    .unwrap_err();
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
+        cancel: CancellationToken::new(),
+        gate: &AutoApproveGate,
+        observer: &NopObserver,
+    };
+    let err = run_loop(&mut session, "loop", &params).await.unwrap_err();
 
     assert!(
         matches!(
             err,
-            rho_core::RhoError::Agent(rho_core::agent::error::AgentError::MaxIterationsExceeded(5))
+            rho_core::RhoError::Agent(rho_core::agent::AgentError::MaxIterationsExceeded(5))
         ),
         "expected MaxIterationsExceeded(5), got: {err}"
     );
@@ -798,18 +780,15 @@ async fn non_retryable_error_propagates_immediately() {
     };
     let mut session = Session::in_memory("mock", None, vec![], "/tmp");
 
-    let err = run_loop(
-        &mut session,
-        "hello",
-        &client,
-        &registry,
-        &config,
-        CancellationToken::new(),
-        &AutoApproveGate,
-        &NopObserver,
-    )
-    .await
-    .unwrap_err();
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
+        cancel: CancellationToken::new(),
+        gate: &AutoApproveGate,
+        observer: &NopObserver,
+    };
+    let err = run_loop(&mut session, "hello", &params).await.unwrap_err();
 
     // Non-retryable errors should propagate immediately without burning the budget.
     assert!(
@@ -882,18 +861,15 @@ async fn retry_budget_exhausted_on_transient_errors() {
     };
     let mut session = Session::in_memory("mock", None, vec![], "/tmp");
 
-    let err = run_loop(
-        &mut session,
-        "hello",
-        &client,
-        &registry,
-        &config,
-        CancellationToken::new(),
-        &AutoApproveGate,
-        &NopObserver,
-    )
-    .await
-    .unwrap_err();
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
+        cancel: CancellationToken::new(),
+        gate: &AutoApproveGate,
+        observer: &NopObserver,
+    };
+    let err = run_loop(&mut session, "hello", &params).await.unwrap_err();
 
     assert!(
         matches!(err, RhoError::RetryBudgetExhausted(2, _)),
@@ -923,18 +899,15 @@ async fn retry_succeeds_after_transient_error() {
     };
     let mut session = Session::in_memory("mock", None, vec![], "/tmp");
 
-    let result = run_loop(
-        &mut session,
-        "hello",
-        &client,
-        &registry,
-        &config,
-        CancellationToken::new(),
-        &AutoApproveGate,
-        &NopObserver,
-    )
-    .await
-    .unwrap();
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
+        cancel: CancellationToken::new(),
+        gate: &AutoApproveGate,
+        observer: &NopObserver,
+    };
+    let result = run_loop(&mut session, "hello", &params).await.unwrap();
 
     assert_eq!(
         result, "recovered",
@@ -1039,23 +1012,20 @@ async fn cancellation_checked_at_top_of_loop() {
     let config = AgentConfig::default();
     let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
 
-    let err = run_loop(
-        &mut session,
-        "do it",
-        &client,
-        &registry,
-        &config,
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
         cancel,
-        &AutoApproveGate,
-        &NopObserver,
-    )
-    .await
-    .unwrap_err();
+        gate: &AutoApproveGate,
+        observer: &NopObserver,
+    };
+    let err = run_loop(&mut session, "do it", &params).await.unwrap_err();
 
     assert!(
         matches!(
             err,
-            rho_core::RhoError::Agent(rho_core::agent::error::AgentError::Cancelled)
+            rho_core::RhoError::Agent(rho_core::agent::AgentError::Cancelled)
         ),
         "expected Cancelled error from early cancellation check, got: {err}"
     );
@@ -1087,23 +1057,20 @@ async fn cancellation_propagates_into_running_tool() {
 
     // The loop should exit with a cancellation error. The token is still
     // set when the loop re-enters Thinking after the tool returned.
-    let err = run_loop(
-        &mut session,
-        "do it",
-        &client,
-        &registry,
-        &config,
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
         cancel,
-        &AutoApproveGate,
-        &NopObserver,
-    )
-    .await
-    .unwrap_err();
+        gate: &AutoApproveGate,
+        observer: &NopObserver,
+    };
+    let err = run_loop(&mut session, "do it", &params).await.unwrap_err();
 
     assert!(
         matches!(
             err,
-            rho_core::RhoError::Agent(rho_core::agent::error::AgentError::Cancelled)
+            rho_core::RhoError::Agent(rho_core::agent::AgentError::Cancelled)
         ),
         "expected cancellation error, got: {err}"
     );
@@ -1269,17 +1236,15 @@ async fn tool_execution_error_still_appends_tool_result() {
     let config = AgentConfig::default();
     let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
 
-    let result = run_loop(
-        &mut session,
-        "trigger the failing tool",
-        &client,
-        &registry,
-        &config,
-        CancellationToken::new(),
-        &AutoApproveGate,
-        &NopObserver,
-    )
-    .await;
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
+        cancel: CancellationToken::new(),
+        gate: &AutoApproveGate,
+        observer: &NopObserver,
+    };
+    let result = run_loop(&mut session, "trigger the failing tool", &params).await;
 
     // The loop should recover: the model sees the error and returns a text reply.
     assert!(
@@ -1321,18 +1286,17 @@ async fn length_truncated_empty_content_returns_explanation() {
     let config = AgentConfig::default();
     let mut session = Session::in_memory("mock", None, vec![], "/tmp");
 
-    let result = run_loop(
-        &mut session,
-        "design streaming support",
-        &client,
-        &registry,
-        &config,
-        CancellationToken::new(),
-        &AutoApproveGate,
-        &NopObserver,
-    )
-    .await
-    .unwrap();
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
+        cancel: CancellationToken::new(),
+        gate: &AutoApproveGate,
+        observer: &NopObserver,
+    };
+    let result = run_loop(&mut session, "design streaming support", &params)
+        .await
+        .unwrap();
 
     // Must NOT be empty — the old bug returned Ok("").
     assert!(
@@ -1364,18 +1328,17 @@ async fn length_truncated_with_partial_content_shows_it() {
     let config = AgentConfig::default();
     let mut session = Session::in_memory("mock", None, vec![], "/tmp");
 
-    let result = run_loop(
-        &mut session,
-        "explain something",
-        &client,
-        &registry,
-        &config,
-        CancellationToken::new(),
-        &AutoApproveGate,
-        &NopObserver,
-    )
-    .await
-    .unwrap();
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
+        cancel: CancellationToken::new(),
+        gate: &AutoApproveGate,
+        observer: &NopObserver,
+    };
+    let result = run_loop(&mut session, "explain something", &params)
+        .await
+        .unwrap();
 
     assert!(
         !result.is_empty(),
@@ -1411,18 +1374,15 @@ async fn length_truncated_empty_everything_shows_no_output() {
     let config = AgentConfig::default();
     let mut session = Session::in_memory("mock", None, vec![], "/tmp");
 
-    let result = run_loop(
-        &mut session,
-        "hello",
-        &client,
-        &registry,
-        &config,
-        CancellationToken::new(),
-        &AutoApproveGate,
-        &NopObserver,
-    )
-    .await
-    .unwrap();
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
+        cancel: CancellationToken::new(),
+        gate: &AutoApproveGate,
+        observer: &NopObserver,
+    };
+    let result = run_loop(&mut session, "hello", &params).await.unwrap();
 
     assert!(
         result.contains("actual response"),
@@ -1443,17 +1403,15 @@ async fn length_truncated_message_persisted_in_session() {
     let config = AgentConfig::default();
     let mut session = Session::in_memory("mock", None, vec![], "/tmp");
 
-    let _ = run_loop(
-        &mut session,
-        "test",
-        &client,
-        &registry,
-        &config,
-        CancellationToken::new(),
-        &AutoApproveGate,
-        &NopObserver,
-    )
-    .await;
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
+        cancel: CancellationToken::new(),
+        gate: &AutoApproveGate,
+        observer: &NopObserver,
+    };
+    let _ = run_loop(&mut session, "test", &params).await;
 
     // The session should contain an assistant message with the partial text.
     let msgs = session.path_messages();
@@ -1500,18 +1458,17 @@ async fn length_truncated_compacts_and_retries() {
     // `send_current` directly to set up the truncated response, then
     // verify the retry behavior. Actually, `run_loop` appends the message
     // itself, so let's use a short message.
-    let result = run_loop(
-        &mut session,
-        "short follow-up",
-        &client,
-        &registry,
-        &config,
-        CancellationToken::new(),
-        &AutoApproveGate,
-        &NopObserver,
-    )
-    .await
-    .unwrap();
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
+        cancel: CancellationToken::new(),
+        gate: &AutoApproveGate,
+        observer: &NopObserver,
+    };
+    let result = run_loop(&mut session, "short follow-up", &params)
+        .await
+        .unwrap();
 
     // After compaction + retry, the model should have produced its answer.
     assert_eq!(

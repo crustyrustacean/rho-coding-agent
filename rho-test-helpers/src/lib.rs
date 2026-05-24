@@ -32,7 +32,7 @@ use rho_core::{
     AgentConfig, CancellationToken, ChatClient, ChatMessage, ChatRequest, ModelResponse, RhoError,
     SandboxRoot, Session, ShellExecutor, ShellOutput, Tool, ToolName, ToolOutcome, ToolRegistry,
     ToolResult, TrustStore,
-    agent::{NopObserver, run_loop},
+    agent::{LoopParams, NopObserver, run_loop},
     approval::ApprovalGate,
     message::ModelToolCall,
     tool::ToolRisk,
@@ -819,18 +819,15 @@ pub async fn single_text_turn(
 ) -> String {
     let client = MockChatClient::new(vec![text_response(response_text)]);
     let config = AgentConfig::default();
-    run_loop(
-        session,
-        user_text,
-        &client,
+    let params = LoopParams {
+        client: &client,
         registry,
-        &config,
-        CancellationToken::new(),
-        &AutoApproveGate,
-        &NopObserver,
-    )
-    .await
-    .unwrap()
+        config: &config,
+        cancel: CancellationToken::new(),
+        gate: &AutoApproveGate,
+        observer: &NopObserver,
+    };
+    run_loop(session, user_text, &params).await.unwrap()
 }
 
 /// Run a single agent loop turn: user sends text, model requests a tool call,
@@ -854,16 +851,13 @@ pub async fn single_tool_turn(
         text_response("done"),
     ]);
     let config = AgentConfig::default();
-    let _ = run_loop(
-        session,
-        user_text,
-        &client,
+    let params = LoopParams {
+        client: &client,
         registry,
-        &config,
-        CancellationToken::new(),
-        &AutoApproveGate,
-        &NopObserver,
-    )
-    .await
-    .unwrap();
+        config: &config,
+        cancel: CancellationToken::new(),
+        gate: &AutoApproveGate,
+        observer: &NopObserver,
+    };
+    let _ = run_loop(session, user_text, &params).await.unwrap();
 }
