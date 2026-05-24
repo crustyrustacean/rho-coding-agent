@@ -32,6 +32,7 @@
 //! ```
 
 pub mod error;
+pub mod openai;
 pub mod retry;
 pub mod service;
 pub mod sse;

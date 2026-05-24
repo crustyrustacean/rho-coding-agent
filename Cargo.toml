@@ -25,6 +25,8 @@ sha2 = "0.11.0"
 toml = { version = "1.0", features = ["parse"] }
 which = "8.0"
 reqwest = { version = "0.13.2", features = ["json", "stream"] }
+tracing = "0.1.44"
+bytes = "1"
 
 [workspace.package]
 version = "0.46.3"

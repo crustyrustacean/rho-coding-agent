@@ -3,10 +3,6 @@
 //! Converts a raw byte stream from `reqwest` into a stream of `data:` payloads.
 //! Used by all three provider modules to consume SSE responses.
 
-use crate::error::ProviderError;
-use futures::stream::Stream;
-use std::pin::Pin;
-
 /// A parsed SSE event containing the data payload.
 #[derive(Debug, Clone)]
 pub struct SseEvent {
