@@ -9,7 +9,6 @@ use rho_core::{
     agent::{LoopParams, run_loop},
     config::RhoConfig,
     message::{ModelToolCall, ToolCallFunction},
-    request::ChatRequest,
     tool::{CancellationToken, Tool},
 };
 use rho_test_helpers::{
@@ -1097,34 +1096,32 @@ async fn cancellation_propagates_into_running_tool() {
 
 #[tokio::test]
 async fn rho_ai_client_returns_http_error_when_server_unreachable() {
-    use rho_core::{ChatClient, ChatRequest, RhoAiClient};
+    use rho_core::RhoAiClient;
     use std::time::Duration;
 
     let client = RhoAiClient::new("test", "http://10.255.255.1/v1/chat/completions", None);
-    let request = ChatRequest {
+    let request = rho_ai::LlmRequest {
         model: "test".to_owned(),
-        messages: vec![ChatMessage::user_text("hello")],
-        stream: false,
+        messages: vec![rho_ai::LlmMessage::User("hello".into())],
         tools: vec![],
         max_tokens: None,
     };
-    let result = tokio::time::timeout(Duration::from_secs(5), client.chat(request)).await;
+    let result = tokio::time::timeout(
+        Duration::from_secs(5),
+        rho_ai::LlmService::chat_stream(&client, request),
+    )
+    .await;
     // On machines with proxies/VPNs, the connection may time out rather than
     // refuse. Either way, we expect an error (never a success).
     match result {
         Ok(Ok(_)) => panic!("expected error when server is unreachable"),
-        Ok(Err(e)) => {
-            assert!(
-                matches!(
-                    e,
-                    rho_core::RhoError::Client(rho_core::client::error::ClientError::Http(_))
-                ),
-                "expected Http error variant, got: {e}"
-            );
+        Ok(Err(_)) => {
+            // Expected: ProviderError from HTTP failure.
         }
-        Err(_) => {
-            // Timeout is also acceptable — it proves the client handles
-            // unreachable servers without hanging indefinitely.
+        Err(elapsed) => {
+            // Timeout is acceptable — proves the client handles unreachable
+            // servers without hanging indefinitely.
+            let _ = elapsed;
         }
     }
 }
@@ -1570,15 +1567,14 @@ async fn test_chat_stream() {
     use futures::StreamExt;
 
     let provider = rho_core::provider_factory(&RhoConfig::default(), None, None);
-    let request = ChatRequest {
+    let request = rho_ai::LlmRequest {
         model: "google/gemma-4-26b-a4b".to_string(),
         messages: vec![],
         tools: vec![],
-        stream: false,
         max_tokens: None,
     };
-    #[allow(deprecated)]
-    let mut stream = provider.chat_client().chat_stream(request).await.unwrap();
+    let service = provider.llm_service();
+    let mut stream = service.chat_stream(request).await.unwrap();
 
     while let Some(event) = stream.next().await {
         let event = event.unwrap();

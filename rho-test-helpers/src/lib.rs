@@ -2,7 +2,7 @@
 //!
 //! # Contents
 //!
-//! - [`MockChatClient`] — a [`ChatClient`] that returns canned [`ModelResponse`]
+//! - [`MockChatClient`] — an [`LlmService`](rho_ai::LlmService) that returns canned [`ModelResponse`]
 //!   values and records every [`ChatRequest`] it receives.
 //! - [`MockShellExecutor`] — a [`ShellExecutor`] that returns canned [`ShellOutput`]
 //!   values and records every command it receives.
@@ -21,7 +21,7 @@
 //!
 //! Add this crate as a `dev-dependency`; it is never published.
 //!
-//! [`ChatClient`]: rho_core::ChatClient
+//! [`LlmService`]: rho_ai::LlmService
 //! [`ChatRequest`]: rho_core::ChatRequest
 //! [`ModelResponse`]: rho_core::ModelResponse
 //! [`ShellExecutor`]: rho_core::ShellExecutor
@@ -30,9 +30,9 @@
 use async_trait::async_trait;
 use rho_ai::{EventStream, LlmRequest, LlmService, ProviderError};
 use rho_core::{
-    AgentConfig, CancellationToken, ChatClient, ChatMessage, ChatRequest, ModelResponse, RhoError,
-    SandboxRoot, Session, ShellExecutor, ShellOutput, Tool, ToolName, ToolOutcome, ToolRegistry,
-    ToolResult, TrustStore,
+    AgentConfig, CancellationToken, ChatMessage, ChatRequest, ModelResponse, RhoError, SandboxRoot,
+    Session, ShellExecutor, ShellOutput, Tool, ToolName, ToolOutcome, ToolRegistry, ToolResult,
+    TrustStore,
     agent::{LoopParams, NopObserver, run_loop},
     approval::ApprovalGate,
     message::ModelToolCall,
@@ -134,7 +134,7 @@ fn convert_error_to_provider(e: RhoError) -> ProviderError {
     }
 }
 
-/// A [`ChatClient`] that returns pre-loaded results in sequence.
+/// An [`LlmService`](rho_ai::LlmService) that returns pre-loaded results in sequence.
 ///
 /// Records every [`ChatRequest`] it receives so tests can inspect the full
 /// conversation that would have been sent to a real model API.
@@ -195,7 +195,7 @@ impl LlmService for MockChatClient {
         &self,
         request: LlmRequest,
     ) -> std::result::Result<EventStream, ProviderError> {
-        // Convert LlmRequest → ChatRequest, delegate to ChatClient impl.
+        // Convert LlmRequest → ChatRequest for internal storage.
         let chat_request = ChatRequest {
             model: request.model,
             messages: request
@@ -266,19 +266,6 @@ impl LlmService for MockChatClient {
                 Err(provider_err)
             }
         }
-    }
-}
-
-#[async_trait]
-impl ChatClient for MockChatClient {
-    async fn chat(&self, request: ChatRequest) -> rho_core::Result<ModelResponse> {
-        self.requests.lock().unwrap().push(request);
-        let mut items = self.items.lock().unwrap();
-        assert!(
-            !items.is_empty(),
-            "MockChatClient: no more canned results — check test setup"
-        );
-        items.remove(0)
     }
 }
 

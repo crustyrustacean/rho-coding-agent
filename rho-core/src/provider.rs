@@ -53,18 +53,6 @@ pub trait Provider: Send + Sync {
     /// Used by callers that need an owned service (e.g. wrapping in a
     /// `CountingService` for benchmarks).
     fn clone_boxed_service(&self) -> Box<dyn rho_ai::LlmService>;
-
-    /// The chat client for this provider (legacy compatibility).
-    ///
-    /// Prefer [`llm_service`](Provider::llm_service) for new code.
-    /// This method exists for backward compatibility with code that still
-    /// uses [`ChatClient`](crate::client::ChatClient).
-    #[deprecated(note = "Use llm_service() instead")]
-    fn chat_client(&self) -> &dyn crate::client::ChatClient;
-
-    /// Return a clone of the underlying chat client (legacy compatibility).
-    #[deprecated(note = "Use clone_boxed_service() instead")]
-    fn clone_boxed_client(&self) -> Box<dyn crate::client::ChatClient>;
 }
 
 /// An OpenAI-compatible provider.
@@ -135,16 +123,6 @@ impl Provider for OpenAiCompatibleProvider {
     }
 
     fn clone_boxed_service(&self) -> Box<dyn rho_ai::LlmService> {
-        Box::new(self.client.clone())
-    }
-
-    #[allow(deprecated)]
-    fn chat_client(&self) -> &dyn crate::client::ChatClient {
-        &self.client
-    }
-
-    #[allow(deprecated)]
-    fn clone_boxed_client(&self) -> Box<dyn crate::client::ChatClient> {
         Box::new(self.client.clone())
     }
 }
@@ -396,16 +374,14 @@ mod tests {
     }
 
     #[test]
-    fn provider_clone_boxed_client() {
+    fn provider_clone_boxed_service() {
         let p = OpenAiCompatibleProvider::new(
             "local",
             "http://localhost:1234/v1/chat/completions",
             Some("key".to_owned()),
         );
-        #[allow(deprecated)]
-        let _cloned = p.clone_boxed_client();
-        // The clone is a Box<dyn ChatClient> — we can't inspect it
-        // further, but we verified it doesn't panic.
+        let _cloned = p.clone_boxed_service();
+        // The clone is a Box<dyn LlmService> — verified it doesn't panic.
     }
 
     // ── ProviderRegistry ─────────────────────────────────────────────────────
@@ -524,16 +500,14 @@ mod tests {
 
                 // Primary uses override key.
                 let primary = registry.default();
-                #[allow(deprecated)]
-                let client = primary.clone_boxed_client();
+                let client = primary.clone_boxed_service();
 
                 // Secondary uses its own configured key.
                 let secondary = registry.get("secondary").unwrap();
-                #[allow(deprecated)]
-                let _sec_client = secondary.clone_boxed_client();
+                let _sec_client = secondary.clone_boxed_service();
 
                 // We can't inspect the key directly, but we verified
-                // construction didn't panic and both clients were created.
+                // construction didn't panic and both services were created.
                 let _ = client;
             },
         );

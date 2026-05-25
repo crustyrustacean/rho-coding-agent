@@ -14,7 +14,7 @@
 //! | [`request`] | [`ChatRequest`] |
 //! | [`response`] | [`ModelResponse`], [`FinishReason`], etc. |
 //! | [`tool`] | [`Tool`] trait, [`ToolRegistry`], [`ToolRisk`], [`ToolResult`], [`CancellationToken`] |
-//! | [`client`] | [`ChatClient`] trait, [`RhoAiClient`] |
+//! | [`client`] | [`RhoAiClient`] — LLM service client |
 //! | [`context`] | [`ContextManager`] trait, [`SlidingWindowContextManager`], [`TokenBudget`] |
 //! | [`conversation`] | [`AssistantResponse`] |
 //! | [`session`] | [`Entry`], [`EntryPayload`], [`EntryResolution`], [`CompactionSummary`], [`ExtensionEntry`], [`ExtensionMessageEntry`] |
@@ -49,7 +49,7 @@
 //! [`ToolRisk`]: tool::ToolRisk
 //! [`ToolResult`]: tool::ToolResult
 //! [`CancellationToken`]: tool::CancellationToken
-//! [`ChatClient`]: client::ChatClient
+//!
 //! [`RhoAiClient`]: client::RhoAiClient
 //! [`ContextManager`]: context::ContextManager
 //! [`SlidingWindowContextManager`]: context::SlidingWindowContextManager
@@ -95,8 +95,7 @@ pub use approval::{
     ApprovalGate, ApprovalPolicy, AutoApprovePolicy, ConfigApprovalPolicy, DefaultApprovalPolicy,
 };
 pub use client::{
-    ChatClient, ModelInfo, ModelList, ModelResponseStream, RhoAiClient, client_factory,
-    is_local_endpoint, resolve_api_key,
+    ModelInfo, ModelList, RhoAiClient, client_factory, is_local_endpoint, resolve_api_key,
 };
 pub use config::{
     AgentLoopConfig, ApprovalAction, ApprovalConfig, ConfigLoadError, ConfigLoader, ContextConfig,
