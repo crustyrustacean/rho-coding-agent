@@ -742,42 +742,15 @@ impl LoopContext<'_> {
 
     /// Execute a single streaming request, consume the stream, and build an
     /// [`AssistantResponse`].
-    #[allow(clippy::too_many_lines)]
     async fn send_streaming(&mut self) -> Result<AssistantResponse> {
-        use crate::message::ContentBlock;
-        use rho_ai::ToolDefinition;
+        let llm_request = build_llm_request(self.session);
 
-        let fitted = self.session.path_messages();
         info!(
             "creating streaming request: model={}, messages={}, tools={}",
-            self.session.model,
-            fitted.len(),
-            self.session.tools.len()
+            llm_request.model,
+            llm_request.messages.len(),
+            llm_request.tools.len()
         );
-
-        let llm_messages: Vec<rho_ai::LlmMessage> =
-            fitted.iter().map(ChatMessage::to_llm_message).collect();
-
-        let tools: Vec<ToolDefinition> = self
-            .session
-            .tools
-            .iter()
-            .map(|t| {
-                ToolDefinition::new(
-                    t.function.name.clone(),
-                    t.function.description.clone(),
-                    t.function.parameters.clone(),
-                )
-            })
-            .collect();
-
-        let llm_request = rho_ai::LlmRequest {
-            model: self.session.model.clone(),
-            messages: llm_messages,
-            tools,
-            max_tokens: Some(self.session.token_budget().completion_reserve),
-        };
-
         debug!(
             "request: model={}, messages={}, tools={}",
             llm_request.model,
@@ -794,92 +767,11 @@ impl LoopContext<'_> {
                 crate::error::RhoError::Client(crate::client::error::ClientError::from(e))
             })?;
 
-        let mut events: Vec<rho_ai::StreamEvent> = Vec::new();
-        let mut stream = std::pin::pin!(event_stream);
-        while let Some(result) = stream.next().await {
-            match result {
-                Ok(event) => {
-                    // Forward deltas to the observer as they arrive.
-                    match &event {
-                        rho_ai::StreamEvent::Text(delta) => {
-                            self.params.observer.on_text_delta(delta);
-                        }
-                        rho_ai::StreamEvent::Reasoning(delta) => {
-                            self.params.observer.on_reasoning_delta(delta);
-                        }
-                        _ => {}
-                    }
-                    debug!("Received stream event: {:?}", event);
-                    events.push(event);
-                }
-                Err(e) => {
-                    warn!("Stream event error: {e}");
-                    return Err(crate::error::RhoError::Client(
-                        crate::client::error::ClientError::from(e),
-                    ));
-                }
-            }
-        }
+        let events = consume_stream(event_stream, self.params.observer).await?;
         debug!("Stream ended with {} events", events.len());
 
         let acc = rho_ai::StreamEvent::accumulate(&events);
-
-        match &acc.stop_reason {
-            rho_ai::StopReason::ToolUse => {
-                let tool_calls = build_tool_calls_from_accumulated(&acc.tool_calls)?;
-                // Persist assistant message with tool_calls BEFORE returning.
-                self.session
-                    .append_assistant_message(crate::ChatMessage::Assistant {
-                        content: if acc.text.is_empty() {
-                            vec![]
-                        } else {
-                            vec![ContentBlock::Text {
-                                text: acc.text.clone(),
-                            }]
-                        },
-                        tool_calls: tool_calls.clone(),
-                    });
-                Ok(AssistantResponse::ToolCalls(tool_calls))
-            }
-            rho_ai::StopReason::Length => {
-                self.session
-                    .append_assistant_message(crate::ChatMessage::assistant_text(&acc.text));
-                Ok(AssistantResponse::LengthTruncated {
-                    content: acc.text.clone(),
-                    reasoning_content: acc.reasoning.clone(),
-                })
-            }
-            _ => {
-                let text = acc.text.clone();
-                let reasoning = acc.reasoning.clone();
-
-                // llama.cpp sometimes reports "stop" instead of "length"
-                // when the model exhausts its completion budget and produces
-                // nothing. Route to LengthTruncated so the agent loop can
-                // attempt compaction and retry. ContentFilter is excluded
-                // because retrying a filtered response is futile.
-                if text.is_empty() && !matches!(acc.stop_reason, rho_ai::StopReason::ContentFilter)
-                {
-                    warn!(
-                        finish_reason = ?acc.stop_reason,
-                        "model returned empty content — treating as length truncation"
-                    );
-                    self.session
-                        .append_assistant_message(crate::ChatMessage::assistant_text(&text));
-                    return Ok(AssistantResponse::LengthTruncated {
-                        content: text,
-                        reasoning_content: reasoning,
-                    });
-                }
-
-                self.session
-                    .append_assistant_message(crate::ChatMessage::assistant_text(&text));
-                Ok(AssistantResponse::Message {
-                    text: acc.text,
-                    reasoning_content: acc.reasoning,
-                })
-            }
-        }
+        route_response(&acc, self.session)
     }
 }
 
@@ -928,6 +820,38 @@ pub async fn run_loop(
 
 // ── Free helpers ──────────────────────────────────────────────────────────────
 
+/// Build an [`LlmRequest`] from the current session state.
+///
+/// Converts session messages to [`LlmMessage`] via [`ChatMessage::to_llm_message`],
+/// maps tool schemas to [`ToolDefinition`](rho_ai::ToolDefinition), and sets
+/// `max_tokens` from the session's token budget.
+fn build_llm_request(session: &Session) -> rho_ai::LlmRequest {
+    use rho_ai::ToolDefinition;
+
+    let fitted = session.path_messages();
+    let llm_messages: Vec<rho_ai::LlmMessage> =
+        fitted.iter().map(ChatMessage::to_llm_message).collect();
+
+    let tools: Vec<ToolDefinition> = session
+        .tools
+        .iter()
+        .map(|t| {
+            ToolDefinition::new(
+                t.function.name.clone(),
+                t.function.description.clone(),
+                t.function.parameters.clone(),
+            )
+        })
+        .collect();
+
+    rho_ai::LlmRequest {
+        model: session.model.clone(),
+        messages: llm_messages,
+        tools,
+        max_tokens: Some(session.token_budget().completion_reserve),
+    }
+}
+
 /// Build typed tool calls from streaming accumulation.
 fn build_tool_calls_from_accumulated(
     tc_list: &[rho_ai::AccumulatedToolCall],
@@ -956,11 +880,115 @@ fn build_tool_calls_from_accumulated(
     Ok(tool_calls)
 }
 
+// ── Stream consumption ────────────────────────────────────────────────────────
+
+/// Consume an event stream, forwarding text/reasoning deltas to the observer
+/// and collecting all events into a vector.
+///
+/// Returns `Err` on the first stream error, converting the
+/// [`ProviderError`](rho_ai::ProviderError) into a [`RhoError`].
+async fn consume_stream(
+    event_stream: rho_ai::EventStream,
+    observer: &dyn AgentObserver,
+) -> Result<Vec<rho_ai::StreamEvent>> {
+    let mut events: Vec<rho_ai::StreamEvent> = Vec::new();
+    let mut stream = std::pin::pin!(event_stream);
+    while let Some(result) = stream.next().await {
+        match result {
+            Ok(event) => {
+                match &event {
+                    rho_ai::StreamEvent::Text(delta) => observer.on_text_delta(delta),
+                    rho_ai::StreamEvent::Reasoning(delta) => {
+                        observer.on_reasoning_delta(delta);
+                    }
+                    _ => {}
+                }
+                events.push(event);
+            }
+            Err(e) => {
+                return Err(RhoError::Client(crate::client::error::ClientError::from(e)));
+            }
+        }
+    }
+    Ok(events)
+}
+
+// ── Response routing ───────────────────────────────────────────────────────────
+
+/// Convert an accumulated LLM response into an [`AssistantResponse`] and
+/// persist the assistant message to the session.
+///
+/// Handles three stop-reason paths:
+/// - **`ToolUse`**: builds typed tool calls and persists them.
+/// - **`Length`**: persists partial text and returns [`LengthTruncated`].
+/// - **Other** (including `EndTurn`, `ContentFilter`): returns a text message,
+///   but routes empty responses to [`LengthTruncated`] (llama.cpp workaround).
+///
+/// [`LengthTruncated`]: AssistantResponse::LengthTruncated
+fn route_response(
+    acc: &rho_ai::AccumulatedResponse,
+    session: &mut Session,
+) -> Result<AssistantResponse> {
+    use crate::message::ContentBlock;
+
+    match &acc.stop_reason {
+        rho_ai::StopReason::ToolUse => {
+            let tool_calls = build_tool_calls_from_accumulated(&acc.tool_calls)?;
+            session.append_assistant_message(crate::ChatMessage::Assistant {
+                content: if acc.text.is_empty() {
+                    vec![]
+                } else {
+                    vec![ContentBlock::Text {
+                        text: acc.text.clone(),
+                    }]
+                },
+                tool_calls: tool_calls.clone(),
+            });
+            Ok(AssistantResponse::ToolCalls(tool_calls))
+        }
+        rho_ai::StopReason::Length => {
+            session.append_assistant_message(crate::ChatMessage::assistant_text(&acc.text));
+            Ok(AssistantResponse::LengthTruncated {
+                content: acc.text.clone(),
+                reasoning_content: acc.reasoning.clone(),
+            })
+        }
+        _ => {
+            let text = acc.text.clone();
+            let reasoning = acc.reasoning.clone();
+
+            // llama.cpp sometimes reports "stop" instead of "length"
+            // when the model exhausts its completion budget and produces
+            // nothing. Route to LengthTruncated so the agent loop can
+            // attempt compaction and retry. ContentFilter is excluded
+            // because retrying a filtered response is futile.
+            if text.is_empty() && !matches!(acc.stop_reason, rho_ai::StopReason::ContentFilter) {
+                session.append_assistant_message(crate::ChatMessage::assistant_text(&text));
+                return Ok(AssistantResponse::LengthTruncated {
+                    content: text,
+                    reasoning_content: reasoning,
+                });
+            }
+
+            session.append_assistant_message(crate::ChatMessage::assistant_text(&text));
+            Ok(AssistantResponse::Message {
+                text: acc.text.clone(),
+                reasoning_content: acc.reasoning.clone(),
+            })
+        }
+    }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::TokenBudget;
+    use crate::schema::ToolSchema;
+    use std::sync::{Arc, Mutex};
+
+    // ── Error type tests ──────────────────────────────────────────────────
 
     #[test]
     fn test_max_iterations_exceeded() {
@@ -1020,5 +1048,339 @@ mod tests {
         let debug_str = format!("{error:?}");
         assert!(debug_str.contains("ProtocolViolation"));
         assert!(debug_str.contains("debug test"));
+    }
+
+    // ── build_llm_request tests ──────────────────────────────────────────
+
+    fn test_session(system: Option<&str>, user_msgs: &[&str], tools: Vec<ToolSchema>) -> Session {
+        let mut session = Session::in_memory("test-model", system, tools, "/tmp");
+        for msg in user_msgs {
+            session.append_user_message(msg);
+        }
+        session
+    }
+
+    #[test]
+    fn build_llm_request_includes_model() {
+        let session = test_session(None, &["hello"], vec![]);
+        let req = build_llm_request(&session);
+        assert_eq!(req.model, "test-model");
+    }
+
+    #[test]
+    fn build_llm_request_includes_messages() {
+        let session = test_session(Some("Be helpful."), &["hello"], vec![]);
+        let req = build_llm_request(&session);
+        // System + User = 2 messages.
+        assert_eq!(req.messages.len(), 2);
+        assert!(matches!(&req.messages[0], rho_ai::LlmMessage::System(t) if t == "Be helpful."));
+        assert!(matches!(&req.messages[1], rho_ai::LlmMessage::User(t) if t == "hello"));
+    }
+
+    #[test]
+    fn build_llm_request_includes_tools() {
+        let tools = vec![ToolSchema::function(
+            "read_file",
+            "Read a file",
+            serde_json::json!({"type": "object"}),
+        )];
+        let session = test_session(None, &[], tools);
+        let req = build_llm_request(&session);
+        assert_eq!(req.tools.len(), 1);
+        assert_eq!(req.tools[0].name, "read_file");
+    }
+
+    #[test]
+    fn build_llm_request_includes_max_tokens() {
+        let session = test_session(None, &["hello"], vec![])
+            .with_token_budget(TokenBudget::with_reserve(4096, 2048));
+        let req = build_llm_request(&session);
+        assert_eq!(req.max_tokens, Some(2048));
+    }
+
+    // ── consume_stream tests ─────────────────────────────────────────────
+
+    /// An observer that records all text and reasoning deltas.
+    #[derive(Default)]
+    struct RecordingObserver {
+        text_deltas: Arc<Mutex<Vec<String>>>,
+        reasoning_deltas: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl AgentObserver for RecordingObserver {
+        fn on_text_delta(&self, delta: &str) {
+            self.text_deltas.lock().unwrap().push(delta.to_owned());
+        }
+        fn on_reasoning_delta(&self, delta: &str) {
+            self.reasoning_deltas.lock().unwrap().push(delta.to_owned());
+        }
+    }
+
+    #[tokio::test]
+    async fn consume_stream_collects_events() {
+        let events = vec![
+            Ok(rho_ai::StreamEvent::Text("hello".into())),
+            Ok(rho_ai::StreamEvent::Text(" world".into())),
+            Ok(rho_ai::StreamEvent::Done {
+                reason: rho_ai::StopReason::EndTurn,
+                usage: rho_ai::StreamUsage::default(),
+            }),
+        ];
+        let stream: rho_ai::EventStream = Box::pin(futures::stream::iter(events));
+        let observer = RecordingObserver::default();
+        let collected = consume_stream(stream, &observer).await.unwrap();
+        assert_eq!(collected.len(), 3);
+        assert_eq!(
+            *observer.text_deltas.lock().unwrap(),
+            vec!["hello", " world"]
+        );
+    }
+
+    #[tokio::test]
+    async fn consume_stream_forwards_reasoning_deltas() {
+        let events = vec![
+            Ok(rho_ai::StreamEvent::Reasoning("thinking".into())),
+            Ok(rho_ai::StreamEvent::Done {
+                reason: rho_ai::StopReason::EndTurn,
+                usage: rho_ai::StreamUsage::default(),
+            }),
+        ];
+        let stream: rho_ai::EventStream = Box::pin(futures::stream::iter(events));
+        let observer = RecordingObserver::default();
+        let _ = consume_stream(stream, &observer).await.unwrap();
+        assert_eq!(*observer.reasoning_deltas.lock().unwrap(), vec!["thinking"]);
+    }
+
+    #[tokio::test]
+    async fn consume_stream_propagates_error() {
+        let events: Vec<std::result::Result<rho_ai::StreamEvent, rho_ai::ProviderError>> =
+            vec![Err(rho_ai::ProviderError::Sse {
+                message: "boom".into(),
+            })];
+        let stream: rho_ai::EventStream = Box::pin(futures::stream::iter(events));
+        let observer = RecordingObserver::default();
+        let result = consume_stream(stream, &observer).await;
+        assert!(result.is_err());
+    }
+
+    // ── route_response tests ─────────────────────────────────────────────
+
+    #[test]
+    fn route_response_text_message() {
+        let mut session = test_session(None, &[], vec![]);
+        let acc = rho_ai::AccumulatedResponse {
+            text: "hello".into(),
+            reasoning: String::new(),
+            tool_calls: vec![],
+            stop_reason: rho_ai::StopReason::EndTurn,
+            usage: rho_ai::StreamUsage::default(),
+        };
+        let response = route_response(&acc, &mut session).unwrap();
+        match response {
+            AssistantResponse::Message {
+                text,
+                reasoning_content,
+            } => {
+                assert_eq!(text, "hello");
+                assert!(reasoning_content.is_empty());
+            }
+            _ => panic!("expected Message, got {response:?}"),
+        }
+    }
+
+    #[test]
+    fn route_response_text_with_reasoning() {
+        let mut session = test_session(None, &[], vec![]);
+        let acc = rho_ai::AccumulatedResponse {
+            text: "done".into(),
+            reasoning: "I thought about it".into(),
+            tool_calls: vec![],
+            stop_reason: rho_ai::StopReason::EndTurn,
+            usage: rho_ai::StreamUsage::default(),
+        };
+        let response = route_response(&acc, &mut session).unwrap();
+        match response {
+            AssistantResponse::Message {
+                text,
+                reasoning_content,
+            } => {
+                assert_eq!(text, "done");
+                assert_eq!(reasoning_content, "I thought about it");
+            }
+            _ => panic!("expected Message, got {response:?}"),
+        }
+    }
+
+    #[test]
+    fn route_response_tool_calls() {
+        let mut session = test_session(None, &[], vec![]);
+        let acc = rho_ai::AccumulatedResponse {
+            text: String::new(),
+            reasoning: String::new(),
+            tool_calls: vec![rho_ai::AccumulatedToolCall {
+                id: Some("call_1".into()),
+                function_name: Some("read_file".into()),
+                arguments: r#"{\"path\":\"a.rs\"}"#.into(),
+            }],
+            stop_reason: rho_ai::StopReason::ToolUse,
+            usage: rho_ai::StreamUsage::default(),
+        };
+        let response = route_response(&acc, &mut session).unwrap();
+        match response {
+            AssistantResponse::ToolCalls(calls) => {
+                assert_eq!(calls.len(), 1);
+                assert_eq!(calls[0].id.to_string(), "call_1");
+                assert_eq!(calls[0].function.name.to_string(), "read_file");
+            }
+            _ => panic!("expected ToolCalls, got {response:?}"),
+        }
+    }
+
+    #[test]
+    fn route_response_length_truncated() {
+        let mut session = test_session(None, &[], vec![]);
+        let acc = rho_ai::AccumulatedResponse {
+            text: "partial".into(),
+            reasoning: "thinking".into(),
+            tool_calls: vec![],
+            stop_reason: rho_ai::StopReason::Length,
+            usage: rho_ai::StreamUsage::default(),
+        };
+        let response = route_response(&acc, &mut session).unwrap();
+        match response {
+            AssistantResponse::LengthTruncated {
+                content,
+                reasoning_content,
+            } => {
+                assert_eq!(content, "partial");
+                assert_eq!(reasoning_content, "thinking");
+            }
+            _ => panic!("expected LengthTruncated, got {response:?}"),
+        }
+    }
+
+    #[test]
+    fn route_response_empty_end_turn_routes_to_length_truncated() {
+        // llama.cpp workaround: empty response with stop reason should be
+        // treated as length truncation.
+        let mut session = test_session(None, &[], vec![]);
+        let acc = rho_ai::AccumulatedResponse {
+            text: String::new(),
+            reasoning: String::new(),
+            tool_calls: vec![],
+            stop_reason: rho_ai::StopReason::EndTurn,
+            usage: rho_ai::StreamUsage::default(),
+        };
+        let response = route_response(&acc, &mut session).unwrap();
+        assert!(
+            matches!(response, AssistantResponse::LengthTruncated { .. }),
+            "empty EndTurn should route to LengthTruncated, got {response:?}"
+        );
+    }
+
+    #[test]
+    fn route_response_empty_content_filter_stays_as_message() {
+        // ContentFilter with empty text should NOT be treated as truncation.
+        let mut session = test_session(None, &[], vec![]);
+        let acc = rho_ai::AccumulatedResponse {
+            text: String::new(),
+            reasoning: String::new(),
+            tool_calls: vec![],
+            stop_reason: rho_ai::StopReason::ContentFilter,
+            usage: rho_ai::StreamUsage::default(),
+        };
+        let response = route_response(&acc, &mut session).unwrap();
+        assert!(
+            matches!(response, AssistantResponse::Message { .. }),
+            "empty ContentFilter should stay as Message, got {response:?}"
+        );
+    }
+
+    #[test]
+    fn route_response_persists_assistant_message_for_text() {
+        let mut session = test_session(None, &[], vec![]);
+        let acc = rho_ai::AccumulatedResponse {
+            text: "reply".into(),
+            reasoning: String::new(),
+            tool_calls: vec![],
+            stop_reason: rho_ai::StopReason::EndTurn,
+            usage: rho_ai::StreamUsage::default(),
+        };
+        let _ = route_response(&acc, &mut session).unwrap();
+        // The session should have an assistant message persisted.
+        let msgs = session.path_messages();
+        let last = msgs.last().expect("should have a message");
+        assert!(
+            matches!(last, ChatMessage::Assistant { .. }),
+            "expected Assistant message, got {last:?}"
+        );
+    }
+
+    #[test]
+    fn route_response_persists_tool_calls() {
+        let mut session = test_session(None, &[], vec![]);
+        let acc = rho_ai::AccumulatedResponse {
+            text: String::new(),
+            reasoning: String::new(),
+            tool_calls: vec![rho_ai::AccumulatedToolCall {
+                id: Some("c1".into()),
+                function_name: Some("edit_file".into()),
+                arguments: "{}".into(),
+            }],
+            stop_reason: rho_ai::StopReason::ToolUse,
+            usage: rho_ai::StreamUsage::default(),
+        };
+        let _ = route_response(&acc, &mut session).unwrap();
+        let msgs = session.path_messages();
+        let last = msgs.last().expect("should have a message");
+        match last {
+            ChatMessage::Assistant { tool_calls, .. } => {
+                assert_eq!(tool_calls.len(), 1);
+            }
+            _ => panic!("expected Assistant with tool_calls, got {last:?}"),
+        }
+    }
+
+    // ── build_tool_calls_from_accumulated tests ──────────────────────────
+
+    #[test]
+    fn build_tool_calls_from_accumulated_success() {
+        let acc = vec![rho_ai::AccumulatedToolCall {
+            id: Some("call_abc".into()),
+            function_name: Some("read_file".into()),
+            arguments: r#"{\"path\":\"x.rs\"}"#.into(),
+        }];
+        let calls = build_tool_calls_from_accumulated(&acc).unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id.to_string(), "call_abc");
+        assert_eq!(calls[0].function.name.to_string(), "read_file");
+    }
+
+    #[test]
+    fn build_tool_calls_from_accumulated_missing_id() {
+        let acc = vec![rho_ai::AccumulatedToolCall {
+            id: None,
+            function_name: Some("read_file".into()),
+            arguments: String::new(),
+        }];
+        let result = build_tool_calls_from_accumulated(&acc);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn build_tool_calls_from_accumulated_missing_name() {
+        let acc = vec![rho_ai::AccumulatedToolCall {
+            id: Some("call_1".into()),
+            function_name: None,
+            arguments: String::new(),
+        }];
+        let result = build_tool_calls_from_accumulated(&acc);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn build_tool_calls_from_accumulated_empty() {
+        let calls = build_tool_calls_from_accumulated(&[]).unwrap();
+        assert!(calls.is_empty());
     }
 }
