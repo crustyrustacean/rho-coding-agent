@@ -1444,7 +1444,7 @@ dependencies = [
 
 [[package]]
 name = "rho"
-version = "0.47.0"
+version = "0.47.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1458,7 +1458,7 @@ dependencies = [
 
 [[package]]
 name = "rho-ai"
-version = "0.47.0"
+version = "0.47.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1473,7 +1473,7 @@ dependencies = [
 
 [[package]]
 name = "rho-bench"
-version = "0.47.0"
+version = "0.47.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1495,7 +1495,7 @@ dependencies = [
 
 [[package]]
 name = "rho-core"
-version = "0.47.0"
+version = "0.47.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1520,7 +1520,7 @@ dependencies = [
 
 [[package]]
 name = "rho-eval"
-version = "0.47.0"
+version = "0.47.1"
 dependencies = [
  "chrono",
  "rho-core",
@@ -1532,7 +1532,7 @@ dependencies = [
 
 [[package]]
 name = "rho-highlight"
-version = "0.47.0"
+version = "0.47.1"
 dependencies = [
  "rho-core",
  "rho-test-helpers",
@@ -1543,7 +1543,7 @@ dependencies = [
 
 [[package]]
 name = "rho-test-helpers"
-version = "0.47.0"
+version = "0.47.1"
 dependencies = [
  "async-trait",
  "futures",
@@ -1557,7 +1557,7 @@ dependencies = [
 
 [[package]]
 name = "rho-tools"
-version = "0.47.0"
+version = "0.47.1"
 dependencies = [
  "async-trait",
  "dunce",
@@ -2989,7 +2989,7 @@ checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 
 [[package]]
 name = "xtask"
-version = "0.47.0"
+version = "0.47.1"
 dependencies = [
  "anyhow",
  "clap",

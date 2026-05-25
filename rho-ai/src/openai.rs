@@ -242,8 +242,14 @@ fn build_tools(tools: Vec<ToolDefinition>) -> Vec<WireTool> {
 }
 
 /// Build the URL for the chat completions endpoint.
+///
+/// Accepts either a base URL (e.g. `https://api.openai.com/v1`) or a full
+/// completions URL (e.g. `.../v1/chat/completions`).  In the latter case the
+/// redundant suffix is stripped so callers don't accidentally double up.
 fn completions_url(base_url: &str) -> String {
-    let base = base_url.trim_end_matches('/');
+    let base = base_url
+        .trim_end_matches('/')
+        .trim_end_matches("/chat/completions");
     format!("{base}/chat/completions")
 }
 
@@ -735,6 +741,22 @@ mod tests {
     fn completions_url_strips_trailing_slash() {
         assert_eq!(
             completions_url("https://api.openai.com/v1/"),
+            "https://api.openai.com/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn completions_url_idempotent_on_full_path() {
+        assert_eq!(
+            completions_url("https://api.openai.com/v1/chat/completions"),
+            "https://api.openai.com/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn completions_url_idempotent_on_full_path_with_trailing_slash() {
+        assert_eq!(
+            completions_url("https://api.openai.com/v1/chat/completions/"),
             "https://api.openai.com/v1/chat/completions"
         );
     }

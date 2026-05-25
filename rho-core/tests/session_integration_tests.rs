@@ -17,8 +17,8 @@
 
 use rho_core::{
     AgentConfig, ChatMessage, ContentBlock, ContextManager, MechanicalCompactionStrategy,
-    ModelResponse, NopObserver, Session, SlidingWindowContextManager, TokenBudget, ToolCallId,
-    ToolName, ToolResult,
+    NopObserver, Session, SlidingWindowContextManager, TokenBudget, ToolCallId, ToolName,
+    ToolResult,
     agent::{LoopParams, run_loop},
     message::{ModelToolCall, ToolCallFunction},
     session::{
@@ -28,41 +28,10 @@ use rho_core::{
 };
 use rho_test_helpers::{
     AutoApproveGate, MockChatClient, assert_no_orphan_tool_results, fixed_registry,
-    in_memory_session, single_text_turn, single_tool_turn, text_response, tool_call_response,
+    in_memory_session, single_text_turn, single_tool_turn, text_events, tool_call_events,
 };
 use std::collections::BTreeMap;
 use std::time::Duration;
-
-// ── Helpers ────────────────────────────────────────────────────────────────────
-
-/// Response builder with known prompt_tokens for calibration tests.
-fn response_with_usage(text: &str, prompt_tokens: usize) -> ModelResponse {
-    let json = serde_json::json!({
-        "id": "mock-id",
-        "object": "chat.completion",
-        "created": 0,
-        "model": "mock-model",
-        "choices": [{
-            "index": 0,
-            "message": {
-                "role": "assistant",
-                "content": text,
-                "reasoning_content": "",
-                "tool_calls": []
-            },
-            "logprobs": null,
-            "finish_reason": "stop"
-        }],
-        "usage": {
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": 5,
-            "total_tokens": prompt_tokens + 5
-        },
-        "stats": {},
-        "system_fingerprint": ""
-    });
-    serde_json::from_value(json).expect("response_with_usage")
-}
 
 // ── Task 16: Phase 2.5–specific tests ─────────────────────────────────────────
 
@@ -319,8 +288,8 @@ async fn branching_old_branch_unreachable_from_leaf() {
 
     // Turn 1: user + assistant
     let client = MockChatClient::new(vec![
-        tool_call_response("call_1", "echo", "{}"),
-        text_response("reply A"),
+        tool_call_events("call_1", "echo", "{}"),
+        text_events("reply A"),
     ]);
     let config = AgentConfig::default();
     let params = LoopParams {
@@ -493,8 +462,8 @@ fn extension_entries_version_bump_clean_break() {
 #[tokio::test]
 async fn amnesia_reproducer_secret_survives() {
     let client = MockChatClient::new(vec![
-        tool_call_response("call_1", "read_file", r#"{"path":"secret.txt"}"#),
-        text_response(
+        tool_call_events("call_1", "read_file", r#"{"path":"secret.txt"}"#),
+        text_events(
             "The secret in the file is: PLUM-BLOSSOM-8834. \
              I found it by reading secret.txt.",
         ),
@@ -761,8 +730,8 @@ async fn long_session_pressure_coherent_after_compaction() {
 #[tokio::test]
 async fn compact_and_resume_model_response_appended_after_compaction() {
     let client = MockChatClient::new(vec![
-        tool_call_response("call_1", "read_file", r#"{"path":"big.rs"}"#),
-        text_response("the answer is 42"),
+        tool_call_events("call_1", "read_file", r#"{"path":"big.rs"}"#),
+        text_events("the answer is 42"),
     ]);
 
     let registry = fixed_registry("read_file", "x".repeat(5000), rho_core::ToolRisk::Read);
@@ -890,14 +859,14 @@ async fn compact_and_resume_original_entries_still_accessible() {
 /// Multiple tool calls in one turn + compaction preserves turn integrity.
 #[tokio::test]
 async fn multi_tool_call_compaction_preserves_integrity() {
-    use rho_test_helpers::multi_tool_call_response;
+    use rho_test_helpers::multi_tool_call_events;
 
     let client = MockChatClient::new(vec![
-        multi_tool_call_response(vec![
+        multi_tool_call_events(vec![
             ("call_a", "read_file", r#"{"path":"a.rs"}"#),
             ("call_b", "read_file", r#"{"path":"b.rs"}"#),
         ]),
-        text_response("done with both files"),
+        text_events("done with both files"),
     ]);
 
     let registry = fixed_registry(
@@ -924,7 +893,7 @@ async fn multi_tool_call_compaction_preserves_integrity() {
 
     // Add more turns to force pressure
     for i in 0..10 {
-        let c = MockChatClient::new(vec![text_response(format!("reply {i}"))]);
+        let c = MockChatClient::new(vec![text_events(format!("reply {i}"))]);
         let params = LoopParams {
             client: &c,
             registry: &registry,
@@ -949,10 +918,18 @@ async fn multi_tool_call_compaction_preserves_integrity() {
 /// true ratio by the third round-trip.
 #[tokio::test]
 async fn estimator_converges_within_20_percent_by_third_round_trip() {
-    let actual_tokens_per_round = 1000_usize;
+    let actual_tokens_per_round = 1000_u64;
 
-    let responses: Vec<ModelResponse> = (0..5)
-        .map(|_| response_with_usage("reply", actual_tokens_per_round))
+    let responses: Vec<Vec<rho_ai::StreamEvent>> = (0..5)
+        .map(|_| {
+            vec![
+                rho_ai::StreamEvent::Text("reply".to_string()),
+                rho_ai::StreamEvent::Done {
+                    reason: rho_ai::StopReason::EndTurn,
+                    usage: rho_ai::StreamUsage::new(actual_tokens_per_round, 0),
+                },
+            ]
+        })
         .collect();
 
     let client = MockChatClient::new(responses);
@@ -1131,8 +1108,8 @@ async fn system_message_pinned_via_session_api() {
 #[tokio::test]
 async fn tool_call_turn_integrity_after_branch() {
     let client = MockChatClient::new(vec![
-        tool_call_response("call_1", "read_file", r#"{"path":"a.rs"}"#),
-        text_response("done with A"),
+        tool_call_events("call_1", "read_file", r#"{"path":"a.rs"}"#),
+        text_events("done with A"),
     ]);
 
     let registry = fixed_registry(
@@ -1168,7 +1145,7 @@ async fn tool_call_turn_integrity_after_branch() {
 
     // Add more turns on the new branch
     for i in 0..5 {
-        let c = MockChatClient::new(vec![text_response(format!("reply {i}"))]);
+        let c = MockChatClient::new(vec![text_events(format!("reply {i}"))]);
         let params = LoopParams {
             client: &c,
             registry: &registry,

@@ -13,7 +13,7 @@ use rho_core::{
 };
 use rho_test_helpers::{
     AutoApproveGate, AutoDenyGate, FixedResponseTool, MockChatClient, empty_trust_store,
-    tempdir_with_sandbox, text_response, tool_call_response,
+    tempdir_with_sandbox, text_events, tool_call_events,
 };
 use std::io::Cursor;
 
@@ -41,8 +41,8 @@ fn destructive_tools_require_approval() {
 async fn denied_tool_gets_denial_message_fed_back() {
     // Model requests a destructive tool; user denies it; model then says "ok".
     let client = MockChatClient::new(vec![
-        tool_call_response("call_1", "bang", "{}"),
-        text_response("understood, skipping"),
+        tool_call_events("call_1", "bang", "{}"),
+        text_events("understood, skipping"),
     ]);
 
     let mut registry = ToolRegistry::new();
@@ -76,15 +76,13 @@ async fn denied_tool_gets_denial_message_fed_back() {
     let denial_msg = second
         .messages
         .iter()
-        .find(|m| matches!(m, ChatMessage::Tool { .. }));
+        .find(|m| matches!(m, rho_ai::LlmMessage::Tool { .. }));
     assert!(
         denial_msg.is_some(),
         "expected Tool denial message in history"
     );
-    if let Some(ChatMessage::Tool { content, .. }) = denial_msg {
-        let text = match &content[0] {
-            rho_core::ContentBlock::Text { text } => text.clone(),
-        };
+    if let Some(rho_ai::LlmMessage::Tool { content, .. }) = denial_msg {
+        let text = content.clone();
         assert!(
             text.to_lowercase().contains("denied"),
             "denial message should mention denial: {text}"
@@ -95,8 +93,8 @@ async fn denied_tool_gets_denial_message_fed_back() {
 #[tokio::test]
 async fn approved_tool_executes() {
     let client = MockChatClient::new(vec![
-        tool_call_response("call_1", "bang", "{}"),
-        text_response("done"),
+        tool_call_events("call_1", "bang", "{}"),
+        text_events("done"),
     ]);
 
     let mut registry = ToolRegistry::new();
@@ -128,12 +126,10 @@ async fn approved_tool_executes() {
     let tool_msg = requests[1]
         .messages
         .iter()
-        .find(|m| matches!(m, ChatMessage::Tool { .. }));
+        .find(|m| matches!(m, rho_ai::LlmMessage::Tool { .. }));
     assert!(tool_msg.is_some());
-    if let Some(ChatMessage::Tool { content, .. }) = tool_msg {
-        let text = match &content[0] {
-            rho_core::ContentBlock::Text { text } => text.clone(),
-        };
+    if let Some(rho_ai::LlmMessage::Tool { content, .. }) = tool_msg {
+        let text = content.clone();
         assert_eq!(text, "executed");
     }
 }
