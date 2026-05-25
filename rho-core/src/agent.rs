@@ -873,7 +873,7 @@ fn build_tool_calls_from_accumulated(
 ///
 /// Returns `Err` on the first stream error, converting the
 /// [`ProviderError`](rho_ai::ProviderError) into a [`RhoError`].
-async fn consume_stream(
+pub(crate) async fn consume_stream(
     event_stream: rho_ai::EventStream,
     observer: &dyn AgentObserver,
 ) -> Result<Vec<rho_ai::StreamEvent>> {
@@ -911,7 +911,7 @@ async fn consume_stream(
 ///   but routes empty responses to [`LengthTruncated`] (llama.cpp workaround).
 ///
 /// [`LengthTruncated`]: AssistantResponse::LengthTruncated
-fn route_response(
+pub(crate) fn route_response(
     acc: &rho_ai::AccumulatedResponse,
     session: &mut Session,
 ) -> Result<AssistantResponse> {
