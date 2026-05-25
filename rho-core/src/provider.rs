@@ -129,16 +129,8 @@ impl Provider for OpenAiCompatibleProvider {
     }
 
     fn llm_service(&self) -> &dyn rho_ai::LlmService {
-        // RhoAiClient implements LlmService via its service() method.
-        // We use a static dispatch approach: build an OpenAiService and
-        // wrap in RetryingService. For the trait object, we store it.
-        //
-        // Since RhoAiClient builds a new service per request, we need
-        // a different approach. For now, we create a wrapper that
-        // delegates to the client's LLM service.
-        //
-        // Actually, the simplest approach: RhoAiClient itself implements
-        // LlmService by creating an OpenAiService per call.
+        // RhoAiClient implements LlmService by creating an OpenAiService
+        // per call.
         &self.client
     }
 
