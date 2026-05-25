@@ -1,15 +1,14 @@
 //! Benchmark harness — runs one (model, task) pair through rho and collects metrics.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Instant;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use rho_core::stream::StreamChunk;
 use rho_core::{
-    AgentConfig, ApprovalGate, AutoApprovePolicy, ChatClient, ChatRequest, ConfigLoader,
-    LoopParams, ModelResponse, ModelResponseStream, ModelToolCall, NopObserver, Provider,
+    AgentConfig, ApprovalGate, AutoApprovePolicy, ConfigLoader, LoopParams, NopObserver, Provider,
     RhoConfig, SandboxRoot, Session, TokenBudget, ToolRegistry, ToolRisk,
     compose_full_system_prompt, provider_factory, run_loop,
 };
@@ -21,31 +20,35 @@ struct BenchApprovalGate;
 
 #[async_trait]
 impl ApprovalGate for BenchApprovalGate {
-    async fn request_approval(&self, _call: &ModelToolCall, _risk: ToolRisk) -> bool {
+    async fn request_approval(
+        &self,
+        _call: &rho_core::message::ModelToolCall,
+        _risk: ToolRisk,
+    ) -> bool {
         true
     }
 }
 
-/// A `ChatClient` wrapper that counts token usage across all requests.
-struct CountingClient {
-    /// The underlying model client.
-    inner: Box<dyn ChatClient>,
+/// An [`LlmService`] wrapper that counts token usage across all requests.
+struct CountingService {
+    /// The underlying LLM service.
+    inner: Box<dyn rho_ai::LlmService>,
     /// Cumulative prompt tokens across all requests.
-    prompt_tokens: AtomicU32,
+    prompt_tokens: Arc<AtomicU32>,
     /// Cumulative completion tokens across all requests.
-    completion_tokens: AtomicU32,
+    completion_tokens: Arc<AtomicU32>,
     /// Total number of API requests made.
-    request_count: AtomicU32,
+    request_count: Arc<AtomicU32>,
 }
 
-impl CountingClient {
-    /// Create a new counting client wrapping the given inner client.
-    fn new(inner: Box<dyn ChatClient>) -> Self {
+impl CountingService {
+    /// Create a new counting service wrapping the given inner service.
+    fn new(inner: Box<dyn rho_ai::LlmService>) -> Self {
         Self {
             inner,
-            prompt_tokens: AtomicU32::new(0),
-            completion_tokens: AtomicU32::new(0),
-            request_count: AtomicU32::new(0),
+            prompt_tokens: Arc::new(AtomicU32::new(0)),
+            completion_tokens: Arc::new(AtomicU32::new(0)),
+            request_count: Arc::new(AtomicU32::new(0)),
         }
     }
 
@@ -61,36 +64,32 @@ impl CountingClient {
 }
 
 #[async_trait]
-impl ChatClient for CountingClient {
-    async fn chat(&self, request: ChatRequest) -> rho_core::error::Result<ModelResponse> {
-        let response = self.inner.chat(request).await?;
-        self.prompt_tokens.fetch_add(
-            u32::try_from(response.usage.prompt_tokens).unwrap_or(u32::MAX),
-            Ordering::Relaxed,
-        );
-        self.completion_tokens.fetch_add(
-            u32::try_from(response.usage.completion_tokens).unwrap_or(u32::MAX),
-            Ordering::Relaxed,
-        );
-        self.request_count.fetch_add(1, Ordering::Relaxed);
-        Ok(response)
-    }
-
+impl rho_ai::LlmService for CountingService {
     async fn chat_stream(
         &self,
-        mut request: ChatRequest,
-    ) -> rho_core::error::Result<ModelResponseStream> {
-        // Use the non-streaming endpoint to avoid slow SSE streaming
-        // through proxies like OpenRouter that emit 1-3 chars per chunk.
-        // Force stream: false so the API returns plain JSON instead of SSE.
-        request.stream = false;
-        let response = self.chat(request).await?;
-        let chunks: Vec<rho_core::error::Result<StreamChunk>> =
-            StreamChunk::from_response(&response)
-                .into_iter()
-                .map(Ok)
-                .collect();
-        Ok(Box::pin(futures::stream::iter(chunks)))
+        request: rho_ai::LlmRequest,
+    ) -> std::result::Result<rho_ai::EventStream, rho_ai::ProviderError> {
+        self.request_count.fetch_add(1, Ordering::Relaxed);
+        let event_stream = self.inner.chat_stream(request).await?;
+
+        // Wrap the event stream to count tokens from the Done event.
+        let prompt_tokens = self.prompt_tokens.clone();
+        let completion_tokens = self.completion_tokens.clone();
+        let mapped = futures::StreamExt::map(event_stream, move |result| {
+            if let Ok(rho_ai::StreamEvent::Done { usage, .. }) = &result {
+                prompt_tokens.fetch_add(
+                    u32::try_from(usage.input_tokens).unwrap_or(u32::MAX),
+                    Ordering::Relaxed,
+                );
+                completion_tokens.fetch_add(
+                    u32::try_from(usage.output_tokens).unwrap_or(u32::MAX),
+                    Ordering::Relaxed,
+                );
+            }
+            result
+        });
+
+        Ok(Box::pin(mapped))
     }
 }
 
@@ -242,8 +241,8 @@ async fn run_single_task(
     .with_token_budget(TokenBudget::new(budget))
     .with_redactor(redactor);
 
-    // Wrap the provider's client to count token usage.
-    let counting_client = CountingClient::new(provider.clone_boxed_client());
+    // Wrap the provider's service to count token usage.
+    let counting_service = CountingService::new(provider.clone_boxed_service());
 
     let gate = BenchApprovalGate;
     let cancel = rho_core::CancellationToken::new();
@@ -251,7 +250,7 @@ async fn run_single_task(
     // Run the agent loop and measure time.
     let start = Instant::now();
     let params = LoopParams {
-        client: &counting_client,
+        client: &counting_service,
         registry: &registry,
         config: &agent_config,
         cancel,
@@ -261,8 +260,8 @@ async fn run_single_task(
     let result = run_loop(&mut session, task.user_prompt(), &params).await;
     let elapsed = start.elapsed();
 
-    // Extract metrics from the counting client.
-    let (token_input, token_output, request_count) = counting_client.snapshot();
+    // Extract metrics from the counting service.
+    let (token_input, token_output, request_count) = counting_service.snapshot();
 
     // Count agent iterations by counting assistant messages in the session.
     let agent_iterations = count_assistant_entries(&session);

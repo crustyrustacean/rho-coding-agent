@@ -10,7 +10,6 @@ use rho_core::{
     config::RhoConfig,
     message::{ModelToolCall, ToolCallFunction},
     request::ChatRequest,
-    session::error::SessionError,
     tool::{CancellationToken, Tool},
 };
 use rho_test_helpers::{
@@ -768,9 +767,9 @@ async fn stuck_loop_disabled_when_threshold_is_zero() {
 
 #[tokio::test]
 async fn non_retryable_error_propagates_immediately() {
-    // The mock panics on empty queue, so queue a single non-retryable error.
-    let client = MockChatClient::with_results(vec![Err(RhoError::Session(
-        SessionError::persistence_error("boom"),
+    // Queue a non-retryable error (SSE error with status 0 is not retryable).
+    let client = MockChatClient::with_results(vec![Err(RhoError::Client(
+        rho_core::client::error::ClientError::http_error(400, "bad request".to_owned()),
     ))]);
     let registry = ToolRegistry::new();
     let config = AgentConfig {
@@ -792,9 +791,10 @@ async fn non_retryable_error_propagates_immediately() {
 
     // Non-retryable errors should propagate immediately without burning the budget.
     assert!(
-        matches!(err, RhoError::Session(_)),
-        "expected Session error, got: {err}"
+        matches!(err, RhoError::Client(_)),
+        "expected Client error, got: {err}"
     );
+    assert!(!err.is_retryable(), "400 should not be retryable");
 }
 
 #[test]
@@ -826,16 +826,19 @@ fn http_error_not_retryable_for_client_errors() {
 /// Connection-refused errors have no HTTP status code, which
 /// [`RhoError::is_retryable`] classifies as retryable.
 async fn retryable_http_error() -> RhoError {
-    use rho_core::{ChatClient, RhoAiClient};
+    use rho_core::RhoAiClient;
     let client = RhoAiClient::new("test", "http://127.0.0.1:1/", None);
-    let request = rho_core::ChatRequest {
+    let request = rho_ai::LlmRequest {
         model: String::new(),
         messages: vec![],
-        stream: false,
         tools: vec![],
         max_tokens: None,
     };
-    client.chat(request).await.unwrap_err()
+    let result = rho_ai::LlmService::chat_stream(&client, request).await;
+    match result {
+        Err(e) => RhoError::Client(rho_core::client::error::ClientError::from(e)),
+        Ok(_) => panic!("expected error, got success"),
+    }
 }
 
 #[tokio::test]
@@ -1574,6 +1577,7 @@ async fn test_chat_stream() {
         stream: false,
         max_tokens: None,
     };
+    #[allow(deprecated)]
     let mut stream = provider.chat_client().chat_stream(request).await.unwrap();
 
     while let Some(event) = stream.next().await {

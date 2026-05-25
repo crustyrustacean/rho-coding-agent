@@ -207,6 +207,8 @@ fn adapt_event_stream(
                 let finish_reason = match reason {
                     rho_ai::StopReason::EndTurn => FinishReason::Stop,
                     rho_ai::StopReason::ToolUse => FinishReason::ToolCalls,
+                    rho_ai::StopReason::Length => FinishReason::Length,
+                    rho_ai::StopReason::ContentFilter => FinishReason::ContentFilter,
                     rho_ai::StopReason::Other(s) => FinishReason::Other(s),
                 };
                 Some(StreamChunk::Done(finish_reason))
@@ -267,6 +269,8 @@ async fn accumulate_response(events: rho_ai::EventStream, model: &str) -> Result
                 finish_reason = match reason {
                     rho_ai::StopReason::EndTurn => FinishReason::Stop,
                     rho_ai::StopReason::ToolUse => FinishReason::ToolCalls,
+                    rho_ai::StopReason::Length => FinishReason::Length,
+                    rho_ai::StopReason::ContentFilter => FinishReason::ContentFilter,
                     rho_ai::StopReason::Other(s) => FinishReason::Other(s),
                 };
                 input_tokens = usage.input_tokens;
@@ -412,6 +416,19 @@ impl Default for RhoAiClient {
     }
 }
 
+// ── LlmService impl ──────────────────────────────────────────────────────────
+
+#[async_trait]
+impl rho_ai::LlmService for RhoAiClient {
+    async fn chat_stream(
+        &self,
+        request: rho_ai::types::LlmRequest,
+    ) -> std::result::Result<rho_ai::EventStream, rho_ai::ProviderError> {
+        let service = self.service();
+        service.chat_stream(request).await
+    }
+}
+
 #[async_trait]
 impl ChatClient for RhoAiClient {
     #[tracing::instrument(skip_all, fields(model = %request.model, message_count = request.messages.len(), tool_count = request.tools.len()))]
@@ -421,13 +438,14 @@ impl ChatClient for RhoAiClient {
 
         let service = self.service();
 
-        let event_stream = if llm_tools.is_empty() {
-            service.chat_stream(llm_messages).await
-        } else {
-            service
-                .chat_stream_with_tools(llm_messages, llm_tools)
-                .await
+        let llm_request = rho_ai::types::LlmRequest {
+            model: request.model.clone(),
+            messages: llm_messages,
+            tools: llm_tools,
+            max_tokens: request.max_tokens,
         };
+
+        let event_stream = service.chat_stream(llm_request).await;
 
         let event_stream =
             event_stream.map_err(|e| crate::error::RhoError::Client(ClientError::from(e)))?;
@@ -454,13 +472,14 @@ impl ChatClient for RhoAiClient {
 
         let service = self.service();
 
-        let event_stream = if llm_tools.is_empty() {
-            service.chat_stream(llm_messages).await
-        } else {
-            service
-                .chat_stream_with_tools(llm_messages, llm_tools)
-                .await
+        let llm_request = rho_ai::types::LlmRequest {
+            model: request.model.clone(),
+            messages: llm_messages,
+            tools: llm_tools,
+            max_tokens: request.max_tokens,
         };
+
+        let event_stream = service.chat_stream(llm_request).await;
 
         let event_stream =
             event_stream.map_err(|e| crate::error::RhoError::Client(ClientError::from(e)))?;

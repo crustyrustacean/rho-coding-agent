@@ -132,6 +132,10 @@ pub enum StopReason {
     EndTurn,
     /// The model wants to call tools.
     ToolUse,
+    /// The model reached the token limit.
+    Length,
+    /// Generation was stopped by a content filter.
+    ContentFilter,
     /// Any other reason (provider-specific).
     Other(String),
 }
@@ -193,6 +197,143 @@ impl ProviderConfig {
             model: model.into(),
             api_key: api_key.into(),
             base_url: base_url.into(),
+        }
+    }
+}
+
+/// A chat completion request.
+///
+/// Bundles the model identifier, conversation messages, tool definitions,
+/// and optional limits into a single struct. This is the unified input type
+/// for [`LlmService::chat_stream`](crate::service::LlmService::chat_stream).
+#[derive(Debug, Clone)]
+pub struct LlmRequest {
+    /// The model identifier (e.g. `"gpt-4o"`, `"claude-sonnet-4-20250514"`).
+    pub model: String,
+    /// The conversation history to send.
+    pub messages: Vec<LlmMessage>,
+    /// Tool definitions available to the model.
+    pub tools: Vec<ToolDefinition>,
+    /// Maximum number of tokens the model may generate.
+    pub max_tokens: Option<usize>,
+}
+
+impl LlmRequest {
+    /// Creates a new request builder with the given model and messages.
+    #[must_use]
+    pub fn new(model: impl Into<String>, messages: Vec<LlmMessage>) -> Self {
+        Self {
+            model: model.into(),
+            messages,
+            tools: Vec::new(),
+            max_tokens: None,
+        }
+    }
+
+    /// Add tool definitions to the request.
+    #[must_use]
+    pub fn with_tools(mut self, tools: Vec<ToolDefinition>) -> Self {
+        self.tools = tools;
+        self
+    }
+
+    /// Set the maximum output tokens.
+    #[must_use]
+    pub fn with_max_tokens(mut self, max_tokens: usize) -> Self {
+        self.max_tokens = Some(max_tokens);
+        self
+    }
+
+    /// Whether tools are present in this request.
+    #[must_use]
+    pub fn has_tools(&self) -> bool {
+        !self.tools.is_empty()
+    }
+}
+
+/// The result of accumulating a stream of [`StreamEvent`]s.
+///
+/// Produced by [`StreamEvent::accumulate`]. Contains the assembled text,
+/// reasoning, tool calls, and stop reason from a completed stream.
+#[derive(Clone, Debug)]
+pub struct AccumulatedResponse {
+    /// Accumulated text content.
+    pub text: String,
+    /// Accumulated reasoning content.
+    pub reasoning: String,
+    /// Accumulated tool calls.
+    pub tool_calls: Vec<AccumulatedToolCall>,
+    /// Why the stream ended.
+    pub stop_reason: StopReason,
+    /// Token usage from the stream.
+    pub usage: StreamUsage,
+}
+
+/// A tool call accumulated from streaming deltas.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AccumulatedToolCall {
+    /// The tool call ID.
+    pub id: Option<String>,
+    /// The function name.
+    pub function_name: Option<String>,
+    /// The accumulated arguments JSON.
+    pub arguments: String,
+}
+
+impl StreamEvent {
+    /// Accumulate a slice of events into an [`AccumulatedResponse`].
+    ///
+    /// Collects text, reasoning, and tool call deltas into complete strings
+    /// and returns the finish reason. This is the unified equivalent of
+    /// `StreamChunk::accumulate` — consumers should prefer this over
+    /// working with raw events.
+    pub fn accumulate(events: &[StreamEvent]) -> AccumulatedResponse {
+        let mut text = String::new();
+        let mut reasoning = String::new();
+        let mut tool_calls: Vec<AccumulatedToolCall> = Vec::new();
+        let mut stop_reason = StopReason::EndTurn;
+        let mut usage = StreamUsage::default();
+
+        for event in events {
+            match event {
+                StreamEvent::Text(t) => text.push_str(t),
+                StreamEvent::Reasoning(r) => reasoning.push_str(r),
+                StreamEvent::ToolUseStart { index, id, name } => {
+                    if tool_calls.len() <= *index {
+                        tool_calls.resize_with(*index + 1, AccumulatedToolCall::default);
+                    }
+                    let tc = &mut tool_calls[*index];
+                    tc.id = Some(id.clone());
+                    tc.function_name = Some(name.clone());
+                }
+                StreamEvent::ToolUseInputDelta { index, delta } => {
+                    if tool_calls.len() <= *index {
+                        tool_calls.resize_with(*index + 1, AccumulatedToolCall::default);
+                    }
+                    tool_calls[*index].arguments.push_str(delta);
+                }
+                StreamEvent::ToolUseComplete { index, tool_call } => {
+                    if tool_calls.len() <= *index {
+                        tool_calls.resize_with(*index + 1, AccumulatedToolCall::default);
+                    }
+                    let tc = &mut tool_calls[*index];
+                    tc.id = Some(tool_call.id.clone());
+                    tc.function_name = Some(tool_call.name.clone());
+                    tc.arguments.clone_from(&tool_call.arguments);
+                }
+                StreamEvent::Done { reason, usage: u } => {
+                    stop_reason = reason.clone();
+                    usage = u.clone();
+                }
+            }
+        }
+
+        AccumulatedResponse {
+            text,
+            reasoning,
+            tool_calls,
+            stop_reason,
+            usage,
         }
     }
 }

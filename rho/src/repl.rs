@@ -201,7 +201,7 @@ pub async fn run_repl(app: &mut App) -> Result<()> {
                     continue;
                 }
 
-                let client = app.active_provider().clone_boxed_client();
+                let client = app.active_provider().clone_boxed_service();
                 let params = rho_core::LoopParams {
                     client: client.as_ref(),
                     registry: &app.registry,
@@ -221,7 +221,7 @@ pub async fn run_repl(app: &mut App) -> Result<()> {
             _ => {}
         }
 
-        let client = app.active_provider().clone_boxed_client();
+        let client = app.active_provider().clone_boxed_service();
         let params = rho_core::LoopParams {
             client: client.as_ref(),
             registry: &app.registry,
@@ -251,7 +251,7 @@ pub async fn run_prompt_file(mut app: App, path: std::path::PathBuf) -> Result<(
         .map_err(|e| anyhow::anyhow!("cannot read prompt file `{}`: {e}", path.display()))?;
     println!("using prompt file: {}", path.display());
 
-    let client = app.active_provider().clone_boxed_client();
+    let client = app.active_provider().clone_boxed_service();
     let params = rho_core::LoopParams {
         client: client.as_ref(),
         registry: &app.registry,

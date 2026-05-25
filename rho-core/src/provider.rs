@@ -2,29 +2,25 @@
 //! and [`ProviderRegistry`] for multi-provider management.
 //!
 //! A provider encapsulates identity, externality, model discovery, and
-//! access to a [`ChatClient`]. The binary constructs providers via
+//! access to a [`LlmService`](rho_ai::LlmService). The binary constructs providers via
 //! [`ProviderRegistry::from_config`] and uses them for consent checks,
-//! model resolution, and obtaining a chat client. The agent loop,
-//! session, and tools only see [`ChatClient`] — they are unaware of
+//! model resolution, and obtaining an LLM service. The agent loop,
+//! session, and tools only see [`LlmService`](rho_ai::LlmService) — they are unaware of
 //! providers.
-//!
-//! [`ChatClient`]: crate::client::ChatClient
 
-use crate::client::{ChatClient, ModelInfo, ModelList, RhoAiClient};
+use crate::client::{ModelInfo, ModelList, RhoAiClient};
 use crate::config::ProviderSettings;
 use crate::error::Result;
 use async_trait::async_trait;
 use tracing;
 
 /// A model provider — knows how to authenticate, discover models, and
-/// vend a [`ChatClient`].
+/// vend an [`LlmService`](rho_ai::LlmService).
 ///
 /// The binary constructs providers via [`ProviderRegistry::from_config`]
-/// and uses them for consent checks, model resolution, and obtaining a
-/// chat client. The agent loop, session, and tools only see [`ChatClient`]
-/// — they are unaware of providers.
-///
-/// [`ChatClient`]: crate::client::ChatClient
+/// and uses them for consent checks, model resolution, and obtaining an
+/// LLM service. The agent loop, session, and tools only see
+/// [`LlmService`](rho_ai::LlmService) — they are unaware of providers.
 #[async_trait]
 pub trait Provider: Send + Sync {
     /// Human-readable provider name (e.g. `"local"`, `"openrouter"`).
@@ -46,18 +42,29 @@ pub trait Provider: Send + Sync {
     /// themselves.
     async fn list_models(&self) -> Result<ModelList>;
 
-    /// The chat client for this provider.
+    /// The LLM service for this provider.
     ///
     /// The returned reference borrows `self`, so the provider must outlive
-    /// any request made through the client.
-    fn chat_client(&self) -> &dyn ChatClient;
+    /// any request made through the service.
+    fn llm_service(&self) -> &dyn rho_ai::LlmService;
 
-    /// Return a clone of the underlying chat client as a boxed trait object.
+    /// Return a clone of the underlying LLM service as a boxed trait object.
     ///
-    /// Used by callers that need an owned client (e.g. wrapping in a
-    /// `CountingClient` for benchmarks). The default implementation
-    /// panics; concrete providers must override this.
-    fn clone_boxed_client(&self) -> Box<dyn ChatClient>;
+    /// Used by callers that need an owned service (e.g. wrapping in a
+    /// `CountingService` for benchmarks).
+    fn clone_boxed_service(&self) -> Box<dyn rho_ai::LlmService>;
+
+    /// The chat client for this provider (legacy compatibility).
+    ///
+    /// Prefer [`llm_service`](Provider::llm_service) for new code.
+    /// This method exists for backward compatibility with code that still
+    /// uses [`ChatClient`](crate::client::ChatClient).
+    #[deprecated(note = "Use llm_service() instead")]
+    fn chat_client(&self) -> &dyn crate::client::ChatClient;
+
+    /// Return a clone of the underlying chat client (legacy compatibility).
+    #[deprecated(note = "Use clone_boxed_service() instead")]
+    fn clone_boxed_client(&self) -> Box<dyn crate::client::ChatClient>;
 }
 
 /// An OpenAI-compatible provider.
@@ -84,7 +91,6 @@ pub struct OpenAiCompatibleProvider {
     /// Whether this provider is external (non-localhost).
     is_external: bool,
 }
-
 impl OpenAiCompatibleProvider {
     /// Create a provider with the given name, endpoint, and optional bearer auth.
     ///
@@ -122,11 +128,31 @@ impl Provider for OpenAiCompatibleProvider {
         self.client.list_models().await
     }
 
-    fn chat_client(&self) -> &dyn ChatClient {
+    fn llm_service(&self) -> &dyn rho_ai::LlmService {
+        // RhoAiClient implements LlmService via its service() method.
+        // We use a static dispatch approach: build an OpenAiService and
+        // wrap in RetryingService. For the trait object, we store it.
+        //
+        // Since RhoAiClient builds a new service per request, we need
+        // a different approach. For now, we create a wrapper that
+        // delegates to the client's LLM service.
+        //
+        // Actually, the simplest approach: RhoAiClient itself implements
+        // LlmService by creating an OpenAiService per call.
         &self.client
     }
 
-    fn clone_boxed_client(&self) -> Box<dyn ChatClient> {
+    fn clone_boxed_service(&self) -> Box<dyn rho_ai::LlmService> {
+        Box::new(self.client.clone())
+    }
+
+    #[allow(deprecated)]
+    fn chat_client(&self) -> &dyn crate::client::ChatClient {
+        &self.client
+    }
+
+    #[allow(deprecated)]
+    fn clone_boxed_client(&self) -> Box<dyn crate::client::ChatClient> {
         Box::new(self.client.clone())
     }
 }
@@ -384,6 +410,7 @@ mod tests {
             "http://localhost:1234/v1/chat/completions",
             Some("key".to_owned()),
         );
+        #[allow(deprecated)]
         let _cloned = p.clone_boxed_client();
         // The clone is a Box<dyn ChatClient> — we can't inspect it
         // further, but we verified it doesn't panic.
@@ -505,10 +532,12 @@ mod tests {
 
                 // Primary uses override key.
                 let primary = registry.default();
+                #[allow(deprecated)]
                 let client = primary.clone_boxed_client();
 
                 // Secondary uses its own configured key.
                 let secondary = registry.get("secondary").unwrap();
+                #[allow(deprecated)]
                 let _sec_client = secondary.clone_boxed_client();
 
                 // We can't inspect the key directly, but we verified

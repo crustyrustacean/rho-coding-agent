@@ -388,6 +388,8 @@ fn parse_sse_chunk(chunk: &SseChunk, tool_acc: &mut ToolCallAccumulator) -> Vec<
         let stop_reason = match reason_str.as_str() {
             "stop" | "end_turn" => StopReason::EndTurn,
             "tool_calls" => StopReason::ToolUse,
+            "length" => StopReason::Length,
+            "content_filter" => StopReason::ContentFilter,
             other => StopReason::Other(other.to_string()),
         };
 
@@ -444,14 +446,17 @@ impl OpenAiService {
     /// Build and send the streaming HTTP request.
     async fn send_streaming_request(
         &self,
-        messages: Vec<LlmMessage>,
-        tools: Vec<ToolDefinition>,
+        request: &crate::types::LlmRequest,
     ) -> Result<EventStream, ProviderError> {
-        let wire_messages = build_messages(messages);
-        let wire_tools = build_tools(tools);
+        let wire_messages = build_messages(request.messages.clone());
+        let wire_tools = build_tools(request.tools.clone());
 
         let body = ChatCompletionRequest {
-            model: self.config.model.clone(),
+            model: if request.model.is_empty() {
+                self.config.model.clone()
+            } else {
+                request.model.clone()
+            },
             messages: wire_messages,
             tools: wire_tools,
             stream: true,
@@ -488,16 +493,11 @@ impl OpenAiService {
 
 #[async_trait]
 impl LlmService for OpenAiService {
-    async fn chat_stream(&self, messages: Vec<LlmMessage>) -> Result<EventStream, ProviderError> {
-        self.send_streaming_request(messages, Vec::new()).await
-    }
-
-    async fn chat_stream_with_tools(
+    async fn chat_stream(
         &self,
-        messages: Vec<LlmMessage>,
-        tools: Vec<ToolDefinition>,
+        request: crate::types::LlmRequest,
     ) -> Result<EventStream, ProviderError> {
-        self.send_streaming_request(messages, tools).await
+        self.send_streaming_request(&request).await
     }
 }
 
@@ -871,6 +871,46 @@ mod tests {
         let chunk = SseChunk {
             choices: vec![SseChoice {
                 delta: SseDelta::default(),
+                finish_reason: Some("some_custom_reason".into()),
+            }],
+            usage: None,
+        };
+        let mut acc = ToolCallAccumulator::default();
+        let events = parse_sse_chunk(&chunk, &mut acc);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            StreamEvent::Done { reason, .. } => {
+                assert_eq!(*reason, StopReason::Other("some_custom_reason".into()));
+            }
+            _ => panic!("expected Done event"),
+        }
+    }
+
+    #[test]
+    fn parse_finish_reason_length() {
+        let chunk = SseChunk {
+            choices: vec![SseChoice {
+                delta: SseDelta::default(),
+                finish_reason: Some("length".into()),
+            }],
+            usage: None,
+        };
+        let mut acc = ToolCallAccumulator::default();
+        let events = parse_sse_chunk(&chunk, &mut acc);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            StreamEvent::Done { reason, .. } => {
+                assert_eq!(*reason, StopReason::Length);
+            }
+            _ => panic!("expected Done event"),
+        }
+    }
+
+    #[test]
+    fn parse_finish_reason_content_filter() {
+        let chunk = SseChunk {
+            choices: vec![SseChoice {
+                delta: SseDelta::default(),
                 finish_reason: Some("content_filter".into()),
             }],
             usage: None,
@@ -880,7 +920,7 @@ mod tests {
         assert_eq!(events.len(), 1);
         match &events[0] {
             StreamEvent::Done { reason, .. } => {
-                assert_eq!(*reason, StopReason::Other("content_filter".into()));
+                assert_eq!(*reason, StopReason::ContentFilter);
             }
             _ => panic!("expected Done event"),
         }

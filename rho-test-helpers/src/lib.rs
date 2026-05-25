@@ -28,6 +28,7 @@
 //! [`ShellOutput`]: rho_core::ShellOutput
 
 use async_trait::async_trait;
+use rho_ai::{EventStream, LlmRequest, LlmService, ProviderError};
 use rho_core::{
     AgentConfig, CancellationToken, ChatClient, ChatMessage, ChatRequest, ModelResponse, RhoError,
     SandboxRoot, Session, ShellExecutor, ShellOutput, Tool, ToolName, ToolOutcome, ToolRegistry,
@@ -43,6 +44,95 @@ use std::time::Duration;
 pub use tempfile::TempDir;
 
 // ── MockChatClient ────────────────────────────────────────────────────────────
+
+/// Convert a `ModelResponse` into a sequence of `StreamEvent`s.
+///
+/// Used by `MockChatClient`'s `LlmService` implementation to produce
+/// events from canned `ModelResponse` fixtures.
+fn model_response_to_events(response: &ModelResponse) -> Vec<rho_ai::StreamEvent> {
+    let mut events = Vec::new();
+
+    if let Some(choice) = response.choices.first() {
+        if !choice.message.content.is_empty() {
+            events.push(rho_ai::StreamEvent::Text(choice.message.content.clone()));
+        }
+        if !choice.message.reasoning_content.is_empty() {
+            events.push(rho_ai::StreamEvent::Reasoning(
+                choice.message.reasoning_content.clone(),
+            ));
+        }
+        for (index, tc) in choice.message.tool_calls.iter().enumerate() {
+            events.push(rho_ai::StreamEvent::ToolUseStart {
+                index,
+                id: tc.id.to_string(),
+                name: tc.function.name.to_string(),
+            });
+            events.push(rho_ai::StreamEvent::ToolUseInputDelta {
+                index,
+                delta: tc.function.arguments.clone(),
+            });
+            events.push(rho_ai::StreamEvent::ToolUseComplete {
+                index,
+                tool_call: rho_ai::ToolCall {
+                    id: tc.id.to_string(),
+                    name: tc.function.name.to_string(),
+                    arguments: tc.function.arguments.clone(),
+                },
+            });
+        }
+        let stop_reason = match &choice.finish_reason {
+            rho_core::FinishReason::Stop => rho_ai::StopReason::EndTurn,
+            rho_core::FinishReason::ToolCalls => rho_ai::StopReason::ToolUse,
+            rho_core::FinishReason::Length => rho_ai::StopReason::Length,
+            rho_core::FinishReason::ContentFilter => rho_ai::StopReason::ContentFilter,
+            rho_core::FinishReason::Other(s) => rho_ai::StopReason::Other(s.clone()),
+        };
+        events.push(rho_ai::StreamEvent::Done {
+            reason: stop_reason,
+            usage: rho_ai::StreamUsage::new(
+                response.usage.prompt_tokens as u64,
+                response.usage.completion_tokens as u64,
+            ),
+        });
+    }
+
+    events
+}
+
+/// Convert a [`RhoError`] to a [`ProviderError`], preserving retryability.
+///
+/// This is used by `MockChatClient`'s `LlmService` implementation to
+/// convert stored `RhoError` values back into appropriate `ProviderError`
+/// variants so that the agent loop's retry logic works correctly.
+fn convert_error_to_provider(e: RhoError) -> ProviderError {
+    match e {
+        RhoError::Client(client_err) => match client_err {
+            rho_core::client::error::ClientError::Http(http_err) => {
+                ProviderError::Http { source: http_err }
+            }
+            rho_core::client::error::ClientError::HttpError { status, message } => {
+                ProviderError::HttpStatus {
+                    status,
+                    body: Some(message),
+                    retryable: matches!(status, 429 | 500 | 502 | 503 | 504),
+                }
+            }
+            rho_core::client::error::ClientError::RetryBudgetExhausted(_attempts, last) => {
+                ProviderError::RetryBudgetExhausted {
+                    last_error: Box::new(convert_error_to_provider(rho_core::RhoError::Client(
+                        *last,
+                    ))),
+                }
+            }
+            _ => ProviderError::Sse {
+                message: client_err.to_string(),
+            },
+        },
+        _ => ProviderError::Sse {
+            message: e.to_string(),
+        },
+    }
+}
 
 /// A [`ChatClient`] that returns pre-loaded results in sequence.
 ///
@@ -96,6 +186,86 @@ impl MockChatClient {
     /// Panics if the internal mutex is poisoned.
     pub fn requests(&self) -> Vec<ChatRequest> {
         self.requests.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl LlmService for MockChatClient {
+    async fn chat_stream(
+        &self,
+        request: LlmRequest,
+    ) -> std::result::Result<EventStream, ProviderError> {
+        // Convert LlmRequest → ChatRequest, delegate to ChatClient impl.
+        let chat_request = ChatRequest {
+            model: request.model,
+            messages: request
+                .messages
+                .into_iter()
+                .map(|m| match m {
+                    rho_ai::LlmMessage::System(text) => ChatMessage::system_text(text),
+                    rho_ai::LlmMessage::User(text) => ChatMessage::user_text(text),
+                    rho_ai::LlmMessage::Assistant {
+                        content,
+                        tool_calls,
+                    } => {
+                        let text = content.unwrap_or_default();
+                        let tcs: Vec<ModelToolCall> = tool_calls
+                            .into_iter()
+                            .map(|tc| ModelToolCall {
+                                id: rho_core::ToolCallId::new(tc.id),
+                                call_type: "function".to_owned(),
+                                function: rho_core::ToolCallFunction {
+                                    name: rho_core::ToolName::new(tc.name),
+                                    arguments: tc.arguments,
+                                },
+                            })
+                            .collect();
+                        ChatMessage::Assistant {
+                            content: if text.is_empty() {
+                                vec![]
+                            } else {
+                                vec![rho_core::ContentBlock::Text { text }]
+                            },
+                            tool_calls: tcs,
+                        }
+                    }
+                    rho_ai::LlmMessage::Tool {
+                        tool_call_id,
+                        content,
+                    } => ChatMessage::tool_result(rho_core::ToolCallId::new(tool_call_id), content),
+                })
+                .collect(),
+            tools: request
+                .tools
+                .into_iter()
+                .map(|t| rho_core::ToolSchema::function(t.name, t.description, t.parameters))
+                .collect(),
+            stream: true,
+            max_tokens: request.max_tokens,
+        };
+
+        // Record the request
+        self.requests.lock().unwrap().push(chat_request.clone());
+
+        // Get the canned response and convert to StreamEvents
+        let mut items = self.items.lock().unwrap();
+        assert!(
+            !items.is_empty(),
+            "MockChatClient: no more canned results — check test setup"
+        );
+        let result = items.remove(0);
+
+        match result {
+            Ok(response) => {
+                let events = model_response_to_events(&response);
+                Ok(Box::pin(futures::stream::iter(events.into_iter().map(Ok))))
+            }
+            Err(e) => {
+                // Convert RhoError to ProviderError, preserving retryability.
+                let provider_err = convert_error_to_provider(e);
+                Err(provider_err)
+            }
+        }
     }
 }
 

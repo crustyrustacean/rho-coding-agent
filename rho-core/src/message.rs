@@ -86,6 +86,17 @@ pub enum ChatMessage {
     },
 }
 
+/// Extract plain text from a `Vec<ContentBlock>`.
+fn extract_text(blocks: &[ContentBlock]) -> String {
+    blocks
+        .iter()
+        .map(|b| match b {
+            ContentBlock::Text { text } => text.as_str(),
+        })
+        .collect::<Vec<_>>()
+        .join("")
+}
+
 impl ChatMessage {
     /// `System` message with a single text block.
     pub fn system_text(text: impl Into<String>) -> Self {
@@ -149,6 +160,51 @@ impl ChatMessage {
             content: vec![ContentBlock::Text {
                 text: format!("<context>\n{escaped}\n<context:end>"),
             }],
+        }
+    }
+
+    /// Convert to a [`rho_ai::LlmMessage`] for LLM API calls.
+    ///
+    /// This is the boundary conversion between rho-core's session-persisted
+    /// type and rho-ai's unified type. The conversion is lossless since
+    /// `ContentBlock` only has `Text` variant.
+    #[must_use]
+    pub fn to_llm_message(&self) -> rho_ai::LlmMessage {
+        match self {
+            Self::System { content } => rho_ai::LlmMessage::System(extract_text(content)),
+            Self::User { content } => rho_ai::LlmMessage::User(extract_text(content)),
+            Self::Assistant {
+                content,
+                tool_calls,
+            } => {
+                let text = if content.is_empty() {
+                    None
+                } else {
+                    Some(extract_text(content))
+                };
+                let tc: Vec<rho_ai::ToolCall> = tool_calls
+                    .iter()
+                    .map(|tc| rho_ai::ToolCall {
+                        id: tc.id.to_string(),
+                        name: tc.function.name.to_string(),
+                        arguments: tc.function.arguments.clone(),
+                    })
+                    .collect();
+                rho_ai::LlmMessage::Assistant {
+                    content: text,
+                    tool_calls: tc,
+                }
+            }
+            Self::Tool {
+                tool_call_id,
+                content,
+            } => {
+                let text = extract_text(content);
+                rho_ai::LlmMessage::Tool {
+                    tool_call_id: tool_call_id.to_string(),
+                    content: text,
+                }
+            }
         }
     }
 }

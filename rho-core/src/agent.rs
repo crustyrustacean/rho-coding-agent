@@ -47,16 +47,12 @@
 use thiserror::Error;
 
 use crate::approval::{ApprovalGate, ApprovalPolicy, DefaultApprovalPolicy};
-use crate::client::ChatClient;
 use crate::conversation::AssistantResponse;
 use crate::error::{Result, RhoError};
+use crate::message::ChatMessage;
 use crate::message::{ModelToolCall, ToolCallFunction};
 use crate::newtypes::{ToolCallId, ToolName};
-use crate::request::ChatRequest;
-use crate::response::FinishReason;
 use crate::session::Session;
-use crate::stream::AccumulatedToolCall;
-use crate::stream::StreamChunk;
 use crate::tool::{CancellationToken, Tool, ToolRegistry, ToolResult, ToolRisk};
 use futures::StreamExt;
 use std::collections::HashMap;
@@ -288,8 +284,8 @@ impl AgentConfig {
 /// let reply = run_loop(&mut session, "hello", &params).await?;
 /// ```
 pub struct LoopParams<'a> {
-    /// The HTTP client that talks to the LLM.
-    pub client: &'a dyn ChatClient,
+    /// The LLM service that talks to the model.
+    pub client: &'a dyn rho_ai::LlmService,
     /// Maps tool names to implementations.
     pub registry: &'a ToolRegistry,
     /// Agent loop configuration (max iterations, retry budget, etc.).
@@ -746,7 +742,11 @@ impl LoopContext<'_> {
 
     /// Execute a single streaming request, consume the stream, and build an
     /// [`AssistantResponse`].
+    #[allow(clippy::too_many_lines)]
     async fn send_streaming(&mut self) -> Result<AssistantResponse> {
+        use crate::message::ContentBlock;
+        use rho_ai::ToolDefinition;
+
         let fitted = self.session.path_messages();
         info!(
             "creating streaming request: model={}, messages={}, tools={}",
@@ -755,59 +755,85 @@ impl LoopContext<'_> {
             self.session.tools.len()
         );
 
-        let request = ChatRequest {
+        let llm_messages: Vec<rho_ai::LlmMessage> =
+            fitted.iter().map(ChatMessage::to_llm_message).collect();
+
+        let tools: Vec<ToolDefinition> = self
+            .session
+            .tools
+            .iter()
+            .map(|t| {
+                ToolDefinition::new(
+                    t.function.name.clone(),
+                    t.function.description.clone(),
+                    t.function.parameters.clone(),
+                )
+            })
+            .collect();
+
+        let llm_request = rho_ai::LlmRequest {
             model: self.session.model.clone(),
-            messages: fitted,
-            tools: self.session.tools.clone(),
-            stream: true,
+            messages: llm_messages,
+            tools,
             max_tokens: Some(self.session.token_budget().completion_reserve),
         };
 
-        let request_json = serde_json::to_string(&request).unwrap_or_else(|e| {
-            error!("failed to serialize request: {}", e);
-            format!("{{\"serialization_error\":\"{e}\"}}")
-        });
-        debug!("request JSON: {}", request_json);
+        debug!(
+            "request: model={}, messages={}, tools={}",
+            llm_request.model,
+            llm_request.messages.len(),
+            llm_request.tools.len()
+        );
 
-        let mut stream = self.params.client.chat_stream(request).await?;
+        let event_stream = self
+            .params
+            .client
+            .chat_stream(llm_request)
+            .await
+            .map_err(|e| {
+                crate::error::RhoError::Client(crate::client::error::ClientError::from(e))
+            })?;
 
-        let mut chunks: Vec<StreamChunk> = Vec::new();
+        let mut events: Vec<rho_ai::StreamEvent> = Vec::new();
+        let mut stream = std::pin::pin!(event_stream);
         while let Some(result) = stream.next().await {
             match result {
-                Ok(chunk) => {
+                Ok(event) => {
                     // Forward deltas to the observer as they arrive.
-                    match &chunk {
-                        StreamChunk::TextDelta(delta) => {
+                    match &event {
+                        rho_ai::StreamEvent::Text(delta) => {
                             self.params.observer.on_text_delta(delta);
                         }
-                        StreamChunk::ReasoningDelta(delta) => {
+                        rho_ai::StreamEvent::Reasoning(delta) => {
                             self.params.observer.on_reasoning_delta(delta);
                         }
                         _ => {}
                     }
-                    debug!("Received stream chunk: {:?}", chunk);
-                    chunks.push(chunk);
+                    debug!("Received stream event: {:?}", event);
+                    events.push(event);
                 }
                 Err(e) => {
-                    warn!("Stream chunk error: {e}");
-                    return Err(e);
+                    warn!("Stream event error: {e}");
+                    return Err(crate::error::RhoError::Client(
+                        crate::client::error::ClientError::from(e),
+                    ));
                 }
             }
         }
-        debug!("Stream ended with {} chunks", chunks.len());
+        debug!("Stream ended with {} events", events.len());
 
-        let acc = StreamChunk::accumulate(&chunks);
+        let acc = rho_ai::StreamEvent::accumulate(&events);
 
-        match acc.finish_reason {
-            FinishReason::ToolCalls => {
-                let tool_calls = build_tool_calls(&acc.tool_calls)?;
+        match &acc.stop_reason {
+            rho_ai::StopReason::ToolUse => {
+                let tool_calls = build_tool_calls_from_accumulated(&acc.tool_calls)?;
                 // Persist assistant message with tool_calls BEFORE returning.
                 self.session
                     .append_assistant_message(crate::ChatMessage::Assistant {
                         content: if acc.text.is_empty() {
                             vec![]
                         } else {
-                            vec![crate::message::ContentBlock::Text {
+                            vec![ContentBlock::Text {
                                 text: acc.text.clone(),
                             }]
                         },
@@ -815,12 +841,12 @@ impl LoopContext<'_> {
                     });
                 Ok(AssistantResponse::ToolCalls(tool_calls))
             }
-            FinishReason::Length => {
+            rho_ai::StopReason::Length => {
                 self.session
                     .append_assistant_message(crate::ChatMessage::assistant_text(&acc.text));
                 Ok(AssistantResponse::LengthTruncated {
-                    content: acc.text,
-                    reasoning_content: acc.reasoning,
+                    content: acc.text.clone(),
+                    reasoning_content: acc.reasoning.clone(),
                 })
             }
             _ => {
@@ -832,9 +858,10 @@ impl LoopContext<'_> {
                 // nothing. Route to LengthTruncated so the agent loop can
                 // attempt compaction and retry. ContentFilter is excluded
                 // because retrying a filtered response is futile.
-                if text.is_empty() && !matches!(acc.finish_reason, FinishReason::ContentFilter) {
+                if text.is_empty() && !matches!(acc.stop_reason, rho_ai::StopReason::ContentFilter)
+                {
                     warn!(
-                        finish_reason = ?acc.finish_reason,
+                        finish_reason = ?acc.stop_reason,
                         "model returned empty content — treating as length truncation"
                     );
                     self.session
@@ -902,7 +929,9 @@ pub async fn run_loop(
 // ── Free helpers ──────────────────────────────────────────────────────────────
 
 /// Build typed tool calls from streaming accumulation.
-fn build_tool_calls(tc_list: &[AccumulatedToolCall]) -> Result<Vec<ModelToolCall>> {
+fn build_tool_calls_from_accumulated(
+    tc_list: &[rho_ai::AccumulatedToolCall],
+) -> Result<Vec<ModelToolCall>> {
     let mut tool_calls = Vec::new();
     for tc in tc_list {
         let id = tc.id.clone().ok_or_else(|| {

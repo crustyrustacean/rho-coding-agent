@@ -5,7 +5,7 @@
 
 use crate::error::ProviderError;
 use crate::service::{EventStream, LlmService};
-use crate::types::{LlmMessage, ToolDefinition};
+use crate::types::LlmRequest;
 use async_trait::async_trait;
 use std::future::Future;
 use std::pin::Pin;
@@ -100,7 +100,7 @@ async fn retry_stream(
 
 #[async_trait]
 impl LlmService for RetryingService {
-    async fn chat_stream(&self, messages: Vec<LlmMessage>) -> Result<EventStream, ProviderError> {
+    async fn chat_stream(&self, request: LlmRequest) -> Result<EventStream, ProviderError> {
         let state = Mutex::new(RetryState { attempt: 0 });
         let config = self.config.clone();
         let inner = self.inner.clone();
@@ -109,30 +109,8 @@ impl LlmService for RetryingService {
             &config,
             || {
                 let inner = inner.clone();
-                let messages = messages.clone();
-                Box::pin(async move { inner.chat_stream(messages).await })
-            },
-            &state,
-        )
-        .await
-    }
-
-    async fn chat_stream_with_tools(
-        &self,
-        messages: Vec<LlmMessage>,
-        tools: Vec<ToolDefinition>,
-    ) -> Result<EventStream, ProviderError> {
-        let state = Mutex::new(RetryState { attempt: 0 });
-        let config = self.config.clone();
-        let inner = self.inner.clone();
-
-        retry_stream(
-            &config,
-            || {
-                let inner = inner.clone();
-                let messages = messages.clone();
-                let tools = tools.clone();
-                Box::pin(async move { inner.chat_stream_with_tools(messages, tools).await })
+                let request = request.clone();
+                Box::pin(async move { inner.chat_stream(request).await })
             },
             &state,
         )

@@ -41,6 +41,6 @@ pub mod types;
 pub use error::ProviderError;
 pub use service::{EventStream, LlmService};
 pub use types::{
-    Backend, LlmMessage, ProviderConfig, StopReason, StreamEvent, StreamUsage, ToolCall,
-    ToolDefinition,
+    AccumulatedResponse, AccumulatedToolCall, Backend, LlmMessage, LlmRequest, ProviderConfig,
+    StopReason, StreamEvent, StreamUsage, ToolCall, ToolDefinition,
 };
