@@ -95,7 +95,7 @@ impl App {
         // ── 7. Tool registry ────────────────────────────────────────────
         let mut tool_registry = ToolRegistry::new();
         register_all(&mut tool_registry, sandbox.clone(), &config);
-        let tool_schemas = tool_registry.tool_schemas();
+        let tool_schemas = tool_registry.tool_definitions();
 
         // ── 8. Context files (interactive trust workflow) ────────────────
         let context_files = scan_context_files(&sandbox);
@@ -328,7 +328,7 @@ fn build_session(
     cli: &Cli,
     model: &str,
     system_prompt: &str,
-    tool_schemas: &[rho_core::ToolSchema],
+    tool_schemas: &[rho_core::ToolDefinition],
     sandbox: &SandboxRoot,
     token_budget: TokenBudget,
     redactor: Redactor,
@@ -381,7 +381,7 @@ fn build_session(
 fn resume_session(
     path: &Path,
     model: &str,
-    tool_schemas: &[rho_core::ToolSchema],
+    tool_schemas: &[rho_core::ToolDefinition],
     sandbox: &SandboxRoot,
     token_budget: TokenBudget,
     redactor: Redactor,

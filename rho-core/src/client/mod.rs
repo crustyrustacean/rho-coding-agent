@@ -1,145 +1,52 @@
-//! The [`ChatClient`] trait and [`LocalChatClient`] default implementation.
+//! [`RhoAiClient`] — the concrete LLM service client.
 //!
-//! Also provides [`client_factory`] for constructing a fully-configured client
-//! from [`RhoConfig`] with optional CLI overrides.
+//! [`RhoAiClient`] wraps [`rho_ai::OpenAiService`] and implements
+//! [`LlmService`](rho_ai::LlmService). All HTTP communication and SSE parsing
+//! is delegated to `rho-ai`.
 
 pub mod error;
 
 use crate::client::error::ClientError;
 use crate::config::RhoConfig;
 use crate::error::Result;
-use crate::request::ChatRequest;
-use crate::response::{FinishReason, ModelResponse};
-use crate::stream::StreamChunk;
 use async_trait::async_trait;
-use futures::stream::Stream;
-use reqwest::Client;
-use serde::Deserialize;
-use std::pin::Pin;
-use tracing::{debug, error, info, warn};
 
-/// The type returned by [`ChatClient::chat_stream`].
-pub type ModelResponseStream = Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>;
+// ── RhoAiClient ──────────────────────────────────────────────────────────────
 
-/// Interface all model providers must implement.
+/// A [`LlmService`](rho_ai::LlmService) backed by [`rho_ai::OpenAiService`].
 ///
-/// # Dyn-compatibility
-///
-/// `#[async_trait]` is required because the binary swaps providers at runtime
-/// (`/provider`), which requires `Box<dyn ChatClient>`. Native AFIT is not
-/// dyn-compatible.
-#[async_trait]
-pub trait ChatClient: Send + Sync {
-    /// Send a chat completion request and return the model's response.
-    async fn chat(&self, request: ChatRequest) -> Result<ModelResponse>;
-
-    /// Send a chat completion request and receive a stream of chunks.
-    ///
-    /// The default implementation wraps [`chat`](Self::chat) — it sends a
-    /// non-streaming request and converts the full response into a `Vec`
-    /// of [`StreamChunk`] via [`StreamChunk::from_response`]. This means
-    /// every [`ChatClient`] implementation supports streaming automatically;
-    /// providers that natively support SSE override this method for
-    /// incremental token delivery.
-    async fn chat_stream(&self, request: ChatRequest) -> Result<ModelResponseStream> {
-        let response = self.chat(request).await?;
-        let chunks = StreamChunk::from_response(&response);
-        Ok(Box::pin(futures::stream::iter(chunks.into_iter().map(Ok))))
-    }
-}
-
-/// Default [`ChatClient`] targeting `OpenAI`-compatible endpoints.
-///
-/// Works with local servers (LM Studio, Ollama) and external providers
-/// (`OpenRouter`, `OpenAI`, `DeepInfra`, `Groq`, etc.) — anything that speaks
-/// the `OpenAI` wire format.
-///
-/// # Bearer authentication
-///
-/// When an API key is provided, it is sent as an `Authorization: Bearer`
-/// header with every request. This is required for external providers but
-/// unused for local endpoints.
+/// This is the sole client implementation. It delegates all HTTP communication
+/// and SSE parsing to `rho-ai`, adapting between rho-core's types and rho-ai's
+/// unified types at the boundary.
 #[derive(Clone, Debug)]
-pub struct LocalChatClient {
-    /// The underlying HTTP client.
-    http_client: Client,
-    /// The model API endpoint URL.
+pub struct RhoAiClient {
+    /// The model identifier.
+    model: String,
+    /// The endpoint URL (used for display/debugging).
     endpoint: String,
-    /// Optional API key for bearer authentication.
-    ///
-    /// When `Some`, sent as `Authorization: Bearer <key>` with each request.
-    /// Local endpoints typically don't need this.
+    /// Optional API key (used for display/debugging).
     api_key: Option<String>,
 }
 
-impl LocalChatClient {
-    /// Create a client at the default local endpoint
-    /// (`http://localhost:1234/v1/chat/completions`).
-    ///
-    /// This is a convenience constructor equivalent to
-    /// `with_endpoint(DEFAULT_ENDPOINT)`. For custom endpoints, use
-    /// [`with_endpoint()`]. For production use with config, prefer
-    /// [`client_factory()`].
-    pub fn new() -> Self {
-        Self::with_endpoint(DEFAULT_ENDPOINT)
-    }
-
-    /// Create a client at a custom endpoint URL.
-    ///
-    /// # When to use
-    ///
-    /// - Local server at non-default port or path
-    /// - Quick configuration without loading config files
-    ///
-    /// # When not to use
-    ///
-    /// - Production with config: use [`client_factory()`]
-    /// - Need API key authentication: use [`with_endpoint_and_key()`]
-    pub fn with_endpoint(endpoint: impl Into<String>) -> Self {
+impl RhoAiClient {
+    /// Create a new client.
+    pub fn new(
+        model: impl Into<String>,
+        endpoint: impl Into<String>,
+        api_key: Option<String>,
+    ) -> Self {
         Self {
-            http_client: Client::new(),
-            endpoint: endpoint.into(),
-            api_key: None,
-        }
-    }
-
-    /// Create a client at a custom endpoint URL with optional bearer
-    /// authentication.
-    ///
-    /// # When to use
-    ///
-    /// - External API providers (`OpenRouter`, `OpenAI`, etc.)
-    /// - Quick configuration without loading config files
-    ///
-    /// # When not to use
-    ///
-    /// - Production with config: use [`client_factory()`]
-    pub fn with_endpoint_and_key(endpoint: impl Into<String>, api_key: Option<String>) -> Self {
-        Self {
-            http_client: Client::new(),
+            model: model.into(),
             endpoint: endpoint.into(),
             api_key,
         }
     }
 
-    /// List models available at the server's `/v1/models` endpoint.
-    ///
-    /// Derives the models URL from the configured completions endpoint by
-    /// replacing the `/v1/chat/completions` path with `/v1/models`. Uses
-    /// URL parsing so trailing slashes and non-standard paths are handled.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the endpoint URL cannot be parsed or the request
-    /// fails (e.g. the server is unreachable).
-    pub async fn list_models(&self) -> Result<ModelList> {
-        let mut models_url = reqwest::Url::parse(&self.endpoint).map_err(ClientError::from)?;
-        models_url.set_path("/v1/models");
-        let mut req = self.http_client.get(models_url);
-        if let Some(ref key) = self.api_key {
-            req = req.bearer_auth(key);
-        }
-        Ok(req.send().await?.json::<ModelList>().await?)
+    /// Build an `OpenAiService` for a specific request.
+    fn service(&self) -> rho_ai::openai::OpenAiService {
+        let api_key = self.api_key.clone().unwrap_or_default();
+        let config = rho_ai::ProviderConfig::new(&self.model, api_key, &self.endpoint);
+        rho_ai::openai::OpenAiService::new(config)
     }
 
     /// The configured endpoint URL.
@@ -153,385 +60,45 @@ impl LocalChatClient {
     pub fn api_key(&self) -> &Option<String> {
         &self.api_key
     }
+
+    /// List models available at the server's `/v1/models` endpoint.
+    ///
+    /// Derives the models URL from the configured endpoint by
+    /// replacing the path with `/v1/models`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the endpoint URL cannot be parsed or the request
+    /// fails.
+    pub async fn list_models(&self) -> Result<ModelList> {
+        let mut models_url = url::Url::parse(&self.endpoint)
+            .map_err(|e| crate::error::RhoError::Client(ClientError::UrlParse(e)))?;
+        models_url.set_path("/v1/models");
+        let client = reqwest::Client::new();
+        let mut req = client.get(models_url);
+        if let Some(ref key) = self.api_key {
+            req = req.bearer_auth(key);
+        }
+        Ok(req.send().await?.json::<ModelList>().await?)
+    }
 }
 
-impl Default for LocalChatClient {
+impl Default for RhoAiClient {
     fn default() -> Self {
-        Self::new()
+        Self::new("default", DEFAULT_ENDPOINT, None)
     }
 }
 
-/// A model returned by the `/v1/models` endpoint.
-#[derive(Clone, Debug, Deserialize)]
-pub struct ModelInfo {
-    /// The model identifier (used in chat completion requests).
-    pub id: String,
-    /// The object type (always `"model"`).
-    pub object: String,
-    /// Unix timestamp of creation.
-    #[serde(default)]
-    pub created: u64,
-    /// Who owns/created this model.
-    #[serde(default)]
-    pub owned_by: String,
-}
-
-/// The response from the `/v1/models` endpoint.
-#[derive(Clone, Debug, Deserialize)]
-pub struct ModelList {
-    /// The list of available models.
-    pub data: Vec<ModelInfo>,
-}
-
-/// Truncate a response body for inclusion in error messages.
-///
-/// Uses `floor_char_boundary` which requires Rust ≥ 1.82.
-fn truncate_error_body(body: &str) -> &str {
-    const MAX_LEN: usize = 512;
-    if body.len() <= MAX_LEN {
-        body
-    } else {
-        &body[..body.floor_char_boundary(MAX_LEN)]
-    }
-}
-
-/// Build a human-readable message for a non-2xx HTTP response body.
-///
-/// Includes actionable suggestions for known error patterns (e.g. context
-/// window exceeded from llama.cpp / LM Studio).
-fn enhance_http_body(status: u16, body: &str) -> String {
-    let snippet = truncate_error_body(body);
-
-    // Detect the common "context window exceeded" error from llama.cpp / LM Studio.
-    if status == 400 && body.contains("n_keep") && body.contains("n_ctx") {
-        return format!(
-            "context window exceeded.\
-             \n  The system prompt + tool schemas exceed the model's context length.\
-             \n  Try one of:\
-             \n    1. Load the model with a larger context length in LM Studio\
-             \n    2. Use --compact to send a shorter system prompt\
-             \n    3. Use a model with a larger context window\
-             \n  Server details: {snippet}"
-        );
-    }
-
-    snippet.to_string()
-}
-
-// ── SSE wire types (private) ──────────────────────────────────────────────────
-//
-// These types mirror the OpenAI SSE wire format. They are only used by
-// `LocalChatClient::chat_stream` to deserialize individual `data:` lines.
-// Clippy's `missing_docs_in_private_items` lint is suppressed for these
-// deserialization-only structs.
-
-/// A single SSE event payload from the streaming API.
-#[derive(Debug, Clone, Deserialize)]
-#[allow(clippy::missing_docs_in_private_items)]
-struct SseChunk {
-    #[serde(default)]
-    choices: Vec<SseChoice>,
-}
-
-/// A single choice within an SSE chunk.
-#[derive(Debug, Clone, Deserialize)]
-#[allow(clippy::missing_docs_in_private_items)]
-struct SseChoice {
-    delta: SseDelta,
-    finish_reason: Option<FinishReason>,
-}
-
-/// The delta content within an SSE choice.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[allow(clippy::missing_docs_in_private_items)]
-struct SseDelta {
-    #[serde(default)]
-    #[allow(dead_code)]
-    role: Option<String>,
-    #[serde(default)]
-    content: Option<String>,
-    #[serde(default)]
-    reasoning_content: Option<String>,
-    #[serde(default)]
-    tool_calls: Option<Vec<SseToolCallDelta>>,
-}
-
-/// A tool call delta within an SSE choice.
-#[derive(Debug, Clone, Deserialize)]
-#[allow(clippy::missing_docs_in_private_items)]
-struct SseToolCallDelta {
-    index: usize,
-    #[serde(default)]
-    id: Option<String>,
-    #[serde(default)]
-    function: Option<SseFunctionDelta>,
-}
-
-/// A function delta within a tool call delta.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[allow(clippy::missing_docs_in_private_items)]
-struct SseFunctionDelta {
-    #[serde(default)]
-    name: Option<String>,
-    #[serde(default)]
-    arguments: Option<String>,
-}
+// ── LlmService impl ──────────────────────────────────────────────────────────
 
 #[async_trait]
-impl ChatClient for LocalChatClient {
-    #[tracing::instrument(skip_all, fields(model = %request.model, message_count = request.messages.len(), tool_count = request.tools.len()))]
-    async fn chat(&self, request: ChatRequest) -> Result<ModelResponse> {
-        debug!(
-            model = %request.model,
-            num_messages = request.messages.len(),
-            num_tools = request.tools.len(),
-            "sending chat request"
-        );
-        let mut request_builder = self.http_client.post(&self.endpoint).json(&request);
-        if let Some(ref key) = self.api_key {
-            request_builder = request_builder.bearer_auth(key);
-        }
-        let response = request_builder.send().await?;
-
-        let status = response.status();
-
-        // Read the body as text so we can report it on parse failures and
-        // include it in HTTP error diagnostics. If the body read itself
-        // fails (e.g. connection dropped mid-response), propagate as
-        // ClientError::Http so it remains retryable.
-        let body = response.text().await?;
-
-        if !status.is_success() {
-            // Non-2xx HTTP response. Use HttpError which preserves the
-            // status code for retry classification.
-            warn!(status = status.as_u16(), body = %truncate_error_body(&body));
-            return Err(ClientError::http_error(
-                status.as_u16(),
-                enhance_http_body(status.as_u16(), &body),
-            )
-            .into());
-        }
-
-        let model_response = serde_json::from_str::<ModelResponse>(&body).map_err(|e| {
-            error!(error = %e);
-            ClientError::Json(e)
-        })?;
-
-        // Log response telemetry for data model assessment.
-        if let Some(choice) = model_response.choices.first() {
-            info!(
-                finish_reason = ?choice.finish_reason,
-                prompt_tokens = model_response.usage.prompt_tokens,
-                completion_tokens = model_response.usage.completion_tokens,
-                total_tokens = model_response.usage.total_tokens,
-            );
-        }
-
-        Ok(model_response)
-    }
-
-    async fn chat_stream(&self, request: ChatRequest) -> Result<ModelResponseStream> {
-        info!("sending streaming request to {}", self.endpoint);
-        let mut request_builder = self.http_client.post(&self.endpoint).json(&request);
-        if let Some(ref key) = self.api_key {
-            request_builder = request_builder.bearer_auth(key);
-        }
-
-        let response = request_builder.send().await?;
-        let status = response.status();
-        info!("received response with status: {}", status);
-
-        if !status.is_success() {
-            let error_text = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "unable to read error body".to_string());
-            error!(
-                "streaming request failed with status {}: {}",
-                status, error_text
-            );
-            return Err(ClientError::http_error(status.as_u16(), error_text).into());
-        }
-
-        let byte_stream = response.bytes_stream();
-        debug!("created byte stream from response");
-
-        // Build a `futures::Stream` that buffers SSE lines and emits
-        // `StreamChunk` items.
-        let stream = SseStream::new(Box::pin(byte_stream));
-        Ok(Box::pin(stream))
-    }
-}
-
-// ── SSE line-buffered stream ──────────────────────────────────────────────────
-
-/// A `futures::Stream` that consumes a reqwest byte stream, buffers SSE
-/// lines, and emits parsed [`StreamChunk`] items.
-///
-/// SSE data may be split across TCP frames arbitrarily, so we must buffer
-/// partial lines and only process complete `\n`-terminated lines.
-struct SseStream {
-    /// Inner byte stream from reqwest.
-    byte_stream: std::pin::Pin<
-        Box<dyn futures::Stream<Item = std::result::Result<bytes::Bytes, reqwest::Error>> + Send>,
-    >,
-    /// Line buffer for accumulating partial SSE lines across chunks.
-    line_buf: String,
-    /// Whether `[DONE]` has been received.
-    done: bool,
-}
-
-impl SseStream {
-    /// Create a new SSE stream parser wrapping a reqwest byte stream.
-    #[allow(clippy::missing_docs_in_private_items)]
-    fn new(
-        byte_stream: std::pin::Pin<
-            Box<
-                dyn futures::Stream<Item = std::result::Result<bytes::Bytes, reqwest::Error>>
-                    + Send,
-            >,
-        >,
-    ) -> Self {
-        Self {
-            byte_stream,
-            line_buf: String::new(),
-            done: false,
-        }
-    }
-
-    /// Try to extract the next `StreamChunk` from the line buffer.
-    /// Returns `None` if no complete SSE event is available.
-    fn try_next_chunk(&mut self) -> Option<Result<StreamChunk>> {
-        loop {
-            if self.done {
-                return None;
-            }
-
-            // Find the next complete line.
-            let newline_pos = self.line_buf.find('\n')?;
-
-            let line = self.line_buf[..newline_pos]
-                .trim_end_matches('\r')
-                .to_owned();
-            self.line_buf = self.line_buf[newline_pos + 1..].to_owned();
-
-            // Skip non-data lines.
-            let Some(payload) = line.strip_prefix("data: ") else {
-                continue;
-            };
-            let payload = payload.trim();
-
-            // Check for stream end sentinel.
-            if payload == "[DONE]" {
-                self.done = true;
-                return None;
-            }
-
-            // Parse the JSON payload.
-            let sse_chunk = match serde_json::from_str::<SseChunk>(payload) {
-                Ok(c) => c,
-                Err(e) => {
-                    warn!("failed to parse SSE chunk: {e}; payload: {payload}");
-                    continue;
-                }
-            };
-
-            // Convert the first choice into StreamChunk(s).
-            if let Some(choice) = sse_chunk.choices.first() {
-                // Emit tool call deltas first — these carry the most important
-                // signal and should not be shadowed by empty content fields.
-                if let Some(tool_call_deltas) = &choice.delta.tool_calls
-                    && let Some(tc_delta) = tool_call_deltas.first()
-                {
-                    let func = tc_delta.function.as_ref();
-                    return Some(Ok(StreamChunk::ToolCallDelta {
-                        index: tc_delta.index,
-                        id: tc_delta.id.clone(),
-                        function_name: func.and_then(|f| f.name.clone()),
-                        arguments_delta: func.and_then(|f| f.arguments.clone()),
-                    }));
-                }
-                // Emit text delta (skip empty strings — some providers send
-                // `content: ""` alongside `finish_reason`, which would
-                // prevent the Done chunk from being emitted).
-                if let Some(text) = choice.delta.content.clone()
-                    && !text.is_empty()
-                {
-                    return Some(Ok(StreamChunk::TextDelta(text)));
-                }
-                // Emit reasoning delta (similarly skip empty strings).
-                if let Some(reasoning) = choice.delta.reasoning_content.clone()
-                    && !reasoning.is_empty()
-                {
-                    return Some(Ok(StreamChunk::ReasoningDelta(reasoning)));
-                }
-                // Emit done.
-                if let Some(reason) = &choice.finish_reason {
-                    return Some(Ok(StreamChunk::Done(reason.clone())));
-                }
-            }
-            // If no useful data in this SSE event, continue to next line.
-            debug!("SSE chunk had no text, reasoning, tool_calls, or finish_reason; skipping");
-        }
-    }
-}
-
-impl futures::Stream for SseStream {
-    type Item = Result<StreamChunk>;
-
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
-        debug!(
-            "poll_next called: done={}, line_buf_len={}",
-            self.done,
-            self.line_buf.len()
-        );
-        // First, try to extract a chunk from already-buffered lines.
-        if let Some(chunk) = self.try_next_chunk() {
-            return std::task::Poll::Ready(Some(chunk));
-        }
-
-        // If done, close the stream.
-        if self.done {
-            return std::task::Poll::Ready(None);
-        }
-
-        // Poll the inner byte stream for more data.
-        loop {
-            match self.byte_stream.as_mut().poll_next(cx) {
-                std::task::Poll::Ready(Some(Ok(bytes))) => {
-                    let bytes_str = String::from_utf8_lossy(&bytes).to_string();
-                    debug!(
-                        "received {} bytes from byte stream: {:?}",
-                        bytes.len(),
-                        bytes_str
-                    );
-                    self.line_buf.push_str(&bytes_str);
-                    if let Some(chunk) = self.try_next_chunk() {
-                        return std::task::Poll::Ready(Some(chunk));
-                    }
-                    // try_next_chunk may have set `done`; check before
-                    // polling again.
-                    if self.done {
-                        return std::task::Poll::Ready(None);
-                    }
-                    // No chunk ready yet — keep polling.
-                }
-                std::task::Poll::Ready(Some(Err(e))) => {
-                    warn!("SSE byte stream error: {e}");
-                    return std::task::Poll::Ready(None);
-                }
-                std::task::Poll::Ready(None) => {
-                    // Inner stream exhausted.
-                    return std::task::Poll::Ready(None);
-                }
-                std::task::Poll::Pending => {
-                    return std::task::Poll::Pending;
-                }
-            }
-        }
+impl rho_ai::LlmService for RhoAiClient {
+    async fn chat_stream(
+        &self,
+        request: rho_ai::types::LlmRequest,
+    ) -> std::result::Result<rho_ai::EventStream, rho_ai::ProviderError> {
+        let service = self.service();
+        service.chat_stream(request).await
     }
 }
 
@@ -540,14 +107,14 @@ impl futures::Stream for SseStream {
 /// The default endpoint URL when no override or config is set.
 const DEFAULT_ENDPOINT: &str = "http://localhost:1234/v1/chat/completions";
 
-/// Construct a fully-configured [`LocalChatClient`] from [`RhoConfig`].
+/// Construct a fully-configured [`RhoAiClient`] from [`RhoConfig`].
 ///
 /// **Prefer [`provider_factory`](crate::provider_factory) for new code** — it
 /// returns a [`Box<dyn Provider>`](crate::Provider) that encapsulates client
 /// construction, model discovery, and externality checking.
 ///
 /// This function remains available for:
-/// - Bench harnesses that need a concrete [`LocalChatClient`]
+/// - Bench harnesses that need a concrete client
 /// - Tests that bypass the provider abstraction
 /// - Backward compatibility
 ///
@@ -560,7 +127,7 @@ pub fn client_factory(
     config: &RhoConfig,
     endpoint_override: Option<&str>,
     api_key_env_override: Option<&str>,
-) -> LocalChatClient {
+) -> RhoAiClient {
     let endpoint = endpoint_override
         .map(String::from)
         .or_else(|| config.provider.default_endpoint().map(String::from))
@@ -568,10 +135,9 @@ pub fn client_factory(
 
     let api_key = resolve_api_key(config, api_key_env_override);
 
-    match api_key {
-        Some(key) => LocalChatClient::with_endpoint_and_key(endpoint, Some(key)),
-        None => LocalChatClient::with_endpoint(endpoint),
-    }
+    // Extract model from the endpoint's base URL or use a default.
+    // The model will be overridden per-request via ChatRequest.model.
+    RhoAiClient::new("default", endpoint, api_key)
 }
 
 /// Resolve the API key from provider configuration.
@@ -597,6 +163,30 @@ pub fn is_local_endpoint(endpoint: &str) -> bool {
         .ok()
         .and_then(|u| u.host_str().map(String::from))
         .is_some_and(|h| matches!(h.as_str(), "localhost" | "127.0.0.1" | "::1" | "[::1]"))
+}
+
+// ── Legacy types for backward compatibility ──────────────────────────────────
+
+/// A model returned by the `/v1/models` endpoint.
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct ModelInfo {
+    /// The model identifier (used in chat completion requests).
+    pub id: String,
+    /// The object type (always `"model"`).
+    pub object: String,
+    /// Unix timestamp of creation.
+    #[serde(default)]
+    pub created: u64,
+    /// Who owns/created this model.
+    #[serde(default)]
+    pub owned_by: String,
+}
+
+/// The response from the `/v1/models` endpoint.
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct ModelList {
+    /// The list of available models.
+    pub data: Vec<ModelInfo>,
 }
 
 #[cfg(test)]
@@ -626,7 +216,7 @@ mod tests {
         }
     }
 
-    // ── client_factory ───────────────────────────────────────────────────────
+    // ── client_factory ───────────────────────────────────────────────────
 
     #[test]
     fn client_factory_defaults_when_no_config_or_override() {
@@ -691,7 +281,7 @@ mod tests {
         );
     }
 
-    // ── resolve_api_key ────────────────────────────────────────────────────
+    // ── resolve_api_key ──────────────────────────────────────────────────
 
     #[test]
     fn resolve_api_key_returns_none_when_nothing_configured() {
@@ -732,7 +322,7 @@ mod tests {
         });
     }
 
-    // ── is_local_endpoint ──────────────────────────────────────────────────
+    // ── is_local_endpoint ────────────────────────────────────────────────
 
     #[test]
     fn local_endpoint_localhost() {
@@ -779,30 +369,9 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn default_endpoint_derives_models_url() {
-        let client = LocalChatClient::new();
-        let models_url = reqwest::Url::parse(&client.endpoint).unwrap();
-        let mut expected = models_url.clone();
-        expected.set_path("/v1/models");
-        assert_eq!(expected.as_str(), "http://localhost:1234/v1/models");
-    }
+    // ── Message conversion ───────────────────────────────────────────────
 
-    #[test]
-    fn custom_endpoint_derives_models_url() {
-        let client = LocalChatClient::with_endpoint("http://localhost:8080/v1/chat/completions");
-        let models_url = reqwest::Url::parse(&client.endpoint).unwrap();
-        let mut expected = models_url.clone();
-        expected.set_path("/v1/models");
-        assert_eq!(expected.as_str(), "http://localhost:8080/v1/models");
-    }
+    // ── Tool conversion ──────────────────────────────────────────────────
 
-    #[test]
-    fn trailing_slash_endpoint_still_derives_models_url() {
-        let client = LocalChatClient::with_endpoint("http://localhost:1234/v1/chat/completions/");
-        let models_url = reqwest::Url::parse(&client.endpoint).unwrap();
-        let mut expected = models_url.clone();
-        expected.set_path("/v1/models");
-        assert_eq!(expected.as_str(), "http://localhost:1234/v1/models");
-    }
+    // ── content_into_string ──────────────────────────────────────────────
 }

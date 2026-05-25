@@ -2,8 +2,8 @@
 //!
 //! # Contents
 //!
-//! - [`MockChatClient`] — a [`ChatClient`] that returns canned [`ModelResponse`]
-//!   values and records every [`ChatRequest`] it receives.
+//! - [`MockChatClient`] — an [`LlmService`](rho_ai::LlmService) that returns canned
+//!   [`StreamEvent`](rho_ai::StreamEvent) sequences and records every [`LlmRequest`] it receives.
 //! - [`MockShellExecutor`] — a [`ShellExecutor`] that returns canned [`ShellOutput`]
 //!   values and records every command it receives.
 //! - [`FixedResponseTool`] — a [`Tool`] that always returns a fixed string,
@@ -19,19 +19,28 @@
 //! - [`assert_no_orphan_tool_results`] — assert every `Tool` message has a
 //!   matching preceding `Assistant` tool call.
 //!
+//! # Event builders
+//!
+//! The fixture builders produce `Vec<StreamEvent>` directly:
+//!
+//! - [`text_events`] — model responds with text, stops.
+//! - [`tool_call_events`] — model requests a single tool call.
+//! - [`multi_tool_call_events`] — model requests multiple tool calls.
+//! - [`length_truncated_events`] — model hit token budget.
+//! - [`empty_stop_events`] — model stops with empty content.
+//! - [`empty_content_filter_events`] — content filtered, empty response.
+//!
 //! Add this crate as a `dev-dependency`; it is never published.
 //!
-//! [`ChatClient`]: rho_core::ChatClient
-//! [`ChatRequest`]: rho_core::ChatRequest
-//! [`ModelResponse`]: rho_core::ModelResponse
+//! [`LlmService`]: rho_ai::LlmService
 //! [`ShellExecutor`]: rho_core::ShellExecutor
 //! [`ShellOutput`]: rho_core::ShellOutput
 
 use async_trait::async_trait;
+use rho_ai::{EventStream, LlmRequest, LlmService, ProviderError};
 use rho_core::{
-    AgentConfig, CancellationToken, ChatClient, ChatMessage, ChatRequest, ModelResponse, RhoError,
-    SandboxRoot, Session, ShellExecutor, ShellOutput, Tool, ToolName, ToolOutcome, ToolRegistry,
-    ToolResult, TrustStore,
+    AgentConfig, CancellationToken, ChatMessage, RhoError, SandboxRoot, Session, ShellExecutor,
+    ShellOutput, Tool, ToolName, ToolOutcome, ToolRegistry, ToolResult, TrustStore,
     agent::{LoopParams, NopObserver, run_loop},
     approval::ApprovalGate,
     message::ModelToolCall,
@@ -44,45 +53,94 @@ pub use tempfile::TempDir;
 
 // ── MockChatClient ────────────────────────────────────────────────────────────
 
-/// A [`ChatClient`] that returns pre-loaded results in sequence.
+/// Convert a [`RhoError`] to a [`ProviderError`], preserving retryability.
 ///
-/// Records every [`ChatRequest`] it receives so tests can inspect the full
-/// conversation that would have been sent to a real model API.
+/// Used by [`MockChatClient`] to convert stored `RhoError` values back into
+/// appropriate `ProviderError` variants so that the agent loop's retry logic
+/// works correctly.
+fn convert_error_to_provider(e: RhoError) -> ProviderError {
+    match e {
+        RhoError::Client(client_err) => match client_err {
+            rho_core::client::error::ClientError::Http(http_err) => {
+                ProviderError::Http { source: http_err }
+            }
+            rho_core::client::error::ClientError::HttpError { status, message } => {
+                ProviderError::HttpStatus {
+                    status,
+                    body: Some(message),
+                    retryable: matches!(status, 429 | 500 | 502 | 503 | 504),
+                }
+            }
+            rho_core::client::error::ClientError::RetryBudgetExhausted(_attempts, last) => {
+                ProviderError::RetryBudgetExhausted {
+                    last_error: Box::new(convert_error_to_provider(rho_core::RhoError::Client(
+                        *last,
+                    ))),
+                }
+            }
+            _ => ProviderError::Sse {
+                message: client_err.to_string(),
+            },
+        },
+        _ => ProviderError::Sse {
+            message: e.to_string(),
+        },
+    }
+}
+
+/// A canned response for [`MockChatClient`].
 ///
-/// Use [`MockChatClient::new`] for simple success-response sequences, or
-/// [`MockChatClient::with_results`] to mix successes and errors (e.g. for
-/// retry tests).
+/// Wraps either a sequence of [`StreamEvent`](rho_ai::StreamEvent)s (success)
+/// or a [`RhoError`] (failure).
+pub enum MockResponse {
+    /// Successful response: a sequence of stream events.
+    Events(Vec<rho_ai::StreamEvent>),
+    /// Error response.
+    Error(RhoError),
+}
+
+impl From<Vec<rho_ai::StreamEvent>> for MockResponse {
+    fn from(events: Vec<rho_ai::StreamEvent>) -> Self {
+        Self::Events(events)
+    }
+}
+
+/// An [`LlmService`](rho_ai::LlmService) that returns pre-loaded results in sequence.
+///
+/// Records every [`LlmRequest`] it receives so tests can inspect what the
+/// agent loop sent to the model.
+///
+/// Use [`MockChatClient::new`] for success-response sequences, or
+/// [`MockChatClient::with_results`] to mix successes and errors.
 ///
 /// # Panics
 ///
 /// Panics if called more times than there are queued results. This is
-/// intentional — an under-queued mock is a test-setup bug and should fail
-/// loudly rather than producing a confusing downstream error.
-#[derive(Clone)]
+/// intentional — an under-queued mock is a test-setup bug.
 pub struct MockChatClient {
-    /// Queued results (success or error) returned in order.
-    items: Arc<Mutex<Vec<Result<ModelResponse, RhoError>>>>,
+    /// Queued results returned in order.
+    items: Arc<Mutex<Vec<MockResponse>>>,
     /// All requests received, in order.
-    requests: Arc<Mutex<Vec<ChatRequest>>>,
+    requests: Arc<Mutex<Vec<LlmRequest>>>,
 }
 
 impl MockChatClient {
-    /// Create a client with a sequence of successful responses.
+    /// Create a client with a sequence of successful event lists.
     ///
-    /// Responses are returned in order: the first call returns `responses[0]`,
-    /// the second call returns `responses[1]`, and so on.
-    pub fn new(responses: Vec<ModelResponse>) -> Self {
+    /// Each `Vec<StreamEvent>` is returned as one complete stream response.
+    pub fn new(responses: Vec<Vec<rho_ai::StreamEvent>>) -> Self {
         Self {
-            items: Arc::new(Mutex::new(responses.into_iter().map(Ok).collect())),
+            items: Arc::new(Mutex::new(
+                responses.into_iter().map(MockResponse::Events).collect(),
+            )),
             requests: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
-    /// Create a client with a sequence of results (successes and errors).
+    /// Create a client with a sequence of [`MockResponse`] values.
     ///
-    /// Use this for retry tests where you need to queue retryable errors
-    /// followed by a successful response.
-    pub fn with_results(items: Vec<Result<ModelResponse, RhoError>>) -> Self {
+    /// Use this to mix successes and errors (e.g. for retry tests).
+    pub fn with_results(items: Vec<MockResponse>) -> Self {
         Self {
             items: Arc::new(Mutex::new(items)),
             requests: Arc::new(Mutex::new(Vec::new())),
@@ -94,21 +152,35 @@ impl MockChatClient {
     /// # Panics
     ///
     /// Panics if the internal mutex is poisoned.
-    pub fn requests(&self) -> Vec<ChatRequest> {
+    pub fn requests(&self) -> Vec<LlmRequest> {
         self.requests.lock().unwrap().clone()
     }
 }
 
 #[async_trait]
-impl ChatClient for MockChatClient {
-    async fn chat(&self, request: ChatRequest) -> rho_core::Result<ModelResponse> {
+impl LlmService for MockChatClient {
+    async fn chat_stream(
+        &self,
+        request: LlmRequest,
+    ) -> std::result::Result<EventStream, ProviderError> {
         self.requests.lock().unwrap().push(request);
+
         let mut items = self.items.lock().unwrap();
         assert!(
             !items.is_empty(),
             "MockChatClient: no more canned results — check test setup"
         );
-        items.remove(0)
+        let result = items.remove(0);
+
+        match result {
+            MockResponse::Events(events) => {
+                Ok(Box::pin(futures::stream::iter(events.into_iter().map(Ok))))
+            }
+            MockResponse::Error(e) => {
+                let provider_err = convert_error_to_provider(e);
+                Err(provider_err)
+            }
+        }
     }
 }
 
@@ -117,14 +189,11 @@ impl ChatClient for MockChatClient {
 /// A [`ShellExecutor`] that returns canned [`ShellOutput`] values.
 ///
 /// Records every command it receives so tests can inspect what the tool
-/// layer asked the shell to run. Used by `RunCommand` unit tests that need
-/// to exercise argument parsing and result formatting without spawning a
-/// real shell.
+/// layer asked the shell to run.
 ///
 /// # Panics
 ///
-/// Panics if called more times than there are queued outputs. This is
-/// intentional — an under-queued mock is a test-setup bug.
+/// Panics if called more times than there are queued outputs.
 #[derive(Clone)]
 pub struct MockShellExecutor {
     /// Queued outputs returned in order.
@@ -190,11 +259,10 @@ impl ShellExecutor for MockShellExecutor {
 
 // ── FixedResponseTool ───────────────────────────────────────────────────
 
-/// A tool that always returns a fixed string. Used in integration tests
-/// as a stand-in for any tool the model might call.
+/// A tool that always returns a fixed string.
 ///
 /// The name, response text, and risk level are all configurable, making
-/// this a universal replacement for stub tools scattered across test files.
+/// this a universal replacement for stub tools across test files.
 pub struct FixedResponseTool {
     /// The tool's registered name.
     pub name: &'static str,
@@ -276,254 +344,131 @@ impl Tool for FailingTool {
     }
 }
 
-// ── Response builders ─────────────────────────────────────────────────────────
+// ── StreamEvent builders ──────────────────────────────────────────────────────
 
-/// Build a minimal [`ModelResponse`] that returns a text message.
+/// Build a stream that delivers a text response, then ends the turn.
 ///
-/// Useful for building mock sequences without writing out the full JSON structure.
+/// # Examples
 ///
-/// # Panics
-///
-/// Panics if the internal fixture JSON is malformed (should never happen).
-pub fn text_response(text: impl Into<String>) -> ModelResponse {
-    let json = serde_json::json!({
-        "id": "mock-id",
-        "object": "chat.completion",
-        "created": 0,
-        "model": "mock-model",
-        "choices": [{
-            "index": 0,
-            "message": {
-                "role": "assistant",
-                "content": text.into(),
-                "reasoning_content": "",
-                "tool_calls": []
-            },
-            "logprobs": null,
-            "finish_reason": "stop"
-        }],
-        "usage": {
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "total_tokens": 0
-        },
-        "stats": {},
-        "system_fingerprint": ""
-    });
-    serde_json::from_value(json).expect("text_response: invalid fixture")
+/// ```ignore
+/// let client = MockChatClient::new(vec![text_events("hello")]);
+/// ```
+pub fn text_events(text: impl Into<String>) -> Vec<rho_ai::StreamEvent> {
+    vec![
+        rho_ai::StreamEvent::Text(text.into()),
+        done_event(rho_ai::StopReason::EndTurn),
+    ]
 }
 
-/// Build a minimal [`ModelResponse`] that requests a single tool call.
+/// Build a stream that delivers a single tool call, then signals tool-use stop.
 ///
-/// # Panics
+/// # Examples
 ///
-/// Panics if the internal fixture JSON is malformed (should never happen).
-pub fn tool_call_response(
+/// ```ignore
+/// let client = MockChatClient::new(vec![tool_call_events("c1", "echo", "{}")]);
+/// ```
+pub fn tool_call_events(
     call_id: impl Into<String>,
     tool_name: impl Into<String>,
     arguments: impl Into<String>,
-) -> ModelResponse {
-    let json = serde_json::json!({
-        "id": "mock-id",
-        "object": "chat.completion",
-        "created": 0,
-        "model": "mock-model",
-        "choices": [{
-            "index": 0,
-            "message": {
-                "role": "assistant",
-                "content": "",
-                "reasoning_content": "",
-                "tool_calls": [{
-                    "id": call_id.into(),
-                    "type": "function",
-                    "function": {
-                        "name": tool_name.into(),
-                        "arguments": arguments.into()
-                    }
-                }]
-            },
-            "logprobs": null,
-            "finish_reason": "tool_calls"
-        }],
-        "usage": {
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "total_tokens": 0
+) -> Vec<rho_ai::StreamEvent> {
+    let id = call_id.into();
+    let name = tool_name.into();
+    let args = arguments.into();
+    vec![
+        rho_ai::StreamEvent::ToolUseStart {
+            index: 0,
+            id: id.clone(),
+            name: name.clone(),
         },
-        "stats": {},
-        "system_fingerprint": ""
-    });
-    serde_json::from_value(json).expect("tool_call_response: invalid fixture")
+        rho_ai::StreamEvent::ToolUseInputDelta {
+            index: 0,
+            delta: args.clone(),
+        },
+        rho_ai::StreamEvent::ToolUseComplete {
+            index: 0,
+            tool_call: rho_ai::ToolCall {
+                id,
+                name,
+                arguments: args,
+            },
+        },
+        done_event(rho_ai::StopReason::ToolUse),
+    ]
 }
 
-/// Build a minimal [`ModelResponse`] that requests multiple tool calls.
+/// Build a stream that delivers multiple tool calls, then signals tool-use stop.
 ///
 /// Each tuple is `(call_id, tool_name, arguments)`.
-///
-/// # Panics
-///
-/// Panics if the internal fixture JSON is malformed (should never happen).
-pub fn multi_tool_call_response(
+pub fn multi_tool_call_events(
     calls: Vec<(impl Into<String>, impl Into<String>, impl Into<String>)>,
-) -> ModelResponse {
-    let tool_calls: Vec<serde_json::Value> = calls
-        .into_iter()
-        .map(|(id, name, args)| {
-            serde_json::json!({
-                "id": id.into(),
-                "type": "function",
-                "function": {
-                    "name": name.into(),
-                    "arguments": args.into()
-                }
-            })
-        })
-        .collect();
-
-    let json = serde_json::json!({
-        "id": "mock-id",
-        "object": "chat.completion",
-        "created": 0,
-        "model": "mock-model",
-        "choices": [{
-            "index": 0,
-            "message": {
-                "role": "assistant",
-                "content": "",
-                "reasoning_content": "",
-                "tool_calls": tool_calls
+) -> Vec<rho_ai::StreamEvent> {
+    let mut events = Vec::new();
+    for (index, (id, name, args)) in calls.into_iter().enumerate() {
+        let id = id.into();
+        let name = name.into();
+        let args = args.into();
+        events.push(rho_ai::StreamEvent::ToolUseStart {
+            index,
+            id: id.clone(),
+            name: name.clone(),
+        });
+        events.push(rho_ai::StreamEvent::ToolUseInputDelta {
+            index,
+            delta: args.clone(),
+        });
+        events.push(rho_ai::StreamEvent::ToolUseComplete {
+            index,
+            tool_call: rho_ai::ToolCall {
+                id,
+                name,
+                arguments: args,
             },
-            "logprobs": null,
-            "finish_reason": "tool_calls"
-        }],
-        "usage": {
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "total_tokens": 0
-        },
-        "stats": {},
-        "system_fingerprint": ""
-    });
-    serde_json::from_value(json).expect("multi_tool_call_response: invalid fixture")
+        });
+    }
+    events.push(done_event(rho_ai::StopReason::ToolUse));
+    events
 }
 
-/// Build a [`ModelResponse`] with `finish_reason: "length"` and the given content.
+/// Build a stream with `StopReason::Length` and the given content/reasoning.
 ///
-/// Both `content` and `reasoning_content` default to `""` if not provided.
-/// This models a reasoning model that ran out of tokens (e.g. spent everything
-/// on chain-of-thought with no content output).
-///
-/// # Panics
-///
-/// Panics if the internal fixture JSON is malformed (should never happen).
-pub fn length_truncated_response(
+/// Models a reasoning model that ran out of tokens.
+pub fn length_truncated_events(
     content: impl Into<String>,
     reasoning_content: impl Into<String>,
-) -> ModelResponse {
-    let json = serde_json::json!({
-        "id": "mock-id",
-        "object": "chat.completion",
-        "created": 0,
-        "model": "mock-model",
-        "choices": [{
-            "index": 0,
-            "message": {
-                "role": "assistant",
-                "content": content.into(),
-                "reasoning_content": reasoning_content.into(),
-                "tool_calls": []
-            },
-            "logprobs": null,
-            "finish_reason": "length"
-        }],
-        "usage": {
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "total_tokens": 0
-        },
-        "stats": {},
-        "system_fingerprint": ""
-    });
-    serde_json::from_value(json).expect("length_truncated_response: invalid fixture")
+) -> Vec<rho_ai::StreamEvent> {
+    let mut events = Vec::new();
+    let text = content.into();
+    if !text.is_empty() {
+        events.push(rho_ai::StreamEvent::Text(text));
+    }
+    let reasoning = reasoning_content.into();
+    if !reasoning.is_empty() {
+        events.push(rho_ai::StreamEvent::Reasoning(reasoning));
+    }
+    events.push(done_event(rho_ai::StopReason::Length));
+    events
 }
 
-/// Build a [`ModelResponse`] where the model claims `finish_reason: "stop"`
-/// but returns empty content.
+/// Build a stream with `StopReason::EndTurn` but empty content.
 ///
-/// This models the llama.cpp behaviour where the server reports "stop"
+/// Models the llama.cpp behaviour where the server reports "stop"
 /// instead of "length" when the model exhausts its completion budget.
-/// Build a [`ModelResponse`] where the model claims `finish_reason: "stop"`
-/// but returns empty content.
-///
-/// This models the llama.cpp behaviour where the server reports "stop"
-/// instead of "length" when the model exhausts its completion budget.
-///
-/// # Panics
-///
-/// Panics if the internal fixture JSON is malformed (should never happen).
-pub fn empty_stop_response() -> ModelResponse {
-    let json = serde_json::json!({
-        "id": "mock-id",
-        "object": "chat.completion",
-        "created": 0,
-        "model": "mock-model",
-        "choices": [{
-            "index": 0,
-            "message": {
-                "role": "assistant",
-                "content": "",
-                "reasoning_content": "",
-                "tool_calls": []
-            },
-            "logprobs": null,
-            "finish_reason": "stop"
-        }],
-        "usage": {
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "total_tokens": 0
-        },
-        "stats": {},
-        "system_fingerprint": ""
-    });
-    serde_json::from_value(json).expect("empty_stop_response: invalid fixture")
+pub fn empty_stop_events() -> Vec<rho_ai::StreamEvent> {
+    vec![done_event(rho_ai::StopReason::EndTurn)]
 }
 
-/// Build a [`ModelResponse`] with `finish_reason: "content_filter"` and
-/// empty content.
-/// Build a [`ModelResponse`] with `finish_reason: "content_filter"` and
-/// empty content.
-///
-/// # Panics
-///
-/// Panics if the internal fixture JSON is malformed (should never happen).
-pub fn empty_content_filter_response() -> ModelResponse {
-    let json = serde_json::json!({
-        "id": "mock-id",
-        "object": "chat.completion",
-        "created": 0,
-        "model": "mock-model",
-        "choices": [{
-            "index": 0,
-            "message": {
-                "role": "assistant",
-                "content": "",
-                "reasoning_content": "",
-                "tool_calls": []
-            },
-            "logprobs": null,
-            "finish_reason": "content_filter"
-        }],
-        "usage": {
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "total_tokens": 0
-        },
-        "stats": {},
-        "system_fingerprint": ""
-    });
-    serde_json::from_value(json).expect("empty_content_filter_response: invalid fixture")
+/// Build a stream with `StopReason::ContentFilter` and empty content.
+pub fn empty_content_filter_events() -> Vec<rho_ai::StreamEvent> {
+    vec![done_event(rho_ai::StopReason::ContentFilter)]
+}
+
+/// Helper: build a `Done` event with zero usage.
+fn done_event(reason: rho_ai::StopReason) -> rho_ai::StreamEvent {
+    rho_ai::StreamEvent::Done {
+        reason,
+        usage: rho_ai::StreamUsage::new(0, 0),
+    }
 }
 
 // ── Fixture loader ────────────────────────────────────────────────────────────
@@ -686,7 +631,6 @@ impl Default for FileTestEnv {
 /// Panics if the temp directory or sandbox root cannot be created.
 pub fn tempdir_with_sandbox() -> (TempDir, SandboxRoot) {
     let env = FileTestEnv::new();
-    // Unwrap the env into its components for backward compatibility.
     let dir = env.dir;
     let root = env.root;
     (dir, root)
@@ -724,8 +668,7 @@ pub fn trust_store_path(dir: &TempDir) -> PathBuf {
 /// Windows PowerShell 5.1 is on `PATH`, or `None` if neither is found.
 ///
 /// Use this in integration tests that spawn real PowerShell processes
-/// to skip tests gracefully when no shell is available, rather than
-/// panicking as [`PowerShellExecutor::new()`] does.
+/// to skip tests gracefully when no shell is available.
 ///
 /// [`PowerShellExecutor::new()`]: rho_tools::PowerShellExecutor
 pub fn detect_shell() -> Option<&'static str> {
@@ -739,10 +682,6 @@ pub fn detect_shell() -> Option<&'static str> {
 }
 
 /// Check whether an executable exists on `PATH`.
-///
-/// Mirrors the private `which_exists` in `rho-tools` so test code can
-/// detect shells without depending on `rho-tools` (which would create a
-/// circular dev-dependency).
 fn which_exists(name: &str) -> bool {
     which::which(name).is_ok()
 }
@@ -755,7 +694,10 @@ fn which_exists(name: &str) -> bool {
 /// `"mock"` and the CWD to `/tmp`.
 ///
 /// If `system_prompt` is `None`, a default `"you are a test assistant"` is used.
-pub fn in_memory_session(system_prompt: Option<&str>, tools: Vec<rho_core::ToolSchema>) -> Session {
+pub fn in_memory_session(
+    system_prompt: Option<&str>,
+    tools: Vec<rho_ai::ToolDefinition>,
+) -> Session {
     let prompt = system_prompt.unwrap_or("you are a test assistant");
     Session::in_memory("mock", Some(prompt), tools, "/tmp")
 }
@@ -817,7 +759,7 @@ pub async fn single_text_turn(
     response_text: &str,
     registry: &ToolRegistry,
 ) -> String {
-    let client = MockChatClient::new(vec![text_response(response_text)]);
+    let client = MockChatClient::new(vec![text_events(response_text)]);
     let config = AgentConfig::default();
     let params = LoopParams {
         client: &client,
@@ -847,8 +789,8 @@ pub async fn single_tool_turn(
     registry: &ToolRegistry,
 ) {
     let client = MockChatClient::new(vec![
-        tool_call_response(call_id, tool_name, tool_args),
-        text_response("done"),
+        tool_call_events(call_id, tool_name, tool_args),
+        text_events("done"),
     ]);
     let config = AgentConfig::default();
     let params = LoopParams {

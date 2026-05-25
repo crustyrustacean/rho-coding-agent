@@ -100,7 +100,7 @@ use crate::error::Result;
 use crate::message::{ChatMessage, ContentBlock};
 use crate::newtypes::{EntryId, SessionId, ToolCallId};
 use crate::redact::Redactor;
-use crate::schema::ToolSchema;
+
 use crate::session::error::SessionError;
 use crate::tool::{ToolResult, ToolResultDetails};
 use std::collections::HashMap;
@@ -221,7 +221,7 @@ pub struct Session {
     /// Model identifier.
     pub model: String,
     /// Tool schemas sent with every request.
-    pub tools: Vec<ToolSchema>,
+    pub tools: Vec<rho_ai::ToolDefinition>,
     /// Context window manager applied before each request.
     context_manager: Box<dyn ContextManager>,
     /// Token budget for the context manager.
@@ -263,7 +263,7 @@ impl Session {
     pub fn new(
         model: impl Into<String>,
         system_prompt: Option<&str>,
-        tools: Vec<ToolSchema>,
+        tools: Vec<rho_ai::ToolDefinition>,
         cwd: impl Into<PathBuf>,
     ) -> Self {
         let mut entries = HashMap::new();
@@ -318,7 +318,7 @@ impl Session {
     pub fn in_memory(
         model: impl Into<String>,
         system_prompt: Option<&str>,
-        tools: Vec<ToolSchema>,
+        tools: Vec<rho_ai::ToolDefinition>,
         cwd: impl Into<PathBuf>,
     ) -> Self {
         let mut entries = HashMap::new();
@@ -477,7 +477,7 @@ impl Session {
 
     /// Override the tool schemas (useful when resuming a session with
     /// a different set of tools).
-    pub fn set_tools(&mut self, tools: Vec<ToolSchema>) {
+    pub fn set_tools(&mut self, tools: Vec<rho_ai::ToolDefinition>) {
         self.tools = tools;
     }
 
@@ -940,8 +940,8 @@ impl Session {
     /// Send the current session state to the model and persist the response.
     ///
     /// 1. Builds the message list via [`path_messages`](Self::path_messages).
-    /// 2. Constructs a [`ChatRequest`](crate::request::ChatRequest).
-    /// 3. Calls the client.
+    /// 2. Constructs an [`LlmRequest`](rho_ai::LlmRequest).
+    /// 3. Calls the LLM service.
     /// 4. Persists the assistant response as an appended entry.
     /// 5. Calibrates the estimator against the actual `prompt_tokens`.
     ///
@@ -951,93 +951,42 @@ impl Session {
     /// or the response cannot be parsed.
     pub async fn send_current(
         &mut self,
-        client: &dyn crate::client::ChatClient,
+        client: &dyn rho_ai::LlmService,
     ) -> crate::error::Result<crate::conversation::AssistantResponse> {
-        use crate::request::ChatRequest;
-        use crate::response::FinishReason;
+        use crate::agent::{consume_stream, route_response};
 
         let fitted = self.path_messages();
 
         // Estimate tokens for the request before sending (for calibration).
         let estimated_tokens = Self::estimate_messages_tokens(&fitted);
 
-        let request = ChatRequest {
+        let llm_messages: Vec<rho_ai::LlmMessage> =
+            fitted.iter().map(ChatMessage::to_llm_message).collect();
+
+        let llm_request = rho_ai::LlmRequest {
             model: self.model.clone(),
-            messages: fitted,
+            messages: llm_messages,
             tools: self.tools.clone(),
-            stream: false,
             max_tokens: Some(self.token_budget.completion_reserve),
         };
 
-        let response = client.chat(request).await?;
-        let choice = &response.choices[0];
+        let event_stream = client.chat_stream(llm_request).await.map_err(|e| {
+            crate::error::RhoError::Client(crate::client::error::ClientError::from(e))
+        })?;
+
+        let events = consume_stream(event_stream, &crate::agent::NopObserver).await?;
+        let acc = rho_ai::StreamEvent::accumulate(&events);
 
         // Calibrate estimator if the API returned prompt_tokens.
-        let usage = &response.usage;
-        if usage.prompt_tokens > 0 {
-            self.estimator
-                .calibrate(&self.model, estimated_tokens, usage.prompt_tokens);
+        if acc.usage.input_tokens > 0 {
+            self.estimator.calibrate(
+                &self.model,
+                estimated_tokens,
+                usize::try_from(acc.usage.input_tokens).unwrap_or(0),
+            );
         }
 
-        match &choice.finish_reason {
-            FinishReason::ToolCalls => {
-                let tool_calls = choice.message.tool_calls.clone();
-                // Persist assistant message with tool_calls BEFORE returning.
-                self.append_assistant_message(ChatMessage::Assistant {
-                    content: if choice.message.content.is_empty() {
-                        vec![]
-                    } else {
-                        vec![crate::message::ContentBlock::Text {
-                            text: choice.message.content.clone(),
-                        }]
-                    },
-                    tool_calls: tool_calls.clone(),
-                });
-                Ok(crate::conversation::AssistantResponse::ToolCalls(
-                    tool_calls,
-                ))
-            }
-            FinishReason::Length => {
-                // The model hit the token limit. Persist the (possibly empty)
-                // response as an assistant message so the conversation history
-                // stays valid, then signal the agent loop to handle recovery.
-                let content = choice.message.content.clone();
-                let reasoning_content = choice.message.reasoning_content.clone();
-                self.append_assistant_message(ChatMessage::assistant_text(&content));
-                Ok(crate::conversation::AssistantResponse::LengthTruncated {
-                    content,
-                    reasoning_content,
-                })
-            }
-            _ => {
-                let text = choice.message.content.clone();
-                let reasoning_content = choice.message.reasoning_content.clone();
-
-                // llama.cpp sometimes reports "stop" instead of "length"
-                // when the model exhausts its completion budget and produces
-                // nothing. Route to LengthTruncated so the agent loop can
-                // attempt compaction and retry. ContentFilter is excluded
-                // because retrying a filtered response is futile.
-                if text.is_empty() && !matches!(&choice.finish_reason, FinishReason::ContentFilter)
-                {
-                    warn!(
-                        finish_reason = ?choice.finish_reason,
-                        "model returned empty content — treating as length truncation"
-                    );
-                    self.append_assistant_message(ChatMessage::assistant_text(&text));
-                    return Ok(crate::conversation::AssistantResponse::LengthTruncated {
-                        content: text,
-                        reasoning_content,
-                    });
-                }
-
-                self.append_assistant_message(ChatMessage::assistant_text(&text));
-                Ok(crate::conversation::AssistantResponse::Message {
-                    text,
-                    reasoning_content,
-                })
-            }
-        }
+        route_response(&acc, self)
     }
 
     /// Estimate the total tokens for a slice of messages.
@@ -1791,8 +1740,7 @@ mod tests {
 
     #[test]
     fn schema_overhead_returns_nonzero_with_tools() {
-        use crate::schema::ToolSchema;
-        let tools = vec![ToolSchema::function(
+        let tools = vec![rho_ai::ToolDefinition::new(
             "read_file",
             "Read a file",
             serde_json::json!({
@@ -1809,8 +1757,7 @@ mod tests {
 
     #[test]
     fn message_budget_is_prompt_minus_overheads() {
-        use crate::schema::ToolSchema;
-        let tools = vec![ToolSchema::function(
+        let tools = vec![rho_ai::ToolDefinition::new(
             "read_file",
             "Read a file",
             serde_json::json!({"type": "object"}),
@@ -2748,17 +2695,16 @@ mod tests {
 
     #[test]
     fn path_messages_subtracts_tool_schema_overhead() {
-        use crate::schema::ToolSchema;
         use serde_json::json;
 
         // Create a session with a very small budget and tool schemas
         let tools = vec![
-            ToolSchema::function(
+            rho_ai::ToolDefinition::new(
                 "read_file",
                 "Read a file",
                 json!({"type": "object", "properties": {"path": {"type": "string"}}}),
             ),
-            ToolSchema::function(
+            rho_ai::ToolDefinition::new(
                 "run_command",
                 "Execute a command",
                 json!({"type": "object", "properties": {"command": {"type": "string"}}}),

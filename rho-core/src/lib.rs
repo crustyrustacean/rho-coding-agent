@@ -14,7 +14,7 @@
 //! | [`request`] | [`ChatRequest`] |
 //! | [`response`] | [`ModelResponse`], [`FinishReason`], etc. |
 //! | [`tool`] | [`Tool`] trait, [`ToolRegistry`], [`ToolRisk`], [`ToolResult`], [`CancellationToken`] |
-//! | [`client`] | [`ChatClient`] trait, [`LocalChatClient`] |
+//! | [`client`] | [`RhoAiClient`] — LLM service client |
 //! | [`context`] | [`ContextManager`] trait, [`SlidingWindowContextManager`], [`TokenBudget`] |
 //! | [`conversation`] | [`AssistantResponse`] |
 //! | [`session`] | [`Entry`], [`EntryPayload`], [`EntryResolution`], [`CompactionSummary`], [`ExtensionEntry`], [`ExtensionMessageEntry`] |
@@ -49,8 +49,8 @@
 //! [`ToolRisk`]: tool::ToolRisk
 //! [`ToolResult`]: tool::ToolResult
 //! [`CancellationToken`]: tool::CancellationToken
-//! [`ChatClient`]: client::ChatClient
-//! [`LocalChatClient`]: client::LocalChatClient
+//!
+//! [`RhoAiClient`]: client::RhoAiClient
 //! [`ContextManager`]: context::ContextManager
 //! [`SlidingWindowContextManager`]: context::SlidingWindowContextManager
 //! [`TokenBudget`]: context::TokenBudget
@@ -95,8 +95,7 @@ pub use approval::{
     ApprovalGate, ApprovalPolicy, AutoApprovePolicy, ConfigApprovalPolicy, DefaultApprovalPolicy,
 };
 pub use client::{
-    ChatClient, LocalChatClient, ModelInfo, ModelList, ModelResponseStream, client_factory,
-    is_local_endpoint, resolve_api_key,
+    ModelInfo, ModelList, RhoAiClient, client_factory, is_local_endpoint, resolve_api_key,
 };
 pub use config::{
     AgentLoopConfig, ApprovalAction, ApprovalConfig, ConfigLoadError, ConfigLoader, ContextConfig,
@@ -119,6 +118,7 @@ pub use provider::{OpenAiCompatibleProvider, Provider, ProviderRegistry, provide
 pub use redact::Redactor;
 pub use request::ChatRequest;
 pub use response::{FinishReason, ModelChoice, ModelResponse, ModelUsage};
+pub use rho_ai::ToolDefinition;
 pub use sandbox::{SandboxRoot, find_project_root};
 pub use schema::ToolSchema;
 pub use session::{

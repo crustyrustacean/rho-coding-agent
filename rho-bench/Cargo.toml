@@ -15,6 +15,7 @@ workspace = true
 
 [dependencies]
 rho-core = { path = "../rho-core" }
+rho-ai = { path = "../rho-ai" }
 rho-eval = { path = "../rho-eval" }
 rho-tools = { path = "../rho-tools" }
 clap = { version = "4", features = ["derive"] }

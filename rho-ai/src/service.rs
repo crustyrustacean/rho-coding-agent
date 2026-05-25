@@ -1,7 +1,7 @@
 //! The [`LlmService`] trait — the core abstraction for provider-agnostic LLM communication.
 
 use crate::error::ProviderError;
-use crate::types::{LlmMessage, StreamEvent, ToolDefinition};
+use crate::types::StreamEvent;
 use async_trait::async_trait;
 use futures::Stream;
 use std::pin::Pin;
@@ -20,19 +20,14 @@ pub type EventStream = Pin<Box<dyn Stream<Item = Result<StreamEvent, ProviderErr
 /// an implementation of this trait from a [`crate::types::ProviderConfig`].
 #[async_trait]
 pub trait LlmService: Send + Sync {
-    /// Send messages and stream the response (no tools).
+    /// Send a chat completion request and stream the response.
     ///
-    /// Use this for simple chat completions where tool use is not needed.
-    async fn chat_stream(&self, messages: Vec<LlmMessage>) -> Result<EventStream, ProviderError>;
-
-    /// Send messages with tool definitions and stream the response.
-    ///
+    /// The request carries the model, messages, tools, and optional limits.
     /// The LLM may respond with text, tool calls, or both.
     /// Tool calls arrive as a sequence of `StreamEvent` variants:
     /// `ToolUseStart` → zero or more `ToolUseInputDelta` → `ToolUseComplete`.
-    async fn chat_stream_with_tools(
+    async fn chat_stream(
         &self,
-        messages: Vec<LlmMessage>,
-        tools: Vec<ToolDefinition>,
+        request: crate::types::LlmRequest,
     ) -> Result<EventStream, ProviderError>;
 }

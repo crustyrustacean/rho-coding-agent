@@ -3,10 +3,6 @@
 //! Converts a raw byte stream from `reqwest` into a stream of `data:` payloads.
 //! Used by all three provider modules to consume SSE responses.
 
-use crate::error::ProviderError;
-use futures::stream::Stream;
-use std::pin::Pin;
-
 /// A parsed SSE event containing the data payload.
 #[derive(Debug, Clone)]
 pub struct SseEvent {
@@ -22,6 +18,7 @@ pub(crate) struct SseParser {
 }
 
 impl SseParser {
+    /// Create a new parser.
     pub(crate) fn new() -> Self {
         Self::default()
     }
@@ -35,7 +32,9 @@ impl SseParser {
         self.buffer.push_str(chunk);
 
         while let Some(newline_pos) = self.buffer.find('\n') {
-            let line = self.buffer[..newline_pos].trim_end_matches('\r').to_string();
+            let line = self.buffer[..newline_pos]
+                .trim_end_matches('\r')
+                .to_string();
             self.buffer = self.buffer[newline_pos + 1..].to_string();
 
             if line.is_empty() {

@@ -13,7 +13,7 @@
 //!    model API to return a 400 error.
 
 use crate::message::ChatMessage;
-use crate::schema::ToolSchema;
+
 use crate::session::{Entry, EntryPayload, EntryResolution, TokenEstimator};
 use tracing::{debug, warn};
 
@@ -198,7 +198,7 @@ pub trait ContextManager: Send + Sync {
         entries: &[&Entry],
         budget: TokenBudget,
         estimator: &dyn TokenEstimator,
-        tool_schemas: &[ToolSchema],
+        tool_schemas: &[rho_ai::ToolDefinition],
     ) -> Vec<ChatMessage> {
         // Step 1–4: Convert entries to messages, respecting resolution.
         let mut messages = Vec::with_capacity(entries.len());
@@ -308,7 +308,7 @@ pub fn render_compaction_summary(summary: &crate::session::CompactionSummary) ->
 /// message history. Their token cost must be subtracted from the prompt
 /// budget to avoid over-estimating available space.
 pub(crate) fn estimate_tool_schema_overhead(
-    schemas: &[ToolSchema],
+    schemas: &[rho_ai::ToolDefinition],
     estimator: &dyn TokenEstimator,
 ) -> usize {
     if schemas.is_empty() {
@@ -810,7 +810,7 @@ mod tests {
     // ── fit_path tests (Task 8) ──────────────────────────────────────────
 
     use crate::newtypes::EntryId;
-    use crate::schema::ToolSchema;
+
     use crate::session::{
         CompactionSummary, Entry, EntryPayload, EntryResolution, HeuristicEstimator,
     };
@@ -1069,7 +1069,7 @@ mod tests {
 
     #[test]
     fn fit_path_subtracts_tool_schema_overhead() {
-        let tools = vec![ToolSchema::function(
+        let tools = vec![rho_ai::ToolDefinition::new(
             "read_file",
             "Read a file from disk",
             json!({"type": "object", "properties": {"path": {"type": "string"}}}),
@@ -1113,7 +1113,7 @@ mod tests {
     #[test]
     fn estimate_tool_schema_overhead_returns_nonzero_for_schemas() {
         let estimator = HeuristicEstimator::new();
-        let tools = vec![ToolSchema::function(
+        let tools = vec![rho_ai::ToolDefinition::new(
             "test",
             "A test tool",
             json!({"type": "object"}),
