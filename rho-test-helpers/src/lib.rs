@@ -925,7 +925,10 @@ fn which_exists(name: &str) -> bool {
 /// `"mock"` and the CWD to `/tmp`.
 ///
 /// If `system_prompt` is `None`, a default `"you are a test assistant"` is used.
-pub fn in_memory_session(system_prompt: Option<&str>, tools: Vec<rho_core::ToolSchema>) -> Session {
+pub fn in_memory_session(
+    system_prompt: Option<&str>,
+    tools: Vec<rho_ai::ToolDefinition>,
+) -> Session {
     let prompt = system_prompt.unwrap_or("you are a test assistant");
     Session::in_memory("mock", Some(prompt), tools, "/tmp")
 }

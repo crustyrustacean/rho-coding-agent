@@ -826,28 +826,14 @@ pub async fn run_loop(
 /// maps tool schemas to [`ToolDefinition`](rho_ai::ToolDefinition), and sets
 /// `max_tokens` from the session's token budget.
 fn build_llm_request(session: &Session) -> rho_ai::LlmRequest {
-    use rho_ai::ToolDefinition;
-
     let fitted = session.path_messages();
     let llm_messages: Vec<rho_ai::LlmMessage> =
         fitted.iter().map(ChatMessage::to_llm_message).collect();
 
-    let tools: Vec<ToolDefinition> = session
-        .tools
-        .iter()
-        .map(|t| {
-            ToolDefinition::new(
-                t.function.name.clone(),
-                t.function.description.clone(),
-                t.function.parameters.clone(),
-            )
-        })
-        .collect();
-
     rho_ai::LlmRequest {
         model: session.model.clone(),
         messages: llm_messages,
-        tools,
+        tools: session.tools.clone(),
         max_tokens: Some(session.token_budget().completion_reserve),
     }
 }
@@ -985,7 +971,7 @@ fn route_response(
 mod tests {
     use super::*;
     use crate::context::TokenBudget;
-    use crate::schema::ToolSchema;
+    use rho_ai::ToolDefinition;
     use std::sync::{Arc, Mutex};
 
     // ── Error type tests ──────────────────────────────────────────────────
@@ -1052,7 +1038,11 @@ mod tests {
 
     // ── build_llm_request tests ──────────────────────────────────────────
 
-    fn test_session(system: Option<&str>, user_msgs: &[&str], tools: Vec<ToolSchema>) -> Session {
+    fn test_session(
+        system: Option<&str>,
+        user_msgs: &[&str],
+        tools: Vec<ToolDefinition>,
+    ) -> Session {
         let mut session = Session::in_memory("test-model", system, tools, "/tmp");
         for msg in user_msgs {
             session.append_user_message(msg);
@@ -1079,7 +1069,7 @@ mod tests {
 
     #[test]
     fn build_llm_request_includes_tools() {
-        let tools = vec![ToolSchema::function(
+        let tools = vec![ToolDefinition::new(
             "read_file",
             "Read a file",
             serde_json::json!({"type": "object"}),

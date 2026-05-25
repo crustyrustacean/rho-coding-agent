@@ -314,7 +314,7 @@ fn resolution_filtering_attached_still_in_tree() {
 async fn branching_old_branch_unreachable_from_leaf() {
     let registry = fixed_registry("echo", "ok".to_owned(), rho_core::ToolRisk::Read);
 
-    let mut session = Session::in_memory("m", Some("sys"), registry.tool_schemas(), "/tmp");
+    let mut session = Session::in_memory("m", Some("sys"), registry.tool_definitions(), "/tmp");
     let root_id = session.leaf().unwrap();
 
     // Turn 1: user + assistant
@@ -507,7 +507,7 @@ async fn amnesia_reproducer_secret_survives() {
     );
 
     let config = AgentConfig::default();
-    let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
+    let mut session = Session::in_memory("mock", None, registry.tool_definitions(), "/tmp");
 
     let params = LoopParams {
         client: &client,
@@ -621,7 +621,7 @@ async fn session_bounded_tool_result_preserves_tool_pair() {
 async fn long_session_pressure_first_user_survives() {
     let registry = fixed_registry("echo", "ok".to_owned(), rho_core::ToolRisk::Read);
 
-    let mut session = Session::in_memory("m", Some("sys"), registry.tool_schemas(), "/tmp")
+    let mut session = Session::in_memory("m", Some("sys"), registry.tool_definitions(), "/tmp")
         .with_token_budget(TokenBudget::new(1024));
 
     let secret = "MANGO-TANGO-7742";
@@ -670,7 +670,7 @@ async fn long_session_pressure_no_orphan_tool_results() {
         rho_core::ToolRisk::Read,
     );
 
-    let mut session = Session::in_memory("m", Some("sys"), registry.tool_schemas(), "/tmp")
+    let mut session = Session::in_memory("m", Some("sys"), registry.tool_definitions(), "/tmp")
         .with_token_budget(TokenBudget::new(2048));
 
     single_tool_turn(
@@ -705,7 +705,7 @@ async fn long_session_pressure_no_orphan_tool_results() {
 async fn long_session_pressure_coherent_after_compaction() {
     let registry = fixed_registry("echo", "ok".to_owned(), rho_core::ToolRisk::Read);
 
-    let mut session = Session::in_memory("m", Some("sys"), registry.tool_schemas(), "/tmp")
+    let mut session = Session::in_memory("m", Some("sys"), registry.tool_definitions(), "/tmp")
         .with_token_budget(TokenBudget::new(2048));
 
     let secret = "HONEYCRISP-1234";
@@ -768,7 +768,7 @@ async fn compact_and_resume_model_response_appended_after_compaction() {
     let registry = fixed_registry("read_file", "x".repeat(5000), rho_core::ToolRisk::Read);
 
     let config = AgentConfig::default();
-    let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp")
+    let mut session = Session::in_memory("mock", None, registry.tool_definitions(), "/tmp")
         .with_token_budget(TokenBudget::new(2048));
 
     let params = LoopParams {
@@ -803,7 +803,7 @@ async fn compact_and_resume_model_response_appended_after_compaction() {
 async fn compact_and_resume_compaction_survives_subsequent_calls() {
     let registry = fixed_registry("echo", "ok".to_owned(), rho_core::ToolRisk::Read);
 
-    let mut session = Session::in_memory("m", Some("sys"), registry.tool_schemas(), "/tmp")
+    let mut session = Session::in_memory("m", Some("sys"), registry.tool_definitions(), "/tmp")
         .with_token_budget(TokenBudget::new(1024));
 
     single_text_turn(&mut session, "remember: the value is 7", "ok", &registry).await;
@@ -863,7 +863,7 @@ async fn compact_and_resume_compaction_survives_subsequent_calls() {
 async fn compact_and_resume_original_entries_still_accessible() {
     let registry = fixed_registry("echo", "ok".to_owned(), rho_core::ToolRisk::Read);
 
-    let mut session = Session::in_memory("m", Some("sys"), registry.tool_schemas(), "/tmp");
+    let mut session = Session::in_memory("m", Some("sys"), registry.tool_definitions(), "/tmp");
 
     single_text_turn(
         &mut session,
@@ -907,7 +907,7 @@ async fn multi_tool_call_compaction_preserves_integrity() {
     );
 
     let config = AgentConfig::default();
-    let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp")
+    let mut session = Session::in_memory("mock", None, registry.tool_definitions(), "/tmp")
         .with_token_budget(TokenBudget::new(2048));
 
     let params = LoopParams {
@@ -959,7 +959,8 @@ async fn estimator_converges_within_20_percent_by_third_round_trip() {
     let registry = fixed_registry("echo", "echo".to_owned(), rho_core::ToolRisk::Read);
 
     let config = AgentConfig::default();
-    let mut session = Session::in_memory("converge-model", None, registry.tool_schemas(), "/tmp");
+    let mut session =
+        Session::in_memory("converge-model", None, registry.tool_definitions(), "/tmp");
 
     for i in 0..5 {
         let params = LoopParams {
@@ -1056,7 +1057,7 @@ fn estimator_convergence_unit_test() {
 async fn first_user_turn_pinned_via_session_api() {
     let registry = fixed_registry("echo", "ok".to_owned(), rho_core::ToolRisk::Read);
 
-    let mut session = Session::in_memory("m", Some("sys"), registry.tool_schemas(), "/tmp")
+    let mut session = Session::in_memory("m", Some("sys"), registry.tool_definitions(), "/tmp")
         .with_token_budget(TokenBudget::new(1));
 
     let secret = "POMELO-SLICE-42";
@@ -1104,7 +1105,7 @@ async fn system_message_pinned_via_session_api() {
     let mut session = Session::in_memory(
         "m",
         Some("unique-sys-marker-xyz"),
-        registry.tool_schemas(),
+        registry.tool_definitions(),
         "/tmp",
     )
     .with_token_budget(TokenBudget::new(1));
@@ -1141,7 +1142,7 @@ async fn tool_call_turn_integrity_after_branch() {
     );
 
     let config = AgentConfig::default();
-    let mut session = Session::in_memory("m", Some("sys"), registry.tool_schemas(), "/tmp");
+    let mut session = Session::in_memory("m", Some("sys"), registry.tool_definitions(), "/tmp");
 
     let params = LoopParams {
         client: &client,
@@ -1257,7 +1258,7 @@ fn compaction_summary_rendering_byte_stable() {
 async fn compacted_branch_does_not_leak_into_other_branch() {
     let registry = fixed_registry("echo", "ok".to_owned(), rho_core::ToolRisk::Read);
 
-    let mut session = Session::in_memory("m", Some("sys"), registry.tool_schemas(), "/tmp");
+    let mut session = Session::in_memory("m", Some("sys"), registry.tool_definitions(), "/tmp");
 
     let root_id = session.leaf().unwrap();
     single_text_turn(

@@ -53,7 +53,7 @@ async fn denied_tool_gets_denial_message_fed_back() {
     }));
 
     let config = AgentConfig::default(); // DefaultApprovalPolicy → requires approval
-    let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
+    let mut session = Session::in_memory("mock", None, registry.tool_definitions(), "/tmp");
 
     // AutoDenyGate always says no.
     let params = LoopParams {
@@ -107,7 +107,7 @@ async fn approved_tool_executes() {
     }));
 
     let config = AgentConfig::default();
-    let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
+    let mut session = Session::in_memory("mock", None, registry.tool_definitions(), "/tmp");
 
     // AutoApproveGate always says yes.
     let params = LoopParams {

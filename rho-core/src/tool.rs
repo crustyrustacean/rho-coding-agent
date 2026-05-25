@@ -3,7 +3,6 @@
 use crate::error::Result;
 use crate::message::ModelToolCall;
 use crate::newtypes::ToolName;
-use crate::schema::ToolSchema;
 use async_trait::async_trait;
 
 // ── CancellationToken ─────────────────────────────────────────────────────────
@@ -207,14 +206,16 @@ impl ToolRegistry {
             .map(std::convert::AsRef::as_ref)
     }
 
-    /// Produce tool schemas for inclusion in a [`ChatRequest`].
-    ///
-    /// [`ChatRequest`]: crate::request::ChatRequest
-    pub fn tool_schemas(&self) -> Vec<ToolSchema> {
+    /// Produce tool definitions for inclusion in an [`LlmRequest`](rho_ai::LlmRequest).
+    pub fn tool_definitions(&self) -> Vec<rho_ai::ToolDefinition> {
         self.tools
             .iter()
             .map(|t| {
-                ToolSchema::function(t.name().to_string(), t.description(), t.parameters_schema())
+                rho_ai::ToolDefinition::new(
+                    t.name().to_string(),
+                    t.description(),
+                    t.parameters_schema(),
+                )
             })
             .collect()
     }

@@ -119,6 +119,7 @@ pub use provider::{OpenAiCompatibleProvider, Provider, ProviderRegistry, provide
 pub use redact::Redactor;
 pub use request::ChatRequest;
 pub use response::{FinishReason, ModelChoice, ModelResponse, ModelUsage};
+pub use rho_ai::ToolDefinition;
 pub use sandbox::{SandboxRoot, find_project_root};
 pub use schema::ToolSchema;
 pub use session::{

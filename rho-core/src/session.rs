@@ -100,7 +100,7 @@ use crate::error::Result;
 use crate::message::{ChatMessage, ContentBlock};
 use crate::newtypes::{EntryId, SessionId, ToolCallId};
 use crate::redact::Redactor;
-use crate::schema::ToolSchema;
+
 use crate::session::error::SessionError;
 use crate::tool::{ToolResult, ToolResultDetails};
 use std::collections::HashMap;
@@ -221,7 +221,7 @@ pub struct Session {
     /// Model identifier.
     pub model: String,
     /// Tool schemas sent with every request.
-    pub tools: Vec<ToolSchema>,
+    pub tools: Vec<rho_ai::ToolDefinition>,
     /// Context window manager applied before each request.
     context_manager: Box<dyn ContextManager>,
     /// Token budget for the context manager.
@@ -263,7 +263,7 @@ impl Session {
     pub fn new(
         model: impl Into<String>,
         system_prompt: Option<&str>,
-        tools: Vec<ToolSchema>,
+        tools: Vec<rho_ai::ToolDefinition>,
         cwd: impl Into<PathBuf>,
     ) -> Self {
         let mut entries = HashMap::new();
@@ -318,7 +318,7 @@ impl Session {
     pub fn in_memory(
         model: impl Into<String>,
         system_prompt: Option<&str>,
-        tools: Vec<ToolSchema>,
+        tools: Vec<rho_ai::ToolDefinition>,
         cwd: impl Into<PathBuf>,
     ) -> Self {
         let mut entries = HashMap::new();
@@ -477,7 +477,7 @@ impl Session {
 
     /// Override the tool schemas (useful when resuming a session with
     /// a different set of tools).
-    pub fn set_tools(&mut self, tools: Vec<ToolSchema>) {
+    pub fn set_tools(&mut self, tools: Vec<rho_ai::ToolDefinition>) {
         self.tools = tools;
     }
 
@@ -964,7 +964,17 @@ impl Session {
         let request = ChatRequest {
             model: self.model.clone(),
             messages: fitted,
-            tools: self.tools.clone(),
+            tools: self
+                .tools
+                .iter()
+                .map(|t| {
+                    crate::schema::ToolSchema::function(
+                        t.name.clone(),
+                        t.description.clone(),
+                        t.parameters.clone(),
+                    )
+                })
+                .collect(),
             stream: false,
             max_tokens: Some(self.token_budget.completion_reserve),
         };
@@ -1791,8 +1801,7 @@ mod tests {
 
     #[test]
     fn schema_overhead_returns_nonzero_with_tools() {
-        use crate::schema::ToolSchema;
-        let tools = vec![ToolSchema::function(
+        let tools = vec![rho_ai::ToolDefinition::new(
             "read_file",
             "Read a file",
             serde_json::json!({
@@ -1809,8 +1818,7 @@ mod tests {
 
     #[test]
     fn message_budget_is_prompt_minus_overheads() {
-        use crate::schema::ToolSchema;
-        let tools = vec![ToolSchema::function(
+        let tools = vec![rho_ai::ToolDefinition::new(
             "read_file",
             "Read a file",
             serde_json::json!({"type": "object"}),
@@ -2748,17 +2756,16 @@ mod tests {
 
     #[test]
     fn path_messages_subtracts_tool_schema_overhead() {
-        use crate::schema::ToolSchema;
         use serde_json::json;
 
         // Create a session with a very small budget and tool schemas
         let tools = vec![
-            ToolSchema::function(
+            rho_ai::ToolDefinition::new(
                 "read_file",
                 "Read a file",
                 json!({"type": "object", "properties": {"path": {"type": "string"}}}),
             ),
-            ToolSchema::function(
+            rho_ai::ToolDefinition::new(
                 "run_command",
                 "Execute a command",
                 json!({"type": "object", "properties": {"command": {"type": "string"}}}),

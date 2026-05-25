@@ -187,7 +187,7 @@ async fn assistant_tool_call_message_persisted_before_tool_result() {
 
     let registry = fixed_registry("echo_tool", "echo output".into(), ToolRisk::Read);
     let config = AgentConfig::default();
-    let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
+    let mut session = Session::in_memory("mock", None, registry.tool_definitions(), "/tmp");
 
     let params = LoopParams {
         client: &client,
@@ -246,7 +246,7 @@ async fn multiple_tool_calls_executed_sequentially() {
     }));
 
     let config = AgentConfig::default();
-    let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
+    let mut session = Session::in_memory("mock", None, registry.tool_definitions(), "/tmp");
 
     let params = LoopParams {
         client: &client,
@@ -320,7 +320,7 @@ async fn multi_tool_call_persistence_invariant() {
 
     let registry = fixed_registry("echo_tool", "echo".into(), ToolRisk::Read);
     let config = AgentConfig::default();
-    let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
+    let mut session = Session::in_memory("mock", None, registry.tool_definitions(), "/tmp");
 
     let params = LoopParams {
         client: &client,
@@ -373,7 +373,7 @@ async fn mixed_approval_with_multi_tool_call() {
     }));
 
     let config = AgentConfig::default(); // DefaultApprovalPolicy: Read auto, Write needs approval
-    let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
+    let mut session = Session::in_memory("mock", None, registry.tool_definitions(), "/tmp");
 
     let params = LoopParams {
         client: &client,
@@ -465,7 +465,7 @@ async fn all_tool_calls_denied_still_feeds_results_and_resends() {
     }));
 
     let config = AgentConfig::default();
-    let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
+    let mut session = Session::in_memory("mock", None, registry.tool_definitions(), "/tmp");
 
     let params = LoopParams {
         client: &client,
@@ -523,7 +523,7 @@ async fn cancellation_between_tool_calls_in_batch() {
     registry.register(Box::new(SlowTool));
 
     let config = AgentConfig::default();
-    let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
+    let mut session = Session::in_memory("mock", None, registry.tool_definitions(), "/tmp");
 
     // Cancel after 150ms — the SlowTool runs 20 × 50ms = 1000ms polling loop.
     // The first tool will observe the cancellation and return early.
@@ -615,7 +615,7 @@ async fn iteration_count_includes_multi_tool_call_response() {
         max_iterations: 5,
         ..AgentConfig::default()
     };
-    let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
+    let mut session = Session::in_memory("mock", None, registry.tool_definitions(), "/tmp");
 
     let params = LoopParams {
         client: &client,
@@ -653,7 +653,7 @@ async fn loop_terminates_after_max_iterations() {
         max_iterations: 5,
         ..AgentConfig::default()
     };
-    let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
+    let mut session = Session::in_memory("mock", None, registry.tool_definitions(), "/tmp");
 
     let params = LoopParams {
         client: &client,
@@ -696,7 +696,7 @@ async fn stuck_loop_injects_nudge_after_threshold() {
         max_iterations: 10,
         ..AgentConfig::default()
     };
-    let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
+    let mut session = Session::in_memory("mock", None, registry.tool_definitions(), "/tmp");
 
     let params = LoopParams {
         client: &client,
@@ -742,7 +742,7 @@ async fn stuck_loop_disabled_when_threshold_is_zero() {
         max_iterations: 5,
         ..AgentConfig::default()
     };
-    let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
+    let mut session = Session::in_memory("mock", None, registry.tool_definitions(), "/tmp");
 
     let params = LoopParams {
         client: &client,
@@ -1013,7 +1013,7 @@ async fn cancellation_checked_at_top_of_loop() {
     registry.register(Box::new(SlowTool));
 
     let config = AgentConfig::default();
-    let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
+    let mut session = Session::in_memory("mock", None, registry.tool_definitions(), "/tmp");
 
     let params = LoopParams {
         client: &client,
@@ -1056,7 +1056,7 @@ async fn cancellation_propagates_into_running_tool() {
     registry.register(Box::new(SlowTool));
 
     let config = AgentConfig::default();
-    let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
+    let mut session = Session::in_memory("mock", None, registry.tool_definitions(), "/tmp");
 
     // The loop should exit with a cancellation error. The token is still
     // set when the loop re-enters Thinking after the tool returned.
@@ -1237,7 +1237,7 @@ async fn tool_execution_error_still_appends_tool_result() {
     }));
 
     let config = AgentConfig::default();
-    let mut session = Session::in_memory("mock", None, registry.tool_schemas(), "/tmp");
+    let mut session = Session::in_memory("mock", None, registry.tool_definitions(), "/tmp");
 
     let params = LoopParams {
         client: &client,

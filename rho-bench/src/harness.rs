@@ -235,7 +235,7 @@ async fn run_single_task(
     let mut session = Session::in_memory(
         model_id,
         Some(&system_prompt),
-        registry.tool_schemas(),
+        registry.tool_definitions(),
         &project_dir,
     )
     .with_token_budget(TokenBudget::new(budget))
