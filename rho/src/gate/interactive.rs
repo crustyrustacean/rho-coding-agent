@@ -1,13 +1,11 @@
 //! REPL-based approval gate for tool calls.
 //!
-//! Prints a tool-call preview to stdout and reads `y/N` from stdin.
-//!
-//! Writes to stdout (not stderr) to avoid terminals that render stderr
-//! in a different colour.
+//! Delegates formatting to [`crate::presenter::ReplPresenter`] and reads
+//! `y/N` from stdin.
 
 use async_trait::async_trait;
 use rho_core::{ModelToolCall, ToolRisk, approval::ApprovalGate};
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead};
 
 /// Prints a tool-call preview and reads `y/N` from stdin.
 pub(crate) struct ReplApprovalGate;
@@ -20,12 +18,11 @@ impl ApprovalGate for ReplApprovalGate {
             ToolRisk::Write => "write",
             ToolRisk::Destructive => "destructive",
         };
-        println!();
-        println!("  Tool     : {}", call.function.name);
-        println!("  Risk     : {risk_label}");
-        println!("  Arguments: {}", call.function.arguments);
-        print!("  Execute? [y/n] ");
-        io::stdout().flush().ok();
+        crate::presenter::ReplPresenter::approval_prompt(
+            &call.function.name,
+            risk_label,
+            &call.function.arguments,
+        );
 
         let mut line = String::new();
         let ok = io::stdin().lock().read_line(&mut line).is_ok();

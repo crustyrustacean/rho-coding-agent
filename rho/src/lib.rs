@@ -8,4 +8,5 @@ pub mod app;
 pub mod cli;
 pub(crate) mod gate;
 pub(crate) mod model;
+pub(crate) mod presenter;
 pub(crate) mod repl;

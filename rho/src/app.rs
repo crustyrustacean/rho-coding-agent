@@ -5,6 +5,7 @@
 //! scoped to this module, keeping [`App::build`] as a readable sequence.
 
 use crate::cli::Cli;
+use crate::presenter::ReplPresenter as P;
 use anyhow::Result;
 use rho_core::tool::CancellationToken as Cancel;
 use rho_core::{
@@ -14,7 +15,7 @@ use rho_core::{
     find_project_root,
 };
 use rho_tools::register_all;
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead};
 use std::path::Path;
 use tracing_subscriber::EnvFilter;
 
@@ -203,7 +204,7 @@ fn resolve_sandbox(cli: &Cli) -> Result<SandboxRoot> {
 /// Falls back to [`RhoConfig::default`] on error, printing a warning to stderr.
 fn load_config(sandbox: &SandboxRoot) -> RhoConfig {
     ConfigLoader::load(sandbox.path()).unwrap_or_else(|e| {
-        eprintln!("Warning: {e} — using defaults");
+        P::config_warning(&e.to_string());
         RhoConfig::default()
     })
 }
@@ -230,10 +231,7 @@ fn check_provider_type(config: &RhoConfig) {
                 .iter()
                 .any(|t| provider_type.eq_ignore_ascii_case(t))
         {
-            eprintln!(
-                "warning: provider type \"{provider_type}\" was set, but rho only supports \
-                 OpenAI-compatible endpoints. Requests may fail."
-            );
+            P::provider_type_warning(provider_type);
         }
     }
 }
@@ -253,29 +251,20 @@ fn check_provider_consent(registry: &ProviderRegistry, cli: &Cli) -> Result<()> 
     }
 
     let has_local = registry.providers().iter().any(|p| !p.is_external());
-
-    eprintln!();
-    if !has_local {
-        eprintln!("  ⚠  No local model server detected");
-    }
-    eprintln!("  ⚠  External provider(s) configured:");
-    for provider in registry.providers().iter().filter(|p| p.is_external()) {
-        eprintln!("      - {}", provider.name());
-    }
-    eprintln!();
-    eprintln!("      Your prompts and code will be sent to external servers.");
-    eprintln!("      This may expose proprietary code, secrets, or other");
-    eprintln!("      sensitive data to the providers and any intermediaries.");
-    eprintln!();
-    eprint!("      Continue? [y/N] ");
-    io::stderr().flush().ok();
+    let external_names: Vec<&str> = registry
+        .providers()
+        .iter()
+        .filter(|p| p.is_external())
+        .map(|p| p.name())
+        .collect();
+    P::provider_consent_prompt(has_local, &external_names);
 
     let mut line = String::new();
     let ok = io::stdin().lock().read_line(&mut line).is_ok();
     if ok && matches!(line.trim().to_lowercase().as_str(), "y" | "yes") {
         Ok(())
     } else {
-        eprintln!("  Aborting. Use --accept-external-provider to skip this prompt.");
+        P::provider_consent_aborted();
         Err(anyhow::anyhow!("user declined external provider consent"))
     }
 }
@@ -330,10 +319,10 @@ fn build_session(
     if cli.r#continue {
         let path = rho_core::find_latest_session(sandbox.path())
             .ok_or_else(|| anyhow::anyhow!("no previous sessions found for this project"))?;
-        eprintln!("resuming latest session: {}", path.display());
+        P::session_resumed(&path);
         resume_session(&path, model, tool_schemas, sandbox, token_budget, redactor)
     } else if let Some(ref path) = cli.session {
-        eprintln!("resuming session from: {}", path.display());
+        P::session_resumed(path);
         resume_session(path, model, tool_schemas, sandbox, token_budget, redactor)
     } else if cli.ephemeral {
         let s = Session::in_memory(
@@ -355,15 +344,12 @@ fn build_session(
         .with_token_budget(token_budget)
         .with_redactor(redactor);
         if let Some(path) = s.save_path() {
-            eprintln!("session: {}", path.display());
+            P::session_created(path);
         }
         // Show a hint if there are previous sessions for this project.
         let previous = rho_core::list_sessions(sandbox.path());
         if !previous.is_empty() {
-            eprintln!(
-                "  ({} previous session(s) for this project — use rho -c to resume the latest)",
-                previous.len()
-            );
+            P::previous_sessions_hint(previous.len());
         }
         Ok(s)
     }
@@ -386,21 +372,7 @@ fn resume_session(
     let session_cwd = s.header().cwd.clone();
     let current_cwd = sandbox.path();
     if session_cwd != current_cwd {
-        if !session_cwd.as_os_str().is_empty() && !session_cwd.exists() {
-            eprintln!(
-                "warning: session's working directory no longer exists\n  \
-                 session: {}\n  current: {}\n  continuing with current directory",
-                session_cwd.display(),
-                current_cwd.display()
-            );
-        } else {
-            eprintln!(
-                "warning: session was created in a different directory\n  \
-                 session: {}\n  current: {}\n  continuing with current directory",
-                session_cwd.display(),
-                current_cwd.display()
-            );
-        }
+        P::stale_cwd_warning(&session_cwd, current_cwd, session_cwd.exists());
     }
 
     s.set_model(model);
@@ -431,9 +403,7 @@ fn log_budget_diagnostics(session: &Session) {
     let prompt = budget.prompt_budget();
     let available = session.message_budget();
 
-    eprintln!(
-        "budget: {}T context, {}T reserve, {}T prompt \
-         ({}T system + {}T schema = {}T overhead, {}T for conversation)",
+    P::budget_summary(
         budget.context_window,
         budget.completion_reserve,
         prompt,
@@ -446,9 +416,6 @@ fn log_budget_diagnostics(session: &Session) {
     if total_overhead > prompt / 2 {
         #[allow(clippy::cast_possible_truncation)]
         let pct = (100_usize.saturating_mul(total_overhead) / prompt.max(1)) as u32;
-        eprintln!(
-            "warning: system overhead is {pct}% of prompt budget — \
-             consider --compact or increasing token_budget in .rho/config.toml"
-        );
+        P::budget_overhead_warning(pct);
     }
 }

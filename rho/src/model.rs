@@ -3,28 +3,19 @@
 //! Resolves which model to use based on CLI flags, config, and auto-detection
 //! against configured providers. Falls back to an interactive picker when
 //! no model can be determined automatically.
+//!
+//! All output is delegated to [`crate::presenter::ReplPresenter`].
 
+use crate::presenter::ReplPresenter as P;
 use anyhow::Result;
 use rho_core::{ProviderRegistry, RhoConfig};
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead};
 
 /// The minimum fuzzy similarity score to include a suggestion.
 const FUZZY_THRESHOLD: f64 = 0.5;
 
 /// Maximum number of fuzzy suggestions to display.
 const MAX_SUGGESTIONS: usize = 5;
-
-/// Popular models offered by the interactive model picker.
-///
-/// Each entry is (display name, provider family, model ID). The model IDs
-/// use `OpenRouter`'s `provider/model` format which is the most common
-/// multi-model endpoint. For direct OpenAI/Anthropic use, the user should
-/// configure the right endpoint in their config.
-const PICKER_MODELS: &[(&str, &str, &str)] = &[
-    ("Claude Sonnet 4", "Anthropic", "anthropic/claude-sonnet-4"),
-    ("GPT-4o", "OpenAI", "openai/gpt-4o"),
-    ("GLM-5", "z.ai", "z-ai/glm-5"),
-];
 
 /// Resolve the model identifier.
 ///
@@ -49,11 +40,8 @@ pub(crate) async fn resolve_model(
     cli_model: Option<&String>,
     registry: &ProviderRegistry,
 ) -> Result<String> {
-    // Query all providers for available models upfront (needed for
-    // validation and auto-detect alike).
     let all_models = registry.list_all_models().await;
 
-    // Build a flat list of (provider_name, model_id) strings for matching.
     let available: Vec<(&str, String)> = all_models
         .iter()
         .map(|(provider, info)| (*provider, info.id.clone()))
@@ -72,7 +60,7 @@ pub(crate) async fn resolve_model(
         return no_models_fallback(config, registry);
     }
     let (provider_name, model_id) = &available[0];
-    eprintln!("auto-detected model: {model_id} (from provider: {provider_name})");
+    P::model_auto_detected(model_id, provider_name);
     Ok(model_id.clone())
 }
 
@@ -85,39 +73,24 @@ pub(crate) async fn resolve_model(
 /// 3. No models could be discovered (empty list) → accept the model
 ///    verbatim with a warning (provider may not support `/v1/models`).
 fn validate_and_resolve(model: &str, source: &str, available: &[(&str, String)]) -> String {
-    // Exact match (case-sensitive).
     if let Some((provider_name, model_id)) = rho_core::find_exact(model, available) {
-        eprintln!("using model from {source}: {model_id} (provider: {provider_name})");
+        P::model_from_source(model_id, source, provider_name);
         return model_id.to_owned();
     }
 
-    // No models discovered — fall back to accepting the model verbatim.
-    // Some providers (especially external ones) don't support `/v1/models`
-    // or it may be unavailable due to auth/network issues.
     if available.is_empty() {
-        eprintln!(
-            "warning: could not list models from any provider; \
-             accepting model from {source}: {model}"
-        );
+        P::model_accepting_verbatim(model, source);
         return model.to_owned();
     }
 
-    // Models were discovered but the specified one wasn't found —
-    // show fuzzy suggestions as a warning, but still accept the model.
-    // The provider may accept IDs not advertised in `/v1/models`, and
-    // the API will return a proper error if the model is truly invalid.
-    eprintln!("warning: model \"{model}\" not found in provider model list.");
+    P::model_not_in_list(model);
 
     let suggestions = rho_core::fuzzy_match(model, available, FUZZY_THRESHOLD);
     if !suggestions.is_empty() {
-        eprintln!("Did you mean:");
-        eprintln!(
-            "{}",
-            rho_core::format_suggestions(&suggestions, MAX_SUGGESTIONS)
-        );
+        P::model_suggestions(&rho_core::format_suggestions(&suggestions, MAX_SUGGESTIONS));
     }
 
-    eprintln!("continuing with model from {source}: {model}");
+    P::model_continuing(model, source);
     model.to_owned()
 }
 
@@ -168,8 +141,6 @@ fn no_models_fallback(config: &RhoConfig, registry: &ProviderRegistry) -> Result
         ));
     }
 
-    // One or more providers are configured but none could list models.
-    // Offer an interactive model picker.
     pick_model_interactively(registry)
 }
 
@@ -180,23 +151,7 @@ fn no_models_fallback(config: &RhoConfig, registry: &ProviderRegistry) -> Result
 /// the selected model ID.
 fn pick_model_interactively(registry: &ProviderRegistry) -> Result<String> {
     let names: Vec<&str> = registry.providers().iter().map(|p| p.name()).collect();
-    eprintln!();
-    eprintln!("  Could not list models from: {}", names.join(", "));
-    eprintln!("  Select a model to use:");
-    eprintln!();
-
-    for (i, (display_name, family, _id)) in PICKER_MODELS.iter().enumerate() {
-        eprintln!(
-            "    [{idx}] {name:<22} ({family})",
-            idx = i + 1,
-            name = display_name,
-            family = family
-        );
-    }
-    eprintln!("    [0] Enter model ID manually");
-    eprintln!();
-    eprint!("  Choice: ");
-    io::stderr().flush().ok();
+    P::picker_header(&names);
 
     let mut line = String::new();
     let ok = io::stdin().lock().read_line(&mut line).is_ok();
@@ -206,34 +161,33 @@ fn pick_model_interactively(registry: &ProviderRegistry) -> Result<String> {
 
     let choice = line.trim();
 
-    // Manual entry.
     if choice == "0" {
-        eprint!("  Model ID: ");
-        io::stderr().flush().ok();
+        P::picker_manual_prompt();
         let mut manual = String::new();
         if io::stdin().lock().read_line(&mut manual).is_ok() {
             let model_id = manual.trim().to_owned();
             if !model_id.is_empty() {
-                eprintln!("  using model: {model_id}");
+                P::model_entered(&model_id);
                 return Ok(model_id);
             }
         }
         return Err(anyhow::anyhow!("no model ID entered"));
     }
 
-    // Numeric selection from the list.
+    // Numeric selection from the list (uses the same PICKER_MODELS table
+    // as the presenter).
+    let picker_models = P::picker_models();
     if let Ok(idx) = choice.parse::<usize>()
         && idx >= 1
-        && idx <= PICKER_MODELS.len()
+        && idx <= picker_models.len()
     {
-        let (display_name, _family, model_id) = PICKER_MODELS[idx - 1];
-        eprintln!("  using model: {model_id} ({display_name})");
+        let (display_name, _family, model_id) = picker_models[idx - 1];
+        P::model_picked(model_id, display_name);
         return Ok(model_id.to_owned());
     }
 
-    // If the user typed a model ID directly (not a number), accept it.
     if !choice.is_empty() {
-        eprintln!("  using model: {choice}");
+        P::model_entered(choice);
         return Ok(choice.to_owned());
     }
 
