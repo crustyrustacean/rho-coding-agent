@@ -173,17 +173,33 @@ pub fn build(release: bool) -> Result<()> {
     spawn("build", "cargo", &args)
 }
 
-/// `cargo xtask test [--release] [-- <args>...]` — run all tests.
+/// `cargo xtask test [--release] [-- <args>...]` — run all tests via nextest.
+///
+/// Falls back to `cargo test` if `cargo-nextest` is not installed.
 pub fn test(release: bool, extra_args: &[String]) -> Result<()> {
-    let mut args: Vec<&str> = vec!["test", "--workspace"];
-    if release {
-        args.push("--release");
+    let use_nextest = which::which("cargo-nextest").is_ok();
+
+    if use_nextest {
+        let mut args: Vec<&str> = vec!["nextest", "run", "--workspace"];
+        if release {
+            args.push("--release");
+        }
+        if !extra_args.is_empty() {
+            args.extend(extra_args.iter().map(String::as_str));
+        }
+        spawn("test", "cargo", &args)
+    } else {
+        eprintln!("note: cargo-nextest not found, falling back to cargo test");
+        let mut args: Vec<&str> = vec!["test", "--workspace"];
+        if release {
+            args.push("--release");
+        }
+        if !extra_args.is_empty() {
+            args.push("--");
+            args.extend(extra_args.iter().map(String::as_str));
+        }
+        spawn("test", "cargo", &args)
     }
-    if !extra_args.is_empty() {
-        args.push("--");
-        args.extend(extra_args.iter().map(String::as_str));
-    }
-    spawn("test", "cargo", &args)
 }
 
 /// `cargo xtask run [-- <args>...]` — run the main binary.

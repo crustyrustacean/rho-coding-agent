@@ -10,6 +10,7 @@ anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 semver = "1"
 toml = "1"
+which = "8"
 
 [lints]
 workspace = true

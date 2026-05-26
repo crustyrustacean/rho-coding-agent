@@ -16,7 +16,7 @@ use rho_core::{
 };
 use rho_tools::register_all;
 use std::io::{self, BufRead, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tracing_subscriber::EnvFilter;
 
 // ── App ───────────────────────────────────────────────────────────────────────
@@ -24,7 +24,7 @@ use tracing_subscriber::EnvFilter;
 /// Long-lived runtime state for the `rho` agent.
 ///
 /// Constructed by [`App::build`] which runs all startup phases in sequence.
-/// After construction, call [`App::run`] to enter prompt-file or REPL mode.
+/// After construction, call [`App::run`] to enter REPL mode.
 pub struct App {
     /// The agent's conversation session (tree-shaped, optionally persisted).
     pub(crate) session: Session,
@@ -40,8 +40,6 @@ pub struct App {
     pub(crate) gate: ReplApprovalGate,
     /// Cooperative cancellation token.
     pub(crate) cancel: Cancel,
-    /// Path to a prompt file for one-shot mode (None means REPL mode).
-    pub(crate) prompt_file: Option<PathBuf>,
 }
 
 impl App {
@@ -144,7 +142,6 @@ impl App {
             config: agent_config,
             gate: ReplApprovalGate,
             cancel: Cancel::new(),
-            prompt_file: cli.prompt_file.clone(),
         })
     }
 
@@ -161,14 +158,7 @@ impl App {
     /// Returns an error if the prompt file cannot be read or the agent loop
     /// encounters a fatal error.
     pub async fn run(mut self) -> Result<()> {
-        use crate::repl::{run_prompt_file, run_repl};
-
-        // Check for prompt-file mode first.
-        if let Some(path) = self.prompt_file.take() {
-            return run_prompt_file(self, path).await;
-        }
-
-        run_repl(&mut self).await
+        crate::repl::run_repl(&mut self).await
     }
 
     // ── Private: tracing ────────────────────────────────────────────────

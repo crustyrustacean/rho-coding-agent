@@ -1,8 +1,6 @@
-//! REPL interaction modes for rho.
+//! REPL interaction mode for rho.
 //!
-//! Two modes:
-//! - [`run_repl`] — interactive read-eval-print loop
-//! - [`run_prompt_file`] — read a prompt from a file, run once, exit
+//! [`run_repl`] — interactive read-eval-print loop
 //!
 //! Slash commands:
 //! - `/quit` — exit the REPL
@@ -237,35 +235,6 @@ pub async fn run_repl(app: &mut App) -> Result<()> {
         print_context_bar(&app.session);
     }
 
-    Ok(())
-}
-
-/// Read a prompt file, run the agent loop once, print the reply, and exit.
-///
-/// # Errors
-///
-/// Returns an error if the file cannot be read or the agent loop encounters
-/// a fatal error.
-pub async fn run_prompt_file(mut app: App, path: std::path::PathBuf) -> Result<()> {
-    let input = fs::read_to_string(&path)
-        .map_err(|e| anyhow::anyhow!("cannot read prompt file `{}`: {e}", path.display()))?;
-    println!("using prompt file: {}", path.display());
-
-    let client = app.active_provider().clone_boxed_service();
-    let params = rho_core::LoopParams {
-        client: client.as_ref(),
-        registry: &app.registry,
-        config: &app.config,
-        cancel: app.cancel.clone(),
-        gate: &app.gate,
-        observer: &ReplObserver,
-    };
-    match rho_core::run_loop(&mut app.session, &input, &params).await {
-        Ok(reply) => println!("\nAssistant: {reply}"),
-        Err(e) => println!("\nError: {e}"),
-    }
-
-    app.session.close("prompt file completed");
     Ok(())
 }
 

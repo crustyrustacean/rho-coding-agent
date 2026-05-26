@@ -74,13 +74,6 @@ pub struct Cli {
     #[arg(long)]
     pub token_budget: Option<u32>,
 
-    /// Prompt file.
-    ///
-    /// Reads the file contents and passes them to the agent loop,
-    /// then exits (no REPL). Useful for automation and testing.
-    #[arg(long)]
-    pub prompt_file: Option<PathBuf>,
-
     /// Resume the most recent session for this project.
     ///
     /// Scans `~/.rho/sessions/` for the latest JSONL file matching the
