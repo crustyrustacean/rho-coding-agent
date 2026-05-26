@@ -4,8 +4,9 @@
 //! phases that `main()` delegated to it. Each phase is a private free function
 //! scoped to this module, keeping [`App::build`] as a readable sequence.
 
-use crate::cli::Cli;
+use crate::cli::{Cli, Mode};
 use crate::presenter::ReplPresenter as P;
+use crate::presenter::RpcPresenter;
 use anyhow::Result;
 use rho_core::tool::CancellationToken as Cancel;
 use rho_core::{
@@ -24,8 +25,10 @@ use tracing_subscriber::EnvFilter;
 /// Long-lived runtime state for the `rho` agent.
 ///
 /// Constructed by [`App::build`] which runs all startup phases in sequence.
-/// After construction, call [`App::run`] to enter REPL mode.
+/// After construction, call [`App::run`] to dispatch to the selected mode.
 pub struct App {
+    /// Execution mode selected via `--mode` (default: [`Mode::Repl`]).
+    pub(crate) mode: Mode,
     /// The agent's conversation session (tree-shaped, optionally persisted).
     pub(crate) session: Session,
     /// The provider registry (owns all configured providers).
@@ -100,8 +103,12 @@ impl App {
         register_all(&mut tool_registry, sandbox.clone(), &config);
         let tool_schemas = tool_registry.tool_definitions();
 
+        // Whether we are running in a headless mode (no interactive stdin).
+        // Determined once here and threaded through all remaining interactive phases.
+        let headless = cli.mode == Mode::Rpc;
+
         // ── 8. Context files [INTERACTIVE] ──────────────────────────────
-        let context_files = scan_context_files(&sandbox);
+        let context_files = scan_context_files(&sandbox, headless);
 
         // ── 9. System prompt ─────────────────────────────────────────────
         let system_prompt = compose_full_system_prompt(
@@ -113,7 +120,8 @@ impl App {
         );
 
         // ── 10. Model [INTERACTIVE] ──────────────────────────────────────
-        let model = resolve_model(&config, cli.model.as_ref(), &provider_registry).await?;
+        let model =
+            resolve_model(&config, cli.model.as_ref(), &provider_registry, headless).await?;
 
         // ── 11. Agent config ─────────────────────────────────────────────
         let agent_config = build_agent_config(&config, &cli);
@@ -140,6 +148,7 @@ impl App {
         log_budget_diagnostics(&session);
 
         Ok(Self {
+            mode: cli.mode,
             session,
             providers: provider_registry,
             active_provider_index: 0,
@@ -155,13 +164,19 @@ impl App {
         self.providers.providers()[self.active_provider_index].as_ref()
     }
 
-    /// Run the agent in the configured mode (currently REPL only).
+    /// Run the agent in the mode selected via `--mode`.
+    ///
+    /// - [`Mode::Repl`] — interactive terminal session (default).
+    /// - [`Mode::Rpc`] — headless JSONL over stdin/stdout.
     ///
     /// # Errors
     ///
     /// Returns an error if the agent loop encounters a fatal error.
     pub async fn run(mut self) -> Result<()> {
-        crate::repl::run_repl(&mut self).await
+        match self.mode {
+            Mode::Repl => crate::repl::run_repl(&mut self).await,
+            Mode::Rpc => crate::rpc::run_rpc(self).await,
+        }
     }
 
     // ── Private: tracing ────────────────────────────────────────────────
@@ -257,6 +272,19 @@ fn check_provider_consent(registry: &ProviderRegistry, cli: &Cli) -> Result<()> 
         .filter(|p| p.is_external())
         .map(|p| p.name())
         .collect();
+
+    // In headless (RPC) mode skip interactive stdin — the caller must pass
+    // --accept-external-provider explicitly. Full JSONL-based consent handling
+    // arrives in step 6.
+    if cli.mode == Mode::Rpc {
+        RpcPresenter::provider_consent_prompt(has_local, &external_names);
+        RpcPresenter::provider_consent_aborted();
+        return Err(anyhow::anyhow!(
+            "external provider consent required in RPC mode; \
+             pass --accept-external-provider to proceed"
+        ));
+    }
+
     P::provider_consent_prompt(has_local, &external_names);
 
     let mut line = String::new();
@@ -269,21 +297,39 @@ fn check_provider_consent(registry: &ProviderRegistry, cli: &Cli) -> Result<()> 
     }
 }
 
-/// Scan the sandbox root for project context files (interactive trust workflow).
+/// Scan the sandbox root for project context files.
 ///
-/// The stdin lock is released before returning so the REPL loop can access
-/// stdin without deadlock.
-fn scan_context_files(sandbox: &SandboxRoot) -> Vec<ContextFile> {
+/// **Interactive mode** — displays file contents and prompts the user to trust
+/// new or changed files via stdin/stdout.
+///
+/// **Headless mode** (`headless = true`) — silently includes already-trusted
+/// files; auto-denies new or changed files without blocking on stdin. This is
+/// the safe policy for RPC mode: the client cannot answer trust prompts, and
+/// untrusted project instructions must not be injected unattended.
+///
+/// In interactive mode the stdin lock is released before returning so the
+/// REPL loop can access stdin without deadlock.
+fn scan_context_files(sandbox: &SandboxRoot, headless: bool) -> Vec<ContextFile> {
     let mut trust_store = TrustStore::load_default();
     let scanner = ContextScanner::new(sandbox);
-    let mut stdout = io::stdout();
-    let context_files = {
-        let stdin = io::stdin();
-        let mut stdin_locked = stdin.lock();
-        scanner.run(&mut trust_store, &mut stdin_locked, &mut stdout)
-    };
-    // stdin_locked is dropped here, releasing the stdin mutex.
-    context_files
+
+    if headless {
+        // Empty reader → prompt_yn always returns false (auto-deny).
+        // Sink writer  → trust prompts and file contents are discarded.
+        // Already-trusted files (hash match) load silently without any I/O.
+        let mut empty = io::Cursor::new(&b""[..]);
+        let mut null = io::sink();
+        scanner.run(&mut trust_store, &mut empty, &mut null)
+    } else {
+        let mut stdout = io::stdout();
+        let context_files = {
+            let stdin = io::stdin();
+            let mut stdin_locked = stdin.lock();
+            scanner.run(&mut trust_store, &mut stdin_locked, &mut stdout)
+        };
+        // stdin_locked is dropped here, releasing the stdin mutex.
+        context_files
+    }
 }
 
 /// Build the agent loop configuration from config and CLI overrides.
@@ -390,8 +436,9 @@ async fn resolve_model(
     config: &RhoConfig,
     cli_model: Option<&String>,
     registry: &ProviderRegistry,
+    headless: bool,
 ) -> Result<String> {
-    crate::model::resolve_model(config, cli_model, registry).await
+    crate::model::resolve_model(config, cli_model, registry, headless).await
 }
 
 /// Log token budget diagnostics at startup.

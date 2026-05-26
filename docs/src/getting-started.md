@@ -63,15 +63,18 @@ On startup, rho:
 | Flag | Description |
 |---|---|
 | `-m, --model <MODEL>` | Model identifier (auto-detected if omitted) |
+| `--mode <MODE>` | Execution mode: `repl` (default) or `rpc` |
 | `-s, --system <SYSTEM>` | Override the system prompt |
 | `--compact` | Use a minimal system prompt for small-context models |
 | `--root <ROOT>` | Project root / sandbox root |
 | `--token-budget <N>` | Context window token budget (default: 32768) |
-| `--prompt-file <FILE>` | Read a prompt from a file, then exit |
+| `--endpoint <URL>` | API endpoint URL (overrides config) |
+| `--api-key-env <VAR>` | Environment variable holding the API key |
+| `--max-iterations <N>` | Maximum agent loop iterations |
+| `--accept-external-provider` | Skip consent prompt for non-local providers |
 | `-c, --continue` | Resume the most recent session for this project |
 | `--session <PATH>` | Resume a specific session from a JSONL file |
 | `--ephemeral` | Run without disk persistence |
-| `--accept-external-provider` | Skip consent prompt for non-local providers |
 ## Session persistence
 
 By default, every rho invocation creates a new JSONL session file under `~/.rho/sessions/<project-hash>/`. Sessions survive process restarts — use `rho -c` to resume the latest session or `--session <path>` to resume a specific one.
@@ -98,3 +101,4 @@ See [Sessions](./core-concepts/sessions.md) for details.
 - [Core Concepts](./core-concepts.md) — sessions, agent loop, context management
 - [Security](./security.md) — the threat model and defenses
 - [Configuration](./configuration.md) — customizing behavior
+- [RPC Mode](./rpc-mode.md) — headless JSONL integration

@@ -13,14 +13,24 @@ rho-coding-agent/
 │       ├── lib.rs            # Module declarations
 │       ├── cli.rs            # `Cli` — 17 CLI flags with clap
 │       ├── app.rs            # `App` — runtime state, build/run orchestration
-│       ├── gate.rs           # `ReplApprovalGate` — approval prompts
-│       └── repl.rs           # `run_repl()`, `run_prompt_file()` — interaction modes
+│       ├── model.rs          # Model resolution + interactive picker
+│       ├── gate.rs           # Approval gate module root
+│       ├── gate/
+│       │   └── interactive.rs  # `ReplApprovalGate` — y/N from stdin
+│       ├── rpc.rs            # RPC mode: `run_rpc`, `run_rpc_on`, observer, approval gate (68 tests)
+│       ├── repl.rs           # `run_repl()` — REPL loop
+│       ├── presenter.rs      # Presenter module root
+│       ├── presenter/
+│       │   ├── repl.rs       # `ReplPresenter` — all REPL terminal output
+│       │   └── rpc.rs        # `RpcPresenter` — startup output for RPC mode
 ├── rho-core/                # Agent kernel
 │   └── src/
 │       ├── lib.rs           # Module declarations, convenience re-exports
 │       ├── agent.rs         # Agent loop state machine, `run_loop`
 │       ├── approval.rs      # `ApprovalPolicy`, `ApprovalGate` traits
-│       ├── client.rs        # `ChatClient` trait, `LocalChatClient`
+│       ├── client/
+│       │   ├── mod.rs        # `RhoAiClient`, `ProviderRegistry`, `provider_factory`
+│       │   └── error.rs      # `ClientError`
 │       ├── config.rs        # `RhoConfig`, `ConfigLoader`, two-tier TOML loading
 │       ├── context.rs       # `ContextManager`, `SlidingWindowContextManager`, `TokenBudget`
 │       ├── context_files.rs # Project context file scanner, `TrustStore`, prompt composition
@@ -35,7 +45,14 @@ rho-coding-agent/
 │       ├── response.rs      # `ModelResponse`, `FinishReason`, `ModelUsage`
 │       ├── sandbox.rs       # `SandboxRoot` — file sandbox validation
 │       ├── schema.rs        # `ToolSchema` — wire-format tool definitions
+│       ├── provider.rs      # `Provider` trait, `OpenAiCompatibleProvider`, `ProviderRegistry`
 │       ├── session.rs       # `Session`, `Entry`, tree persistence, compaction
+│       ├── session/
+│       │   ├── compaction.rs # `CompactionStrategy`, `MechanicalCompactionStrategy`
+│       │   ├── entry.rs     # `Entry`, `EntryPayload`, `EntryResolution`
+│       │   ├── error.rs     # `SessionError`
+│       │   ├── estimator.rs # `TokenEstimator`, `HeuristicEstimator`
+│       │   └── persist.rs   # JSONL persistence, `SessionMetadata`
 │       └── shell.rs         # `ShellExecutor` trait, `ShellOutput`
 ├── rho-highlight/           # Tree-sitter syntax analysis
 │   └── src/
@@ -48,10 +65,11 @@ rho-coding-agent/
 │   └── src/
 │       ├── lib.rs           # `register_all()`
 │       ├── files.rs         # `ReadFile`, `WriteFile`, `ListDir`, `EditFile`
+│       ├── hashline.rs      # Hashline content-addressed editing
 │       ├── shell.rs         # `RunCommand`, `PowerShellExecutor`, `CommandDenylist`
 │       └── rust.rs          # `CargoCheck`, `CargoClippy`, `CargoTest`, `CargoFix`, `RustcExplain`
 ├── rho-test-helpers/        # Shared test infrastructure (dev-only)
-│   └── src/lib.rs
+│   └── src/lib.rs           # `MockChatClient`, `TestProvider`, response builders, helpers
 ├── rho-bench/               # Benchmark harness for multi-model evaluation
 │   └── src/
 │       ├── main.rs          # CLI: --models, --tasks, --repeats, --output

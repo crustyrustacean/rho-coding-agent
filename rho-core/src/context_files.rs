@@ -593,6 +593,114 @@ mod tests {
         assert!(prompt.contains("Prefer functional style."));
     }
 
+    // ── Headless I/O (RPC mode) ──────────────────────────────────────────
+
+    /// Helper: trust a file interactively (simulate "y" answer).
+    fn trust_file_interactively(scanner: &ContextScanner<'_>, store: &mut TrustStore, name: &str) {
+        let mut input = Cursor::new(b"y\n".to_vec());
+        let mut output = Vec::new();
+        let trusted = scanner.run(store, &mut input, &mut output);
+        assert!(
+            trusted.iter().any(|f| f.name == name),
+            "expected `{name}` to be trusted after interactive approval"
+        );
+    }
+
+    #[test]
+    fn headless_includes_already_trusted_file() {
+        let (_dir, root) = setup(&[("AGENTS.md", "# instructions")]);
+        let store_dir = tempfile::tempdir().unwrap();
+        let mut store = store_in(&store_dir);
+        let scanner = ContextScanner::new(&root);
+
+        // Trust interactively first.
+        trust_file_interactively(&scanner, &mut store, "AGENTS.md");
+
+        // Headless run: already-trusted file must be included without blocking.
+        let mut empty = Cursor::new(&b""[..]);
+        let mut null = std::io::sink();
+        let trusted = scanner.run(&mut store, &mut empty, &mut null);
+
+        assert_eq!(
+            trusted.len(),
+            1,
+            "already-trusted file must load headlessly"
+        );
+        assert_eq!(trusted[0].name, "AGENTS.md");
+    }
+
+    #[test]
+    fn headless_auto_denies_new_file() {
+        let (_dir, root) = setup(&[("AGENTS.md", "# instructions")]);
+        let store_dir = tempfile::tempdir().unwrap();
+        let mut store = store_in(&store_dir);
+        let scanner = ContextScanner::new(&root);
+
+        // Headless run: file has never been trusted — must be silently skipped.
+        let mut empty = Cursor::new(&b""[..]);
+        let mut null = std::io::sink();
+        let trusted = scanner.run(&mut store, &mut empty, &mut null);
+
+        assert!(
+            trusted.is_empty(),
+            "new file must be auto-denied in headless mode"
+        );
+    }
+
+    #[test]
+    fn headless_auto_denies_changed_file() {
+        let (dir, root) = setup(&[("AGENTS.md", "# original")]);
+        let store_dir = tempfile::tempdir().unwrap();
+        let mut store = store_in(&store_dir);
+        let scanner = ContextScanner::new(&root);
+
+        // Trust the original file interactively.
+        trust_file_interactively(&scanner, &mut store, "AGENTS.md");
+
+        // Modify the file so it needs re-confirmation.
+        std::fs::write(dir.path().join("AGENTS.md"), "# modified").unwrap();
+
+        // Headless run: changed file must be silently skipped.
+        let mut empty = Cursor::new(&b""[..]);
+        let mut null = std::io::sink();
+        let trusted = scanner.run(&mut store, &mut empty, &mut null);
+
+        assert!(
+            trusted.is_empty(),
+            "changed file must be auto-denied in headless mode"
+        );
+    }
+
+    #[test]
+    fn headless_auto_deny_does_not_persist_to_trust_store() {
+        // When a new file is auto-denied in headless mode the trust store
+        // must not be updated — the file should still prompt on the next
+        // interactive run.
+        let (_dir, root) = setup(&[("AGENTS.md", "# instructions")]);
+        let store_dir = tempfile::tempdir().unwrap();
+        let mut store = store_in(&store_dir);
+        let scanner = ContextScanner::new(&root);
+
+        let mut empty = Cursor::new(&b""[..]);
+        let mut null = std::io::sink();
+        scanner.run(&mut store, &mut empty, &mut null);
+
+        // A second interactive run must still prompt (file not silently loaded).
+        let mut input = Cursor::new(b"y\n".to_vec());
+        let mut output = Vec::new();
+        let trusted = scanner.run(&mut store, &mut input, &mut output);
+        let prompt_text = String::from_utf8_lossy(&output);
+        assert!(
+            prompt_text.contains("Trust"),
+            "file should still require trust after headless auto-denial"
+        );
+        assert_eq!(
+            trusted.len(),
+            1,
+            "interactive approval after headless run must work"
+        );
+    }
+
     #[test]
     fn full_prompt_empty_extensions_no_extra_newlines() {
         let dir = tempfile::tempdir().unwrap();

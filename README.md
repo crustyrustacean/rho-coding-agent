@@ -15,6 +15,7 @@ A local coding agent written in Rust. rho runs in your terminal, talks to a mode
 - 📂 **Project-aware** — auto-detects project root, loads context files (`AGENTS.md`, `CLAUDE.md`, `.cursorrules`, etc.) with hash-verified trust
 - ⚙️ **Configurable** — two-tier TOML config (user-level `~/.rho/config.toml` + project-level `.rho/config.toml`), per-tool approval policies, command denylist
 - 🧠 **Local and remote models** — targets OpenAI-compatible endpoints (LM Studio, Ollama, OpenAI, Groq, OpenRouter, DeepInfra, and more)
+- 🔌 **RPC mode** — headless JSONL over stdin/stdout for embedding in editors, bots, and custom UIs (`--mode rpc`)
 
 ## Quick Start
 
@@ -75,6 +76,7 @@ rho [OPTIONS]
 
 Options:
   -m, --model <MODEL>                    Model identifier (auto-detected if omitted)
+      --mode <MODE>                      Execution mode: `repl` (default) or `rpc`
   -s, --system <SYSTEM>                  Override the system prompt
       --compact                          Use a compact prompt for small-context models (~100 tokens)
       --root <ROOT>                      Project/sandbox root (auto-detected if omitted)
@@ -83,7 +85,6 @@ Options:
       --max-iterations <N>                Maximum agent loop iterations
       --accept-external-provider         Skip consent warning for external endpoints (also implied by --endpoint)
       --token-budget <TOKEN_BUDGET>      Context window token budget (default: 32768)
-      --prompt-file <FILE>               Read a prompt from a file, then exit
       --session <PATH>                   Resume a previous session from a JSONL file
   -c, --continue                         Resume the most recent session for this project
       --ephemeral                        Run without disk persistence
@@ -100,6 +101,21 @@ Options:
 | `/sessions` | List recent sessions for this project |
 | `/status` | Show context window usage |
 | `/quit` | Exit the agent |
+
+### RPC Mode
+
+Run rho as a headless agent controlled via JSONL:
+
+```sh
+echo '{"type":"prompt","message":"list the source files"}' | \
+  cargo run --package rho -- \
+    --mode rpc \
+    --ephemeral \
+    --endpoint http://localhost:1234/v1/chat/completions \
+    --model my-model
+```
+
+Output is a stream of JSONL events (`ready`, `agent_start`, `message_update`, `tool_call`, `tool_result`, `agent_end`, etc.). See [ARCHITECTURE.md](ARCHITECTURE.md) for the full protocol reference.
 
 ## Configuration
 
@@ -207,6 +223,7 @@ rho/                  # Binary entry point + library crate
     app.rs            # App struct — startup orchestration
     gate.rs           # REPL approval gate (replaced by TUI in Phase 4)
     repl.rs           # REPL loop and prompt-file mode
+    rpc.rs            # RPC mode — headless JSONL protocol (68 tests)
 rho-core/             # Agent kernel (loop, types, traits, config)
 rho-tools/            # Built-in tools (files, shell, rust tooling)
 rho-highlight/        # Tree-sitter syntax analysis

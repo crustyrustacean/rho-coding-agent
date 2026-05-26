@@ -16,9 +16,12 @@ cargo xtask test -p rho-core -- --nocapture  # Single crate
 |---|---|---|
 | Unit tests | `#[cfg(test)] mod tests` inside each source file | Individual functions, types, edge cases |
 | Integration tests | `rho-core/tests/integration_tests.rs` | Agent loop, approval flow, context management |
+| RPC integration tests | `rho/src/rpc.rs` (`#[cfg(test)] mod tests`) | Full JSONL protocol: command dispatch, event sequencing, approval round-trips, tool calls, errors, multi-turn sessions, JSONL conformance |
 | Tool integration tests | `rho-tools/tests/tool_tests.rs` | Tool execution, sandbox enforcement, denylist |
 | Eval unit tests | `rho-eval/src/tasks.rs` | Task verification logic (pass/fail/error) |
 | Bench unit tests | `rho-bench/src/*.rs` | Harness config, display formatting, persistence |
+
+RPC integration tests live in `rho/src/rpc.rs` (not `rho/tests/`) because `App`'s fields are `pub(crate)`. They use `TestProvider` to wrap a `MockChatClient` as a `Provider` and construct `App` directly, bypassing the full CLI startup sequence. The RPC core loop is generic over I/O (`run_rpc_on<R, W>`), so tests inject `Cursor<Vec<u8>>` for both stdin and stdout.
 
 ## Test helpers (`rho-test-helpers`)
 
@@ -30,6 +33,7 @@ cargo xtask test -p rho-core -- --nocapture  # Single crate
 |---|---|
 | `MockChatClient` | Pre-programmed model responses for deterministic agent loop tests |
 | `MockShellExecutor` | Pre-programmed command output for tool tests |
+| `TestProvider` | Wraps `MockChatClient` as a `Provider` for tests needing `ProviderRegistry` |
 | `AutoApproveGate` | Approves all tool calls automatically |
 | `AutoDenyGate` | Denies all tool calls automatically |
 
@@ -37,10 +41,11 @@ cargo xtask test -p rho-core -- --nocapture  # Single crate
 
 | Helper | Purpose |
 |---|---|
-| `text_response(text)` | Create a simple text model response |
-| `tool_call_response(name, args)` | Create a tool call model response |
-| `multi_tool_call_response(calls)` | Create a response with multiple tool calls |
+| `text_events(text)` | Create a streaming text response followed by `Done` |
+| `tool_call_events(id, name, args)` | Create a single tool call response |
+| `multi_tool_call_events(calls)` | Create a response with multiple tool calls |
 | `FixedResponseTool` | A tool that always returns the same output |
+| `FailingTool` | A tool that always returns an error |
 
 ### Fixtures and utilities
 

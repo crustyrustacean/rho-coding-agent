@@ -1,13 +1,30 @@
 //! CLI argument parsing for `rho`.
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
+
+/// The execution mode for the `rho` agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum Mode {
+    /// Interactive REPL (default): reads prompts from stdin, renders output
+    /// to the terminal using the presenter layer.
+    Repl,
+    /// Headless RPC: reads JSONL commands from stdin, writes JSONL events
+    /// to stdout. Suitable for embedding rho in other applications.
+    Rpc,
+}
 
 /// rho — a local coding agent.
 #[derive(Debug, Parser)]
 #[command(version, about)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct Cli {
+    /// Execution mode.
+    ///
+    /// `repl` (default) — interactive terminal session.
+    /// `rpc` — headless JSONL over stdin/stdout for process integration.
+    #[arg(long, default_value = "repl")]
+    pub mode: Mode,
     /// Model identifier.
     ///
     /// If omitted (and not set in config), rho queries the server's
@@ -99,4 +116,46 @@ pub struct Cli {
     /// don't want `.rho/sessions/` clutter.
     #[arg(long, conflicts_with_all = ["continue", "session"])]
     pub ephemeral: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
+        Cli::try_parse_from(std::iter::once("rho").chain(args.iter().copied()))
+    }
+
+    #[test]
+    fn mode_defaults_to_repl() {
+        let cli = parse(&[]).expect("default parse");
+        assert_eq!(cli.mode, Mode::Repl);
+    }
+
+    #[test]
+    fn mode_repl_explicit() {
+        let cli = parse(&["--mode", "repl"]).expect("--mode repl");
+        assert_eq!(cli.mode, Mode::Repl);
+    }
+
+    #[test]
+    fn mode_rpc_explicit() {
+        let cli = parse(&["--mode", "rpc"]).expect("--mode rpc");
+        assert_eq!(cli.mode, Mode::Rpc);
+    }
+
+    #[test]
+    fn mode_unknown_value_is_rejected() {
+        let err = parse(&["--mode", "tui"]).expect_err("unknown mode should fail");
+        assert_eq!(err.kind(), clap::error::ErrorKind::InvalidValue);
+    }
+
+    #[test]
+    fn mode_does_not_conflict_with_session_flags() {
+        // --mode rpc should coexist with --ephemeral without conflict.
+        let cli = parse(&["--mode", "rpc", "--ephemeral"]).expect("rpc + ephemeral");
+        assert_eq!(cli.mode, Mode::Rpc);
+        assert!(cli.ephemeral);
+    }
 }

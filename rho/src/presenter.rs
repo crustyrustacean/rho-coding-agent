@@ -5,5 +5,7 @@
 //! instead of raw `println!`/`eprintln!`.
 
 pub(crate) mod repl;
+pub(crate) mod rpc;
 
 pub(crate) use repl::ReplPresenter;
+pub(crate) use rpc::RpcPresenter;

@@ -21,6 +21,7 @@
   - [Prompt Injection Defense](./security/prompt-injection-defense.md)
 - [Configuration](./configuration.md)
 - [External Providers](./providers.md)
+- [RPC Mode](./rpc-mode.md)
 - [Extensions](./extensions.md)
 - [Development](./development.md)
   - [Testing](./development/testing.md)

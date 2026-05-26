@@ -10,3 +10,4 @@ pub(crate) mod gate;
 pub(crate) mod model;
 pub(crate) mod presenter;
 pub(crate) mod repl;
+pub(crate) mod rpc;

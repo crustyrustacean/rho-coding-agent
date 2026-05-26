@@ -1,6 +1,6 @@
 # Roadmap
 
-rho is developed in phases, each building on the last. The current version is **0.46.0**.
+rho is developed in phases, each building on the last. The current version is **0.47.1**.
 
 ## Phase summary
 
@@ -17,6 +17,7 @@ rho is developed in phases, each building on the last. The current version is **
 | 3.9: Streaming & Live Output | ✅ Complete | SSE streaming, `AgentObserver` trait, REPL live output, `ReplObserver` |
 | 3.10: Multi-Provider & Model Picker | ✅ Complete | `Provider` trait, `ProviderRegistry`, interactive model picker, `/models`, `/model` |
 | 3.11: Session Discovery & Context Visibility | ✅ Complete | `find_latest_session()`, `list_sessions()`, `rho -c`, `/sessions`, `/status`, context status bar |
+| 3.12: RPC Mode | ✅ Complete | Headless JSONL over stdin/stdout, `run_rpc_on<R, W>`, approval round-trips, 43 integration tests |
 | 4: Terminal UI | 🔜 Next | Rich TUI replacing the bare REPL |
 | 5: Extensions and Polish | Planned | Custom tools, prompt composition with budget awareness |
 | 6: LSP | Deferred | rust-analyzer integration |
@@ -68,6 +69,12 @@ SSE streaming for the Chat Completions API. `AgentObserver` trait with 7 event m
 Session discovery functions (`find_latest_session`, `list_sessions`) for lightweight header-only session scanning. `rho -c` / `--continue` flag to auto-resume the most recent session. `/sessions` REPL command listing recent sessions with timestamps, sizes, and entry counts. `ContextStats` struct for context window usage snapshots. Live status bar after every REPL turn with color-coded utilization. `/status` REPL command for detailed context breakdown.
 
 ## Upcoming phases
+
+### Phase 3.12 — RPC Mode
+
+Headless JSONL over stdin/stdout for process integration. `--mode rpc` starts rho as a subprocess that reads newline-delimited JSON commands from stdin and writes JSON events to stdout. Supports the full agent loop: prompts, tool calls, approval round-trips, model switching, context compaction, and session queries.
+
+The implementation is generic over I/O (`run_rpc_on<R, W>`) so integration tests can inject canned stdin and capture stdout. 43 end-to-end tests cover the complete protocol. See [RPC Mode](../rpc-mode.md) for the protocol reference.
 
 ### Phase 4 — Terminal UI
 

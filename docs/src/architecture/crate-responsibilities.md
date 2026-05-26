@@ -2,15 +2,20 @@
 
 ## `rho` (binary)
 
-The REPL loop, CLI argument parsing, tool wiring, and system prompt assembly. Constructs a `Session`, connects to the model via `LocalChatClient`, and drives the agent loop. Handles CLI dispatch (REPL mode, prompt-file mode, session resume, ephemeral mode).
+The binary entry point: CLI argument parsing, tool wiring, and system prompt assembly. Supports two execution modes:
 
-Key responsibilities: provider consent check, model resolution, startup budget diagnostics, shell-specific prompt extensions, session discovery (`rho -c`), and live observer output (reasoning deltas, tool activity).
+- **REPL mode** (default) — interactive terminal session with slash commands and live output
+- **RPC mode** (`--mode rpc`) — headless JSONL over stdin/stdout for process integration
+
+Constructs a `Session`, connects to the model via a `Provider`, and drives the agent loop. Handles provider consent checks, model resolution, startup budget diagnostics, shell-specific prompt extensions, session discovery (`rho -c`), and live observer output (reasoning deltas, tool activity).
+
+The RPC implementation is generic over I/O (`run_rpc_on<R, W>`) so the 43 in-process integration tests can inject canned stdin and capture stdout without touching real file descriptors. See [RPC Mode](../rpc-mode.md) for the full protocol reference.
 
 ## `rho-core`
 
-The kernel: agent loop state machine (with `AgentObserver` for live output), session management (tree persistence, compaction, branching, session discovery), context window management (sliding window, token estimation, `ContextStats`), tool registry and traits, approval gates, secret redaction, file sandbox, model client trait, configuration loading, and all shared types.
+The kernel: agent loop state machine (with `AgentObserver` for live output), session management (tree persistence, compaction, branching, session discovery), context window management (sliding window, token estimation, `ContextStats`), tool registry and traits, approval gates, secret redaction, file sandbox, provider abstraction (`Provider` trait, `ProviderRegistry`), LLM client (`RhoAiClient`), configuration loading, and all shared types.
 
-Key types: `Session`, `AgentConfig`, `AgentObserver`, `NopObserver`, `ContextStats`, `SessionMetadata`, `ToolRegistry`, `Tool`, `ChatClient`, `ContextManager`, `TokenBudget`, `SandboxRoot`, `Redactor`, `RhoConfig`.
+Key types: `Session`, `AgentConfig`, `AgentObserver`, `NopObserver`, `ContextStats`, `SessionMetadata`, `ToolRegistry`, `Tool`, `Provider`, `ProviderRegistry`, `ContextManager`, `TokenBudget`, `SandboxRoot`, `Redactor`, `RhoConfig`.
 
 
 ## `rho-highlight`
@@ -33,7 +38,9 @@ Each implements the `Tool` trait from `rho-core`.
 
 ## `rho-test-helpers`
 
-Shared test infrastructure (dev-only): `MockChatClient`, `MockShellExecutor`, `AutoApproveGate`, `AutoDenyGate`, `FixedResponseTool`, `FileTestEnv`, `in_memory_session`, `empty_trust_store`, `detect_shell`, `tempdir_with_sandbox`, `assert_no_orphan_tool_results`. Never published.
+Shared test infrastructure (dev-only): `MockChatClient`, `TestProvider`, `MockShellExecutor`, `AutoApproveGate`, `AutoDenyGate`, `FixedResponseTool`, `FailingTool`, `FileTestEnv`, `in_memory_session`, `empty_trust_store`, `detect_shell`, `tempdir_with_sandbox`, `assert_no_orphan_tool_results`. Never published.
+
+`TestProvider` wraps a `MockChatClient` as a `Provider` impl, enabling integration tests that need a `ProviderRegistry` without a live model server.
 
 ## `rho-eval`
 

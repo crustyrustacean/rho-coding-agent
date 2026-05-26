@@ -19,6 +19,11 @@ async-trait.workspace = true
 clap = { version = "4.5", features = ["derive"] }
 rho-core = { path = "../rho-core" }
 rho-tools = { path = "..//rho-tools" }
+serde_json.workspace = true
 tokio.workspace = true
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+[dev-dependencies]
+rho-test-helpers = { path = "../rho-test-helpers" }
+rho-ai = { path = "../rho-ai" }

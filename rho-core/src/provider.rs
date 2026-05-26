@@ -141,7 +141,28 @@ pub struct ProviderRegistry {
     providers: Vec<Box<dyn Provider>>,
 }
 
+impl Default for ProviderRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ProviderRegistry {
+    /// Create an empty registry.
+    ///
+    /// Useful for tests that need to populate providers manually.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            providers: Vec::new(),
+        }
+    }
+
+    /// Add a provider to the registry.
+    pub fn add(&mut self, provider: Box<dyn Provider>) {
+        self.providers.push(provider);
+    }
+
     /// Construct a registry from config with optional CLI overrides.
     ///
     /// CLI `--endpoint` and `--api-key-env` override the **default (first)**
@@ -156,10 +177,13 @@ impl ProviderRegistry {
         api_key_env_override: Option<&str>,
     ) -> Self {
         let providers: Vec<Box<dyn Provider>> = if settings.providers.is_empty() {
+            // Apply CLI overrides even in the zero-config case so that
+            // `--endpoint` and `--api-key-env` work without a config file.
+            let endpoint =
+                endpoint_override.map_or_else(|| DEFAULT_ENDPOINT.to_owned(), String::from);
+            let api_key = api_key_env_override.and_then(|var| std::env::var(var).ok());
             vec![Box::new(OpenAiCompatibleProvider::new(
-                "local",
-                DEFAULT_ENDPOINT,
-                None,
+                "local", endpoint, api_key,
             ))]
         } else {
             settings

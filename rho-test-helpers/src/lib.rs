@@ -99,6 +99,15 @@ pub enum MockResponse {
     Error(RhoError),
 }
 
+impl Clone for MockChatClient {
+    fn clone(&self) -> Self {
+        Self {
+            items: Arc::clone(&self.items),
+            requests: Arc::clone(&self.requests),
+        }
+    }
+}
+
 impl From<Vec<rho_ai::StreamEvent>> for MockResponse {
     fn from(events: Vec<rho_ai::StreamEvent>) -> Self {
         Self::Events(events)
@@ -802,4 +811,67 @@ pub async fn single_tool_turn(
         observer: &NopObserver,
     };
     let _ = run_loop(session, user_text, &params).await.unwrap();
+}
+
+// ── TestProvider ─────────────────────────────────────────────────────────────
+
+/// A [`Provider`](rho_core::Provider) that wraps a [`MockChatClient`].
+///
+/// Use this in integration tests that need a `ProviderRegistry` with a
+/// working LLM service but no live model server. The provider reports
+/// itself as local (not external) with no discoverable models.
+///
+/// # Examples
+///
+/// ```ignore
+/// let client = MockChatClient::new(vec![text_events("hello")]);
+/// let provider = TestProvider::new("test", client);
+/// let mut registry = ProviderRegistry::new();
+/// registry.add(Box::new(provider));
+/// ```
+pub struct TestProvider {
+    /// Provider name.
+    name: String,
+    /// The mock LLM service.
+    client: MockChatClient,
+}
+
+impl TestProvider {
+    /// Create a new test provider with the given name and mock client.
+    pub fn new(name: &str, client: MockChatClient) -> Self {
+        Self {
+            name: name.to_owned(),
+            client,
+        }
+    }
+}
+
+#[async_trait]
+impl rho_core::Provider for TestProvider {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn is_external(&self) -> bool {
+        false
+    }
+
+    async fn list_models(&self) -> rho_core::Result<rho_core::ModelList> {
+        Ok(rho_core::ModelList {
+            data: vec![rho_core::ModelInfo {
+                id: "mock-model".to_owned(),
+                object: "model".to_owned(),
+                created: 0,
+                owned_by: "test".to_owned(),
+            }],
+        })
+    }
+
+    fn llm_service(&self) -> &dyn rho_ai::LlmService {
+        &self.client
+    }
+
+    fn clone_boxed_service(&self) -> Box<dyn rho_ai::LlmService> {
+        Box::new(self.client.clone())
+    }
 }

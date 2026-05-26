@@ -18,11 +18,11 @@ xtask ────────────────────────�
 
 | Crate | Depends on | Notes |
 |---|---|---|
-| `rho` | `rho-core`, `rho-tools` | Binary entry point — wires everything together |
+| `rho` | `rho-core`, `rho-tools` | Binary entry point — REPL and RPC modes, wires everything together |
 | `rho-tools` | `rho-core`, `rho-highlight` | Tool implementations use core types and highlight for node-splitting |
 | `rho-highlight` | none (external only) | Tree-sitter grammar — standalone, no rho dependencies |
 | `rho-core` | none (external only) | Kernel — the foundation everything else builds on |
-| `rho-test-helpers` | `rho-core` | Dev-only — provides mocks and fixtures for testing |
+| `rho-test-helpers` | `rho-core`, `rho-ai` | Dev-only — provides mocks and fixtures for testing |
 | `rho-eval` | `rho-core` | Dev-only — benchmark task definitions and scoring |
 | `rho-bench` | `rho-core`, `rho-eval`, `rho-tools` | Dev-only — benchmark harness binary for multi-model evaluation |
 | `xtask` | none (cargo integration) | Dev-only — task runner, no rho crate dependencies |

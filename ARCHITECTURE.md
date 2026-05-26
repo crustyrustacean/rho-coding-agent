@@ -15,18 +15,20 @@
 │                   rho-highlight                  │  ← Tree-sitter syntax analysis
 ├─────────────────────────────────────────────────┤
 │                   rho-core                       │  ← Agent kernel (loop, types, traits, data model)
+├─────────────────────────────────────────────────┤
+│                   rho-ai                         │  ← Unified LLM provider abstraction
 └─────────────────────────────────────────────────┘
 
    ┌──────────────────┐  ┌──────────────────┐
    │ rho-test-helpers  │  │    rho-eval       │  ← Dev-only: mocks, fixtures, benchmarks
    └──────────────────┘  └──────────────────┘
 
-                  rho-bench → rho-eval → rho-core
+                  rho-bench → rho-eval → rho-core → rho-ai
                   rho-tools → rho-highlight → rho-core
                   rho-test-helpers → rho-core
 ```
 
-**Rule:** a crate may only depend on crates below it in the stack. `rho-core` depends on nothing but external libraries.
+**Rule:** a crate may only depend on crates below it in the stack. `rho-ai` is the lowest layer; `rho-core` depends on it for the `LlmService` trait and unified streaming types.
 
 ## Crate Responsibilities
 
@@ -39,7 +41,7 @@ The foundation. Defines the contract everything else implements.
 - **Tool trait** — `Tool`: async, dyn-compatible, takes `CancellationToken`, returns `ToolOutcome`.
 - **Tool registry** — Maps tool names to `Box<dyn Tool>` implementations, each with a risk level.
 - **Approval policy** — `ApprovalPolicy` decides whether a tool call needs confirmation; `ApprovalGate` asks the user.
-- **Chat client** — `ChatClient` trait abstracts the model API. `LocalChatClient` is the OpenAI-compatible implementation.
+- **LLM service** — `LlmService` trait (from `rho-ai`) abstracts the model API. `RhoAiClient` wraps it for use in the agent loop. `ProviderRegistry` manages one or more providers with CLI endpoint/key overrides.
 - **Session** — Tree-shaped conversation model with adaptive resolution, JSONL persistence, token estimation.
 - **Config** — `RhoConfig` merged from user-level (`~/.rho/config.toml`) and project-level (`.rho/config.toml`).
 - **File sandbox** — `SandboxRoot` validates all file paths stay within the project root.
@@ -80,21 +82,97 @@ Syntax highlighting and structural code awareness. Serves two roles:
 
 Currently ships the Rust grammar. PowerShell, TOML, and JSON grammars are future additions.
 
+### `rho-ai` — Unified LLM Provider Abstraction
+
+Provider-agnostic streaming interface for LLM communication.
+
+- **`LlmService` trait** — `chat_stream(LlmRequest) → EventStream`. All providers implement this.
+- **`OpenAiService`** — OpenAI-compatible HTTP client with SSE parsing and retry logic. Covers OpenAI, DeepSeek, OpenRouter, Groq, local servers (Ollama, LM Studio), and any OpenAI-compatible endpoint.
+- **Unified types** — `LlmMessage`, `LlmRequest`, `ToolDefinition`, `StreamEvent` (`Text`, `Reasoning`, `ToolUseStart/Delta/Complete`, `Done`), `AccumulatedResponse`.
+- **Retry** — Exponential backoff on transient errors with configurable budget.
+- **SSE parser** — Line-buffered server-sent event parser with streaming accumulation.
+
 ### `rho` — Binary Entry Point
 
-Assembles all layers:
+Assembles all layers and dispatches to the selected execution mode.
 
-1. Parse CLI arguments
+**Startup sequence (`App::build`):**
+1. Parse CLI arguments (`Cli` — `--mode`, `--model`, `--endpoint`, `--api-key-env`, session flags, etc.)
 2. Load config (two-tier TOML)
-3. Resolve provider and model
-4. Scan for project context files, verify trust
+3. Construct `ProviderRegistry` from config + CLI overrides
+4. Run interactive startup phases (consent, context files, model picker) — headless in RPC mode
 5. Create tool registry and register built-in tools
-6. Construct session (persisted, resumed, or ephemeral)
-7. Start the agent loop connected to REPL or TUI
+6. Compose system prompt (base + trusted context files + environment block)
+7. Construct session (persisted, resumed, or ephemeral)
+
+**Mode dispatch (`App::run`):** routes to the selected mode after startup.
+
+## Execution Modes
+
+rho supports three execution modes selected via `--mode` (default: `repl`):
+
+### REPL Mode (default)
+
+Interactive terminal session. Reads prompts from stdin, renders output to the terminal.
+
+- `ReplObserver` — prints agent events (tool calls, errors, reasoning) to stdout
+- `ReplApprovalGate` — reads `y/N` from stdin for destructive tool calls
+- `ReplPresenter` — all formatted terminal output (startup messages, slash commands, context bar)
+
+### RPC Mode (`--mode rpc`)
+
+Headless JSONL over stdin/stdout for process integration with editors, bots, and custom UIs.
+
+```
+# Example session
+echo '{"type":"prompt","message":"fix the bug"}' | rho --mode rpc --model <id>
+```
+
+The core RPC loop is generic over I/O (`run_rpc_on<R, W>`) so the in-process integration tests can inject canned stdin and capture stdout without touching real file descriptors. The public entry point (`run_rpc`) delegates with real `io::stdin()` and `io::stdout()`.
+
+**Integration tests.** 43 end-to-end tests in `rho/src/rpc.rs` cover the full JSONL protocol: command dispatch, event sequencing, approval round-trips, tool call flows, error handling, multi-turn sessions, and JSONL conformance. Tests use `MockChatClient` via `TestProvider` (in `rho-test-helpers`) and construct `App` directly (bypassing CLI startup) to exercise the RPC adapter layer over the real agent loop.
+
+**Commands (stdin → rho):**
+
+| `type` | Fields | Description |
+|---|---|---|
+| `prompt` | `message` | Send a user message to the agent |
+| `abort` | — | Cancel the current operation |
+| `get_state` | — | Return current model / provider |
+| `get_messages` | — | Return all messages on active path |
+| `set_model` | `model` | Switch the active model |
+| `get_session_stats` | — | Return token budget / usage info |
+| `compact` | — | Trigger context compaction |
+
+**Events (rho → stdout):**
+
+| `type` | Fields | Description |
+|---|---|---|
+| `ready` | — | Emitted once on startup |
+| `agent_start` | — | Agent began processing a prompt |
+| `agent_end` | `reply` | Agent finished; full text reply |
+| `agent_error` | `error` | Agent loop encountered an error |
+| `state_change` | `state` | Loop state transition (`thinking`, `executing_tool`, etc.) |
+| `message_update` | `delta` | Streaming text chunk |
+| `reasoning_delta` | `delta` | Streaming reasoning/chain-of-thought chunk |
+| `tool_call` | `name`, `arguments` | Model requested a tool call |
+| `tool_result` | `name`, `is_error`, `output` | Tool finished executing |
+| `tool_denied` | `name` | Tool call denied by approval gate |
+| `approval_request` | `tool`, `arguments`, `risk` | Approval required — send `{"type":"approval_response","approved":true}` |
+| `response` | `success`, [`error`] | Command acknowledgment |
+
+**Headless startup policy:**
+- Provider consent requires `--accept-external-provider` (no interactive prompt).
+- Context file trust: already-trusted files load silently; new/changed files are auto-denied.
+- Model picker: requires `--model` (returns an error instead of interactive selection).
+
+### TUI Mode (future)
+
+Rich terminal UI with streaming output, syntax highlighting, and inline approval prompts. Planned for Phase 4.
 
 ### `rho-test-helpers` — Shared Test Utilities (dev-only)
 
-`MockChatClient`, `MockShellExecutor`, response builders, approval gates, file-system test environment, sandbox/trust helpers.
+`MockChatClient`, `MockShellExecutor`, `TestProvider`, response builders, approval gates, file-system test environment, sandbox/trust helpers. `TestProvider` wraps a `MockChatClient` as a `Provider` impl, enabling integration tests that need a `ProviderRegistry` without a live model server.
 
 ### `rho-eval` — Behavioural Benchmarks (dev-only)
 
@@ -189,38 +267,62 @@ rho/                # Binary entry point (`rho` CLI)
   src/
     main.rs         # Thin entry: parse CLI, build App, run
     lib.rs          # Module declarations
-    cli.rs          # `Cli` — CLI argument struct (17 flags)
-    app.rs          # `App` — runtime state, build/run orchestration
-    gate.rs         # `ReplApprovalGate` — REPL approval prompts
-    repl.rs         # `run_repl()`, `run_prompt_file()` — interaction modes
+    cli.rs          # `Cli` + `Mode` enum (--mode repl|rpc)
+    app.rs          # `App::build` (startup phases) + `App::run` (mode dispatch)
+    model.rs        # Model resolution + interactive picker
+    gate.rs         # Approval gate module root
+    gate/
+      interactive.rs # `ReplApprovalGate` — reads y/N from stdin
+    rpc.rs          # RPC mode: `run_rpc`, `run_rpc_on`, `RpcObserver`, `RpcApprovalGate` (68 tests: 25 unit + 43 integration)
+    repl.rs         # `run_repl` — interactive REPL loop
+    presenter.rs    # Presenter module root
+    presenter/
+      repl.rs       # `ReplPresenter` — all REPL terminal output
+      rpc.rs        # `RpcPresenter` — startup output for RPC mode
+rho-ai/             # Unified LLM provider abstraction
+  src/
+    lib.rs          # Re-exports: `LlmService`, `EventStream`, unified types
+    service.rs      # `LlmService` trait
+    openai.rs       # `OpenAiService` — OpenAI-compatible HTTP + SSE
+    sse.rs          # Server-sent event parser
+    retry.rs        # Exponential backoff retry logic
+    types.rs        # `LlmMessage`, `LlmRequest`, `StreamEvent`, `AccumulatedResponse`
+    error.rs        # `ProviderError`
 rho-core/           # Core library
   src/
     lib.rs          # Module declarations and convenience re-exports
-    agent.rs        # Agent loop state machine and `run_loop`
+    agent.rs        # Agent loop state machine, `run_loop`, `AgentObserver`
     approval.rs     # `ApprovalPolicy` and `ApprovalGate` traits
-    client.rs       # `ChatClient` trait, `LocalChatClient`, `client_factory()`
+    client/
+      mod.rs        # `RhoAiClient`, `ProviderRegistry`, `provider_factory`
+      error.rs      # `ClientError`
     config.rs       # `RhoConfig`, `ConfigLoader`, config sub-types
     context.rs      # `ContextManager` trait, `SlidingWindowContextManager`, `TokenBudget`
     context_files.rs# Project context file scanner, `TrustStore`
-    conversation.rs # `Conversation`, `AssistantResponse`
+    conversation.rs # `AssistantResponse`
     diagnostic.rs   # `Diagnostic`, `DiagnosticSeverity`, `DiagnosticSpan`
     error.rs        # `RhoError` and `Result`
     message.rs      # `ChatMessage`, `ContentBlock`, `ModelToolCall`
+    model_match.rs  # `fuzzy_match`, `find_exact`, `format_suggestions`
     newtypes.rs     # `FilePath`, `ToolName`, `ToolCallId`, `DiagnosticCode`
     prompts.rs      # `base_prompt()`, `compact_prompt()`
+    provider.rs     # `Provider` trait, `OpenAiCompatibleProvider`, `ProviderRegistry`
     redact.rs       # `Redactor` — secret pattern matching
-    request.rs      # `ChatRequest`
-    response.rs     # `ModelResponse`, `FinishReason`, `ModelUsage`
     sandbox.rs      # `SandboxRoot` — file sandbox validation
-    schema.rs       # `ToolSchema` — wire-format tool definitions
     session.rs      # `Session` — tree-shaped conversation with JSONL persistence
+    session/
+      compaction.rs # `CompactionStrategy`, `MechanicalCompactionStrategy`
+      entry.rs      # `Entry`, `EntryPayload`, `EntryResolution`
+      error.rs      # `SessionError`
+      estimator.rs  # `TokenEstimator`, `HeuristicEstimator`
+      persist.rs    # JSONL persistence, `SessionMetadata`
     shell.rs        # `ShellExecutor` trait, `ShellOutput`
-    stream.rs       # `StreamChunk`, SSE parsing, accumulation
     tool.rs         # `Tool` trait, `ToolRegistry`, `ToolResult`, `ToolRisk`
 rho-tools/          # Built-in tool implementations
   src/
     lib.rs          # `register_all()`
     files.rs        # `ReadFile`, `WriteFile`, `ListDir`, `EditFile`
+    hashline.rs     # Hashline content-addressed editing
     shell.rs        # `PowerShellExecutor`, `RunCommand`
     rust.rs         # `CargoCheck`, `CargoClippy`, `CargoTest`, `CargoFix`, `RustcExplain`
 rho-highlight/      # Tree-sitter syntax analysis
@@ -234,11 +336,11 @@ rho-eval/           # Behavioural benchmark definitions (dev-only)
     lib.rs          # `EvalTask`, `TaskOutcome`, `TaskMetrics`, `EvalRun`
     task.rs         # `EvalTask` trait, `TaskVerdict`
     report.rs       # `EvalRun`, `EvalReport`
-    tasks.rs        # Built-in task definitions
+    tasks.rs        # 10 built-in eval scenarios
 rho-bench/          # Benchmark harness binary (dev-only)
   src/
-    main.rs         # CLI
-    harness.rs      # `CountingClient`, `BenchApprovalGate`
+    main.rs         # CLI (--models, --tasks, --endpoint, --api-key-env)
+    harness.rs      # `run_benchmarks`, `BenchApprovalGate`
     comparison.rs   # Terminal table display
     persistence.rs  # JSON result files
 rho-test-helpers/   # Shared test infrastructure (dev-only)
@@ -247,7 +349,7 @@ rho-test-helpers/   # Shared test infrastructure (dev-only)
 xtask/              # Dev task runner
   src/
     main.rs         # CLI dispatch
-    tasks.rs        # Task implementations
+    tasks.rs        # `ci`, `test`, `release`, `changelog` tasks
 Cargo.toml          # Workspace root
 CHANGELOG.md        # Generated via git-cliff
 cliff.toml          # git-cliff configuration
@@ -282,9 +384,14 @@ cliff.toml          # git-cliff configuration
 
 | Type | Location | Purpose |
 |---|---|---|
-| `ChatClient` | `client.rs` | Trait: sends `ChatRequest`, returns `ModelResponse` |
-| `LocalChatClient` | `client.rs` | OpenAI-compatible HTTP client |
-| `ModelInfo` | `client.rs` | A model from `/v1/models` |
+| `LlmService` | `rho-ai/service.rs` | Trait: `chat_stream(LlmRequest) → EventStream` |
+| `OpenAiService` | `rho-ai/openai.rs` | OpenAI-compatible HTTP client with SSE streaming |
+| `StreamEvent` | `rho-ai/types.rs` | Streaming response event (`Text`, `Reasoning`, `ToolUse*`, `Done`) |
+| `AccumulatedResponse` | `rho-ai/types.rs` | Fully-accumulated response (text + tool calls + usage) |
+| `RhoAiClient` | `client/mod.rs` | Wraps `LlmService` for use in the agent loop |
+| `Provider` | `provider.rs` | Trait: `name`, `is_external`, `list_models`, `clone_boxed_service` |
+| `ProviderRegistry` | `provider.rs` | Ordered collection of `Box<dyn Provider>` |
+| `ModelInfo` | `client/mod.rs` | A model entry from `/v1/models` |
 | `ProviderConfig` | `config.rs` | Endpoint and API key env var configuration |
 
 ### Session and context

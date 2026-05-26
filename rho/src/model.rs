@@ -4,9 +4,11 @@
 //! against configured providers. Falls back to an interactive picker when
 //! no model can be determined automatically.
 //!
-//! All output is delegated to [`crate::presenter::ReplPresenter`].
+//! In REPL mode all output is delegated to [`crate::presenter::ReplPresenter`].
+//! In headless (RPC) mode the interactive picker is replaced by an error;
+//! see [`crate::presenter::RpcPresenter`] for the no-op stubs used there.
 
-use crate::presenter::ReplPresenter as P;
+use crate::presenter::{ReplPresenter as P, RpcPresenter};
 use anyhow::Result;
 use rho_core::{ProviderRegistry, RhoConfig};
 use std::io::{self, BufRead};
@@ -33,12 +35,15 @@ const MAX_SUGGESTIONS: usize = 5;
 ///
 /// # Interactive
 ///
-/// If no model is specified and none can be auto-detected, this function
-/// may prompt the user interactively via stdin.
+/// If no model is specified and none can be auto-detected this function
+/// normally prompts the user interactively via stdin. When `headless` is
+/// `true` (RPC mode) the interactive picker is skipped and an error is
+/// returned instead — the caller must pass `--model` explicitly.
 pub(crate) async fn resolve_model(
     config: &RhoConfig,
     cli_model: Option<&String>,
     registry: &ProviderRegistry,
+    headless: bool,
 ) -> Result<String> {
     let all_models = registry.list_all_models().await;
 
@@ -57,7 +62,7 @@ pub(crate) async fn resolve_model(
     }
     // 3. Auto-detect across all providers.
     if available.is_empty() {
-        return no_models_fallback(config, registry);
+        return no_models_fallback(config, registry, headless);
     }
     let (provider_name, model_id) = &available[0];
     P::model_auto_detected(model_id, provider_name);
@@ -109,7 +114,11 @@ fn validate_and_resolve(model: &str, source: &str, available: &[(&str, String)])
 /// # Interactive
 ///
 /// Prompts the user via stdin to select or enter a model ID.
-fn no_models_fallback(config: &RhoConfig, registry: &ProviderRegistry) -> Result<String> {
+fn no_models_fallback(
+    config: &RhoConfig,
+    registry: &ProviderRegistry,
+    headless: bool,
+) -> Result<String> {
     let is_zero_config =
         config.provider.is_empty() && registry.external_provider_names().is_empty();
 
@@ -141,7 +150,7 @@ fn no_models_fallback(config: &RhoConfig, registry: &ProviderRegistry) -> Result
         ));
     }
 
-    pick_model_interactively(registry)
+    pick_model_interactively(registry, headless)
 }
 
 /// Interactive model picker for when no models could be auto-detected.
@@ -149,8 +158,21 @@ fn no_models_fallback(config: &RhoConfig, registry: &ProviderRegistry) -> Result
 /// Shows a numbered menu of popular models, plus an option to type a
 /// model ID manually. Reads the user's choice from stdin and returns
 /// the selected model ID.
-fn pick_model_interactively(registry: &ProviderRegistry) -> Result<String> {
+fn pick_model_interactively(registry: &ProviderRegistry, headless: bool) -> Result<String> {
     let names: Vec<&str> = registry.providers().iter().map(|p| p.name()).collect();
+
+    // In headless (RPC) mode the interactive picker is not available.
+    // Route through the no-op RpcPresenter stubs before returning an error
+    // so that step 6 can replace this path with JSONL-based selection.
+    if headless {
+        RpcPresenter::picker_header(&names);
+        RpcPresenter::picker_manual_prompt();
+        return Err(anyhow::anyhow!(
+            "no model could be auto-detected in RPC mode; \
+             specify one with --model <id>"
+        ));
+    }
+
     P::picker_header(&names);
 
     let mut line = String::new();

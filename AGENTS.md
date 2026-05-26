@@ -30,7 +30,8 @@ cargo xtask test -- --nocapture # Run with stdout visible
 - Unit tests live in `#[cfg(test)] mod tests` blocks within each source file.
 - Integration tests live in `rho-core/tests/`.
 - Tool integration tests live in `rho-tools/tests/`.
-- `rho-test-helpers` provides `MockChatClient`, `MockShellExecutor`, response builders (`text_response`, `tool_call_response`, `multi_tool_call_response`), approval gates (`AutoApproveGate`, `AutoDenyGate`), file-system test environment (`FileTestEnv`), shell detection (`detect_shell`), sandbox helpers (`tempdir_with_sandbox`), and trust-store helpers (`empty_trust_store`).
+- RPC integration tests live in `rho/src/rpc.rs` (in the `#[cfg(test)] mod tests` block). These test the JSONL protocol end-to-end using `MockChatClient` via `TestProvider`, with `App` constructed directly to bypass CLI startup. They must live inside the `rho` crate because `App`'s fields are `pub(crate)`.
+- `rho-test-helpers` provides `MockChatClient`, `MockShellExecutor`, `TestProvider`, response builders (`text_events`, `tool_call_events`, `multi_tool_call_events`), approval gates (`AutoApproveGate`, `AutoDenyGate`), file-system test environment (`FileTestEnv`), shell detection (`detect_shell`), sandbox helpers (`tempdir_with_sandbox`), and trust-store helpers (`empty_trust_store`).
 - `rho-eval` defines canonical coding tasks and scoring logic used by `rho-bench`.
 - `rho-bench` runs eval tasks against models with timing and token metrics. Run with `cargo run -p rho-bench -- --models <id> --endpoint <url>`.
 - When adding new deserialization logic, add a JSON fixture test.
