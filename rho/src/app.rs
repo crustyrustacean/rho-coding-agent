@@ -5,7 +5,6 @@
 //! scoped to this module, keeping [`App::build`] as a readable sequence.
 
 use crate::cli::Cli;
-use crate::gate::ReplApprovalGate;
 use anyhow::Result;
 use rho_core::tool::CancellationToken as Cancel;
 use rho_core::{
@@ -36,8 +35,6 @@ pub struct App {
     pub(crate) registry: ToolRegistry,
     /// Agent loop configuration.
     pub(crate) config: AgentConfig,
-    /// Approval gate for tool call confirmation.
-    pub(crate) gate: ReplApprovalGate,
     /// Cooperative cancellation token.
     pub(crate) cancel: Cancel,
 }
@@ -45,23 +42,30 @@ pub struct App {
 impl App {
     /// Build the application from CLI arguments.
     ///
-    /// Runs the full startup sequence in order:
+    /// Runs the full startup sequence in order. Phases marked **interactive**
+    /// read from stdin and write to stdout/stderr — they require a terminal
+    /// and will need to be replaced or skipped in headless (RPC) mode.
+    ///
+    /// # Non-interactive phases
     ///
     /// 1. Initialize tracing
     /// 2. Resolve sandbox root
     /// 3. Load configuration (two-tier TOML)
     /// 4. Construct provider registry (endpoint, auth, externality)
     /// 5. Check provider type compatibility
-    /// 6. Check external provider consent
-    /// 7. Register built-in tools
-    /// 8. Scan project context files (interactive trust workflow)
-    /// 9. Compose the system prompt
-    /// 10. Resolve the model identifier
-    /// 11. Build agent config with CLI overrides
-    /// 12. Build secret redactor
-    /// 13. Determine token budget
-    /// 14. Construct the session (resumed, in-memory, or persisted)
-    /// 15. Log budget diagnostics
+    /// 6. Register built-in tools
+    /// 7. Compose the system prompt
+    /// 8. Build agent config with CLI overrides
+    /// 9. Build secret redactor
+    /// 10. Determine token budget
+    /// 11. Construct the session (resumed, in-memory, or persisted)
+    /// 12. Log budget diagnostics
+    ///
+    /// # Interactive phases (stdin/stdout)
+    ///
+    /// - Check external provider consent (phase 6)
+    /// - Scan project context files — trust workflow (phase 8)
+    /// - Resolve model identifier — fallback picker (phase 10)
     ///
     /// # Errors
     ///
@@ -87,7 +91,7 @@ impl App {
         // ── 5. Provider type compatibility ──────────────────────────────
         check_provider_type(&config);
 
-        // ── 6. Provider consent ──────────────────────────────────────────
+        // ── 6. Provider consent [INTERACTIVE] ────────────────────────────
         check_provider_consent(&provider_registry, &cli)?;
 
         // ── 7. Tool registry ────────────────────────────────────────────
@@ -95,7 +99,7 @@ impl App {
         register_all(&mut tool_registry, sandbox.clone(), &config);
         let tool_schemas = tool_registry.tool_definitions();
 
-        // ── 8. Context files (interactive trust workflow) ────────────────
+        // ── 8. Context files [INTERACTIVE] ──────────────────────────────
         let context_files = scan_context_files(&sandbox);
 
         // ── 9. System prompt ─────────────────────────────────────────────
@@ -107,7 +111,7 @@ impl App {
             cli.compact,
         );
 
-        // ── 10. Model ────────────────────────────────────────────────────
+        // ── 10. Model [INTERACTIVE] ──────────────────────────────────────
         let model = resolve_model(&config, cli.model.as_ref(), &provider_registry).await?;
 
         // ── 11. Agent config ─────────────────────────────────────────────
@@ -140,7 +144,6 @@ impl App {
             active_provider_index: 0,
             registry: tool_registry,
             config: agent_config,
-            gate: ReplApprovalGate,
             cancel: Cancel::new(),
         })
     }
@@ -151,12 +154,11 @@ impl App {
         self.providers.providers()[self.active_provider_index].as_ref()
     }
 
-    /// Dispatch the agent: prompt-file mode or interactive REPL.
+    /// Run the agent in the configured mode (currently REPL only).
     ///
     /// # Errors
     ///
-    /// Returns an error if the prompt file cannot be read or the agent loop
-    /// encounters a fatal error.
+    /// Returns an error if the agent loop encounters a fatal error.
     pub async fn run(mut self) -> Result<()> {
         crate::repl::run_repl(&mut self).await
     }
@@ -182,7 +184,7 @@ impl App {
     }
 }
 
-// ── Private setup phases ───────────────────────────────────────────────────────
+// ── Private setup phases (non-interactive) ────────────────────────────────────
 
 /// Resolve the sandbox root from CLI `--root` or auto-detection.
 fn resolve_sandbox(cli: &Cli) -> Result<SandboxRoot> {
@@ -235,6 +237,8 @@ fn check_provider_type(config: &RhoConfig) {
         }
     }
 }
+
+// ── Interactive setup phases (stdin/stdout — require a terminal) ──────────────
 
 /// Display a consent warning and read confirmation for external providers.
 ///
@@ -406,227 +410,16 @@ fn resume_session(
     Ok(s)
 }
 
-/// The minimum fuzzy similarity score to include a suggestion.
-const FUZZY_THRESHOLD: f64 = 0.5;
-
-/// Maximum number of fuzzy suggestions to display.
-const MAX_SUGGESTIONS: usize = 5;
-
 /// Resolve the model identifier.
 ///
-/// Priority: CLI `--model` → config `agent.model` → auto-detect via all
-/// providers (first model found in config order).
-///
-/// When a model is explicitly specified (via CLI or config), it is
-/// validated against the providers' model lists. If the model is not
-/// found, fuzzy suggestions are shown and an error is returned.
-///
-/// When the model list cannot be obtained (e.g. `/v1/models` is not
-/// supported or all providers are unreachable), the user-specified model
-/// is accepted verbatim with a warning — this avoids blocking valid
-/// workflows on providers that simply don't advertise their models.
+/// Delegates to [`crate::model::resolve_model`] which handles CLI priority,
+/// config fallback, auto-detection, and interactive selection.
 async fn resolve_model(
     config: &RhoConfig,
     cli_model: Option<&String>,
     registry: &ProviderRegistry,
 ) -> Result<String> {
-    // Query all providers for available models upfront (needed for
-    // validation and auto-detect alike).
-    let all_models = registry.list_all_models().await;
-
-    // Build a flat list of (provider_name, model_id) strings for matching.
-    let available: Vec<(&str, String)> = all_models
-        .iter()
-        .map(|(provider, info)| (*provider, info.id.clone()))
-        .collect();
-
-    // 1. CLI flag takes highest priority.
-    if let Some(model) = cli_model {
-        return Ok(validate_and_resolve(model, "--model", &available));
-    }
-    // 2. Config.
-    if let Some(model) = config.agent.model.as_deref() {
-        return Ok(validate_and_resolve(model, "config", &available));
-    }
-    // 3. Auto-detect across all providers.
-    if available.is_empty() {
-        return no_models_fallback(config, registry);
-    }
-    let (provider_name, model_id) = &available[0];
-    eprintln!("auto-detected model: {model_id} (from provider: {provider_name})");
-    Ok(model_id.clone())
-}
-
-/// Validate a user-specified model against the available model list.
-///
-/// Three outcomes:
-/// 1. Exact match found → use it, report the provider.
-/// 2. Models were discovered but the specified one isn't present →
-///    show fuzzy suggestions as a warning, then accept the model.
-/// 3. No models could be discovered (empty list) → accept the model
-///    verbatim with a warning (provider may not support `/v1/models`).
-fn validate_and_resolve(model: &str, source: &str, available: &[(&str, String)]) -> String {
-    // Exact match (case-sensitive).
-    if let Some((provider_name, model_id)) = rho_core::find_exact(model, available) {
-        eprintln!("using model from {source}: {model_id} (provider: {provider_name})");
-        return model_id.to_owned();
-    }
-
-    // No models discovered — fall back to accepting the model verbatim.
-    // Some providers (especially external ones) don't support `/v1/models`
-    // or it may be unavailable due to auth/network issues.
-    if available.is_empty() {
-        eprintln!(
-            "warning: could not list models from any provider; \
-             accepting model from {source}: {model}"
-        );
-        return model.to_owned();
-    }
-
-    // Models were discovered but the specified one wasn't found —
-    // show fuzzy suggestions as a warning, but still accept the model.
-    // The provider may accept IDs not advertised in `/v1/models`, and
-    // the API will return a proper error if the model is truly invalid.
-    eprintln!("warning: model \"{model}\" not found in provider model list.");
-
-    let suggestions = rho_core::fuzzy_match(model, available, FUZZY_THRESHOLD);
-    if !suggestions.is_empty() {
-        eprintln!("Did you mean:");
-        eprintln!(
-            "{}",
-            rho_core::format_suggestions(&suggestions, MAX_SUGGESTIONS)
-        );
-    }
-
-    eprintln!("continuing with model from {source}: {model}");
-    model.to_owned()
-}
-
-/// Popular models offered by the interactive model picker.
-///
-/// Each entry is (display name, provider family, model ID). The model IDs
-/// use `OpenRouter`'s `provider/model` format which is the most common
-/// multi-model endpoint. For direct OpenAI/Anthropic use, the user should
-/// configure the right endpoint in their config.
-const PICKER_MODELS: &[(&str, &str, &str)] = &[
-    ("Claude Sonnet 4", "Anthropic", "anthropic/claude-sonnet-4"),
-    ("GPT-4o", "OpenAI", "openai/gpt-4o"),
-    ("GLM-5", "z.ai", "z-ai/glm-5"),
-];
-
-/// Handle the case where no models could be discovered from any provider.
-///
-/// Two distinct scenarios:
-///
-/// 1. **Zero-config** — no providers configured, only the default localhost
-///    fallback exists, and it's unreachable. Returns an error with a
-///    getting-started guide.
-///
-/// 2. **Configured but unreachable** — one or more providers are configured
-///    but none could list models. Offers an interactive model picker with
-///    popular models, falling back to manual entry.
-fn no_models_fallback(config: &RhoConfig, registry: &ProviderRegistry) -> Result<String> {
-    let is_zero_config =
-        config.provider.is_empty() && registry.external_provider_names().is_empty();
-
-    if is_zero_config {
-        return Err(anyhow::anyhow!(
-            "\n\
-             No model provider detected.\n\
-             \n\
-             rho could not reach a local model server and no external\n\
-             provider is configured.\n\
-             \n\
-             To get started, either:\n\
-             \n\
-               1. Start a local model server (LM Studio, Ollama) on\n\
-                  localhost:1234, then run rho again.\n\
-             \n\
-               2. Configure an external provider in ~/.rho/config.toml:\n\
-             \n\
-                      [provider]\n\
-                      endpoint = \"https://openrouter.ai/api/v1/chat/completions\"\n\
-                      api_key_env = \"OPENROUTER_API_KEY\"\n\
-             \n\
-                      [agent]\n\
-                      model = \"gpt-4o\"\n\
-             \n\
-               3. Use CLI flags:\n\
-             \n\
-                      rho --endpoint <url> --api-key-env <VAR> --model <id>"
-        ));
-    }
-
-    // One or more providers are configured but none could list models.
-    // Offer an interactive model picker.
-    pick_model_interactively(registry)
-}
-
-/// Interactive model picker for when no models could be auto-detected.
-///
-/// Shows a numbered menu of popular models, plus an option to type a
-/// model ID manually. Reads the user's choice from stdin and returns
-/// the selected model ID.
-fn pick_model_interactively(registry: &ProviderRegistry) -> Result<String> {
-    let names: Vec<&str> = registry.providers().iter().map(|p| p.name()).collect();
-    eprintln!();
-    eprintln!("  Could not list models from: {}", names.join(", "));
-    eprintln!("  Select a model to use:");
-    eprintln!();
-
-    for (i, (display_name, family, _id)) in PICKER_MODELS.iter().enumerate() {
-        eprintln!(
-            "    [{idx}] {name:<22} ({family})",
-            idx = i + 1,
-            name = display_name,
-            family = family
-        );
-    }
-    eprintln!("    [0] Enter model ID manually");
-    eprintln!();
-    eprint!("  Choice: ");
-    io::stderr().flush().ok();
-
-    let mut line = String::new();
-    let ok = io::stdin().lock().read_line(&mut line).is_ok();
-    if !ok {
-        return Err(anyhow::anyhow!("could not read model choice from stdin"));
-    }
-
-    let choice = line.trim();
-
-    // Manual entry.
-    if choice == "0" {
-        eprint!("  Model ID: ");
-        io::stderr().flush().ok();
-        let mut manual = String::new();
-        if io::stdin().lock().read_line(&mut manual).is_ok() {
-            let model_id = manual.trim().to_owned();
-            if !model_id.is_empty() {
-                eprintln!("  using model: {model_id}");
-                return Ok(model_id);
-            }
-        }
-        return Err(anyhow::anyhow!("no model ID entered"));
-    }
-
-    // Numeric selection from the list.
-    if let Ok(idx) = choice.parse::<usize>()
-        && idx >= 1
-        && idx <= PICKER_MODELS.len()
-    {
-        let (display_name, _family, model_id) = PICKER_MODELS[idx - 1];
-        eprintln!("  using model: {model_id} ({display_name})");
-        return Ok(model_id.to_owned());
-    }
-
-    // If the user typed a model ID directly (not a number), accept it.
-    if !choice.is_empty() {
-        eprintln!("  using model: {choice}");
-        return Ok(choice.to_owned());
-    }
-
-    Err(anyhow::anyhow!("no model selected"))
+    crate::model::resolve_model(config, cli_model, registry).await
 }
 
 /// Log token budget diagnostics at startup.

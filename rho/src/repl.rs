@@ -25,6 +25,7 @@
 //!
 
 use crate::app::App;
+use crate::gate::ReplApprovalGate;
 use anyhow::Result;
 use rho_core::{AgentObserver, AgentState, ToolResult, ToolRisk};
 use std::{
@@ -113,6 +114,7 @@ impl AgentObserver for ReplObserver {
 /// `/paste`, and empty-input graceful exit on EOF.
 #[allow(clippy::too_many_lines)]
 pub async fn run_repl(app: &mut App) -> Result<()> {
+    let gate = ReplApprovalGate;
     loop {
         print!("User: ");
         io::stdout().flush()?;
@@ -205,7 +207,7 @@ pub async fn run_repl(app: &mut App) -> Result<()> {
                     registry: &app.registry,
                     config: &app.config,
                     cancel: app.cancel.clone(),
-                    gate: &app.gate,
+                    gate: &gate,
                     observer: &ReplObserver,
                 };
                 match rho_core::run_loop(&mut app.session, pasted.trim(), &params).await {
@@ -225,7 +227,7 @@ pub async fn run_repl(app: &mut App) -> Result<()> {
             registry: &app.registry,
             config: &app.config,
             cancel: app.cancel.clone(),
-            gate: &app.gate,
+            gate: &gate,
             observer: &ReplObserver,
         };
         match rho_core::run_loop(&mut app.session, input, &params).await {
