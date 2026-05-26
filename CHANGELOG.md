@@ -1,3 +1,52 @@
+## [0.47.1] - 2026-05-26
+
+### 🚀 Features
+
+- *(repl)* Add \paste command for multi-line input
+- Add `-c`/`--continue` flag to resume the last session, `/sessions` REPL command
+- Add context window status bar and `/status` REPL command
+- Scaffold rho-ai crate with unified types, trait, SSE parser, and retry
+- *(rho-ai)* Implement OpenAI-compatible provider
+- *(rho-core)* Wire rho-ai into rho-core, replace LocalChatClient
+
+### 🐛 Bug Fixes
+
+- Write REPL observer output to stdout instead of stderr
+- Set mtime on both files in find_latest test to prevent CI flake
+- Move approval gate and REPL error output to stdout to prevent stderr colour leakage
+- Strip ANSI escape codes from shell command output
+- Make completions_url idempotent, clean up tests
+
+### 💼 Other
+
+- Rho-ai-openai-provider into trunk
+
+### 🚜 Refactor
+
+- Redesign agent loop as state machine, extract LoopParams
+- Unify LLM types on rho-ai, replace ChatClient with LlmService (Phases 1-3)
+- Extract send_streaming into three testable helpers
+- Replace ToolSchema with rho_ai::ToolDefinition in Session and ToolRegistry
+- Rewrite Session::send_current() to use LlmService
+- Remove ChatClient trait and deprecated adapters (Phase 5)
+
+### 📚 Documentation
+
+- Add session discovery & context visibility phase plan, update roadmap
+- Sync documentation with 0.45.0-0.46.0 features
+
+### 🎨 Styling
+
+- Collapse ShellOutput::new call to single line in test
+
+### ⚙️ Miscellaneous Tasks
+
+- *(rho-core)* Clean up LocalChatClient references
+- Resolve clippy lints across rho-ai and rho-core
+- Clean up stale comment in Provider::llm_service()
+
+---
+
 ## [0.41.1] - 2026-05-21
 
 ### 🐛 Bug Fixes

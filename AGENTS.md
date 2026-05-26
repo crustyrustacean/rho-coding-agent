@@ -65,10 +65,32 @@ The hash is a 2-character string from alphabet `ZPMQVRWSNKTXJBYH` (256 combinati
 
 Legacy `old_text`/`new_text` edits still work but prefer hashline.
 
-## Release Checklist
+## Release
 
-1. Ensure `cargo xtask ci` passes.
-2. `cargo xtask changelog <version>` — update `CHANGELOG.md` (requires `git-cliff`).
-3. Bump `version` in workspace `Cargo.toml`.
-4. `git add -A && git commit -m "chore(release): prepare <version>"`.
-5. `git push origin trunk`.
+```sh
+# One command — runs CI, bumps version, updates changelog, tags, commits:
+cargo xtask release 0.48.0       # explicit version
+# or:
+cargo xtask release patch        # bump current version
+
+# If you just ran CI:
+cargo xtask release patch --skip-ci
+
+# Then push:
+git push origin trunk --tags
+```
+
+The `release` task:
+1. Runs `cargo xtask ci` (unless `--skip-ci`).
+2. Bumps `workspace.package.version` in `Cargo.toml`.
+3. Runs `git cliff --tag v<version> --prepend CHANGELOG.md` (existing entries preserved).
+4. Creates a `v<version>` git tag.
+5. Commits with `chore(release): prepare <version>`.
+
+Tags are required by `git-cliff` to delimit releases. The `release` task creates them automatically.
+
+To regenerate the changelog without a release (e.g. after editing commit messages):
+
+```sh
+cargo xtask changelog    # reads version from Cargo.toml, prepends entry
+```

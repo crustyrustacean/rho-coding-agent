@@ -8,6 +8,8 @@ publish.workspace = true
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+semver = "1"
+toml = "1"
 
 [lints]
 workspace = true

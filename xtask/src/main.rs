@@ -50,9 +50,28 @@ enum Xtask {
     Ci,
 
     /// Generate or update CHANGELOG.md via git-cliff.
-    Changelog {
-        /// Target version tag (e.g. "0.2.0"). Omit for unreleased changes.
-        version: Option<String>,
+    ///
+    /// Uses `--prepend` so existing entries are preserved.
+    /// Reads the current version from workspace Cargo.toml.
+    Changelog,
+
+    /// Prepare a release: bump version, update changelog, tag, and commit.
+    ///
+    /// Steps:
+    ///   1. Run CI to ensure a clean tree.
+    ///   2. Bump the version in workspace `Cargo.toml`.
+    ///   3. Generate a changelog entry via git-cliff and prepend to CHANGELOG.md.
+    ///   4. Create a `v<version>` git tag.
+    ///   5. Commit everything with `chore(release): prepare <version>`.
+    ///
+    /// The tag and commit are local only — push with `git push origin trunk --tags`.
+    Release {
+        /// The new version (e.g. "0.48.0", "major", "minor", "patch").
+        version: String,
+
+        /// Skip the CI check (use if you just ran `cargo xtask ci`).
+        #[arg(long)]
+        skip_ci: bool,
     },
 
     /// Show workspace status summary.
@@ -69,7 +88,8 @@ fn main() -> Result<()> {
         Xtask::Run { args } => tasks::run(&args),
         Xtask::Clean => tasks::clean(),
         Xtask::Ci => tasks::ci(),
-        Xtask::Changelog { version } => tasks::changelog(version.as_deref()),
+        Xtask::Changelog => tasks::changelog(),
+        Xtask::Release { version, skip_ci } => tasks::release(&version, skip_ci),
         Xtask::Status => tasks::status(),
     }
 }
