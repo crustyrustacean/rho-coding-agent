@@ -3,6 +3,6 @@
 //! Each mode (REPL, RPC, future TUI) provides its own [`ApprovalGate`]
 //! implementation that decides *how* to ask the user for confirmation.
 
-pub(crate) mod repl;
+pub(crate) mod interactive;
 
-pub(crate) use repl::ReplApprovalGate;
+pub(crate) use interactive::ReplApprovalGate;
