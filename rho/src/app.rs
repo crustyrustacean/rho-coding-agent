@@ -467,7 +467,7 @@ async fn resolve_model(
 ///    verbatim with a warning (provider may not support `/v1/models`).
 fn validate_and_resolve(model: &str, source: &str, available: &[(&str, String)]) -> String {
     // Exact match (case-sensitive).
-    if let Some((provider_name, model_id)) = crate::model_match::find_exact(model, available) {
+    if let Some((provider_name, model_id)) = rho_core::find_exact(model, available) {
         eprintln!("using model from {source}: {model_id} (provider: {provider_name})");
         return model_id.to_owned();
     }
@@ -489,12 +489,12 @@ fn validate_and_resolve(model: &str, source: &str, available: &[(&str, String)])
     // the API will return a proper error if the model is truly invalid.
     eprintln!("warning: model \"{model}\" not found in provider model list.");
 
-    let suggestions = crate::model_match::fuzzy_match(model, available, FUZZY_THRESHOLD);
+    let suggestions = rho_core::fuzzy_match(model, available, FUZZY_THRESHOLD);
     if !suggestions.is_empty() {
         eprintln!("Did you mean:");
         eprintln!(
             "{}",
-            crate::model_match::format_suggestions(&suggestions, MAX_SUGGESTIONS)
+            rho_core::format_suggestions(&suggestions, MAX_SUGGESTIONS)
         );
     }
 

@@ -9,6 +9,7 @@
 //! | [`error`] | [`RhoError`] and [`Result`] |
 //! | [`newtypes`] | [`FilePath`], [`ToolName`], [`ToolCallId`], [`EntryId`], [`DiagnosticCode`] |
 //! | [`message`] | [`ChatMessage`], [`ContentBlock`], [`ModelToolCall`] |
+//! | [`model_match`] | [`fuzzy_match`], [`find_exact`] - fuzzy model identifier matching |
 //! | [`schema`] | [`ToolSchema`] — wire-format tool definitions for API requests |
 //! | [`shell`] | [`ShellExecutor`] trait, [`ShellOutput`] — shell execution abstraction |
 //! | [`request`] | [`ChatRequest`] |
@@ -73,6 +74,7 @@ pub mod conversation;
 pub mod diagnostic;
 pub mod error;
 pub mod message;
+pub mod model_match;
 pub mod newtypes;
 pub mod prompts;
 pub mod provider;
@@ -112,6 +114,7 @@ pub use diagnostic::{
 };
 pub use error::{Result, RhoError};
 pub use message::{ChatMessage, ContentBlock, ModelToolCall, ToolCallFunction};
+pub use model_match::{ModelCandidate, find_exact, format_suggestions, fuzzy_match};
 pub use newtypes::{DiagnosticCode, EntryId, FilePath, SessionId, ToolCallId, ToolName};
 pub use prompts::{base_prompt, compact_prompt};
 pub use provider::{OpenAiCompatibleProvider, Provider, ProviderRegistry, provider_factory};
