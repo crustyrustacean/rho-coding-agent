@@ -1,10 +1,11 @@
 //! rho-ext — TypeScript extension runtime for rho.
 //!
 //! Provides [`ExtensionRuntime`] which owns a V8 isolate on a dedicated thread
-//! and allows calling exported TypeScript functions via async channels.
+//! and allows calling extension tools, hooks, and commands via async channels.
 //!
-//! The spike in [`spike`] validates the threading model and `deno_core` API.
-//! The production runtime is in [`runtime`].
+//! Extensions declare their capabilities via `export default { ... }` in their
+//! main TypeScript module. The manifest is parsed into [`LoadedExtension`]
+//! during spawn and is available via [`ExtensionRuntime::manifest`].
 
 pub mod error;
 pub mod host;

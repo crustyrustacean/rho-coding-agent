@@ -2,6 +2,8 @@
 
 use thiserror::Error;
 
+use crate::manifest::ManifestError;
+
 /// Errors that can occur during extension loading or execution.
 #[derive(Debug, Error)]
 pub enum ExtensionError {
@@ -13,9 +15,29 @@ pub enum ExtensionError {
     #[error("module load failed: {0}")]
     ModuleLoad(String),
 
-    /// A requested export was not found in the module.
-    #[error("export not found: {0}")]
-    ExportNotFound(String),
+    /// Manifest extraction or validation failed.
+    #[error("manifest error: {0}")]
+    Manifest(#[from] ManifestError),
+
+    /// A tool was not found in the extension.
+    #[error("tool not found: {0}")]
+    ToolNotFound(String),
+
+    /// A tool is missing its `execute` function.
+    #[error("tool '{0}' has no execute function")]
+    ToolMissingExecute(String),
+
+    /// A hook was not found in the extension.
+    #[error("hook not found: {0}")]
+    HookNotFound(String),
+
+    /// A command was not found in the extension.
+    #[error("command not found: {0}")]
+    CommandNotFound(String),
+
+    /// A command is missing its `handler` function.
+    #[error("command '{0}' has no handler function")]
+    CommandMissingHandler(String),
 
     /// The extension thread has shut down (sender dropped).
     #[error("extension runtime shut down")]
