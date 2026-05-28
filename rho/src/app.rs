@@ -15,9 +15,12 @@ use rho_core::{
     context_files::{ContextFile, ContextScanner, TrustStore},
     find_project_root,
 };
+use rho_ext::DenoObserver;
+use rho_ext::loader::ExtensionLoader;
 use rho_tools::register_all;
 use std::io::{self, BufRead};
 use std::path::Path;
+use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::EnvFilter;
 
 // ── App ───────────────────────────────────────────────────────────────────────
@@ -41,6 +44,14 @@ pub struct App {
     pub(crate) config: AgentConfig,
     /// Cooperative cancellation token.
     pub(crate) cancel: Cancel,
+    /// Extension loader (manages TypeScript extension runtimes).
+    pub(crate) ext_loader: ExtensionLoader,
+    /// Extension observers (one per loaded extension).
+    pub(crate) ext_observers: Vec<DenoObserver>,
+    /// Keeps the tracing non-blocking writer alive until `App` is dropped.
+    /// Without this, the worker thread flushes and exits during `init_tracing`,
+    /// silently dropping all subsequent log events.
+    pub(crate) _log_guard: WorkerGuard,
 }
 
 impl App {
@@ -77,7 +88,7 @@ impl App {
     /// model API, declined external provider consent, malformed session file).
     pub async fn build(cli: Cli) -> Result<Self> {
         // ── 1. Tracing ──────────────────────────────────────────────────
-        Self::init_tracing();
+        let _log_guard = Self::init_tracing();
 
         // ── 2. Sandbox root ──────────────────────────────────────────────
         let sandbox = resolve_sandbox(&cli)?;
@@ -101,6 +112,19 @@ impl App {
         // ── 7. Tool registry ────────────────────────────────────────────
         let mut tool_registry = ToolRegistry::new();
         register_all(&mut tool_registry, sandbox.clone(), &config);
+
+        // ── 7b. Extensions ───────────────────────────────────────────────
+        let mut ext_loader = ExtensionLoader::new(config.extensions.clone());
+        let ext_dirs = extension_dirs(sandbox.path());
+        if !ext_dirs.is_empty() {
+            if let Err(e) = ext_loader.load_all(&ext_dirs) {
+                P::extension_load_error(&e.to_string());
+            }
+            ext_loader.register_tools(&mut tool_registry);
+            P::extensions_loaded(ext_loader.len());
+        }
+        let ext_observers = ext_loader.build_observers();
+
         let tool_schemas = tool_registry.tool_definitions();
 
         // Whether we are running in a headless mode (no interactive stdin).
@@ -122,6 +146,9 @@ impl App {
         // ── 10. Model [INTERACTIVE] ──────────────────────────────────────
         let model =
             resolve_model(&config, cli.model.as_ref(), &provider_registry, headless).await?;
+
+        // Set model in all loaded extensions so rho.getModel() works.
+        ext_loader.set_model_all(&model).await;
 
         // ── 11. Agent config ─────────────────────────────────────────────
         let agent_config = build_agent_config(&config, &cli);
@@ -155,6 +182,9 @@ impl App {
             registry: tool_registry,
             config: agent_config,
             cancel: Cancel::new(),
+            ext_loader,
+            ext_observers,
+            _log_guard,
         })
     }
 
@@ -173,6 +203,9 @@ impl App {
     ///
     /// Returns an error if the agent loop encounters a fatal error.
     pub async fn run(mut self) -> Result<()> {
+        // Fire extension onLoad hooks now that the app is fully built.
+        self.ext_loader.fire_on_load().await;
+
         match self.mode {
             Mode::Repl => crate::repl::run_repl(&mut self).await,
             Mode::Rpc => crate::rpc::run_rpc(self).await,
@@ -186,9 +219,9 @@ impl App {
     /// Writes structured logs to `logs/rho.log` at `INFO` level, suppressing
     /// noisy crates (`rustls`, `hyper`, `reqwest`). The log level can be
     /// overridden via the `RHO_LOG` environment variable.
-    fn init_tracing() {
+    fn init_tracing() -> WorkerGuard {
         let file_appender = tracing_appender::rolling::never("logs", "rho.log");
-        let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+        let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
 
         let env_filter = EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| EnvFilter::new("info,rustls=warn,hyper=warn,reqwest=warn"));
@@ -197,6 +230,8 @@ impl App {
             .with_writer(non_blocking)
             .with_env_filter(env_filter)
             .init();
+
+        guard
     }
 }
 
@@ -465,4 +500,31 @@ fn log_budget_diagnostics(session: &Session) {
         let pct = (100_usize.saturating_mul(total_overhead) / prompt.max(1)) as u32;
         P::budget_overhead_warning(pct);
     }
+}
+
+/// Build the list of extension directories to scan.
+///
+/// Checks for:
+/// - User-level: `~/.rho/extensions/`
+/// - Project-level: `.rho/extensions/` (relative to sandbox root)
+pub fn extension_dirs(sandbox_path: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut dirs = Vec::new();
+
+    // User-level extensions.
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map(std::path::PathBuf::from)
+        .unwrap_or_default();
+    let user_ext = home.join(".rho").join("extensions");
+    if user_ext.is_dir() {
+        dirs.push(user_ext);
+    }
+
+    // Project-level extensions.
+    let project_ext = sandbox_path.join(".rho").join("extensions");
+    if project_ext.is_dir() && !dirs.contains(&project_ext) {
+        dirs.push(project_ext);
+    }
+
+    dirs
 }

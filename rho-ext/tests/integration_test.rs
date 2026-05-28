@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use rho_core::tool::{CancellationToken, ToolOutcome, ToolRegistry, ToolResult};
 use rho_core::newtypes::ToolName;
+use rho_core::config::ExtensionPermissions;
 use rho_ext::deno_observer::DenoObserver;
 use rho_ext::deno_tool::DenoTool;
 use rho_ext::discover::{deduplicate, discover};
@@ -441,4 +442,167 @@ fn assert_tool_output(outcome: &ToolOutcome, expected: &str) {
         }
         ToolOutcome::Streamed(_) => panic!("expected Immediate result"),
     }
+}
+
+// ── Test 5: readFile and writeFile through extension ────────────────────────
+
+#[tokio::test]
+async fn extension_can_read_and_write_files() {
+    let dir = tempfile::tempdir().unwrap();
+
+    // Write a data file the extension can read
+    std::fs::write(dir.path().join("config.json"), r#"{"theme":"dark"}"#).unwrap();
+
+    // An extension that reads a config file and writes output
+    std::fs::write(
+        dir.path().join("file_io.ts"),
+        r#"
+export default {
+    name: "file-io",
+    version: "1.0.0",
+    tools: [{
+        name: "read_config",
+        description: "Read the config file",
+        risk: "read" as const,
+        parameters: {},
+        execute: async () => {
+            return rho.readFile("config.json");
+        },
+    }, {
+        name: "write_report",
+        description: "Write a report file",
+        risk: "write" as const,
+        parameters: {
+            content: { type: "string", description: "Report content", required: true },
+        },
+        execute: async (args: string) => {
+            const { content } = JSON.parse(args);
+            rho.writeFile("reports/output.txt", content);
+            return "written";
+        },
+    }],
+};
+"#,
+    )
+    .unwrap();
+
+    let mut runtime = ExtensionRuntime::spawn_from_file(
+        &dir.path().join("file_io.ts"),
+        dir.path(),
+    )
+    .expect("spawn should succeed");
+
+    // Test readFile
+    let result = runtime.call_tool("read_config", "").await.unwrap();
+    assert_eq!(result, r#"{"theme":"dark"}"#);
+
+    // Test writeFile (creates subdirectory)
+    let result = runtime
+        .call_tool("write_report", r#"{"content":"Hello, World!"}"#)
+        .await
+        .unwrap();
+    assert_eq!(result, "written");
+
+    // Verify the file was actually written
+    let written = std::fs::read_to_string(dir.path().join("reports/output.txt")).unwrap();
+    assert_eq!(written, "Hello, World!");
+
+    runtime.shutdown().unwrap();
+}
+
+// ── Test 6: runCommand with permissions ─────────────────────────────────────
+
+#[tokio::test]
+async fn extension_run_command_with_permission() {
+    let dir = tempfile::tempdir().unwrap();
+
+    std::fs::write(
+        dir.path().join("runner.ts"),
+        r#"
+export default {
+    name: "runner",
+    version: "1.0.0",
+    tools: [{
+        name: "git_version",
+        description: "Check git version",
+        risk: "destructive" as const,
+        parameters: {},
+        execute: async () => {
+            const result = rho.runCommand("git", ["--version"]);
+            return JSON.stringify(result);
+        },
+    }],
+};
+"#,
+    )
+    .unwrap();
+
+    let perms = ExtensionPermissions {
+        commands: Some(true),
+        ..Default::default()
+    };
+
+    let mut runtime = ExtensionRuntime::spawn_from_file_with_perms(
+        &dir.path().join("runner.ts"),
+        dir.path(),
+        &perms,
+        "test-model",
+    )
+    .expect("spawn should succeed");
+
+    let result = runtime.call_tool("git_version", "").await.unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(parsed["exitCode"], 0);
+    assert!(
+        parsed["stdout"].as_str().unwrap().contains("git version"),
+        "expected git version output, got: {}",
+        parsed["stdout"]
+    );
+
+    runtime.shutdown().unwrap();
+}
+
+#[tokio::test]
+async fn extension_run_command_blocked_without_permission() {
+    let dir = tempfile::tempdir().unwrap();
+
+    std::fs::write(
+        dir.path().join("runner.ts"),
+        r#"
+export default {
+    name: "runner",
+    version: "1.0.0",
+    tools: [{
+        name: "git_version",
+        description: "Check git version",
+        risk: "destructive" as const,
+        parameters: {},
+        execute: async () => {
+            try {
+                const result = rho.runCommand("git", ["--version"]);
+                return JSON.stringify(result);
+            } catch (e) {
+                return "error:" + e.message;
+            }
+        },
+    }],
+};
+"#,
+    )
+    .unwrap();
+
+    // No commands permission (default)
+    let mut runtime = ExtensionRuntime::spawn_from_file(
+        &dir.path().join("runner.ts"),
+        dir.path(),
+    )
+    .expect("spawn should succeed");
+
+    let result = runtime.call_tool("git_version", "").await.unwrap();
+    assert!(
+        result.contains("command execution permission"),
+        "expected permission error, got: {result}"
+    );
+
+    runtime.shutdown().unwrap();
 }

@@ -1,3 +1,20 @@
+## [0.51.0] - 2026-05-28
+
+### 🚀 Features
+
+- Wire rho-ext extension system into the rho binary — extensions are discovered, loaded, and registered at startup
+- Add `/reload` REPL command for hot-reloading extensions at runtime
+- Add `/extensions` REPL command to list loaded extension names
+- Add `CompositeObserver` to fan out agent-loop events to REPL + extension observers (first Block wins for interception)
+- Propagate model changes to extensions via `/model` and RPC `set_model`
+- Fire extension `onLoad` hooks after app construction
+- Add `loaded_names()` and `set_model_all()` to `ExtensionLoader`
+
+### 🐛 Bug Fixes
+
+- Fix tracing log output silently dropped — `WorkerGuard` is now stored in `App` to keep the non-blocking writer alive for the full application lifetime
+
+
 ## [0.50.0] - 2026-05-28
 
 ### 🚀 Features

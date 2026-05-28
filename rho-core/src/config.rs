@@ -442,6 +442,9 @@ impl ExtensionConfig {
             if override_perms.max_execution_time_s.is_some() {
                 perms.max_execution_time_s = override_perms.max_execution_time_s;
             }
+            if override_perms.allow_paths.is_some() {
+                perms.allow_paths = override_perms.allow_paths.clone();
+            }
         }
         perms
     }
@@ -473,6 +476,15 @@ pub struct ExtensionPermissions {
     /// `None` means "use the default" (30 s).
     #[serde(default)]
     pub max_execution_time_s: Option<u32>,
+    /// Extra directory paths the extension may read/write via `rho.readFile`
+    /// and `rho.writeFile` (in addition to its own root directory).
+    ///
+    /// Paths are resolved relative to the project root. Non-existent paths
+    /// are silently ignored.
+    ///
+    /// `None` means "use the default" (no extra paths).
+    #[serde(default)]
+    pub allow_paths: Option<Vec<String>>,
 }
 
 // ── Wire format (TOML-deserializable) ─────────────────────────────────────────
@@ -794,6 +806,7 @@ fn merge_permissions(user: ExtensionPermissions, project: ExtensionPermissions) 
         commands: project.commands.or(user.commands),
         max_memory_mb: project.max_memory_mb.or(user.max_memory_mb),
         max_execution_time_s: project.max_execution_time_s.or(user.max_execution_time_s),
+        allow_paths: project.allow_paths.or(user.allow_paths),
     }
 }
 

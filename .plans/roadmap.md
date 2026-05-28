@@ -17,8 +17,8 @@
 | 3.9: Rust Standard Library Reference | ✅ Complete | `RustdocLookup` tool — query local rustdoc via `rustup doc --path`, resolve types/methods/traits, HTML stripping, section filtering |
 | 3.10: Hashline Editing | 🔜 Planned | Content-addressed line editing with hash-anchored references. Reliable edits, stale-context detection, token efficiency. Backward compatible with legacy exact-match edits. |
 | Session Discovery & Context Visibility | ✅ Complete | `rho -c` session resumption, `/sessions` REPL command, context window status bar after every turn, `/status` detailed breakdown, `ContextStats` API, `list_sessions`/`find_latest_session` in rho-core |
-| 4: Terminal UI | 🔜 Planned | Rich TUI replacing the bare REPL. Pre-Work 1 (streaming API) and Pre-Work 2 (modularize rust.rs) complete. External provider streaming validated. |
-| 5: Extensions and Polish | Planned | Custom tools, prompt composition with budget awareness |
+| 4: Extensions | 🔜 Planned | TypeScript extensions via Deno (tools, hooks, commands). REPL and RPC polish. Prompt composition with budget awareness. |
+| 5: Terminal UI | Deferred | Rich TUI replacing the bare REPL. Deferred in favor of polished REPL + RPC modes. |
 | 6: LSP | Deferred | rust-analyzer integration |
 
 **Platform support:** Windows, macOS, Linux. PowerShell 7+ (`pwsh`) is the primary shell on all platforms; Windows PowerShell 5.1 (`powershell`) is the fallback on Windows only.
@@ -35,9 +35,9 @@ The project is organized as a layered workspace. Dependencies flow downward only
 ┌─────────────────────────────────────────────────┐
 │                   rho (binary)                   │  ← Assembles all layers, runs the app
 ├─────────────────────────────────────────────────┤
-│                   rho-ext                        │  ← Extension API and runtime
+│                   rho-ext                        │  ← Extension API and runtime (TypeScript via Deno)
 ├─────────────────────────────────────────────────┤
-│                   rho-tui                        │  ← Terminal UI (display, input, approval)
+│                   rho-tui                        │  ← Terminal UI (deferred)
 ├─────────────────────────────────────────────────┤
 │                   rho-tools                      │  ← Built-in tool implementations
 ├─────────────────────────────────────────────────┤
@@ -72,7 +72,7 @@ The foundation. Defines the contract everything else implements.
   - **Documented** — every public type, field, and variant has a doc comment explaining its purpose and constraints
   - **Newtype where it matters** — `FilePath`, `ToolName`, `ToolCallId`, `EntryId`, `DiagnosticCode` etc. as distinct types rather than raw strings
 - **`ChatMessage` shape** — Modelled as a variant per role (`System`, `User`, `Assistant`, `Tool`) carrying a `Vec<ContentBlock>` rather than a flat `String`. The `Tool` variant carries `tool_call_id`; the `Assistant` variant carries `tool_calls`. This admits images, file references, tool-result binding, and future content kinds without rewriting downstream code. Serialization produces the existing OpenAI wire format (string content for the single-text-block case, array content otherwise).
-- **Tool trait** — `Tool`: the interface all tools implement. Async, dyn-compatible (via `async-trait`), takes a `CancellationToken` so long-running tools can be aborted, and returns a `ToolOutcome` that admits both immediate and streaming forms. Phase 1a uses immediate only; the streaming variant exists so Phase 4's TUI streaming is a new variant rather than a workspace-wide signature change.
+- **Tool trait** — `Tool`: the interface all tools implement. Async, dyn-compatible (via `async-trait`), takes a `CancellationToken` so long-running tools can be aborted, and returns a `ToolOutcome` that admits both immediate and streaming forms. Phase 1a uses immediate only; the streaming variant exists so Phase 5's TUI streaming is a new variant rather than a workspace-wide signature change.
 - **Tool registry** — Maps tool names to `Box<dyn Tool>` implementations. Tools are registered with a risk level (`Read`, `Write`, `Destructive`) that feeds into the approval policy.
 - **Approval policy** — Every tool call passes through an `ApprovalPolicy` before execution (introduced in Phase 1b). The default policy requires human confirmation for destructive operations (`WriteFile`, `EditFile`, `RunCommand`). The approval gate lives in `rho-core`, not the UI layer — the TUI just renders the prompt and collects the response.
 - **File sandbox** — File tools operate within a sandbox root (the project directory, or an explicit `--root` argument). `FilePath` canonicalises the path (resolving `..`, symlinks, junctions) and validates it's within the root. For not-yet-existing paths (the `WriteFile` case), the sandbox walks up to the nearest existing ancestor, canonicalises that, then verifies the would-be path stays within the root. Users can opt out in config (`sandbox = false`), but the default is safe.
@@ -107,7 +107,7 @@ The foundation. Defines the contract everything else implements.
 | `/config` | Show current configuration | Config access |
 | `/quit` | Exit the agent | N/A (UI-only) |
 
-Phase 1a implements the APIs that `rho-core` owns (`Session::branch_to()`, `ToolRegistry::list()`, etc.). The bare REPL handles `/quit` and `/clear` minimally. Phase 2.5 adds `--session` and `--ephemeral` CLI flags for session management. Phase 4 (TUI) builds out full slash-command parsing, autocomplete, and rendering. Phase 5 (extensions) may allow custom commands via `rho-ext`.
+Phase 1a implements the APIs that `rho-core` owns (`Session::branch_to()`, `ToolRegistry::list()`, etc.). The bare REPL handles `/quit` and `/clear` minimally. Phase 2.5 adds `--session` and `--ephemeral` CLI flags for session management. Phase 4 (extensions) adds custom commands via `rho-ext`. Phase 5 (TUI) builds out full slash-command parsing, autocomplete, and rendering.
 
 `rho-core` does **not** know about:
 - PowerShell, shells, or any specific command execution
@@ -167,18 +167,18 @@ This is **not** just a display concern. Tree-sitter sits between `rho-core` and 
 
 2. **Rendering** — The TUI uses tree-sitter to syntax-highlight code blocks, diffs, and diagnostic context. This produces highlighted output (ANSI escape sequences or styled spans) that `rho-tui` renders directly.
 
-- **Grammar management** — Compile and ship tree-sitter grammars for Rust (primary in Phase 3), with PowerShell, TOML, Markdown, and JSON evaluated for Phase 4.
+- **Grammar management** — Compile and ship tree-sitter grammars for Rust (primary in Phase 3), with PowerShell, TOML, Markdown, and JSON evaluated for Phase 5.
 - **Highlight queries** — Tree-sitter highlighting queries (`.scm` files) for each grammar, defining color classes.
-- **Theme mapping** — Map tree-sitter highlight classes to concrete colors (ANSI, crossterm, or ratatui style). Phase 4.
+- **Theme mapping** — Map tree-sitter highlight classes to concrete colors (ANSI, crossterm, or ratatui style). Phase 5.
 - **Structural queries** — API for tools to query a syntax tree: "what node is at line X, column Y?", "what's the enclosing function?", "list all `fn` items in this file". Phase 3.
-- **Incremental parsing** — Re-parse only changed regions for live editing scenarios. Phase 4 if useful.
+- **Incremental parsing** — Re-parse only changed regions for live editing scenarios. Phase 5 if useful.
 - **Build dependency** — Tree-sitter grammars require a C compiler at build time. Document this in the project README so contributors know what to install.
 
 `rho-highlight` depends on `rho-core` (for `FilePath` and error types) and on the `tree-sitter` + grammar crates.
 
-### `rho-tui` — Terminal UI
+### `rho-tui` — Terminal UI (Deferred)
 
-The interactive terminal experience. Replaces the bare REPL.
+The interactive terminal experience. Replaces the bare REPL. **Deferred** in favor of polished REPL + RPC modes.
 
 - **Input** — Multi-line editor with history, completion, and paste support
 - **Output rendering** — Markdown rendering, syntax-highlighted code blocks (via `rho-highlight`), diff views
@@ -194,10 +194,12 @@ The interactive terminal experience. Replaces the bare REPL.
 
 Allows users to add custom tools and hooks without modifying the core.
 
-- **Tool plugins** — Users define tools in a config file (TOML in Phase 5; Lua/WASM are deferred). Extension command templates use **structured argument substitution** — each argument is passed as a separate parameter to the command, never shell-interpolated. This is the difference between `Command::arg()` (safe) and `Command::new("/bin/sh -c ...")` (unsafe). Extension authors are responsible for their tools' safety; the framework prevents the most common injection vector.
-- **Hooks** — Pre/post execution callbacks (e.g., log every tool call, block certain commands)
-- **Configuration** — Per-project `.rho/` config: model, system prompt extensions, enabled tools, approval policies
-- **Prompt templates** — User-defined system prompt fragments that get composed at startup
+- **Tool plugins** — Users define tools as TypeScript files loaded into V8 isolates via `deno_core`. Extension tool `execute` functions use host functions for I/O (`rho.readFile`, `rho.runCommand`, etc.) or native `fetch()` for network access. All I/O goes through rho's sandbox and approval policy.
+- **Hooks** — Pre/post execution callbacks (e.g., block certain commands, modify tool results, inject context)
+- **Custom commands** — Extensions register slash commands available in REPL and RPC modes
+- **Configuration** — Per-project `.rho/config.toml`: model, system prompt extensions, enabled tools, approval policies, extension permissions
+- **Type definitions** — `rho.d.ts` shipped for extension author IntelliSense
+- **Hot reload** — `/reload` picks up new and modified extensions without full restart
 
 `rho-ext` depends on `rho-core` (for the `Tool` trait and registry). It does not depend on `rho-tui`.
 
@@ -256,8 +258,8 @@ Each phase produces a runnable agent. No phase requires a rewrite of the previou
 | 3.7: Multi-Model Benchmark Harness | [`phases/phase-3.7-COMPLETE/`](phases/phase-3.7-COMPLETE/) | `rho-bench` binary with `CountingClient`, multi-model sweeps, `TaskMetrics`, terminal table + JSON output. ✅ **Complete** |
 | 3.8: Streaming Support | [`phases/phase-3.8-COMPLETE/`](phases/phase-3.8-COMPLETE/) | Streaming API, SSE parsing, `StreamChunk` accumulation, external provider support (OpenRouter). ✅ **Complete** |
 | Session Discovery & Context Visibility | [`phases/phase-session-discovery-COMPLETE/`](phases/phase-session-discovery-COMPLETE/) | `rho -c` resume, `/sessions` listing, context status bar, `/status` breakdown. ✅ **Complete** |
-| 4: Terminal UI | [`phases/phase-4/`](phases/phase-4/) | Rich TUI with approval prompts, streaming, session navigation. 🔜 **In Progress** |
-| 5: Extensions and Polish | [`phases/phase-5/`](phases/phase-5/) | Custom tools, config, prompt composition |
+| 4: Extensions | [`phases/phase-4/`](phases/phase-4/) | TypeScript extensions via Deno (tools, hooks, commands). REPL and RPC polish. 🔜 **Planned** |
+| 5: Terminal UI | [`phases/phase-5-tui/`](phases/phase-5-tui/) | Rich TUI with approval prompts, streaming, session navigation. Deferred. |
 | 6: LSP (Future) | [`phases/phase-6/`](phases/phase-6/) | rust-analyzer LSP integration (deferred) |
 
 Phase 1 was originally a single phase. It was split because the original scope packed the agent-loop machinery and the security surface (sandbox, approval, trust, redaction) into one milestone. Each deserved focused implementation and test coverage rather than being rushed alongside the other. Both Phase 1a and Phase 1b are now complete. Phase 2 is also complete, adding cross-platform support alongside the originally planned PowerShell and file tools. Phase 2.5 replaces the flat `Conversation` model with a tree-shaped `Session` that supports adaptive resolution, calibrated token budgets, bounded tool results (fixing the shipping amnesia bug), JSONL persistence, extension entries, and mechanical compaction. The agent loop now uses `Session` by default; `Conversation` is retained for backward compatibility.
@@ -353,8 +355,8 @@ A coding agent takes untrusted input (LLM output), interprets it as instructions
 | `rho-test-helpers` | 1a | `rho-core` | Shared test utilities: mock `ChatClient`, fixture loaders, tempdir helpers, trust-store overrides, session helpers |
 | `rho-highlight` | 3 | `rho-core`, `tree-sitter`, `tree-sitter-rust` | Tree-sitter parsing, highlighting, and structural queries |
 | `rho-eval` | 3 | `rho-core` | Behavioural benchmark suite |
-| `rho-tui` | 4 | `rho-core`, `rho-highlight`, `crossterm` **(foundation)**, `ratatui` **(wrapped)**, `pulldown-cmark` **(wrapped)** | Terminal UI: rendering, input, approval |
-| `rho-ext` | 5 | `rho-core` | Extension API and runtime |
+| `rho-tui` | 5+ | `rho-core`, `rho-highlight`, `crossterm` **(foundation)**, `ratatui` **(wrapped)**, `pulldown-cmark` **(wrapped)** | Terminal UI: rendering, input, approval (deferred) |
+| `rho-ext` | 4 | `rho-core`, `deno_core` **(foundation)**, `deno_ast` **(foundation)** | Extension API and runtime (TypeScript via Deno) |
 | `rho` (binary) | 1a+ | All above | Top-level assembly and CLI |
 | `xtask` | existing | External only | Dev task runner (unchanged) |
 
@@ -364,15 +366,15 @@ A coding agent takes untrusted input (LLM output), interprets it as instructions
 
 These are choices that seem right now but may need adjustment as we build:
 
-1. **Tool trait shape** — Resolved for now: async, dyn-compatible (`async-trait`), takes `CancellationToken`, returns `ToolOutcome` with immediate and streaming variants. The streaming variant is declared but not exercised until Phase 4. If real-world tools need a fundamentally different shape (e.g., long-running daemon tools), revisit.
+1. **Tool trait shape** — Resolved for now: async, dyn-compatible (`async-trait`), takes `CancellationToken`, returns `ToolOutcome` with immediate and streaming variants. The streaming variant is declared but not exercised until Phase 5 (TUI). If real-world tools need a fundamentally different shape (e.g., long-running daemon tools), revisit.
 
-2. **Approval model** — Phase 1b introduces `ApprovalPolicy` with a default that requires approval for destructive operations. Phase 4 enhances the UX (rich preview, single-keypress, batch approval). Per-tool config-driven policy lands in Phase 2. A trust-on-first-use model could be added later.
+2. **Approval model** — Phase 1b introduces `ApprovalPolicy` with a default that requires approval for destructive operations. Phase 5 (TUI) enhances the UX (rich preview, single-keypress, batch approval). Per-tool config-driven policy lands in Phase 2. A trust-on-first-use model could be added later.
 
 **Workspace version:** 0.46.0
 
 3. **Streaming** — ✅ Complete (Phase 3.8): `ChatClient::chat_stream` returns `Pin<Box<dyn Stream<Item = Result<StreamChunk>> + Send>>>` with a default impl that wraps `chat`. `LocalChatClient` implements real SSE parsing with line buffering. `run_loop` always uses the streaming path. `StreamChunk` enum carries `TextDelta`, `ReasoningDelta`, `ToolCallDelta`, `Done`. `StreamChunk::accumulate()` reconstructs `AssistantResponse`. SSE parser handles external providers (OpenRouter) — tool-call deltas checked first, empty content strings skipped to avoid blocking `Done` chunks. `rho-bench`'s `CountingClient` delegates `chat_stream()` to the inner client. Validated against DeepSeek v4 Flash, GLM 5.1, Gemini 2.0 Flash, and Gemma 4 26B via OpenRouter. `ToolOutcome::Streamed` remains for tool-side streaming in a future phase.
 
-4. **Extension format** — TOML-defined command tools are the simplest starting point (Phase 5). WASM or Lua would allow more sophisticated extensions but add significant complexity.
+4. **Extension format** — TypeScript files loaded into V8 isolates via `deno_core` (Phase 4). Matches pi's extension model (write TypeScript, drop it in a directory, it works). Gives extension authors `fetch()`, `async/await`, npm ecosystem, and type safety. Replaces the original Phase 5 plan's TOML-defined tools. See pi-brain design doc `c5dcae58` for full specification.
 
 5. **rust-analyzer integration** — LSP is deferred to Phase 6+. The protocol is complex (800–1200 lines, not the ~500 initially estimated). If pursued, accept `lsp-types` rather than hand-rolling.
 
@@ -388,13 +390,13 @@ These are choices that seem right now but may need adjustment as we build:
 
 11. **When to write it ourselves vs. depend on a crate** — The bar for adding a dependency stays high. Each phase documents its dependency decisions. Revisit at the phase boundary: did we end up needing a crate we initially wrote ourselves? Did a crate we added turn out to be a thin wrapper?
 
-12. **Grammar crate maturity** — Tree-sitter grammar crates vary widely in quality. `tree-sitter-rust` is mature. PowerShell, TOML, and Markdown grammars may be less so. Evaluate each grammar before committing in Phase 4.
+12. **Grammar crate maturity** — Tree-sitter grammar crates vary widely in quality. `tree-sitter-rust` is mature. PowerShell, TOML, and Markdown grammars may be less so. Evaluate each grammar before committing in Phase 5.
 
-13. **MCP (Model Context Protocol) compatibility** — The current `Tool` trait is custom. MCP has become the dominant standard for tool interoperability. The `Tool` trait schema format is JSON Schema–compatible (via `serde_json::Value`), which leaves the door open for an `rho-ext` MCP adapter layer. Revisit when the extension API is designed in Phase 5.
+13. **MCP (Model Context Protocol) compatibility** — The current `Tool` trait is custom. MCP has become the dominant standard for tool interoperability. The `Tool` trait schema format is JSON Schema–compatible (via `serde_json::Value`), which leaves the door open for an `rho-ext` MCP adapter layer. Revisit when the extension API is designed in Phase 4.
 
 14. **Error recovery model** — The `AgentState` state machine (Phase 1a) treats errors and retries as transition outcomes rather than states. Tune the retry budget and backoff strategy based on real-world usage.
 
-15. **Context window management strategy** — Resolved (Phase 2.5): replaced the flat `Vec<ChatMessage>` buffer with a tree-shaped `Session` using adaptive resolution. The `ContextManager` trait now exposes `fit_path`, which walks the leaf-to-root path, filters by resolution, renders compaction summaries, subtracts tool-schema and system-message overhead from the budget, and delegates to `fit`. `SlidingWindowContextManager` pins the system message *and the first user turn* and evicts by turn. Token budgets split into `context_window` and `completion_reserve` (default 4096). The `HeuristicEstimator` calibrates per-model chars-per-token ratios via exponential moving average against API ground truth. **Model-aware sizing** (querying the API for `max_context_length` and auto-sizing the budget) is a Phase 4 concern — it requires the TUI to display the resolved budget and the provider abstraction to expose model metadata.
+15. **Context window management strategy** — Resolved (Phase 2.5): replaced the flat `Vec<ChatMessage>` buffer with a tree-shaped `Session` using adaptive resolution. The `ContextManager` trait now exposes `fit_path`, which walks the leaf-to-root path, filters by resolution, renders compaction summaries, subtracts tool-schema and system-message overhead from the budget, and delegates to `fit`. `SlidingWindowContextManager` pins the system message *and the first user turn* and evicts by turn. Token budgets split into `context_window` and `completion_reserve` (default 4096). The `HeuristicEstimator` calibrates per-model chars-per-token ratios via exponential moving average against API ground truth. **Model-aware sizing** (querying the API for `max_context_length` and auto-sizing the budget) is a Phase 5 concern — it requires the TUI to display the resolved budget and the provider abstraction to expose model metadata.
 
 16. **Cross-platform shell support** — Resolved (Phase 2, Task 14): `PowerShellExecutor` works cross-platform. PowerShell 7+ (`pwsh`) is the default on all platforms; `powershell` (Windows PowerShell 5.1) is the fallback on Windows only. Path normalization is platform-aware (Windows-only slash conversion). Process killing uses `taskkill` on Windows and `kill -9` on Unix. The `ShellExecutor` trait remains the seam for adding platform-specific shells (e.g., `BashExecutor` for native Unix workflows) without rewriting the tool layer. The system prompt instructs the model to use PowerShell on all platforms.
 
@@ -412,7 +414,7 @@ These are choices that seem right now but may need adjustment as we build:
 
 23. **Prompt composition precedence** — The base identity prompt is always first in the system prompt and cannot be overridden by project context files. Project context files extend the prompt but cannot rewrite it.
 
-24. **Base prompt accessor shape** — `base_prompt()` is a function rather than a `const` so that runtime substitution (e.g., injecting the current OS, project name, or date) can be added later without an API break. v1 ships with no substitution. If `rho-eval` shows model-dependent regressions, per-model prompt variants can be added via a `base_prompt_for(model: &str) -> &'static str` overload. The base prompt is intentionally short: long prompts push relevant context out of the model's attention window, are harder to revise, and tempt the author to encode behaviours that belong in tool schemas or runtime checks. **Budget-aware prompt composition** (Phase 5, Task 6) measures the token cost of each prompt layer and warns when the system prompt consumes more than a configured fraction of the budget, ensuring sufficient room for conversation.
+24. **Base prompt accessor shape** — `base_prompt()` is a function rather than a `const` so that runtime substitution (e.g., injecting the current OS, project name, or date) can be added later without an API break. v1 ships with no substitution. If `rho-eval` shows model-dependent regressions, per-model prompt variants can be added via a `base_prompt_for(model: &str) -> &'static str` overload. The base prompt is intentionally short: long prompts push relevant context out of the model's attention window, are harder to revise, and tempt the author to encode behaviours that belong in tool schemas or runtime checks. **Budget-aware prompt composition** (Phase 4, Task 13) measures the token cost of each prompt layer and warns when the system prompt consumes more than a configured fraction of the budget, ensuring sufficient room for conversation.
 
 25. **Tool-call message persistence** — Resolved (Phase 1a, task 7): the assistant message containing `tool_calls` must be persisted into history before the matching `tool` result message is appended. The API rejects requests where a `tool` message is not preceded by an assistant message containing the matching `tool_call_id`. The fix has a regression test in Phase 1a. The invariant carries forward to `Session` — the agent loop appends assistant entries before tool-result entries.
 

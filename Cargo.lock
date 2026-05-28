@@ -2329,24 +2329,26 @@ dependencies = [
 
 [[package]]
 name = "rho"
-version = "0.49.0"
+version = "0.51.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "clap",
  "rho-ai",
  "rho-core",
+ "rho-ext",
  "rho-test-helpers",
  "rho-tools",
  "serde_json",
  "tokio",
+ "tracing",
  "tracing-appender",
  "tracing-subscriber",
 ]
 
 [[package]]
 name = "rho-ai"
-version = "0.49.0"
+version = "0.51.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2361,7 +2363,7 @@ dependencies = [
 
 [[package]]
 name = "rho-bench"
-version = "0.49.0"
+version = "0.51.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2383,7 +2385,7 @@ dependencies = [
 
 [[package]]
 name = "rho-core"
-version = "0.49.0"
+version = "0.51.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2408,7 +2410,7 @@ dependencies = [
 
 [[package]]
 name = "rho-eval"
-version = "0.49.0"
+version = "0.51.0"
 dependencies = [
  "chrono",
  "rho-core",
@@ -2420,7 +2422,7 @@ dependencies = [
 
 [[package]]
 name = "rho-ext"
-version = "0.49.0"
+version = "0.51.0"
 dependencies = [
  "async-trait",
  "deno_ast",
@@ -2438,7 +2440,7 @@ dependencies = [
 
 [[package]]
 name = "rho-highlight"
-version = "0.49.0"
+version = "0.51.0"
 dependencies = [
  "rho-core",
  "rho-test-helpers",
@@ -2449,7 +2451,7 @@ dependencies = [
 
 [[package]]
 name = "rho-test-helpers"
-version = "0.49.0"
+version = "0.51.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -2463,7 +2465,7 @@ dependencies = [
 
 [[package]]
 name = "rho-tools"
-version = "0.49.0"
+version = "0.51.0"
 dependencies = [
  "async-trait",
  "dunce",
@@ -4664,7 +4666,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.49.0"
+version = "0.51.0"
 dependencies = [
  "anyhow",
  "clap",

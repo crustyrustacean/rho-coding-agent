@@ -51,6 +51,7 @@
 //! tool call and lets the agent continue.
 
 use crate::app::App;
+use crate::ext_observer::CompositeObserver;
 use anyhow::Result;
 use async_trait::async_trait;
 use rho_core::{
@@ -294,7 +295,7 @@ async fn dispatch_command(app: &mut App, cmd: Value, out: &Out, inp: &In) {
         }
         Some("get_state") => handle_get_state(app, out),
         Some("get_messages") => handle_get_messages(app, out),
-        Some("set_model") => handle_set_model(app, &cmd, out),
+        Some("set_model") => handle_set_model(app, &cmd, out).await,
         Some("get_session_stats") => handle_get_session_stats(app, out),
         Some("compact") => handle_compact(app, out).await,
         Some(other) => write_event(
@@ -340,6 +341,13 @@ async fn handle_prompt(app: &mut App, cmd: &Value, out: &Out, inp: &In) {
     let observer = RpcObserver {
         out: Arc::clone(out),
     };
+    let composite = CompositeObserver::new({
+        let mut obs: Vec<&dyn AgentObserver> = vec![&observer];
+        for ext_obs in &app.ext_observers {
+            obs.push(ext_obs);
+        }
+        obs
+    });
     let gate = RpcApprovalGate {
         out: Arc::clone(out),
         input: Arc::clone(inp),
@@ -351,7 +359,7 @@ async fn handle_prompt(app: &mut App, cmd: &Value, out: &Out, inp: &In) {
         config: &app.config,
         cancel: app.cancel.clone(),
         gate: &gate,
-        observer: &observer,
+        observer: &composite,
     };
 
     match rho_core::run_loop(&mut app.session, &message, &params).await {
@@ -388,10 +396,11 @@ fn handle_get_messages(app: &App, out: &Out) {
 }
 
 /// Switch the active model to `cmd["model"]`.
-fn handle_set_model(app: &mut App, cmd: &Value, out: &Out) {
+async fn handle_set_model(app: &mut App, cmd: &Value, out: &Out) {
     match cmd["model"].as_str() {
         Some(id) if !id.is_empty() => {
             app.session.set_model(id);
+            app.ext_loader.set_model_all(id).await;
             write_event(
                 out,
                 json!({"type": "response", "success": true, "model": id}),
@@ -796,6 +805,21 @@ mod tests {
             registry,
             config: AgentConfig::default(),
             cancel: CancellationToken::new(),
+            ext_loader: rho_ext::loader::ExtensionLoader::new(
+                rho_core::config::ExtensionConfig::default(),
+            ),
+            ext_observers: vec![],
+            _log_guard: {
+                // In tests, we don't need file logging. Create a no-op guard
+                // by using a sink writer that discards everything.
+                let (non_blocking, guard) = tracing_appender::non_blocking(std::io::sink());
+                // Best-effort: install a subscriber if none exists (first test wins).
+                let _ = tracing_subscriber::fmt()
+                    .with_writer(non_blocking)
+                    .with_env_filter(tracing_subscriber::EnvFilter::new("off"))
+                    .try_init();
+                guard
+            },
         }
     }
 

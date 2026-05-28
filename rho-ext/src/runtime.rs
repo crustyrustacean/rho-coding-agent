@@ -33,6 +33,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use deno_core::v8::{self, Global, HandleScope, Local, Object, PinnedRef};
@@ -40,6 +41,8 @@ use deno_core::{JsRuntime, ModuleLoader, RuntimeOptions};
 use tokio::runtime::Builder;
 use tokio::sync::oneshot;
 use url::Url;
+
+use rho_core::config::ExtensionPermissions;
 
 use crate::error::ExtensionError;
 use crate::host::HostState;
@@ -98,6 +101,11 @@ pub struct ExtensionRuntime {
     handle: Option<thread::JoinHandle<()>>,
     /// The extracted extension manifest.
     manifest: LoadedExtension,
+    /// Shared model name handle — cloned from `HostState::model`.
+    ///
+    /// Allows the caller to update the model name that extensions see
+    /// via `rho.getModel()` without going through the V8 thread.
+    model: Arc<Mutex<String>>,
 }
 
 impl ExtensionRuntime {
@@ -126,6 +134,8 @@ impl ExtensionRuntime {
     /// that all imported files reside within `root_dir` (after symlink
     /// resolution). TypeScript imports are transpiled on the fly.
     ///
+    /// Uses default permissions (no commands, no extra paths).
+    ///
     /// # Errors
     ///
     /// Returns an error if:
@@ -134,6 +144,37 @@ impl ExtensionRuntime {
     /// - Manifest extraction fails
     /// - Any tool is missing its `execute` function or command its `handler`
     pub fn spawn_from_file(entry_path: &Path, root_dir: &Path) -> Result<Self, ExtensionError> {
+        Self::spawn_from_file_with_perms(entry_path, root_dir, &ExtensionPermissions::default(), "")
+    }
+
+    /// Spawn a new extension runtime from a TypeScript file on disk, with
+    /// explicit permissions and model context.
+    ///
+    /// Like [`ExtensionRuntime::spawn_from_file`], but configures the runtime's
+    /// [`HostState`] according to the given [`ExtensionPermissions`] and sets
+    /// the initial model name. This is the method used by
+    /// [`ExtensionLoader`](crate::loader::ExtensionLoader) to pass per-extension
+    /// permissions through to the V8 isolate.
+    ///
+    /// # Permission mapping
+    ///
+    /// | Config field | HostState field |
+    /// |---|---|
+    /// | `commands` | `allow_commands` |
+    /// | `allow_paths` | `allowed_paths` (extra, beyond extension root) |
+    ///
+    /// The `model` parameter sets the initial model name returned by
+    /// `rho.getModel()`. It can be updated later via [`ExtensionRuntime::set_model`].
+    ///
+    /// # Errors
+    ///
+    /// Same error conditions as [`ExtensionRuntime::spawn_from_file`].
+    pub fn spawn_from_file_with_perms(
+        entry_path: &Path,
+        root_dir: &Path,
+        permissions: &ExtensionPermissions,
+        model: &str,
+    ) -> Result<Self, ExtensionError> {
         let source = std::fs::read_to_string(entry_path).map_err(|e| {
             ExtensionError::ModuleLoad(format!(
                 "failed to read entry module '{}': {e}",
@@ -151,9 +192,26 @@ impl ExtensionRuntime {
         let js = transpile(&specifier, &source).map_err(ExtensionError::Transpile)?;
 
         let root_dir_buf = root_dir.to_path_buf();
-        let host_state = HostState {
-            cwd: root_dir_buf.clone(),
-        };
+
+        // Build HostState from permissions
+        let allow_commands = permissions.commands.unwrap_or(false);
+        let extra_allowed: Vec<std::path::PathBuf> = permissions
+            .allow_paths
+            .as_ref()
+            .map(|paths| {
+                paths
+                    .iter()
+                    .map(|p| root_dir.join(p))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let host_state = HostState::new_with_model(
+            root_dir_buf.clone(),
+            extra_allowed,
+            allow_commands,
+            model.to_string(),
+        );
 
         Self::spawn_inner(specifier, js, Some(root_dir_buf), Some(host_state))
     }
@@ -170,6 +228,14 @@ impl ExtensionRuntime {
         module_loader_root: Option<std::path::PathBuf>,
         host_state: Option<HostState>,
     ) -> Result<Self, ExtensionError> {
+        // Clone the model Arc before moving host_state into the thread.
+        // This gives the ExtensionRuntime handle a reference it can use
+        // to update the model name from outside.
+        let model = host_state
+            .as_ref()
+            .map(|hs| crate::host::HostState::model_handle(hs))
+            .unwrap_or_else(|| Arc::new(Mutex::new(String::new())));
+
         let (init_tx, init_rx) =
             std::sync::mpsc::channel::<Result<LoadedExtension, ExtensionError>>();
         let (tx, rx) = mpsc::channel::<Request>();
@@ -326,12 +392,29 @@ impl ExtensionRuntime {
             tx: Some(tx),
             handle: Some(handle),
             manifest,
+            model,
         })
     }
 
     /// Return the extension's manifest metadata.
     pub fn manifest(&self) -> &LoadedExtension {
         &self.manifest
+    }
+
+    /// Return a shared handle to the model name.
+    ///
+    /// The caller can update the model name via `handle.lock().unwrap().replace(new_name)`.
+    /// Extensions will see the updated value on the next call to `rho.getModel()`.
+    pub fn model_handle(&self) -> Arc<Mutex<String>> {
+        Arc::clone(&self.model)
+    }
+
+    /// Update the model name that extensions see via `rho.getModel()`.
+    ///
+    /// This is a convenience method that locks the shared model handle
+    /// and updates the value. It is safe to call from any thread.
+    pub fn set_model(&self, model: impl Into<String>) {
+        *self.model.lock().expect("model lock poisoned") = model.into();
     }
 
     /// Call a tool's `execute` function with a string argument.
@@ -1326,6 +1409,90 @@ mod tests {
 
         let cwd = rt.call_tool("getCwd", "").await.unwrap();
         assert!(!cwd.is_empty(), "should return a non-empty path");
+
+        rt.shutdown().unwrap();
+    }
+
+    // =========================================================================
+    // getModel + set_model tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn get_model_returns_set_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let main_path = dir.path().join("main.ts");
+        std::fs::write(
+            &main_path,
+            r#"
+            export default {
+                name: "model-test",
+                tools: [{
+                    name: "getModel",
+                    description: "Get model",
+                    risk: "read" as const,
+                    parameters: {},
+                    execute: async () => rho.getModel(),
+                }],
+            };
+            "#,
+        )
+        .unwrap();
+
+        let perms = rho_core::config::ExtensionPermissions::default();
+        let mut rt = ExtensionRuntime::spawn_from_file_with_perms(
+            &main_path,
+            dir.path(),
+            &perms,
+            "claude-sonnet-4-20250514",
+        )
+        .expect("spawn should succeed");
+
+        let model = rt.call_tool("getModel", "").await.unwrap();
+        assert_eq!(model, "claude-sonnet-4-20250514");
+
+        rt.shutdown().unwrap();
+    }
+
+    #[tokio::test]
+    async fn set_model_updates_live() {
+        let dir = tempfile::tempdir().unwrap();
+        let main_path = dir.path().join("main.ts");
+        std::fs::write(
+            &main_path,
+            r#"
+            export default {
+                name: "model-live-test",
+                tools: [{
+                    name: "getModel",
+                    description: "Get model",
+                    risk: "read" as const,
+                    parameters: {},
+                    execute: async () => rho.getModel(),
+                }],
+            };
+            "#,
+        )
+        .unwrap();
+
+        let perms = rho_core::config::ExtensionPermissions::default();
+        let mut rt = ExtensionRuntime::spawn_from_file_with_perms(
+            &main_path,
+            dir.path(),
+            &perms,
+            "gpt-4o",
+        )
+        .expect("spawn should succeed");
+
+        // Initial model
+        let model = rt.call_tool("getModel", "").await.unwrap();
+        assert_eq!(model, "gpt-4o");
+
+        // Update model from outside
+        rt.set_model("claude-sonnet-4-20250514");
+
+        // Extension should see the new value
+        let model = rt.call_tool("getModel", "").await.unwrap();
+        assert_eq!(model, "claude-sonnet-4-20250514");
 
         rt.shutdown().unwrap();
     }

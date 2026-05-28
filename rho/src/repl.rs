@@ -9,6 +9,8 @@
 //! - `/model <id>` — switch to a model (fuzzy match or `provider/model` syntax)
 //! - `/paste` — read multi-line input from stdin (Ctrl-D to finish)
 //! - `/paste <file>` — read input from a file as if pasted
+//! - `/reload` — hot-reload TypeScript extensions
+//! - `/extensions` — list loaded extensions
 //!
 //! ## Multi-line input
 //!
@@ -26,6 +28,7 @@
 //! All formatted output is delegated to [`crate::presenter::ReplPresenter`].
 
 use crate::app::App;
+use crate::ext_observer::CompositeObserver;
 use crate::gate::ReplApprovalGate;
 use crate::presenter::ReplPresenter as P;
 use anyhow::Result;
@@ -113,6 +116,7 @@ impl AgentObserver for ReplObserver {
 #[allow(clippy::too_many_lines)]
 pub async fn run_repl(app: &mut App) -> Result<()> {
     let gate = ReplApprovalGate;
+    let repl_observer = ReplObserver;
     loop {
         P::user_prompt();
 
@@ -158,6 +162,14 @@ pub async fn run_repl(app: &mut App) -> Result<()> {
                 show_context_stats(app);
                 continue;
             }
+            "/reload" => {
+                reload_extensions(app).await;
+                continue;
+            }
+            "/extensions" => {
+                list_extensions(app);
+                continue;
+            }
             _ if input.starts_with("/model ") => {
                 switch_model(app, input.strip_prefix("/model ").unwrap().trim()).await;
                 continue;
@@ -191,13 +203,14 @@ pub async fn run_repl(app: &mut App) -> Result<()> {
                 }
 
                 let client = app.active_provider().clone_boxed_service();
+                let composite = build_composite(&repl_observer, &app.ext_observers);
                 let params = rho_core::LoopParams {
                     client: client.as_ref(),
                     registry: &app.registry,
                     config: &app.config,
                     cancel: app.cancel.clone(),
                     gate: &gate,
-                    observer: &ReplObserver,
+                    observer: &composite,
                 };
                 match rho_core::run_loop(&mut app.session, pasted.trim(), &params).await {
                     Ok(reply) => P::assistant_reply(&reply),
@@ -211,13 +224,14 @@ pub async fn run_repl(app: &mut App) -> Result<()> {
         }
 
         let client = app.active_provider().clone_boxed_service();
+        let composite = build_composite(&repl_observer, &app.ext_observers);
         let params = rho_core::LoopParams {
             client: client.as_ref(),
             registry: &app.registry,
             config: &app.config,
             cancel: app.cancel.clone(),
             gate: &gate,
-            observer: &ReplObserver,
+            observer: &composite,
         };
         match rho_core::run_loop(&mut app.session, input, &params).await {
             Ok(reply) => P::assistant_reply(&reply),
@@ -269,6 +283,7 @@ async fn switch_model(app: &mut App, query: &str) {
                             .expect("provider found via get, so index must exist");
                         app.active_provider_index = idx;
                         app.session.set_model(&info.id);
+                        app.ext_loader.set_model_all(&info.id).await;
                         P::model_switched(&info.id, provider_name);
                         return;
                     }
@@ -300,6 +315,7 @@ async fn switch_model(app: &mut App, query: &str) {
                 .expect("provider from list_all_models must exist in registry");
             app.active_provider_index = idx;
             app.session.set_model(&info.id);
+            app.ext_loader.set_model_all(&info.id).await;
             P::model_switched(&info.id, provider_name);
         }
         _ => {
@@ -385,6 +401,42 @@ fn show_context_stats(app: &App) {
         app.session.model(),
         app.session.save_path(),
     );
+}
+
+/// Build a composite observer from the REPL observer and extension observers.
+fn build_composite<'a>(
+    repl: &'a ReplObserver,
+    ext_observers: &'a [rho_ext::DenoObserver],
+) -> CompositeObserver<'a> {
+    let mut observers: Vec<&'a dyn AgentObserver> = vec![repl];
+    for ext_obs in ext_observers {
+        observers.push(ext_obs);
+    }
+    CompositeObserver::new(observers)
+}
+
+/// Hot-reload extensions.
+async fn reload_extensions(app: &mut App) {
+    let dirs = crate::app::extension_dirs(&app.session.header().cwd);
+    match app.ext_loader.reload(&dirs, &mut app.registry).await {
+        Ok(report) => {
+            // Refresh the extension observers after reload.
+            app.ext_observers = app.ext_loader.build_observers();
+            P::extension_reload_report(
+                report.added.len(),
+                report.reloaded.len(),
+                report.removed.len(),
+                report.failed.len(),
+            );
+        }
+        Err(e) => P::error(&format!("extension reload failed: {e}")),
+    }
+}
+
+/// List loaded extensions.
+fn list_extensions(app: &App) {
+    let names = app.ext_loader.loaded_names();
+    P::extension_list(&names);
 }
 
 /// Format a filesystem modification time for display.

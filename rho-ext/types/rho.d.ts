@@ -265,10 +265,13 @@ interface ExtensionManifest {
  * Currently implemented:
  * - `log` — Structured logging
  * - `getCwd` — Extension's working directory
+ * - `getModel` — Currently active model name
+ * - `readFile` — Read a file within the extension sandbox
+ * - `writeFile` — Write a file within the extension sandbox
+ * - `runCommand` — Run a shell command (requires `commands = true` permission)
  *
  * Planned (not yet available):
- * - `readFile`, `writeFile`, `runCommand`, `fetchUrl`
- * - `getModel`, path utilities, truncation
+ * - `fetchUrl`, path utilities, truncation
  */
 interface RhoGlobal {
   /**
@@ -305,29 +308,80 @@ interface RhoGlobal {
    */
   getCwd(): string;
 
-  // ── Planned host functions (not yet implemented) ──────────────────────────
+  // ── File I/O ────────────────────────────────────────────────────────────
 
   /**
-   * Read a file's contents.
+   * Read a file's contents within the extension sandbox.
+   *
+   * The path is resolved relative to the extension's root directory.
+   * Files must be within the sandbox (the extension root or any
+   * explicitly allowed paths configured in `.rho/config.toml`).
+   * Maximum file size is 1 MiB.
+   *
    * @param path - File path (relative to extension root or absolute).
-   * @returns The file contents as a string.
+   * @returns The file contents as a string (UTF-8).
+   * @throws {Error} If the file is outside the sandbox, doesn't exist, or is too large.
+   *
+   * @example
+   * ```typescript
+   * const config = rho.readFile("config.json");
+   * const data = JSON.parse(config);
+   * ```
    */
-  // readFile(path: string): Promise<string>;
+  readFile(path: string): string;
 
   /**
-   * Write content to a file.
-   * @param path - File path.
-   * @param content - Content to write.
+   * Write content to a file within the extension sandbox.
+   *
+   * The path is resolved relative to the extension's root directory.
+   * Parent directories are created automatically. The parent directory
+   * must be within the sandbox.
+   *
+   * @param path - File path (relative to extension root or absolute).
+   * @param content - Content to write (UTF-8 string).
+   * @throws {Error} If the path is outside the sandbox or the write fails.
+   *
+   * @example
+   * ```typescript
+   * rho.writeFile("output.json", JSON.stringify({ result: 42 }));
+   * ```
    */
-  // writeFile(path: string, content: string): Promise<void>;
+  writeFile(path: string, content: string): void;
+
+  // ── Command execution ──────────────────────────────────────────────────
 
   /**
-   * Run a shell command.
-   * @param cmd - The command to execute.
-   * @param args - Command arguments.
-   * @returns An object with stdout, stderr, and exit code.
+   * Run a shell command and return its output.
+   *
+   * Requires the `commands = true` permission to be enabled in the extension's
+   * configuration. If the extension does not have this permission, an error
+   * is thrown.
+   *
+   * The command is executed as a subprocess. Its stdout, stderr, and exit
+   * code are captured and returned. Commands run in the extension's root
+   * directory.
+   *
+   * **Warning:** This is a powerful permission. Only enable `commands = true`
+   * for extensions you trust. Consider using `tools` with `risk: "destructive"`
+   * to signal the command's impact.
+   *
+   * @param cmd - The command to execute (e.g. `"git"`, `"npm"`, `"cargo"`).
+   * @param args - Command arguments. Defaults to an empty array.
+   * @returns An object with the command's captured output.
+   * @throws {Error} If the extension lacks the `commands` permission,
+   *   or if the command binary cannot be found.
+   *
+   * @example
+   * ```typescript
+   * const result = rho.runCommand("git", ["status", "--short"]);
+   * if (result.exitCode === 0) {
+   *   console.log(result.stdout);
+   * }
+   * ```
    */
-  // runCommand(cmd: string, args?: string[]): Promise<{ stdout: string; stderr: string; exitCode: number }>;
+  runCommand(cmd: string, args?: string[]): { stdout: string; stderr: string; exitCode: number };
+
+  // ── Planned host functions (not yet implemented) ──────────────────────────
 
   /**
    * Fetch a URL and return its content.
@@ -338,8 +392,27 @@ interface RhoGlobal {
 
   /**
    * Get the name of the currently active model.
+   *
+   * The model name is a string like `"claude-sonnet-4-20250514"` or `"gpt-4o"`.
+   * The value updates live if the user switches models during a session
+   * (e.g. via the `/model` command). Returns an empty string if no model
+   * has been set.
+   *
+   * This is useful for extensions that adjust their behavior based on the
+   * model's capabilities (e.g. sending shorter prompts to models with
+   * smaller context windows).
+   *
+   * @returns The model name string.
+   *
+   * @example
+   * ```typescript
+   * const model = rho.getModel();
+   * if (model.includes("gpt-4")) {
+   *   // GPT-4 specific logic
+   * }
+   * ```
    */
-  // getModel(): string;
+  getModel(): string;
 
   /**
    * Truncate text to a maximum size.

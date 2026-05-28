@@ -292,6 +292,24 @@ impl ExtensionLoader {
         self.loaded.is_empty()
     }
 
+    /// Return the names of all currently loaded extensions.
+    #[must_use]
+    pub fn loaded_names(&self) -> Vec<String> {
+        self.loaded.keys().cloned().collect()
+    }
+
+    /// Update the model name in all loaded extension runtimes.
+    ///
+    /// This allows extensions to see the current model via `rho.getModel()`
+    /// after the user switches models with `/model`.
+    pub async fn set_model_all(&self, model: &str) {
+        for (name, state) in &self.loaded {
+            let rt = state.runtime.lock().await;
+            rt.set_model(model);
+            debug!(extension = %name, model = %model, "updated model");
+        }
+    }
+
     /// Get a reference to the shared runtime for an extension.
     fn get_runtime(&self, name: &str) -> Option<Arc<Mutex<ExtensionRuntime>>> {
         self.loaded.get(name).map(|s| s.runtime.clone())
@@ -339,7 +357,9 @@ impl ExtensionLoader {
         disc: &DiscoveredExtension,
         mtime: SystemTime,
     ) -> Result<(), ExtensionError> {
-        let rt = ExtensionRuntime::spawn_from_file(&disc.entry_path, &disc.root_dir)?;
+        let perms = self.config.permissions_for(name);
+        let rt =
+            ExtensionRuntime::spawn_from_file_with_perms(&disc.entry_path, &disc.root_dir, &perms, "")?;
 
         let manifest = rt.manifest().clone();
         let tool_names: Vec<String> = manifest.tools.iter().map(|t| t.name.clone()).collect();
@@ -367,8 +387,14 @@ impl ExtensionLoader {
         for disc in extensions {
             let name = disc.name.clone();
             let mtime = mtime_of(&disc.entry_path);
+            let perms = self.config.permissions_for(&name);
 
-            match ExtensionRuntime::spawn_from_file(&disc.entry_path, &disc.root_dir) {
+            match ExtensionRuntime::spawn_from_file_with_perms(
+                &disc.entry_path,
+                &disc.root_dir,
+                &perms,
+                "", // model name — will be set when wired into rho
+            ) {
                 Ok(rt) => {
                     let manifest = rt.manifest().clone();
                     let tool_names: Vec<String> =

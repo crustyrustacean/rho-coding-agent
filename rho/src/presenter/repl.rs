@@ -396,7 +396,9 @@ impl ReplPresenter {
     ) {
         let filled = (pct as usize * 20 / 100).min(20);
         let empty = 20 - filled;
-        let bar: String = "\u{2588}".repeat(filled) + &"\u{2591}".repeat(empty);
+        let filled_block = "\u{2588}".repeat(filled);
+        let empty_block = "\u{2591}".repeat(empty);
+        let bar = format!("{filled_block}{empty_block}");
 
         let (color, reset) = if pct < 60 {
             ("\x1b[32m", "\x1b[0m")
@@ -453,5 +455,53 @@ impl ReplPresenter {
         println!("  Arguments: {arguments}");
         print!("  Execute? [y/n] ");
         let _ = io::stdout().flush();
+    }
+}
+
+// ── Extensions ───────────────────────────────────────────────────────────────
+
+impl ReplPresenter {
+    /// Report how many extensions were loaded at startup.
+    pub fn extensions_loaded(count: usize) {
+        if count > 0 {
+            eprintln!("extensions: {count} loaded");
+        }
+    }
+
+    /// Report an error during extension loading.
+    pub fn extension_load_error(msg: &str) {
+        eprintln!("warning: extension load error: {msg}");
+    }
+
+    /// Report the result of a reload operation.
+    pub fn extension_reload_report(added: usize, reloaded: usize, removed: usize, failed: usize) {
+        if added + reloaded + removed + failed == 0 {
+            println!("no extensions changed");
+            return;
+        }
+        if added > 0 {
+            println!("  + {added} added");
+        }
+        if reloaded > 0 {
+            println!("  ~ {reloaded} reloaded");
+        }
+        if removed > 0 {
+            println!("  - {removed} removed");
+        }
+        if failed > 0 {
+            println!("  ! {failed} failed");
+        }
+    }
+
+    /// Show loaded extension names.
+    pub fn extension_list(names: &[String]) {
+        if names.is_empty() {
+            println!("no extensions loaded");
+            return;
+        }
+        println!("loaded extensions:");
+        for name in names {
+            println!("  - {name}");
+        }
     }
 }
