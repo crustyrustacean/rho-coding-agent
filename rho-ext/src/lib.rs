@@ -12,6 +12,7 @@ pub mod deno_tool;
 pub mod discover;
 pub mod error;
 pub mod host;
+pub mod loader;
 pub mod manifest;
 pub mod module_loader;
 pub mod runtime;
@@ -23,6 +24,7 @@ pub use deno_tool::DenoTool;
 pub use discover::DiscoveredExtension;
 pub use error::ExtensionError;
 pub use host::HostState;
+pub use loader::{ExtensionLoader, ReloadReport};
 pub use manifest::{
     LoadedCommand, LoadedExtension, LoadedHooks, LoadedTool, ManifestError, ToolRisk,
 };

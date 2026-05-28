@@ -101,8 +101,8 @@ pub use client::{
 };
 pub use config::{
     AgentLoopConfig, ApprovalAction, ApprovalConfig, ConfigLoadError, ConfigLoader, ContextConfig,
-    ProviderConfig, ProviderSettings, RedactionConfig, RhoConfig, SandboxConfig, ShellConfig,
-    SystemPromptConfig,
+    ExtensionConfig, ExtensionPermissions, ProviderConfig, ProviderSettings, RedactionConfig,
+    RhoConfig, SandboxConfig, ShellConfig, SystemPromptConfig,
 };
 pub use context::{ContextManager, SlidingWindowContextManager, TokenBudget};
 pub use context_files::{

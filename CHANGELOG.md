@@ -1,3 +1,13 @@
+## [0.50.0] - 2026-05-28
+
+### 🚀 Features
+
+- **(rho-ext)** Add `ExtensionLoader` with hot-reload support — mtime-based change detection, selective respawn, automatic tool registry update (12 tests)
+- **(rho-core)** Add `ToolRegistry::unregister` and `unregister_by_prefix` for dynamic tool management during hot reload (5 tests)
+- **(rho-ext)** Add `ExtensionConfig` and `ExtensionPermissions` in rho-core config — TOML `[extensions]` section with enabled/disabled allowlists, default and per-extension permission overrides (10 tests)
+- **(rho-ext)** Add `filter_by_config` and `resolve_permissions` to discovery pipeline — config-driven extension filtering (7 tests)
+- **(rho-ext)** Ship `rho.d.ts` type definitions for extension author IntelliSense — `ExtensionManifest`, `ToolDefinition`, `RhoGlobal`, and all supporting types
+
 ## [0.49.0] - 2026-05-28
 
 ### 🚀 Features

@@ -14,6 +14,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use rho_core::config::ExtensionConfig;
+
 /// A discovered extension on disk.
 #[derive(Debug, Clone)]
 pub struct DiscoveredExtension {
@@ -125,6 +127,50 @@ fn scan_directory(dir: &Path, out: &mut Vec<DiscoveredExtension>) -> Result<(), 
     }
 
     Ok(())
+}
+
+// ── Config-based filtering ────────────────────────────────────────────────────
+
+/// Filter discovered extensions by config.
+///
+/// Uses [`ExtensionConfig::is_enabled`] to decide which extensions to keep.
+/// Extensions that are disabled are dropped silently.
+///
+/// This should be called after `discover` and `deduplicate`.
+///
+/// # Example
+///
+/// ```ignore
+/// let dirs = vec![user_extensions_dir(), project_extensions_dir(project_root)];
+/// let discovered = discover(&dirs)?;
+/// let deduped = deduplicate(discovered);
+/// let filtered = filter_by_config(&deduped, &config.extensions);
+/// ```
+pub fn filter_by_config(
+    extensions: &[DiscoveredExtension],
+    config: &ExtensionConfig,
+) -> Vec<DiscoveredExtension> {
+    extensions
+        .iter()
+        .filter(|ext| config.is_enabled(&ext.name))
+        .cloned()
+        .collect()
+}
+
+/// Resolve the effective permissions for each discovered extension.
+///
+/// Returns an iterator of `(DiscoveredExtension, ExtensionPermissions)` pairs,
+/// one per extension in the input.
+///
+/// This should be called after `filter_by_config`.
+pub fn resolve_permissions<'a>(
+    extensions: &'a [DiscoveredExtension],
+    config: &ExtensionConfig,
+) -> Vec<(DiscoveredExtension, rho_core::config::ExtensionPermissions)> {
+    extensions
+        .iter()
+        .map(|ext| (ext.clone(), config.permissions_for(&ext.name)))
+        .collect()
 }
 
 // ── Standard extension directories ────────────────────────────────────────────
@@ -347,5 +393,125 @@ mod tests {
     fn project_extensions_dir_path() {
         let dir = project_extensions_dir(Path::new("/my/project"));
         assert_eq!(dir, PathBuf::from("/my/project/.rho/extensions"));
+    }
+
+    // ── Config filtering tests ────────────────────────────────────────────
+
+    fn make_ext(name: &str) -> DiscoveredExtension {
+        DiscoveredExtension {
+            name: name.to_string(),
+            entry_path: PathBuf::from(format!("/{name}.ts")),
+            root_dir: PathBuf::from("/extensions"),
+        }
+    }
+
+    #[test]
+    fn filter_allows_all_when_no_config() {
+        let config = ExtensionConfig::default();
+        let exts = vec![make_ext("a"), make_ext("b"), make_ext("c")];
+        let filtered = filter_by_config(&exts, &config);
+        assert_eq!(filtered.len(), 3);
+    }
+
+    #[test]
+    fn filter_respects_enabled_list() {
+        let config = ExtensionConfig {
+            enabled: vec!["a".into(), "c".into()],
+            ..Default::default()
+        };
+        let exts = vec![make_ext("a"), make_ext("b"), make_ext("c")];
+        let filtered = filter_by_config(&exts, &config);
+        let names: Vec<&str> = filtered.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["a", "c"]);
+    }
+
+    #[test]
+    fn filter_respects_disabled_list() {
+        let config = ExtensionConfig {
+            disabled: vec!["b".into()],
+            ..Default::default()
+        };
+        let exts = vec![make_ext("a"), make_ext("b"), make_ext("c")];
+        let filtered = filter_by_config(&exts, &config);
+        let names: Vec<&str> = filtered.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["a", "c"]);
+    }
+
+    #[test]
+    fn filter_disabled_overrides_enabled() {
+        let config = ExtensionConfig {
+            enabled: vec!["a".into(), "b".into()],
+            disabled: vec!["b".into()],
+            ..Default::default()
+        };
+        let exts = vec![make_ext("a"), make_ext("b")];
+        let filtered = filter_by_config(&exts, &config);
+        let names: Vec<&str> = filtered.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["a"]);
+    }
+
+    #[test]
+    fn filter_empty_exts() {
+        let config = ExtensionConfig {
+            enabled: vec!["a".into()],
+            ..Default::default()
+        };
+        let filtered = filter_by_config(&[], &config);
+        assert!(filtered.is_empty());
+    }
+
+    #[test]
+    fn resolve_permissions_applies_defaults() {
+        let config = ExtensionConfig {
+            defaults: rho_core::config::ExtensionPermissions {
+                network: Some(true),
+                max_memory_mb: Some(64),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let exts = vec![make_ext("a"), make_ext("b")];
+        let resolved = resolve_permissions(&exts, &config);
+
+        assert_eq!(resolved.len(), 2);
+        for (_, perms) in &resolved {
+            assert_eq!(perms.network, Some(true));
+            assert_eq!(perms.max_memory_mb, Some(64));
+        }
+    }
+
+    #[test]
+    fn resolve_permissions_per_extension_override() {
+        let config = ExtensionConfig {
+            defaults: rho_core::config::ExtensionPermissions {
+                network: Some(true),
+                max_memory_mb: Some(64),
+                ..Default::default()
+            },
+            per_extension: {
+                let mut map = std::collections::HashMap::new();
+                map.insert(
+                    "a".into(),
+                    rho_core::config::ExtensionPermissions {
+                        max_memory_mb: Some(256),
+                        ..Default::default()
+                    },
+                );
+                map
+            },
+            ..Default::default()
+        };
+        let exts = vec![make_ext("a"), make_ext("b")];
+        let resolved = resolve_permissions(&exts, &config);
+
+        // "a" gets per-extension override
+        let perms_a = resolved.iter().find(|(e, _)| e.name == "a").unwrap().1.clone();
+        assert_eq!(perms_a.network, Some(true)); // inherited from defaults
+        assert_eq!(perms_a.max_memory_mb, Some(256)); // overridden
+
+        // "b" gets only defaults
+        let perms_b = resolved.iter().find(|(e, _)| e.name == "b").unwrap().1.clone();
+        assert_eq!(perms_b.network, Some(true));
+        assert_eq!(perms_b.max_memory_mb, Some(64));
     }
 }

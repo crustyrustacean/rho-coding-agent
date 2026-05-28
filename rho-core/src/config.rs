@@ -60,6 +60,8 @@ pub struct RhoConfig {
     pub redaction: RedactionConfig,
     /// System prompt extensions.
     pub system_prompt: SystemPromptConfig,
+    /// Extension system settings.
+    pub extensions: ExtensionConfig,
 }
 
 // ── AgentLoopConfig ───────────────────────────────────────────────────────────
@@ -355,6 +357,124 @@ pub struct SystemPromptConfig {
     pub extensions: Vec<String>,
 }
 
+// ── ExtensionConfig ───────────────────────────────────────────────────────────
+
+/// Extension system configuration.
+///
+/// Controls which extensions are loaded and what permissions they have.
+///
+/// # TOML format
+///
+/// ```toml
+/// [extensions]
+/// enabled = ["crates-search", "rust-docs"]
+/// disabled = ["experimental-thing"]
+///
+/// [extensions.defaults]
+/// network = true
+/// max_memory_mb = 64
+/// max_execution_time_s = 30
+///
+/// [extensions.per_extension."rust-docs"]
+/// max_memory_mb = 128
+/// ```
+///
+/// # Semantics
+///
+/// - If `enabled` is set, **only** those extensions are loaded.
+/// - If `enabled` is empty/unset, all discovered extensions are candidates.
+/// - If `disabled` is set, those extensions are excluded (even if in `enabled`).
+/// - `defaults` provides fallback permissions for any extension that doesn't
+///   have a `per_extension` override.
+/// - `per_extension` overrides are keyed by extension name.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct ExtensionConfig {
+    /// Allowlist: if non-empty, only these extension names are loaded.
+    ///
+    /// When unset/empty, all discovered extensions are candidates (subject
+    /// to `disabled`).
+    #[serde(default)]
+    pub enabled: Vec<String>,
+    /// Denylist: these extension names are never loaded, even if in `enabled`.
+    #[serde(default)]
+    pub disabled: Vec<String>,
+    /// Default permissions applied to all extensions.
+    #[serde(default)]
+    pub defaults: ExtensionPermissions,
+    /// Per-extension permission overrides, keyed by extension name.
+    #[serde(default)]
+    pub per_extension: std::collections::HashMap<String, ExtensionPermissions>,
+}
+
+impl ExtensionConfig {
+    /// Returns `true` if the given extension name should be loaded.
+    ///
+    /// An extension is loaded when:
+    /// - `enabled` is empty OR the name is in `enabled`
+    /// - AND the name is NOT in `disabled`
+    ///
+    /// `disabled` takes priority over `enabled`.
+    #[must_use]
+    pub fn is_enabled(&self, name: &str) -> bool {
+        let in_enabled = self.enabled.is_empty() || self.enabled.iter().any(|n| n == name);
+        let in_disabled = self.disabled.iter().any(|n| n == name);
+        in_enabled && !in_disabled
+    }
+
+    /// Resolve the effective permissions for a named extension.
+    ///
+    /// Per-extension overrides are merged on top of `defaults`:
+    /// any field set in `per_extension[name]` wins; unset fields fall through
+    /// to `defaults`.
+    #[must_use]
+    pub fn permissions_for(&self, name: &str) -> ExtensionPermissions {
+        let mut perms = self.defaults.clone();
+        if let Some(override_perms) = self.per_extension.get(name) {
+            if override_perms.network.is_some() {
+                perms.network = override_perms.network;
+            }
+            if override_perms.commands.is_some() {
+                perms.commands = override_perms.commands;
+            }
+            if override_perms.max_memory_mb.is_some() {
+                perms.max_memory_mb = override_perms.max_memory_mb;
+            }
+            if override_perms.max_execution_time_s.is_some() {
+                perms.max_execution_time_s = override_perms.max_execution_time_s;
+            }
+        }
+        perms
+    }
+}
+
+/// Permissions for a single extension.
+///
+/// All fields are optional — when `None`, the value falls through to
+/// `ExtensionConfig::defaults` or the hardcoded default.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct ExtensionPermissions {
+    /// Whether the extension may access the network (e.g. `host.fetchUrl`).
+    ///
+    /// `None` means "use the default".
+    #[serde(default)]
+    pub network: Option<bool>,
+    /// Whether the extension may run shell commands (`host.runCommand`).
+    ///
+    /// `None` means "use the default".
+    #[serde(default)]
+    pub commands: Option<bool>,
+    /// Maximum memory (in MiB) the extension's V8 isolate may use.
+    ///
+    /// `None` means "use the default" (64 MiB).
+    #[serde(default)]
+    pub max_memory_mb: Option<u32>,
+    /// Maximum execution time (in seconds) for a single tool call.
+    ///
+    /// `None` means "use the default" (30 s).
+    #[serde(default)]
+    pub max_execution_time_s: Option<u32>,
+}
+
 // ── Wire format (TOML-deserializable) ─────────────────────────────────────────
 
 /// The TOML wire format for a config file.
@@ -394,6 +514,9 @@ struct WireConfig {
     /// System prompt settings.
     #[serde(default)]
     system_prompt: Option<SystemPromptConfig>,
+    /// Extension system settings.
+    #[serde(default)]
+    extensions: Option<WireExtensionConfig>,
 }
 
 /// Wire format for `[redaction]` section.
@@ -405,6 +528,26 @@ struct WireRedactionConfig {
     /// Custom regex patterns.
     #[serde(default)]
     custom_patterns: Option<Vec<String>>,
+}
+
+/// Wire format for `[extensions]` section.
+///
+/// Mirrors [`ExtensionConfig`] but with all fields optional for clean
+/// merge semantics.
+#[derive(Clone, Debug, Default, Deserialize)]
+struct WireExtensionConfig {
+    /// Allowlist.
+    #[serde(default)]
+    enabled: Option<Vec<String>>,
+    /// Denylist.
+    #[serde(default)]
+    disabled: Option<Vec<String>>,
+    /// Default permissions.
+    #[serde(default)]
+    defaults: Option<ExtensionPermissions>,
+    /// Per-extension overrides.
+    #[serde(default)]
+    per_extension: Option<std::collections::HashMap<String, ExtensionPermissions>>,
 }
 
 /// Wire format for `[agent]` section.
@@ -573,6 +716,21 @@ impl ConfigLoader {
                 .system_prompt
                 .or(user.system_prompt)
                 .unwrap_or_default(),
+            extensions: {
+                let ue = user.extensions.unwrap_or_default();
+                let pe = project.extensions.unwrap_or_default();
+                let user_defaults = ue.defaults.unwrap_or_default();
+                let project_defaults = pe.defaults.unwrap_or_default();
+                ExtensionConfig {
+                    enabled: pe.enabled.or(ue.enabled).unwrap_or_default(),
+                    disabled: pe.disabled.or(ue.disabled).unwrap_or_default(),
+                    defaults: merge_permissions(user_defaults, project_defaults),
+                    per_extension: pe
+                        .per_extension
+                        .or(ue.per_extension)
+                        .unwrap_or_default(),
+                }
+            },
         }
     }
 }
@@ -624,6 +782,19 @@ impl std::error::Error for ConfigLoadError {
 /// Return the path for the user-level config file (`~/.rho/config.toml`).
 pub fn user_config_path() -> PathBuf {
     dirs_home().join(".rho").join("config.toml")
+}
+
+/// Merge two sets of extension permissions.
+///
+/// Project-level fields override user-level fields. `None` fields fall
+/// through to the other tier.
+fn merge_permissions(user: ExtensionPermissions, project: ExtensionPermissions) -> ExtensionPermissions {
+    ExtensionPermissions {
+        network: project.network.or(user.network),
+        commands: project.commands.or(user.commands),
+        max_memory_mb: project.max_memory_mb.or(user.max_memory_mb),
+        max_execution_time_s: project.max_execution_time_s.or(user.max_execution_time_s),
+    }
 }
 
 /// Best-effort home directory; falls back to current directory if unavailable.
@@ -1394,5 +1565,207 @@ endpoint = "http://localhost:1234/v1/chat/completions"
         )
         .unwrap();
         assert!(without_name.name.is_none());
+    }
+
+    // ── Extension config ───────────────────────────────────────────────────
+
+    #[test]
+    fn extension_config_defaults() {
+        let config = ExtensionConfig::default();
+        assert!(config.enabled.is_empty());
+        assert!(config.disabled.is_empty());
+        assert!(config.defaults.network.is_none());
+        assert!(config.defaults.commands.is_none());
+        assert!(config.defaults.max_memory_mb.is_none());
+        assert!(config.defaults.max_execution_time_s.is_none());
+        assert!(config.per_extension.is_empty());
+    }
+
+    #[test]
+    fn extension_is_enabled_empty_lists_allows_all() {
+        let config = ExtensionConfig::default();
+        assert!(config.is_enabled("anything"));
+        assert!(config.is_enabled("other"));
+    }
+
+    #[test]
+    fn extension_is_enabled_allowlist_filters() {
+        let config = ExtensionConfig {
+            enabled: vec!["crates-search".into(), "rust-docs".into()],
+            ..Default::default()
+        };
+        assert!(config.is_enabled("crates-search"));
+        assert!(config.is_enabled("rust-docs"));
+        assert!(!config.is_enabled("unknown"));
+    }
+
+    #[test]
+    fn extension_is_enabled_denylist_overrides_allowlist() {
+        let config = ExtensionConfig {
+            enabled: vec!["crates-search".into(), "rust-docs".into()],
+            disabled: vec!["rust-docs".into()],
+            ..Default::default()
+        };
+        assert!(config.is_enabled("crates-search"));
+        assert!(!config.is_enabled("rust-docs"));
+    }
+
+    #[test]
+    fn extension_is_enabled_denylist_without_allowlist() {
+        let config = ExtensionConfig {
+            disabled: vec!["experimental".into()],
+            ..Default::default()
+        };
+        assert!(!config.is_enabled("experimental"));
+        assert!(config.is_enabled("everything-else"));
+    }
+
+    #[test]
+    fn extension_permissions_for_defaults_only() {
+        let config = ExtensionConfig {
+            defaults: ExtensionPermissions {
+                network: Some(true),
+                max_memory_mb: Some(128),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let perms = config.permissions_for("my-extension");
+        assert_eq!(perms.network, Some(true));
+        assert_eq!(perms.max_memory_mb, Some(128));
+        assert!(perms.commands.is_none());
+        assert!(perms.max_execution_time_s.is_none());
+    }
+
+    #[test]
+    fn extension_permissions_per_extension_override() {
+        let config = ExtensionConfig {
+            defaults: ExtensionPermissions {
+                network: Some(true),
+                max_memory_mb: Some(64),
+                ..Default::default()
+            },
+            per_extension: {
+                let mut map = std::collections::HashMap::new();
+                map.insert(
+                    "rust-docs".into(),
+                    ExtensionPermissions {
+                        max_memory_mb: Some(256),
+                        ..Default::default()
+                    },
+                );
+                map
+            },
+            ..Default::default()
+        };
+
+        // rust-docs gets per_extension override for max_memory_mb, inherits defaults for network
+        let perms = config.permissions_for("rust-docs");
+        assert_eq!(perms.network, Some(true));
+        assert_eq!(perms.max_memory_mb, Some(256));
+
+        // unknown extension gets only defaults
+        let perms = config.permissions_for("unknown");
+        assert_eq!(perms.network, Some(true));
+        assert_eq!(perms.max_memory_mb, Some(64));
+    }
+
+    #[test]
+    fn extension_config_from_toml() {
+        let dir = TempDir::new().unwrap();
+        temp_env::with_vars(
+            [
+                ("HOME", Some(dir.path().to_path_buf())),
+                ("USERPROFILE", Some(dir.path().to_path_buf())),
+                ("XDG_CONFIG_HOME", Some(dir.path().to_path_buf())),
+            ],
+            || {
+                let rho_dir = dir.path().join(".rho");
+                std::fs::create_dir_all(&rho_dir).unwrap();
+
+                std::fs::write(
+                    rho_dir.join("config.toml"),
+                    r#"
+[extensions]
+enabled = ["crates-search", "rust-docs"]
+disabled = ["experimental"]
+
+[extensions.defaults]
+network = true
+max_memory_mb = 64
+
+[extensions.per_extension."rust-docs"]
+max_memory_mb = 128
+"#,
+                )
+                .unwrap();
+
+                let config = ConfigLoader::load(dir.path()).unwrap();
+
+                assert_eq!(config.extensions.enabled, vec!["crates-search", "rust-docs"]);
+                assert_eq!(config.extensions.disabled, vec!["experimental"]);
+                assert_eq!(config.extensions.defaults.network, Some(true));
+                assert_eq!(config.extensions.defaults.max_memory_mb, Some(64));
+
+                let perms = config.extensions.permissions_for("rust-docs");
+                assert_eq!(perms.max_memory_mb, Some(128));
+                assert_eq!(perms.network, Some(true)); // inherited from defaults
+            },
+        );
+    }
+
+    #[test]
+    fn extension_config_project_overrides_user() {
+        let user_wire: WireConfig = toml::from_str(
+            r#"
+[extensions]
+enabled = ["crates-search", "rust-docs", "experimental"]
+
+[extensions.defaults]
+network = false
+"#,
+        )
+        .unwrap();
+        let project_wire: WireConfig = toml::from_str(
+            r#"
+[extensions]
+enabled = ["crates-search", "rust-docs"]
+disabled = ["experimental"]
+
+[extensions.defaults]
+network = true
+max_memory_mb = 128
+"#,
+        )
+        .unwrap();
+
+        let config = ConfigLoader::merge(Some(user_wire), Some(project_wire));
+
+        // Project enabled replaces user enabled (Vec replacement semantics)
+        assert_eq!(config.extensions.enabled, vec!["crates-search", "rust-docs"]);
+        // Project disabled replaces user disabled
+        assert_eq!(config.extensions.disabled, vec!["experimental"]);
+        // Project defaults override user defaults
+        assert_eq!(config.extensions.defaults.network, Some(true));
+        assert_eq!(config.extensions.defaults.max_memory_mb, Some(128));
+    }
+
+    #[test]
+    fn extension_config_user_preserved_when_no_project() {
+        let user_wire: WireConfig = toml::from_str(
+            r#"
+[extensions]
+enabled = ["crates-search"]
+
+[extensions.defaults]
+network = true
+"#,
+        )
+        .unwrap();
+
+        let config = ConfigLoader::merge(Some(user_wire), None);
+        assert_eq!(config.extensions.enabled, vec!["crates-search"]);
+        assert_eq!(config.extensions.defaults.network, Some(true));
     }
 }

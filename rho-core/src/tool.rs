@@ -193,6 +193,31 @@ impl ToolRegistry {
         self.tools.push(tool);
     }
 
+    /// Unregister a tool by name.
+    ///
+    /// Returns `true` if a tool was removed, `false` if no tool with
+    /// that name existed.
+    ///
+    /// This is used by the hot-reload system to remove stale extension
+       /// tools before re-registering updated versions.
+    pub fn unregister(&mut self, name: &ToolName) -> bool {
+        let len_before = self.tools.len();
+        self.tools.retain(|t| t.name() != *name);
+        self.tools.len() != len_before
+    }
+
+    /// Unregister all tools whose names start with the given prefix.
+    ///
+    /// Returns the number of tools removed.
+    ///
+    /// Useful for removing all tools from a specific extension in one
+    /// call (e.g. all tools from the `"rust-docs"` extension).
+    pub fn unregister_by_prefix(&mut self, prefix: &str) -> usize {
+        let len_before = self.tools.len();
+        self.tools.retain(|t| !t.name().starts_with(prefix));
+        len_before - self.tools.len()
+    }
+
     /// All registered tools.
     pub fn list(&self) -> &[Box<dyn Tool>] {
         &self.tools
@@ -339,5 +364,58 @@ mod tests {
         registry.register(Box::new(StubTool { name: "tool_a" }));
         registry.register(Box::new(StubTool { name: "tool_b" }));
         assert_eq!(registry.list().len(), 2);
+    }
+
+    #[test]
+    fn unregister_removes_existing_tool() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(StubTool { name: "tool_a" }));
+        registry.register(Box::new(StubTool { name: "tool_b" }));
+
+        let removed = registry.unregister(&ToolName::from("tool_a"));
+        assert!(removed);
+        assert_eq!(registry.list().len(), 1);
+        assert!(registry.get_by_name(&ToolName::from("tool_a")).is_none());
+        assert!(registry.get_by_name(&ToolName::from("tool_b")).is_some());
+    }
+
+    #[test]
+    fn unregister_returns_false_for_missing() {
+        let mut registry = ToolRegistry::new();
+        let removed = registry.unregister(&ToolName::from("nonexistent"));
+        assert!(!removed);
+    }
+
+    #[test]
+    fn unregister_by_prefix_removes_matching() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(StubTool { name: "ext_search" }));
+        registry.register(Box::new(StubTool { name: "ext_lookup" }));
+        registry.register(Box::new(StubTool { name: "built_in" }));
+
+        let removed = registry.unregister_by_prefix("ext_");
+        assert_eq!(removed, 2);
+        assert_eq!(registry.list().len(), 1);
+        assert!(registry.get_by_name(&ToolName::from("built_in")).is_some());
+    }
+
+    #[test]
+    fn unregister_by_prefix_returns_zero_for_no_match() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(StubTool { name: "tool_a" }));
+
+        let removed = registry.unregister_by_prefix("nope_");
+        assert_eq!(removed, 0);
+        assert_eq!(registry.list().len(), 1);
+    }
+
+    #[test]
+    fn unregister_then_reregister_same_name() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(StubTool { name: "my_tool" }));
+        registry.unregister(&ToolName::from("my_tool"));
+        // Should not panic — name is gone.
+        registry.register(Box::new(StubTool { name: "my_tool" }));
+        assert_eq!(registry.list().len(), 1);
     }
 }
