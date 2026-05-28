@@ -7,6 +7,7 @@
 //! main TypeScript module. The manifest is parsed into [`LoadedExtension`]
 //! during spawn and is available via [`ExtensionRuntime::manifest`].
 
+pub mod discover;
 pub mod error;
 pub mod host;
 pub mod manifest;
@@ -15,6 +16,7 @@ pub mod runtime;
 pub mod spike;
 pub mod transpile;
 
+pub use discover::DiscoveredExtension;
 pub use error::ExtensionError;
 pub use host::HostState;
 pub use manifest::{
