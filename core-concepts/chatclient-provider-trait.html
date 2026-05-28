@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>ChatClient Provider Trait - rho</title>
+        <title>Provider Architecture - rho</title>
 
 
         <!-- Custom HTML head -->
@@ -88,7 +88,7 @@
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded "><a href="../introduction.html"><strong aria-hidden="true">1.</strong> Introduction</a></li><li class="chapter-item expanded "><a href="../getting-started.html"><strong aria-hidden="true">2.</strong> Getting Started</a></li><li class="chapter-item expanded "><a href="../architecture.html"><strong aria-hidden="true">3.</strong> Architecture</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../architecture/workspace-layout.html"><strong aria-hidden="true">3.1.</strong> Workspace Layout</a></li><li class="chapter-item expanded "><a href="../architecture/crate-responsibilities.html"><strong aria-hidden="true">3.2.</strong> Crate Responsibilities</a></li><li class="chapter-item expanded "><a href="../architecture/dependency-flow.html"><strong aria-hidden="true">3.3.</strong> Dependency Flow</a></li></ol></li><li class="chapter-item expanded "><a href="../core-concepts.html"><strong aria-hidden="true">4.</strong> Core Concepts</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../core-concepts/agent-loop.html"><strong aria-hidden="true">4.1.</strong> Agent Loop</a></li><li class="chapter-item expanded "><a href="../core-concepts/tool-trait.html"><strong aria-hidden="true">4.2.</strong> Tool Trait</a></li><li class="chapter-item expanded "><a href="../core-concepts/chatclient-provider-trait.html" class="active"><strong aria-hidden="true">4.3.</strong> ChatClient Provider Trait</a></li><li class="chapter-item expanded "><a href="../core-concepts/approval-policy.html"><strong aria-hidden="true">4.4.</strong> Approval Policy</a></li><li class="chapter-item expanded "><a href="../core-concepts/context-management.html"><strong aria-hidden="true">4.5.</strong> Context Management</a></li><li class="chapter-item expanded "><a href="../core-concepts/sessions.html"><strong aria-hidden="true">4.6.</strong> Sessions</a></li><li class="chapter-item expanded "><a href="../core-concepts/project-context-files.html"><strong aria-hidden="true">4.7.</strong> Project Context Files</a></li></ol></li><li class="chapter-item expanded "><a href="../security.html"><strong aria-hidden="true">5.</strong> Security</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../security/threat-model.html"><strong aria-hidden="true">5.1.</strong> Threat Model</a></li><li class="chapter-item expanded "><a href="../security/file-sandbox.html"><strong aria-hidden="true">5.2.</strong> File Sandbox</a></li><li class="chapter-item expanded "><a href="../security/secret-redaction.html"><strong aria-hidden="true">5.3.</strong> Secret Redaction</a></li><li class="chapter-item expanded "><a href="../security/prompt-injection-defense.html"><strong aria-hidden="true">5.4.</strong> Prompt Injection Defense</a></li></ol></li><li class="chapter-item expanded "><a href="../configuration.html"><strong aria-hidden="true">6.</strong> Configuration</a></li><li class="chapter-item expanded "><a href="../providers.html"><strong aria-hidden="true">7.</strong> External Providers</a></li><li class="chapter-item expanded "><a href="../rpc-mode.html"><strong aria-hidden="true">8.</strong> RPC Mode</a></li><li class="chapter-item expanded "><a href="../extensions.html"><strong aria-hidden="true">9.</strong> Extensions</a></li><li class="chapter-item expanded "><a href="../development.html"><strong aria-hidden="true">10.</strong> Development</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../development/testing.html"><strong aria-hidden="true">10.1.</strong> Testing</a></li><li class="chapter-item expanded "><a href="../development/benchmarking.html"><strong aria-hidden="true">10.2.</strong> Benchmarking</a></li><li class="chapter-item expanded "><a href="../development/dependency-philosophy.html"><strong aria-hidden="true">10.3.</strong> Dependency Philosophy</a></li><li class="chapter-item expanded "><a href="../development/roadmap.html"><strong aria-hidden="true">10.4.</strong> Roadmap</a></li></ol></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded "><a href="../introduction.html"><strong aria-hidden="true">1.</strong> Introduction</a></li><li class="chapter-item expanded "><a href="../getting-started.html"><strong aria-hidden="true">2.</strong> Getting Started</a></li><li class="chapter-item expanded "><a href="../architecture.html"><strong aria-hidden="true">3.</strong> Architecture</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../architecture/workspace-layout.html"><strong aria-hidden="true">3.1.</strong> Workspace Layout</a></li><li class="chapter-item expanded "><a href="../architecture/crate-responsibilities.html"><strong aria-hidden="true">3.2.</strong> Crate Responsibilities</a></li><li class="chapter-item expanded "><a href="../architecture/dependency-flow.html"><strong aria-hidden="true">3.3.</strong> Dependency Flow</a></li></ol></li><li class="chapter-item expanded "><a href="../core-concepts.html"><strong aria-hidden="true">4.</strong> Core Concepts</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../core-concepts/agent-loop.html"><strong aria-hidden="true">4.1.</strong> Agent Loop</a></li><li class="chapter-item expanded "><a href="../core-concepts/tool-trait.html"><strong aria-hidden="true">4.2.</strong> Tool Trait</a></li><li class="chapter-item expanded "><a href="../core-concepts/chatclient-provider-trait.html" class="active"><strong aria-hidden="true">4.3.</strong> Provider Architecture</a></li><li class="chapter-item expanded "><a href="../core-concepts/approval-policy.html"><strong aria-hidden="true">4.4.</strong> Approval Policy</a></li><li class="chapter-item expanded "><a href="../core-concepts/context-management.html"><strong aria-hidden="true">4.5.</strong> Context Management</a></li><li class="chapter-item expanded "><a href="../core-concepts/sessions.html"><strong aria-hidden="true">4.6.</strong> Sessions</a></li><li class="chapter-item expanded "><a href="../core-concepts/project-context-files.html"><strong aria-hidden="true">4.7.</strong> Project Context Files</a></li></ol></li><li class="chapter-item expanded "><a href="../security.html"><strong aria-hidden="true">5.</strong> Security</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../security/threat-model.html"><strong aria-hidden="true">5.1.</strong> Threat Model</a></li><li class="chapter-item expanded "><a href="../security/file-sandbox.html"><strong aria-hidden="true">5.2.</strong> File Sandbox</a></li><li class="chapter-item expanded "><a href="../security/secret-redaction.html"><strong aria-hidden="true">5.3.</strong> Secret Redaction</a></li><li class="chapter-item expanded "><a href="../security/prompt-injection-defense.html"><strong aria-hidden="true">5.4.</strong> Prompt Injection Defense</a></li><li class="chapter-item expanded "><a href="../security/egress-control.html"><strong aria-hidden="true">5.5.</strong> Egress Control</a></li></ol></li><li class="chapter-item expanded "><a href="../configuration.html"><strong aria-hidden="true">6.</strong> Configuration</a></li><li class="chapter-item expanded "><a href="../providers.html"><strong aria-hidden="true">7.</strong> External Providers</a></li><li class="chapter-item expanded "><a href="../rpc-mode.html"><strong aria-hidden="true">8.</strong> RPC Mode</a></li><li class="chapter-item expanded "><a href="../extensions.html"><strong aria-hidden="true">9.</strong> Extensions</a></li><li class="chapter-item expanded "><a href="../development.html"><strong aria-hidden="true">10.</strong> Development</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../development/testing.html"><strong aria-hidden="true">10.1.</strong> Testing</a></li><li class="chapter-item expanded "><a href="../development/benchmarking.html"><strong aria-hidden="true">10.2.</strong> Benchmarking</a></li><li class="chapter-item expanded "><a href="../development/dependency-philosophy.html"><strong aria-hidden="true">10.3.</strong> Dependency Philosophy</a></li><li class="chapter-item expanded "><a href="../development/roadmap.html"><strong aria-hidden="true">10.4.</strong> Roadmap</a></li></ol></li></ol>
             </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -179,35 +179,41 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="chatclient-provider-trait"><a class="header" href="#chatclient-provider-trait">ChatClient Provider Trait</a></h1>
-<p>The <code>ChatClient</code> trait abstracts the model API. It defines how rho talks to LLMs — any OpenAI-compatible endpoint can be plugged in.</p>
-<h2 id="definition"><a class="header" href="#definition">Definition</a></h2>
+                        <h1 id="provider-architecture"><a class="header" href="#provider-architecture">Provider Architecture</a></h1>
+<p>rho communicates with LLMs through a layered provider abstraction in <code>rho-ai</code>.</p>
+<h2 id="llmservice-trait"><a class="header" href="#llmservice-trait"><code>LlmService</code> trait</a></h2>
+<p>The core trait in <code>rho-ai</code> defines provider-agnostic LLM communication:</p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>#[async_trait]
-pub trait ChatClient: Send + Sync {
-    /// Send a chat completion request and return the model's response.
-    async fn chat(&amp;self, request: ChatRequest) -&gt; Result&lt;ModelResponse&gt;;
-
-    /// List available models from the /v1/models endpoint.
-    async fn list_models(&amp;self) -&gt; Result&lt;ModelList&gt;;
+pub trait LlmService: Send + Sync {
+    fn chat_stream(
+        &amp;self,
+        request: LlmRequest,
+    ) -&gt; Result&lt;EventStream, ProviderError&gt;;
 }
 <span class="boring">}</span></code></pre></pre>
-<h2 id="localchatclient"><a class="header" href="#localchatclient"><code>LocalChatClient</code></a></h2>
-<p>The default implementation targets <code>localhost:1234</code> (LM Studio / Ollama) by default, but works with any OpenAI-compatible endpoint:</p>
+<p>All providers implement this trait. The agent loop consumes the <code>EventStream</code> (a <code>Pin&lt;Box&lt;dyn Stream&lt;Item = Result&lt;StreamEvent&gt;&gt;&gt;&gt;</code>) for streaming responses.</p>
+<h2 id="openaiservice"><a class="header" href="#openaiservice"><code>OpenAiService</code></a></h2>
+<p>The default implementation targets any OpenAI-compatible endpoint:</p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>// Default: localhost
-let client = LocalChatClient::new();
+</span>use rho_ai::OpenAiService;
 
-// Custom endpoint with optional API key
-let client = LocalChatClient::with_endpoint_and_key(
-    "https://api.openai.com/v1/chat/completions",
-    Some("sk-...".into()),
-);
+// Default: localhost
+let service = OpenAiService::from_config(ProviderConfig {
+    endpoint: "http://localhost:1234/v1/chat/completions".into(),
+    api_key: None,
+});
+
+// Custom endpoint with API key
+let service = OpenAiService::from_config(ProviderConfig {
+    endpoint: "https://api.openai.com/v1/chat/completions".into(),
+    api_key: Some("sk-...".into()),
+});
 <span class="boring">}</span></code></pre></pre>
 <h3 id="redacted"><a class="header" href="#redacted">[REDACTED]</a></h3>
-<p>When an API key is provided via <code>api_key_env</code> in config (or <code>with_endpoint_and_key</code> in code), it is sent as an <code>Authorization: Bearer &lt;key&gt;</code> header with every request. Local endpoints typically don't need this. See <a href="../providers.html">External Providers</a> for setup details.</p>
+<p>When an API key is provided via <code>api_key_env</code> in config, it is sent as an <code>Authorization: Bearer &lt;key&gt;</code> header with every request. Local endpoints typically don't need this. See <a href="../providers.html">External Providers</a> for setup details.</p>
 <h3 id="provider-consent"><a class="header" href="#provider-consent">Provider consent</a></h3>
 <p>The binary (<code>rho</code>) checks whether the configured endpoint is local before connecting. Non-local endpoints (e.g., <code>api.openai.com</code>) trigger an interactive consent warning that lists the external provider(s) by name. If no local server is detected, the warning also notes this. Use <code>--accept-external-provider</code> to skip this in automated workflows, or <code>--endpoint</code> (which implies consent since the user explicitly chose the target).</p>
 <h3 id="model-picker"><a class="header" href="#model-picker">Model picker</a></h3>
@@ -222,14 +228,15 @@ let client = LocalChatClient::with_endpoint_and_key(
 <p>Auto-detection works well for local servers where <code>/v1/models</code> is reliable. <strong>For external providers, always specify the model explicitly</strong> with <code>--model</code> or in config — external providers may return large model lists or non-standard responses that can cause auto-detection to pick an unexpected model or fail.</p>
 <h2 id="request--response"><a class="header" href="#request--response">Request / response</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Type</th><th>Purpose</th></tr></thead><tbody>
-<tr><td><code>ChatRequest</code></td><td><code>model</code>, <code>messages</code>, <code>tools</code> — the full API request body</td></tr>
-<tr><td><code>ModelResponse</code></td><td>Parsed API response with choices, finish reason, usage</td></tr>
+<tr><td><code>LlmRequest</code></td><td><code>model</code>, <code>messages</code>, <code>tools</code> — the full API request body</td></tr>
+<tr><td><code>StreamEvent</code></td><td>Streaming response event (<code>Text</code>, <code>Reasoning</code>, <code>ToolUseStart/Delta/Complete</code>, <code>Done</code>)</td></tr>
+<tr><td><code>AccumulatedResponse</code></td><td>Fully-accumulated response (text + tool calls + usage)</td></tr>
 <tr><td><code>FinishReason</code></td><td><code>Stop</code> (text reply), <code>ToolCalls</code>, <code>Length</code> (truncated), <code>ContentFilter</code></td></tr>
-<tr><td><code>ModelUsage</code></td><td><code>prompt_tokens</code>, <code>completion_tokens</code>, <code>total_tokens</code></td></tr>
+<tr><td><code>LlmUsage</code></td><td><code>prompt_tokens</code>, <code>completion_tokens</code>, <code>total_tokens</code></td></tr>
 </tbody></table>
 </div>
 <h2 id="streaming"><a class="header" href="#streaming">Streaming</a></h2>
-<p>The client supports SSE streaming (<code>stream: true</code>) for the Chat Completions API. Streaming chunks are accumulated into a full <code>ModelResponse</code> before being returned to the agent loop. During streaming, <code>StreamChunk::TextDelta</code> and <code>StreamChunk::ReasoningDelta</code> events are forwarded to the <code>AgentObserver</code> in real time, enabling live progress output in the REPL.</p>
+<p><code>OpenAiService</code> uses SSE streaming (<code>stream: true</code>) for the Chat Completions API. Streaming events are returned as an <code>EventStream</code> that the agent loop consumes. <code>StreamEvent::Text</code> and <code>StreamEvent::Reasoning</code> events are forwarded to the <code>AgentObserver</code> in real time, enabling live progress output in the REPL.</p>
 <h2 id="multi-provider-support"><a class="header" href="#multi-provider-support">Multi-provider support</a></h2>
 <p>rho can manage multiple providers simultaneously via the <code>ProviderRegistry</code> and <code>Provider</code> trait:</p>
 <ul>
