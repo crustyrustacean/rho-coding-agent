@@ -110,6 +110,29 @@ impl From<AgentError> for crate::error::RhoError {
 ///
 /// All methods receive `&str` references (not owned values) so observers
 /// can be zero-allocation when they choose to ignore events.
+/// The result of a tool-call interception check.
+///
+/// Returned by [`AgentObserver::on_tool_call_intercept`] to allow extensions
+/// to block tool calls before they reach the approval gate or execution.
+#[derive(Clone, Debug)]
+pub enum InterceptResult {
+    /// Block the tool call with a human-readable reason.
+    Block {
+        /// Why the tool call was blocked.
+        reason: String,
+    },
+    /// Allow the tool call to proceed.
+    Allow,
+}
+
+/// Receives live events from the agent loop.
+///
+/// Implementations can render progress to a REPL, TUI, or test harness.
+/// The agent loop calls these methods at every state transition and as
+/// stream deltas arrive from the model.
+///
+/// All methods receive `&str` references (not owned values) so observers
+/// can be zero-allocation when they choose to ignore events.
 pub trait AgentObserver: Send + Sync {
     /// The agent entered a new [`AgentState`].
     fn on_state_change(&self, _state: AgentState) {}
@@ -135,6 +158,18 @@ pub trait AgentObserver: Send + Sync {
 
     /// A tool call requires human approval with the given risk level.
     fn on_approval_requested(&self, _tool_name: &str, _risk: ToolRisk) {}
+
+    /// Intercept a tool call before it reaches the approval gate or execution.
+    ///
+    /// Called **before** the approval policy check. If any observer returns
+    /// [`InterceptResult::Block`], the tool call is denied immediately with
+    /// the given reason — the approval gate is never consulted.
+    ///
+    /// Return `None` (the default) to indicate no opinion (allow). If multiple
+    /// observers exist, the first `Block` wins.
+    fn on_tool_call_intercept(&self, _name: &str, _arguments: &str) -> Option<InterceptResult> {
+        None
+    }
 }
 
 /// A no-op observer that discards all events.
@@ -575,7 +610,26 @@ impl LoopContext<'_> {
 
     /// Classify a single tool call: does it need approval, or can it be
     /// executed directly?
+    ///
+    /// Checks observers for interception first. If any observer blocks the
+    /// call, it is denied immediately — the approval gate is never consulted.
     fn classify_call(&mut self, call: ModelToolCall, remaining: Vec<ModelToolCall>) -> State {
+        // Check observers for interception.
+        if let Some(InterceptResult::Block { reason }) = self
+            .params
+            .observer
+            .on_tool_call_intercept(&call.function.name, &call.function.arguments)
+        {
+            debug!(tool_name = %call.function.name, %reason, "tool call blocked by observer");
+            self.params.observer.on_tool_denied(&call.function.name);
+            let call_id = ToolCallId::new(call.id.to_string());
+            let _ = self.session.append_tool_result(
+                call_id,
+                &ToolResult::error(format!("Tool call blocked: {reason}")),
+            );
+            return self.advance_to_next_call(remaining);
+        }
+
         let risk = self
             .params
             .registry
@@ -1034,6 +1088,58 @@ mod tests {
         let debug_str = format!("{error:?}");
         assert!(debug_str.contains("ProtocolViolation"));
         assert!(debug_str.contains("debug test"));
+    }
+
+    #[test]
+    fn intercept_result_allow_is_not_block() {
+        let result = InterceptResult::Allow;
+        assert!(
+            !matches!(result, InterceptResult::Block { .. }),
+            "Allow should not match Block"
+        );
+    }
+
+    #[test]
+    fn intercept_result_block_carries_reason() {
+        let result = InterceptResult::Block {
+            reason: "force flags not allowed".to_string(),
+        };
+        if let InterceptResult::Block { reason } = result {
+            assert_eq!(reason, "force flags not allowed");
+        } else {
+            panic!("expected Block");
+        }
+    }
+
+    /// An observer that blocks any tool call whose arguments contain "--force".
+    struct ForceBlockObserver;
+
+    impl AgentObserver for ForceBlockObserver {
+        fn on_tool_call_intercept(&self, _name: &str, arguments: &str) -> Option<InterceptResult> {
+            if arguments.contains("--force") || arguments.contains("-Force") {
+                return Some(InterceptResult::Block {
+                    reason: "force flags blocked by extension".to_string(),
+                });
+            }
+            None
+        }
+    }
+
+    #[test]
+    fn force_block_observer_blocks_force_flags() {
+        let obs = ForceBlockObserver;
+        let result = obs.on_tool_call_intercept("run_command", "git push --force");
+        assert!(
+            matches!(result, Some(InterceptResult::Block { .. })),
+            "should block --force"
+        );
+    }
+
+    #[test]
+    fn force_block_observer_allows_normal_calls() {
+        let obs = ForceBlockObserver;
+        let result = obs.on_tool_call_intercept("run_command", "git push");
+        assert!(result.is_none(), "should allow normal calls");
     }
 
     // ── build_llm_request tests ──────────────────────────────────────────
