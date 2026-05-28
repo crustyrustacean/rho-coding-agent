@@ -8,7 +8,7 @@ members = [
     "rho-highlight",
     "rho-tools",
     "rho-test-helpers",
-    "xtask",
+    "xtask", "rho-ext",
 ]
 resolver = "3"
 
@@ -29,7 +29,7 @@ tracing = "0.1.44"
 bytes = "1"
 
 [workspace.package]
-version = "0.48.0"
+version = "0.49.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/crustyrustacean/rho-coding-agent"

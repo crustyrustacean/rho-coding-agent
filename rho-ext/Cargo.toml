@@ -1,0 +1,30 @@
+[package]
+name = "rho-ext"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+deno_ast = { version = "0.53.2", features = [ "transpiling" ] }
+deno_core = "0.401.0"
+deno_error = "0.7.1"
+rho-core = { path = "../rho-core" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tracing = "0.1.44"
+url = "2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

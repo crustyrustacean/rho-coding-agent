@@ -1,3 +1,9 @@
+## [0.49.0] - 2026-05-28
+
+### 🚀 Features
+
+- **rho-ext**: Add TypeScript extension runtime with V8 isolate, manifest extraction, module loader, and host functions (50 tests)
+
 ## [0.47.1] - 2026-05-26
 
 ### 🚀 Features
