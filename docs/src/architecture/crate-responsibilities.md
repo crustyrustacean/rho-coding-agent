@@ -2,14 +2,14 @@
 
 ## `rho` (binary)
 
-The binary entry point: CLI argument parsing, tool wiring, and system prompt assembly. Supports two execution modes:
+The binary entry point: CLI argument parsing, tool wiring, extension loading, and system prompt assembly. Supports two execution modes:
 
 - **REPL mode** (default) — interactive terminal session with slash commands and live output
 - **RPC mode** (`--mode rpc`) — headless JSONL over stdin/stdout for process integration
 
-Constructs a `Session`, connects to the model via a `Provider`, and drives the agent loop. Handles provider consent checks, model resolution, startup budget diagnostics, shell-specific prompt extensions, session discovery (`rho -c`), and live observer output (reasoning deltas, tool activity).
+Constructs a `Session`, connects to the model via a `Provider`, and drives the agent loop. Handles provider consent checks, model resolution, startup budget diagnostics, shell-specific prompt extensions, session discovery (`rho -c`), extension loading and hot reload (`/reload`, `/extensions`), and live observer output (reasoning deltas, tool activity).
 
-The RPC implementation is generic over I/O (`run_rpc_on<R, W>`) so the 43 in-process integration tests can inject canned stdin and capture stdout without touching real file descriptors. See [RPC Mode](../rpc-mode.md) for the full protocol reference.
+The RPC implementation is generic over I/O (`run_rpc_on<R, W>`) so the in-process integration tests can inject canned stdin and capture stdout without touching real file descriptors. See [RPC Mode](../rpc-mode.md) for the full protocol reference.
 
 ## `rho-core`
 
@@ -35,6 +35,22 @@ Built-in tool implementations:
 - **Lookup tools:** `RustdocTool`, `CratesIoLookup`
 
 Each implements the `Tool` trait from `rho-core`.
+
+## `rho-ext`
+
+TypeScript extension runtime (powered by `deno_core` and V8). Enables user-authored extensions that add tools, hooks, and commands to rho.
+
+- **`ExtensionRuntime`** — owns a V8 isolate on a dedicated OS thread, handles async tool/hook/command calls via tokio channels
+- **`ExtensionLoader`** — orchestrates discovery (single-file and multi-file), config-driven filtering, spawning, tool registration, and hot reload (mtime-based change detection)
+- **`DenoTool`** — wraps extension tool functions as `Box<dyn Tool>` for the `ToolRegistry`
+- **`DenoObserver`** — wraps extension hooks as `AgentObserver` for the agent loop (onLoad, onToolCall, onToolResult, onBeforeModel)
+- **TypeScript transpilation** — `deno_ast` transpiles `.ts` to JS at load time
+- **Host functions** — `rho.log()`, `rho.readFile()`, `rho.writeFile()`, `rho.runCommand()`, `rho.getModel()`, `rho.getCwd()` with permission gating
+- **Type definitions** — ships `rho.d.ts` for extension author IntelliSense
+
+Key types: `ExtensionRuntime`, `ExtensionLoader`, `DenoTool`, `DenoObserver`, `LoadedExtension`, `ExtensionError`.
+
+See [Extensions](../extensions.md) for the full extension system documentation.
 
 ## `rho-test-helpers`
 

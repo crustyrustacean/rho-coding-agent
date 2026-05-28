@@ -1,38 +1,46 @@
-# ChatClient Provider Trait
+# Provider Architecture
 
-The `ChatClient` trait abstracts the model API. It defines how rho talks to LLMs — any OpenAI-compatible endpoint can be plugged in.
+rho communicates with LLMs through a layered provider abstraction in `rho-ai`.
 
-## Definition
+## `LlmService` trait
+
+The core trait in `rho-ai` defines provider-agnostic LLM communication:
 
 ```rust
 #[async_trait]
-pub trait ChatClient: Send + Sync {
-    /// Send a chat completion request and return the model's response.
-    async fn chat(&self, request: ChatRequest) -> Result<ModelResponse>;
-
-    /// List available models from the /v1/models endpoint.
-    async fn list_models(&self) -> Result<ModelList>;
+pub trait LlmService: Send + Sync {
+    fn chat_stream(
+        &self,
+        request: LlmRequest,
+    ) -> Result<EventStream, ProviderError>;
 }
 ```
 
-## `LocalChatClient`
+All providers implement this trait. The agent loop consumes the `EventStream` (a `Pin<Box<dyn Stream<Item = Result<StreamEvent>>>>`) for streaming responses.
 
-The default implementation targets `localhost:1234` (LM Studio / Ollama) by default, but works with any OpenAI-compatible endpoint:
+## `OpenAiService`
+
+The default implementation targets any OpenAI-compatible endpoint:
 
 ```rust
-// Default: localhost
-let client = LocalChatClient::new();
+use rho_ai::OpenAiService;
 
-// Custom endpoint with optional API key
-let client = LocalChatClient::with_endpoint_and_key(
-    "https://api.openai.com/v1/chat/completions",
-    Some("sk-...".into()),
-);
+// Default: localhost
+let service = OpenAiService::from_config(ProviderConfig {
+    endpoint: "http://localhost:1234/v1/chat/completions".into(),
+    api_key: None,
+});
+
+// Custom endpoint with API key
+let service = OpenAiService::from_config(ProviderConfig {
+    endpoint: "https://api.openai.com/v1/chat/completions".into(),
+    api_key: Some("sk-...".into()),
+});
 ```
 
 ### [REDACTED]
 
-When an API key is provided via `api_key_env` in config (or `with_endpoint_and_key` in code), it is sent as an `Authorization: Bearer <key>` header with every request. Local endpoints typically don't need this. See [External Providers](../providers.md) for setup details.
+When an API key is provided via `api_key_env` in config, it is sent as an `Authorization: Bearer <key>` header with every request. Local endpoints typically don't need this. See [External Providers](../providers.md) for setup details.
 
 ### Provider consent
 
@@ -56,14 +64,15 @@ Auto-detection works well for local servers where `/v1/models` is reliable. **Fo
 
 | Type | Purpose |
 |---|---|
-| `ChatRequest` | `model`, `messages`, `tools` — the full API request body |
-| `ModelResponse` | Parsed API response with choices, finish reason, usage |
+| `LlmRequest` | `model`, `messages`, `tools` — the full API request body |
+| `StreamEvent` | Streaming response event (`Text`, `Reasoning`, `ToolUseStart/Delta/Complete`, `Done`) |
+| `AccumulatedResponse` | Fully-accumulated response (text + tool calls + usage) |
 | `FinishReason` | `Stop` (text reply), `ToolCalls`, `Length` (truncated), `ContentFilter` |
-| `ModelUsage` | `prompt_tokens`, `completion_tokens`, `total_tokens` |
+| `LlmUsage` | `prompt_tokens`, `completion_tokens`, `total_tokens` |
 
 ## Streaming
 
-The client supports SSE streaming (`stream: true`) for the Chat Completions API. Streaming chunks are accumulated into a full `ModelResponse` before being returned to the agent loop. During streaming, `StreamChunk::TextDelta` and `StreamChunk::ReasoningDelta` events are forwarded to the `AgentObserver` in real time, enabling live progress output in the REPL.
+`OpenAiService` uses SSE streaming (`stream: true`) for the Chat Completions API. Streaming events are returned as an `EventStream` that the agent loop consumes. `StreamEvent::Text` and `StreamEvent::Reasoning` events are forwarded to the `AgentObserver` in real time, enabling live progress output in the REPL.
 
 ## Multi-provider support
 

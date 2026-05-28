@@ -57,10 +57,18 @@ pub trait AgentObserver: Send + Sync {
     fn on_tool_result(&self, _name: &str, _result: &ToolResult) {}
     fn on_tool_denied(&self, _name: &str) {}
     fn on_approval_requested(&self, _tool_name: &str, _risk: ToolRisk) {}
+
+    /// Called before a tool executes. Return Block to prevent execution.
+    /// Used by extensions to implement approval gates and safety filters.
+    fn on_tool_call_intercept(&self, _name: &str, _args: &str) -> Option<InterceptResult> {
+        None
+    }
 }
 ```
 
 All methods have default no-op implementations, so observers only need to override the events they care about. The REPL's `ReplObserver` streams reasoning deltas and tool activity to stdout so the user can see what the model is doing in real time. For tests, benchmarks, and headless use, `NopObserver` discards all events.
+
+When extensions are loaded, the `CompositeObserver` fans out every call to both the REPL/RPC observer and the extension `DenoObserver`s. For `on_tool_call_intercept`, the **first `Block` wins** — if any extension blocks a tool call, execution is denied immediately.
 
 The observer is called:
 - At every state transition (`on_state_change`)

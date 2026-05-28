@@ -18,6 +18,7 @@ cargo xtask test -p rho-core -- --nocapture  # Single crate
 | Integration tests | `rho-core/tests/integration_tests.rs` | Agent loop, approval flow, context management |
 | RPC integration tests | `rho/src/rpc.rs` (`#[cfg(test)] mod tests`) | Full JSONL protocol: command dispatch, event sequencing, approval round-trips, tool calls, errors, multi-turn sessions, JSONL conformance |
 | Tool integration tests | `rho-tools/tests/tool_tests.rs` | Tool execution, sandbox enforcement, denylist |
+| Extension unit tests | `rho-ext/src/*.rs` (`#[cfg(test)] mod tests`) | Runtime spawning, manifest parsing, discovery, transpilation, DenoTool, DenoObserver, host ops, module loader |
 | Eval unit tests | `rho-eval/src/tasks.rs` | Task verification logic (pass/fail/error) |
 | Bench unit tests | `rho-bench/src/*.rs` | Harness config, display formatting, persistence |
 

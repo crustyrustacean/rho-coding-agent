@@ -4,6 +4,51 @@ Guidance for AI assistants working on this codebase.
 
 For architecture, key types, and crate responsibilities, see [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
+## Extensions
+
+rho supports TypeScript extensions via `rho-ext`. Extensions live in `~/.rho/extensions/` (user-level) and `.rho/extensions/` (project-level). Each extension gets its own V8 isolate and can provide tools, hooks, and slash commands.
+
+```typescript
+// ~/.rho/extensions/hello.ts
+export default {
+  name: "hello",
+  tools: [{
+    name: "hello",
+    description: "Greet someone",
+    risk: "read" as const,
+    parameters: {
+      name: { type: "string", description: "Who to greet", required: true },
+    },
+    execute: async (args: string) => {
+      return JSON.stringify({ output: `Hello, ${args}!` });
+    },
+  }],
+};
+```
+
+Type definitions are shipped at `rho-ext/types/rho.d.ts`.
+
+### REPL commands
+
+- `/reload` — hot-reload extensions from disk (mtime-based change detection)
+- `/extensions` — list loaded extension names
+
+### Config
+
+```toml
+[extensions]
+enabled = ["hello", "crates-search"]
+
+[extensions.defaults]
+network = true
+max_memory_mb = 64
+
+[extensions.per_extension."hello"]
+max_memory_mb = 128
+```
+
+See [`docs/src/extensions.md`](docs/src/extensions.md) for the full extension system documentation.
+
 ## Quick Start
 
 ```sh

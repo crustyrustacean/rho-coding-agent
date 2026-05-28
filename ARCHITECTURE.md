@@ -10,6 +10,8 @@
 ┌─────────────────────────────────────────────────┐
 │                   rho (binary)                   │  ← Assembles all layers, runs the app
 ├─────────────────────────────────────────────────┤
+│                   rho-ext                        │  ← TypeScript extension runtime (V8/deno-core)
+├─────────────────────────────────────────────────┤
 │                   rho-tools                      │  ← Built-in tool implementations
 ├─────────────────────────────────────────────────┤
 │                   rho-highlight                  │  ← Tree-sitter syntax analysis
@@ -24,11 +26,12 @@
    └──────────────────┘  └──────────────────┘
 
                   rho-bench → rho-eval → rho-core → rho-ai
+                  rho-ext → rho-core
                   rho-tools → rho-highlight → rho-core
                   rho-test-helpers → rho-core
 ```
 
-**Rule:** a crate may only depend on crates below it in the stack. `rho-ai` is the lowest layer; `rho-core` depends on it for the `LlmService` trait and unified streaming types.
+**Rule:** a crate may only depend on crates below it in the stack. `rho-ai` is the lowest layer; `rho-core` depends on it for the `LlmService` trait and unified streaming types. `rho-ext` depends on `rho-core` for the `Tool` and `AgentObserver` trait implementations.
 
 ## Crate Responsibilities
 
@@ -92,6 +95,22 @@ Provider-agnostic streaming interface for LLM communication.
 - **Retry** — Exponential backoff on transient errors with configurable budget.
 - **SSE parser** — Line-buffered server-sent event parser with streaming accumulation.
 
+### `rho-ext` — TypeScript Extension Runtime
+
+Enables user-authored TypeScript extensions that add tools, hooks, and commands to rho without modifying the core codebase.
+
+- **`ExtensionRuntime`** — owns a V8 isolate on a dedicated OS thread. Supports async calls for tools, hooks, and commands via tokio channels.
+- **`ExtensionLoader`** — orchestrates discovery, filtering (config-driven), spawning, tool registration, and hot reload (mtime-based change detection).
+- **`DenoTool`** — wraps extension tool functions as `Box<dyn Tool>` for the `ToolRegistry`.
+- **`DenoObserver`** — wraps extension hooks as `AgentObserver` for agent-loop event interception.
+- **`CompositeObserver`** — fans out agent-loop events to REPL/RPC observer + extension observers. First `Block` wins for tool-call interception.
+- **TypeScript transpilation** — `deno_ast` transpiles `.ts` to JS at load time (no external Deno CLI needed).
+- **Host functions** — `rho.log()`, `rho.readFile()`, `rho.writeFile()`, `rho.runCommand()`, `rho.getModel()`, `rho.getCwd()` with permission gating.
+- **Config** — `[extensions]` section in config.toml with enabled/disabled allowlists and per-extension permissions.
+- **Type definitions** — `rho-ext/types/rho.d.ts` for extension author IntelliSense.
+
+Extension directories: `~/.rho/extensions/` (user-level) and `.rho/extensions/` (project-level). Project-local extensions override user-level ones with the same name.
+
 ### `rho` — Binary Entry Point
 
 Assembles all layers and dispatches to the selected execution mode.
@@ -102,8 +121,11 @@ Assembles all layers and dispatches to the selected execution mode.
 3. Construct `ProviderRegistry` from config + CLI overrides
 4. Run interactive startup phases (consent, context files, model picker) — headless in RPC mode
 5. Create tool registry and register built-in tools
-6. Compose system prompt (base + trusted context files + environment block)
-7. Construct session (persisted, resumed, or ephemeral)
+6. Discover and load TypeScript extensions via `ExtensionLoader` (spawn V8 isolates, register extension tools)
+7. Build `CompositeObserver` from REPL/RPC observer + extension `DenoObserver`s
+8. Compose system prompt (base + trusted context files + environment block)
+9. Construct session (persisted, resumed, or ephemeral)
+10. Fire extension `onLoad` hooks
 
 **Mode dispatch (`App::run`):** routes to the selected mode after startup.
 
@@ -130,7 +152,7 @@ echo '{"type":"prompt","message":"fix the bug"}' | rho --mode rpc --model <id>
 
 The core RPC loop is generic over I/O (`run_rpc_on<R, W>`) so the in-process integration tests can inject canned stdin and capture stdout without touching real file descriptors. The public entry point (`run_rpc`) delegates with real `io::stdin()` and `io::stdout()`.
 
-**Integration tests.** 43 end-to-end tests in `rho/src/rpc.rs` cover the full JSONL protocol: command dispatch, event sequencing, approval round-trips, tool call flows, error handling, multi-turn sessions, and JSONL conformance. Tests use `MockChatClient` via `TestProvider` (in `rho-test-helpers`) and construct `App` directly (bypassing CLI startup) to exercise the RPC adapter layer over the real agent loop.
+**Integration tests.** 43 end-to-end tests in `rho/src/rpc.rs` cover the full JSONL protocol: Tests use `MockChatClient` via `TestProvider` (in `rho-test-helpers`) and construct `App` directly (bypassing CLI startup) to exercise the RPC adapter layer over the real agent loop.
 
 **Commands (stdin → rho):**
 
@@ -268,13 +290,14 @@ rho/                # Binary entry point (`rho` CLI)
     main.rs         # Thin entry: parse CLI, build App, run
     lib.rs          # Module declarations
     cli.rs          # `Cli` + `Mode` enum (--mode repl|rpc)
-    app.rs          # `App::build` (startup phases) + `App::run` (mode dispatch)
+    app.rs          # `App::build` (startup phases, extension loading) + `App::run` (mode dispatch)
     model.rs        # Model resolution + interactive picker
+    ext_observer.rs # `CompositeObserver` — fans out to REPL/RPC + extension observers
     gate.rs         # Approval gate module root
     gate/
       interactive.rs # `ReplApprovalGate` — reads y/N from stdin
-    rpc.rs          # RPC mode: `run_rpc`, `run_rpc_on`, `RpcObserver`, `RpcApprovalGate` (68 tests: 25 unit + 43 integration)
-    repl.rs         # `run_repl` — interactive REPL loop
+    rpc.rs          # RPC mode: `run_rpc`, `run_rpc_on`, `RpcObserver`, `RpcApprovalGate`
+    repl.rs         # `run_repl` — interactive REPL loop with `/reload`, `/extensions`
     presenter.rs    # Presenter module root
     presenter/
       repl.rs       # `ReplPresenter` — all REPL terminal output
@@ -288,6 +311,23 @@ rho-ai/             # Unified LLM provider abstraction
     retry.rs        # Exponential backoff retry logic
     types.rs        # `LlmMessage`, `LlmRequest`, `StreamEvent`, `AccumulatedResponse`
     error.rs        # `ProviderError`
+rho-ext/            # TypeScript extension runtime
+  src/
+    lib.rs          # Re-exports: `ExtensionLoader`, `DenoTool`, `DenoObserver`, etc.
+    runtime.rs      # `ExtensionRuntime` — V8 isolate on dedicated OS thread
+    loader.rs       # `ExtensionLoader` — discovery, filtering, spawning, hot reload
+    deno_tool.rs    # `DenoTool` — `Tool` trait wrapper
+    deno_observer.rs# `DenoObserver` — `AgentObserver` trait wrapper
+    manifest.rs     # `LoadedExtension` — manifest parsing and validation
+    discover.rs     # Extension discovery (single-file and multi-file)
+    transpile.rs    # TS → JS transpilation via `deno_ast`
+    module_loader.rs# `RhoModuleLoader` — ESM module resolution for extensions
+    host.rs         # `rho.*` host ops (log, readFile, writeFile, runCommand, getModel, getCwd)
+    host_shim.js    # ESM shim for extension module loading
+    error.rs        # `ExtensionError` enum
+    spike.rs        # Original spike validation code
+  types/
+    rho.d.ts        # TypeScript type definitions for extension authors
 rho-core/           # Core library
   src/
     lib.rs          # Module declarations and convenience re-exports
@@ -451,6 +491,19 @@ cliff.toml          # git-cliff configuration
 | `TaskVerdict` | `rho-eval` | `Pass`, `Fail`, `Error` |
 | `TaskOutcome` | `rho-eval` | Verdict + metrics |
 | `EvalRun` | `rho-eval` | Collection of outcomes with regression detection |
+
+### Extension system (rho-ext)
+
+| Type | Location | Purpose |
+|---|---|---|
+| `ExtensionRuntime` | `rho-ext/src/runtime.rs` | V8 isolate on dedicated OS thread |
+| `ExtensionLoader` | `rho-ext/src/loader.rs` | Discovery, filtering, spawning, hot reload |
+| `DenoTool` | `rho-ext/src/deno_tool.rs` | `Tool` trait wrapper for extension functions |
+| `DenoObserver` | `rho-ext/src/deno_observer.rs` | `AgentObserver` wrapper for extension hooks |
+| `LoadedExtension` | `rho-ext/src/manifest.rs` | Parsed extension manifest (tools, hooks, commands) |
+| `CompositeObserver` | `rho/src/ext_observer.rs` | Fans out to REPL/RPC + extension observers |
+| `ExtensionError` | `rho-ext/src/error.rs` | Transpile, load, manifest, execution errors |
+| `InterceptResult` | `rho-core/src/agent.rs` | `Block`/`Allow` for tool-call interception
 
 ## Platform Support
 

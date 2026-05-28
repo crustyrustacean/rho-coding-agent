@@ -1,6 +1,6 @@
 # Roadmap
 
-rho is developed in phases, each building on the last. The current version is **0.47.1**.
+rho is developed in phases, each building on the last. The current version is **0.51.0**.
 
 ## Phase summary
 
@@ -17,9 +17,9 @@ rho is developed in phases, each building on the last. The current version is **
 | 3.9: Streaming & Live Output | ✅ Complete | SSE streaming, `AgentObserver` trait, REPL live output, `ReplObserver` |
 | 3.10: Multi-Provider & Model Picker | ✅ Complete | `Provider` trait, `ProviderRegistry`, interactive model picker, `/models`, `/model` |
 | 3.11: Session Discovery & Context Visibility | ✅ Complete | `find_latest_session()`, `list_sessions()`, `rho -c`, `/sessions`, `/status`, context status bar |
-| 3.12: RPC Mode | ✅ Complete | Headless JSONL over stdin/stdout, `run_rpc_on<R, W>`, approval round-trips, 43 integration tests |
+| 3.12: RPC Mode | ✅ Complete | Headless JSONL over stdin/stdout, `run_rpc_on<R, W>`, approval round-trips, integration tests |
 | 4: Terminal UI | 🔜 Next | Rich TUI replacing the bare REPL |
-| 5: Extensions and Polish | Planned | Custom tools, prompt composition with budget awareness |
+| 5: TypeScript Extensions | ✅ Complete | `rho-ext` crate, V8/deno-core runtime, `ExtensionLoader`, `DenoTool`, `DenoObserver`, hot reload, config integration, type definitions |
 | 6: LSP | Deferred | rust-analyzer integration |
 
 ## Completed phases
@@ -76,13 +76,27 @@ Headless JSONL over stdin/stdout for process integration. `--mode rpc` starts rh
 
 The implementation is generic over I/O (`run_rpc_on<R, W>`) so integration tests can inject canned stdin and capture stdout. 43 end-to-end tests cover the complete protocol. See [RPC Mode](../rpc-mode.md) for the protocol reference.
 
+### Phase 5 — TypeScript Extensions
+
+`rho-ext` crate providing a TypeScript extension runtime powered by V8/deno-core. Each extension runs in its own V8 isolate on a dedicated OS thread and can register tools, hooks, and commands via `export default { ... }`.
+
+Key components:
+- **`ExtensionRuntime`** — V8 isolate lifecycle, async tool/hook/command calls
+- **`ExtensionLoader`** — discovery, config-driven filtering, hot reload (mtime-based)
+- **`DenoTool`** — `Tool` trait bridge for extension functions
+- **`DenoObserver`** — `AgentObserver` bridge for extension hooks (onLoad, onToolCall, onToolResult, onBeforeModel)
+- **`CompositeObserver`** — fans out agent-loop events to REPL/RPC + extension observers
+- **`InterceptResult`** — tool-call interception (Block/Allow) wired into `classify_call()`
+- **Host functions** — `rho.readFile()`, `rho.writeFile()`, `rho.runCommand()`, `rho.getModel()`, `rho.getCwd()`, `rho.log()`
+- **Config** — `[extensions]` section with enabled/disabled allowlists, default and per-extension permissions
+- **Type definitions** — `rho-ext/types/rho.d.ts` for extension author IntelliSense
+- **REPL commands** — `/reload` for hot reload, `/extensions` to list loaded extensions
+
+135 `rho-ext` tests + 7 integration tests in the binary. See [Extensions](../extensions.md) for the full documentation.
+
 ### Phase 4 — Terminal UI
 
 Rich TUI replacing the bare REPL. Streaming output, approval prompts with rich previews, diagnostic panels, syntax highlighting. Built on `ratatui`/`crossterm`. See [Phase 4 readiness assessment](../../../1.%20Planning/Phase%204/Phase%204%20Readiness%20Assessment.md).
-
-### Phase 5 — Extensions and Polish
-
-Custom tools via TOML definitions, extension API (`rho-ext` crate), prompt composition with budget awareness, and custom slash commands.
 
 ### Phase 6 — LSP
 

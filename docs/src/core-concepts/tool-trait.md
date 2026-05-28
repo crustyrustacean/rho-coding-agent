@@ -73,7 +73,7 @@ Duplicate tool names panic at registration (fast-fail, programming error). Execu
 
 ## Built-in tools
 
-rho ships with 13 built-in tools, all registered in `rho-tools::register_all()`:
+rho ships with 12 built-in tools, all registered in `rho-tools::register_all()`:
 
 | Tool | Risk | Description |
 |---|---|---|
@@ -89,3 +89,11 @@ rho ships with 13 built-in tools, all registered in `rho-tools::register_all()`:
 | `rustc_explain` | Read | Look up detailed explanations for error codes |
 | `rustdoc_lookup` | Read | Look up Rust standard library documentation |
 | `crates_io_lookup` | Read | Search and inspect crate metadata on crates.io |
+
+## Extension tools
+
+TypeScript extensions can register additional tools via `rho-ext`. Each extension tool is wrapped in a `DenoTool` that implements the same `Tool` trait. Extension tools appear alongside built-in tools in the `ToolRegistry` and are visible to the model via the tool schema.
+
+Extension tools are discovered at startup from `~/.rho/extensions/` and `.rho/extensions/`. They can be hot-reloaded at runtime via the `/reload` REPL command.
+
+See [Extensions](../extensions.md) for details.

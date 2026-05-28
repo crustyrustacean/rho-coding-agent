@@ -1,6 +1,6 @@
 # External Providers
 
-rho's `LocalChatClient` speaks the **OpenAI Chat Completions wire format** (`POST /v1/chat/completions`). It works with any endpoint that implements this format — including local servers (LM Studio, Ollama) and external providers that offer an OpenAI-compatible API.
+rho's `OpenAiService` (in `rho-ai`) speaks the **OpenAI Chat Completions wire format** (`POST /v1/chat/completions`). It works with any endpoint that implements this format — including local servers (LM Studio, Ollama) and external providers that offer an OpenAI-compatible API.
 
 ## What "OpenAI-compatible" means
 

@@ -89,6 +89,27 @@ custom_patterns = ["my-key-[a-zA-Z0-9]{32}"]
 [system_prompt]
 # Additional prompt fragments appended after the base prompt
 extensions = ["Always use Rust idioms."]
+
+[extensions]
+# Extension allowlist — only load these extensions (omit to load all)
+enabled = ["hello", "crates-search"]
+
+# Extension denylist — never load these extensions
+# disabled = ["experimental-thing"]
+
+[extensions.defaults]
+# Default permissions for all extensions
+network = true           # allow fetch() by default
+max_memory_mb = 64       # V8 heap limit per isolate
+max_execution_time_s = 30
+
+[extensions.per_extension."rust-docs"]
+# Override defaults for a specific extension
+max_memory_mb = 128      # needs more for HTML parsing
+
+[extensions.per_extension."dangerous-tool"]
+network = false          # deny fetch()
+commands = false         # deny rho.runCommand()
 ```
 
 ## API key handling

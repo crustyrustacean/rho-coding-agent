@@ -93,6 +93,8 @@ See [Sessions](./core-concepts/sessions.md) for details.
 | `/paste` | Enter multi-line paste mode (or `/paste <file>` to read from a file) |
 | `/sessions` | List recent sessions for this project |
 | `/status` | Show detailed context window usage breakdown |
+| `/reload` | Hot-reload TypeScript extensions from disk |
+| `/extensions` | List loaded extension names |
 | `/quit` | Exit rho |
 
 ## Next Steps

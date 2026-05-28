@@ -12,17 +12,44 @@ rho-coding-agent/
 │       ├── main.rs           # Thin: parse CLI, build App, run
 │       ├── lib.rs            # Module declarations
 │       ├── cli.rs            # `Cli` — 17 CLI flags with clap
-│       ├── app.rs            # `App` — runtime state, build/run orchestration
+│       ├── app.rs            # `App` — runtime state, build/run orchestration, extension loading
 │       ├── model.rs          # Model resolution + interactive picker
+│       ├── ext_observer.rs   # `CompositeObserver` — fans out to REPL/RPC + extension observers
 │       ├── gate.rs           # Approval gate module root
 │       ├── gate/
 │       │   └── interactive.rs  # `ReplApprovalGate` — y/N from stdin
-│       ├── rpc.rs            # RPC mode: `run_rpc`, `run_rpc_on`, observer, approval gate (68 tests)
-│       ├── repl.rs           # `run_repl()` — REPL loop
+│       ├── rpc.rs            # RPC mode: `run_rpc`, `run_rpc_on`, observer, approval gate
+│       ├── repl.rs           # `run_repl()` — REPL loop with `/reload`, `/extensions`
 │       ├── presenter.rs      # Presenter module root
 │       ├── presenter/
 │       │   ├── repl.rs       # `ReplPresenter` — all REPL terminal output
 │       │   └── rpc.rs        # `RpcPresenter` — startup output for RPC mode
+├── rho-ai/                 # Unified LLM provider abstraction
+│   └── src/
+│       ├── lib.rs           # Re-exports: `LlmService`, `EventStream`, unified types
+│       ├── service.rs       # `LlmService` trait
+│       ├── openai.rs        # `OpenAiService` — OpenAI-compatible HTTP + SSE
+│       ├── sse.rs           # Server-sent event parser
+│       ├── retry.rs         # Exponential backoff retry logic
+│       ├── types.rs         # `LlmMessage`, `LlmRequest`, `StreamEvent`, `AccumulatedResponse`
+│       └── error.rs         # `ProviderError`
+├── rho-ext/                # TypeScript extension runtime (V8/deno-core)
+│   ├── src/
+│   │   ├── lib.rs          # Re-exports: `ExtensionLoader`, `DenoTool`, `DenoObserver`, etc.
+│   │   ├── runtime.rs      # `ExtensionRuntime` — V8 isolate on dedicated OS thread
+│   │   ├── loader.rs       # `ExtensionLoader` — discovery, filtering, spawning, hot reload
+│   │   ├── deno_tool.rs    # `DenoTool` — `Tool` trait wrapper
+│   │   ├── deno_observer.rs# `DenoObserver` — `AgentObserver` wrapper
+│   │   ├── manifest.rs     # `LoadedExtension` — manifest parsing and validation
+│   │   ├── discover.rs     # Extension discovery (single-file and multi-file)
+│   │   ├── transpile.rs    # TS → JS transpilation
+│   │   ├── module_loader.rs# `RhoModuleLoader` — ESM module resolution
+│   │   ├── host.rs         # `rho.*` host ops (log, readFile, writeFile, runCommand, getModel, getCwd)
+│   │   ├── host_shim.js    # ESM shim for extension module loading
+│   │   ├── error.rs        # `ExtensionError`
+│   │   └── spike.rs        # Original spike validation code
+│   └── types/
+│       └── rho.d.ts        # TypeScript type definitions for extension authors
 ├── rho-core/                # Agent kernel
 │   └── src/
 │       ├── lib.rs           # Module declarations, convenience re-exports
