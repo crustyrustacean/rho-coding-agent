@@ -101,4 +101,19 @@ globalThis.rho = {
     const result = unwrapResult(ops.op_rho_run_command(cmd, argsJson));
     return JSON.parse(result);
   },
+
+  /**
+   * Fetch a URL and return the response.
+   *
+   * Requires the `network = true` permission in the extension config.
+   *
+   * @param {{ url: string, method?: string, headers?: Record<string,string>, body?: string, max_bytes?: number }} opts
+   * @returns {{ status: number, headers: Record<string,string>, body: string }}
+   * @throws {Error} If the extension lacks network permission or the request fails.
+   */
+  fetchUrl(opts) {
+    const optsJson = typeof opts === "string" ? opts : JSON.stringify(opts);
+    const result = unwrapResult(ops.op_rho_fetch_url(optsJson));
+    return JSON.parse(result);
+  },
 };

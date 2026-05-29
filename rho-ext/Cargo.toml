@@ -16,6 +16,7 @@ deno_ast = { version = "0.53.2", features = [ "transpiling" ] }
 deno_core = "0.401.0"
 deno_error = "0.7.1"
 rho-core = { path = "../rho-core" }
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

@@ -15,9 +15,11 @@
 //! | `rho.writeFile(path, content)` | `op_rho_write_file` | Write a file within sandbox |
 //! | `rho.runCommand(cmd, args)` | `op_rho_run_command` | Run a shell command (if permitted) |
 //! | `rho.getModel()` | `op_rho_get_model` | Return the currently active model name |
+//! | `rho.fetchUrl(opts)` | `op_rho_fetch_url` | Make an HTTP request (if permitted) |
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use deno_core::{OpState, op2};
 
@@ -45,6 +47,11 @@ pub struct HostState {
     /// Defaults to `false`. Must be explicitly enabled via the `commands = true`
     /// permission in the extension config.
     pub allow_commands: bool,
+    /// Whether the extension is allowed to make HTTP requests via `rho.fetchUrl`.
+    ///
+    /// Defaults to `false`. Must be explicitly enabled via the `network = true`
+    /// permission in the extension config.
+    pub allow_network: bool,
     /// The name of the currently active model.
     ///
     /// Shared via `Arc<Mutex<String>>` so that the agent loop can update it
@@ -74,7 +81,7 @@ impl HostState {
         extra_allowed: Vec<PathBuf>,
         allow_commands: bool,
     ) -> Self {
-        Self::new_with_model(cwd, extra_allowed, allow_commands, String::new())
+        Self::new_with_network(cwd, extra_allowed, allow_commands, false, String::new())
     }
 
     /// Create a new `HostState` with full control, including the model name.
@@ -84,6 +91,17 @@ impl HostState {
         cwd: PathBuf,
         extra_allowed: Vec<PathBuf>,
         allow_commands: bool,
+        model: String,
+    ) -> Self {
+        Self::new_with_network(cwd, extra_allowed, allow_commands, false, model)
+    }
+
+    /// Create a new `HostState` with full control, including network permission.
+    pub fn new_with_network(
+        cwd: PathBuf,
+        extra_allowed: Vec<PathBuf>,
+        allow_commands: bool,
+        allow_network: bool,
         model: String,
     ) -> Self {
         let mut allowed = Vec::new();
@@ -109,6 +127,7 @@ impl HostState {
             cwd,
             allowed_paths: allowed,
             allow_commands,
+            allow_network,
             model: Arc::new(Mutex::new(model)),
         }
     }
@@ -121,6 +140,13 @@ impl HostState {
     #[must_use]
     pub fn with_model(self, model: impl Into<String>) -> Self {
         *self.model.lock().expect("HostState model lock poisoned") = model.into();
+        self
+    }
+
+    /// Builder: enable or disable network access.
+    #[must_use]
+    pub fn with_network(mut self, allow: bool) -> Self {
+        self.allow_network = allow;
         self
     }
 
@@ -436,6 +462,197 @@ pub fn op_rho_run_command(
     }
 }
 
+// ── HTTP executor ───────────────────────────────────────────────────────────
+
+/// Background HTTP request executor.
+///
+/// A dedicated thread running a multi-threaded tokio runtime + reqwest client.
+/// This is needed because `deno_core::JsRuntime` is `!Send`, so the extension
+/// thread uses `LocalSet`. The op itself is synchronous (V8 callbacks are
+/// `extern "C"` and cannot be async), so we dispatch the HTTP request to this
+/// background thread and block waiting for the result.
+struct HttpExecutor {
+    /// Channel sender for dispatching HTTP requests.
+    tx: std::sync::mpsc::Sender<HttpRequest>,
+}
+
+/// An HTTP request to be executed on the background executor.
+struct HttpRequest {
+    /// The reqwest request to execute.
+    request: reqwest::Request,
+    /// Maximum response body size in bytes.
+    max_bytes: u64,
+    /// Channel to send the result back.
+    reply: std::sync::mpsc::Sender<Result<String, String>>,
+}
+
+/// Get or create the global background HTTP executor.
+fn http_executor() -> &'static HttpExecutor {
+    static EXECUTOR: std::sync::OnceLock<HttpExecutor> = std::sync::OnceLock::new();
+    EXECUTOR.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::channel::<HttpRequest>();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new()
+                .expect("failed to create background HTTP runtime");
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .no_proxy()
+                .build()
+                .expect("failed to create reqwest client");
+            while let Ok(req) = rx.recv() {
+                let HttpRequest {
+                    request,
+                    max_bytes,
+                    reply,
+                } = req;
+                let client = client.clone();
+                rt.spawn(async move {
+                    let result = async {
+                        let response =
+                            client.execute(request).await.map_err(|e| e.to_string())?;
+                        let status = response.status().as_u16();
+                        let mut headers_map = serde_json::Map::new();
+                        for (key, value) in response.headers() {
+                            if let Ok(v) = value.to_str() {
+                                headers_map.insert(
+                                    key.as_str().to_string(),
+                                    serde_json::Value::String(v.to_string()),
+                                );
+                            }
+                        }
+                        let body_bytes = response
+                            .bytes()
+                            .await
+                            .map_err(|e| e.to_string())?;
+                        if body_bytes.len()
+                            > usize::try_from(max_bytes).unwrap_or(usize::MAX)
+                        {
+                            return Err(format!(
+                                "response body too large ({} bytes, max {max_bytes})",
+                                body_bytes.len()
+                            ));
+                        }
+                        let body_text =
+                            String::from_utf8_lossy(&body_bytes).into_owned();
+                        serde_json::to_string(&serde_json::json!({
+                            "status": status,
+                            "headers": headers_map,
+                            "body": body_text,
+                        }))
+                        .map_err(|e| e.to_string())
+                    }
+                    .await;
+                    let _ = reply.send(result);
+                });
+            }
+        });
+        HttpExecutor { tx }
+    })
+}
+
+/// Make an HTTP request from an extension (if permitted).
+///
+/// Accepts a JSON options object with:
+/// - `url` (required): The URL to fetch.
+/// - `method` (optional): HTTP method, defaults to `"GET"`.
+/// - `headers` (optional): Object of header name → value strings.
+/// - `body` (optional): Request body string.
+/// - `max_bytes` (optional): Maximum response body size in bytes (default 10 MiB).
+///
+/// Returns a JSON object `{ "status": N, "headers": {...}, "body": "..." }`,
+/// or an error string starting with `__ERROR__`.
+#[op2]
+#[string]
+fn op_rho_fetch_url(state: &mut OpState, #[string] opts_json: &str) -> String {
+    let allow = state
+        .try_borrow::<HostState>()
+        .is_some_and(|h| h.allow_network);
+    if !allow {
+        return "__ERROR__rho.fetchUrl: extension does not have network permission \
+             (enable with `network = true` in config)"
+            .to_string();
+    }
+
+    let Some(url_str) = parse_field(opts_json, "url") else {
+        return "__ERROR__rho.fetchUrl: missing 'url' field".to_string();
+    };
+
+    let opts: serde_json::Value = serde_json::from_str(opts_json).unwrap_or_default();
+    let method = opts["method"].as_str().unwrap_or("GET");
+    let max_bytes = opts["max_bytes"].as_u64().unwrap_or(10 * 1024 * 1024);
+    let body = opts["body"].as_str().unwrap_or("");
+
+    let req = match build_fetch_request(&url_str, method, body, &opts) {
+        Ok(r) => r,
+        Err(e) => return format!("__ERROR__rho.fetchUrl: {e}"),
+    };
+
+    let executor = http_executor();
+    let (reply_tx, reply_rx) = std::sync::mpsc::channel();
+    executor
+        .tx
+        .send(HttpRequest {
+            request: req,
+            max_bytes,
+            reply: reply_tx,
+        })
+        .unwrap_or_else(|_| panic!("background HTTP executor thread has shut down"));
+
+    match reply_rx.recv() {
+        Ok(Ok(json)) => json,
+        Ok(Err(e)) => format!("__ERROR__rho.fetchUrl: {e}"),
+        Err(_) => "__ERROR__rho.fetchUrl: background executor shut down".to_string(),
+    }
+}
+
+/// Parse a string field from a JSON object.
+fn parse_field(json: &str, field: &str) -> Option<String> {
+    let opts: serde_json::Value = serde_json::from_str(json).ok()?;
+    opts[field].as_str().map(String::from)
+}
+
+/// Build a `reqwest::Request` from the given parameters.
+///
+/// Validates the URL scheme (http/https only) and the HTTP method.
+/// Applies custom headers from the `opts` JSON object.
+fn build_fetch_request(
+    url_str: &str,
+    method: &str,
+    body: &str,
+    opts: &serde_json::Value,
+) -> Result<reqwest::Request, String> {
+    let parsed_url = url::Url::parse(url_str).map_err(|e| format!("invalid URL: {e}"))?;
+    if !matches!(parsed_url.scheme(), "http" | "https") {
+        return Err(format!(
+            "unsupported URL scheme '{}' (only http and https are allowed)",
+            parsed_url.scheme()
+        ));
+    }
+
+    let method = reqwest::Method::from_bytes(method.as_bytes())
+        .map_err(|e| format!("invalid HTTP method: {e}"))?;
+
+    let mut req_builder = reqwest::Request::new(method, parsed_url);
+
+    if !body.is_empty() {
+        *req_builder.body_mut() = Some(reqwest::Body::from(body.to_string()));
+    }
+
+    if let Some(headers) = opts["headers"].as_object() {
+        for (key, value) in headers {
+            let Some(val_str) = value.as_str() else { continue };
+            let Ok(name) = reqwest::header::HeaderName::from_bytes(key.as_bytes()) else {
+                continue;
+            };
+            if let Ok(val) = reqwest::header::HeaderValue::from_str(val_str) {
+                req_builder.headers_mut().insert(name, val);
+            }
+        }
+    }
+
+    Ok(req_builder)
+}
+
 // ── Extension definition ─────────────────────────────────────────────────────
 
 // The `rho_host` deno_core extension.
@@ -446,7 +663,7 @@ pub fn op_rho_run_command(
 // Usage: `rho_host::init()` → add to `RuntimeOptions.extensions`.
 deno_core::extension!(
     rho_host,
-    ops = [op_rho_log, op_rho_get_cwd, op_rho_get_model, op_rho_read_file, op_rho_write_file, op_rho_run_command],
+    ops = [op_rho_log, op_rho_get_cwd, op_rho_get_model, op_rho_read_file, op_rho_write_file, op_rho_run_command, op_rho_fetch_url],
     esm_entry_point = "ext:rho_host/host_shim.js",
     esm = [ dir "src", "host_shim.js" ],
 );
@@ -605,6 +822,7 @@ mod tests {
             "readFile",
             "writeFile",
             "runCommand",
+            "fetchUrl",
         ] {
             let result = eval(&mut rt, &format!(r"typeof rho.{method}"));
             assert_eq!(result, "function", "rho.{method} should be a function");
@@ -976,6 +1194,7 @@ mod tests {
                 cwd: PathBuf::from("/tmp"),
                 allowed_paths: host_state.allowed_paths.clone(),
                 allow_commands: false,
+                allow_network: false,
                 model: model_clone,
             });
         }

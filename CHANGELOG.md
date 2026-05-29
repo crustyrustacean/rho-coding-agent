@@ -1,3 +1,16 @@
+## [0.52.0] - 2026-05-29
+
+### 🚀 Features
+
+- Add `rho.fetchUrl()` host op for HTTP requests from extensions (requires `network = true` permission)
+- Add `HttpExecutor` background thread for async I/O from synchronous V8 ops
+- Add `allow_network` permission to extension `HostState`
+
+### 🛠️ Fixes
+
+- Switch extension thread backing tokio runtime from `current_thread` to multi-threaded, fixing flaky async I/O (hyper cancels requests on `current_thread`)
+- Fix `web-fetch` extension calling `rho.fetchUrl()` which did not exist
+
 ## [0.51.0] - 2026-05-28
 
 ### 🚀 Features

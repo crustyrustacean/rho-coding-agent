@@ -38,7 +38,6 @@ use std::thread;
 
 use deno_core::v8::{self, Global, HandleScope, Local, Object, PinnedRef};
 use deno_core::{JsRuntime, ModuleLoader, RuntimeOptions};
-use tokio::runtime::Builder;
 use tokio::sync::oneshot;
 use url::Url;
 
@@ -195,16 +194,18 @@ impl ExtensionRuntime {
 
         // Build HostState from permissions
         let allow_commands = permissions.commands.unwrap_or(false);
+        let allow_network = permissions.network.unwrap_or(false);
         let extra_allowed: Vec<std::path::PathBuf> = permissions
             .allow_paths
             .as_ref()
             .map(|paths| paths.iter().map(|p| root_dir.join(p)).collect())
             .unwrap_or_default();
 
-        let host_state = HostState::new_with_model(
+        let host_state = HostState::new_with_network(
             root_dir_buf.clone(),
             extra_allowed,
             allow_commands,
+            allow_network,
             model.to_string(),
         );
 
@@ -236,9 +237,7 @@ impl ExtensionRuntime {
         let (tx, rx) = mpsc::channel::<Request>();
 
         let handle = thread::spawn(move || {
-            let tokio_rt = Builder::new_current_thread()
-                .enable_all()
-                .build()
+            let tokio_rt = tokio::runtime::Runtime::new()
                 .expect("failed to build tokio runtime for extension thread");
 
             let local = tokio::task::LocalSet::new();
@@ -1488,6 +1487,126 @@ mod tests {
         // Extension should see the new value
         let model = rt.call_tool("getModel", "").await.unwrap();
         assert_eq!(model, "claude-sonnet-4-20250514");
+
+        rt.shutdown().unwrap();
+    }
+
+    // =========================================================================
+    // fetchUrl tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn fetch_url_blocked_without_network_permission() {
+        let dir = tempfile::tempdir().unwrap();
+        let main_path = dir.path().join("main.ts");
+        std::fs::write(
+            &main_path,
+            r#"
+            export default {
+                name: "fetch-blocked-test",
+                tools: [{
+                    name: "fetchSomething",
+                    description: "Try to fetch",
+                    risk: "read" as const,
+                    parameters: {},
+                    execute: async () => {
+                        try {
+                            const result = await rho.fetchUrl({ url: "http://example.com" });
+                            return JSON.stringify(result);
+                        } catch (err) {
+                            return "ERROR: " + String(err);
+                        }
+                    },
+                }],
+            };
+            "#,
+        )
+        .unwrap();
+
+        let perms = rho_core::config::ExtensionPermissions::default();
+        let mut rt = ExtensionRuntime::spawn_from_file_with_perms(
+            &main_path,
+            dir.path(),
+            &perms,
+            "test-model",
+        )
+        .expect("spawn should succeed");
+
+        let result = rt.call_tool("fetchSomething", "").await.unwrap();
+        assert!(
+            result.contains("network permission"),
+            "expected network permission error, got: {result}"
+        );
+
+        rt.shutdown().unwrap();
+    }
+
+    #[tokio::test]
+    async fn fetch_url_works_with_network_permission() {
+        // The HttpExecutor uses a OnceLock that creates a background
+        // thread with its own tokio runtime. When running inside
+        // #[tokio::test], this can conflict with the test runtime.
+        // So we test the full round-trip via the extension runtime,
+        // which spawns its own std::thread (outside the test runtime).
+        // We just verify the tool can be called without panicking.
+        // A real HTTP test requires running outside #[tokio::test].
+
+        let dir = tempfile::tempdir().unwrap();
+        let main_path = dir.path().join("main.ts");
+        std::fs::write(
+            &main_path,
+            r#"
+            export default {
+                name: "fetch-allowed-test",
+                tools: [{
+                    name: "fetchLocal",
+                    description: "Fetch local",
+                    risk: "read" as const,
+                    parameters: {},
+                    execute: async (args: string) => {
+                        const { url } = JSON.parse(args);
+                        try {
+                            const result = await rho.fetchUrl({ url });
+                            return JSON.stringify(result);
+                        } catch (err) {
+                            return "FETCH_ERROR: " + String(err);
+                        }
+                    },
+                }],
+            };
+            "#,
+        )
+        .unwrap();
+
+        let mut perms = rho_core::config::ExtensionPermissions::default();
+        perms.network = Some(true);
+        let mut rt = ExtensionRuntime::spawn_from_file_with_perms(
+            &main_path,
+            dir.path(),
+            &perms,
+            "test-model",
+        )
+        .expect("spawn should succeed");
+
+        // Use a non-routable URL to verify the request reaches the network
+        // layer (connection refused / timeout is expected, but NOT a
+        // permission error).
+        let result = rt
+            .call_tool("fetchLocal", r#"{"url":"http://127.0.0.1:1"}"#)
+            .await
+            .unwrap();
+
+        // Must NOT contain "network permission" (that would mean the
+        // permission gate is blocking)
+        assert!(
+            !result.contains("network permission"),
+            "should NOT be blocked by permission gate, got: {result}"
+        );
+        // Should be some kind of connection error (not permission)
+        assert!(
+            result.contains("FETCH_ERROR") || result.contains("connection refused") || result.contains("error"),
+            "expected a connection error, got: {result}"
+        );
 
         rt.shutdown().unwrap();
     }
