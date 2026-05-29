@@ -7,6 +7,7 @@
 //! main TypeScript module. The manifest is parsed into [`LoadedExtension`]
 //! during spawn and is available via [`ExtensionRuntime::manifest`].
 
+pub mod async_dispatcher;
 pub mod deno_observer;
 pub mod deno_tool;
 pub mod discover;

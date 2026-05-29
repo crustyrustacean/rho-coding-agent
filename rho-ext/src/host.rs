@@ -462,91 +462,55 @@ pub fn op_rho_run_command(
     }
 }
 
-// ── HTTP executor ───────────────────────────────────────────────────────────
+// ── HTTP via AsyncDispatcher ──────────────────────────────────────────────
 
-/// Background HTTP request executor.
+/// Execute an HTTP request on the shared async dispatcher.
 ///
-/// A dedicated thread running a multi-threaded tokio runtime + reqwest client.
-/// This is needed because `deno_core::JsRuntime` is `!Send`, so the extension
-/// thread uses `LocalSet`. The op itself is synchronous (V8 callbacks are
-/// `extern "C"` and cannot be async), so we dispatch the HTTP request to this
-/// background thread and block waiting for the result.
-struct HttpExecutor {
-    /// Channel sender for dispatching HTTP requests.
-    tx: std::sync::mpsc::Sender<HttpRequest>,
-}
-
-/// An HTTP request to be executed on the background executor.
-struct HttpRequest {
-    /// The reqwest request to execute.
+/// Builds a reqwest client, executes the request, and returns the JSON response.
+/// This replaces the dedicated `HttpExecutor` thread — the shared
+/// [`AsyncDispatcher`](crate::async_dispatcher::AsyncDispatcher) handles
+/// the async-to-sync bridging.
+fn execute_http_request(
     request: reqwest::Request,
-    /// Maximum response body size in bytes.
     max_bytes: u64,
-    /// Channel to send the result back.
-    reply: std::sync::mpsc::Sender<Result<String, String>>,
-}
+) -> Result<String, String> {
+    let dispatcher = crate::async_dispatcher::AsyncDispatcher::global();
+    dispatcher.block_on(async move {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .no_proxy()
+            .build()
+            .map_err(|e| e.to_string())?;
 
-/// Get or create the global background HTTP executor.
-fn http_executor() -> &'static HttpExecutor {
-    static EXECUTOR: std::sync::OnceLock<HttpExecutor> = std::sync::OnceLock::new();
-    EXECUTOR.get_or_init(|| {
-        let (tx, rx) = std::sync::mpsc::channel::<HttpRequest>();
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new()
-                .expect("failed to create background HTTP runtime");
-            let client = reqwest::Client::builder()
-                .timeout(Duration::from_secs(30))
-                .no_proxy()
-                .build()
-                .expect("failed to create reqwest client");
-            while let Ok(req) = rx.recv() {
-                let HttpRequest {
-                    request,
-                    max_bytes,
-                    reply,
-                } = req;
-                let client = client.clone();
-                rt.spawn(async move {
-                    let result = async {
-                        let response =
-                            client.execute(request).await.map_err(|e| e.to_string())?;
-                        let status = response.status().as_u16();
-                        let mut headers_map = serde_json::Map::new();
-                        for (key, value) in response.headers() {
-                            if let Ok(v) = value.to_str() {
-                                headers_map.insert(
-                                    key.as_str().to_string(),
-                                    serde_json::Value::String(v.to_string()),
-                                );
-                            }
-                        }
-                        let body_bytes = response
-                            .bytes()
-                            .await
-                            .map_err(|e| e.to_string())?;
-                        if body_bytes.len()
-                            > usize::try_from(max_bytes).unwrap_or(usize::MAX)
-                        {
-                            return Err(format!(
-                                "response body too large ({} bytes, max {max_bytes})",
-                                body_bytes.len()
-                            ));
-                        }
-                        let body_text =
-                            String::from_utf8_lossy(&body_bytes).into_owned();
-                        serde_json::to_string(&serde_json::json!({
-                            "status": status,
-                            "headers": headers_map,
-                            "body": body_text,
-                        }))
-                        .map_err(|e| e.to_string())
-                    }
-                    .await;
-                    let _ = reply.send(result);
-                });
+        let response = client.execute(request).await.map_err(|e| e.to_string())?;
+        let status = response.status().as_u16();
+
+        let mut headers_map = serde_json::Map::new();
+        for (key, value) in response.headers() {
+            if let Ok(v) = value.to_str() {
+                headers_map.insert(
+                    key.as_str().to_string(),
+                    serde_json::Value::String(v.to_string()),
+                );
             }
-        });
-        HttpExecutor { tx }
+        }
+
+        let body_bytes = response.bytes().await.map_err(|e| e.to_string())?;
+        if body_bytes.len() > usize::try_from(max_bytes).unwrap_or(usize::MAX) {
+            return Err(format!(
+                "response body too large ({} bytes, max {max_bytes})",
+                body_bytes.len()
+            ));
+        }
+
+        let body_text = String::from_utf8_lossy(&body_bytes).into_owned();
+
+        serde_json::to_string(&serde_json::json!({
+            "status": status,
+            "headers": headers_map,
+            "body": body_text,
+        }))
+        .map_err(|e| e.to_string())
     })
 }
 
@@ -587,21 +551,9 @@ fn op_rho_fetch_url(state: &mut OpState, #[string] opts_json: &str) -> String {
         Err(e) => return format!("__ERROR__rho.fetchUrl: {e}"),
     };
 
-    let executor = http_executor();
-    let (reply_tx, reply_rx) = std::sync::mpsc::channel();
-    executor
-        .tx
-        .send(HttpRequest {
-            request: req,
-            max_bytes,
-            reply: reply_tx,
-        })
-        .unwrap_or_else(|_| panic!("background HTTP executor thread has shut down"));
-
-    match reply_rx.recv() {
-        Ok(Ok(json)) => json,
-        Ok(Err(e)) => format!("__ERROR__rho.fetchUrl: {e}"),
-        Err(_) => "__ERROR__rho.fetchUrl: background executor shut down".to_string(),
+    match execute_http_request(req, max_bytes) {
+        Ok(json) => json,
+        Err(e) => format!("__ERROR__rho.fetchUrl: {e}"),
     }
 }
 
