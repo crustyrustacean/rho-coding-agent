@@ -24,6 +24,9 @@ use std::time::Duration;
 use deno_core::{OpState, op2};
 use url::Url;
 
+// Import Phase 3 boilerplate-reduction macros.
+use crate::{err, json, require_perm, require_field};
+
 /// Maximum file size that `readFile` will return (1 MiB).
 const MAX_READ_BYTES: u64 = 1024 * 1024;
 
@@ -320,38 +323,29 @@ pub fn op_rho_read_file(state: &mut OpState, #[string] path: &str) -> String {
         let host = state.borrow::<HostState>();
         match host.resolve_and_check(path) {
             Ok(p) => p,
-            Err(e) => return format!("__ERROR__{e}"),
+            Err(e) => return err!("{e}"),
         }
     };
 
     // Check file size
     match std::fs::metadata(&canonical) {
-        Ok(meta) => {
-            if meta.len() > MAX_READ_BYTES {
-                return format!(
-                    "__ERROR__rho.readFile: file '{}' is too large ({} bytes, max {MAX_READ_BYTES})",
-                    canonical.display(),
-                    meta.len()
-                );
-            }
-        }
-        Err(e) => {
-            return format!(
-                "__ERROR__rho.readFile: cannot stat '{}': {e}",
-                canonical.display()
+        Ok(meta) if meta.len() > MAX_READ_BYTES => {
+            return err!(
+                "rho.readFile: file '{}' is too large ({} bytes, max {MAX_READ_BYTES})",
+                canonical.display(),
+                meta.len()
             );
         }
+        Err(e) => {
+            return err!("rho.readFile: cannot stat '{}': {e}", canonical.display());
+        }
+        _ => {}
     }
 
     // Read file
     match std::fs::read_to_string(&canonical) {
         Ok(content) => content,
-        Err(e) => {
-            format!(
-                "__ERROR__rho.readFile: cannot read '{}': {e}",
-                canonical.display()
-            )
-        }
+        Err(e) => err!("rho.readFile: cannot read '{}': {e}", canonical.display()),
     }
 }
 
@@ -373,7 +367,7 @@ pub fn op_rho_write_file(
         let host = state.borrow::<HostState>();
         match host.resolve_and_check_write(path) {
             Ok(p) => p,
-            Err(e) => return format!("__ERROR__{e}"),
+            Err(e) => return err!("{e}"),
         }
     };
 
@@ -381,8 +375,8 @@ pub fn op_rho_write_file(
     if let Some(parent) = absolute.parent()
         && let Err(e) = std::fs::create_dir_all(parent)
     {
-        return format!(
-            "__ERROR__rho.writeFile: cannot create parent directory '{}': {e}",
+        return err!(
+            "rho.writeFile: cannot create parent directory '{}': {e}",
             parent.display()
         );
     }
@@ -390,19 +384,13 @@ pub fn op_rho_write_file(
     // Write file
     match std::fs::write(&absolute, content) {
         Ok(()) => "ok".to_string(),
-        Err(e) => {
-            format!(
-                "__ERROR__rho.writeFile: cannot write '{}': {e}",
-                absolute.display()
-            )
-        }
+        Err(e) => err!("rho.writeFile: cannot write '{}': {e}", absolute.display()),
     }
 }
 
 /// `rho.runCommand(cmd, args)` — run a shell command and return its output.
 ///
 /// Requires the `commands` permission to be enabled in the extension config.
-/// If the extension does not have this permission, an error is returned.
 ///
 /// `cmd` is the command to execute (e.g. `"git"`, `"npm"`).
 /// `args_json` is a JSON-encoded array of string arguments, or an empty string
@@ -417,49 +405,27 @@ pub fn op_rho_run_command(
     #[string] cmd: &str,
     #[string] args_json: &str,
 ) -> String {
-    // 1. Permission check
-    let allow = state
-        .try_borrow::<HostState>()
-        .is_some_and(|h| h.allow_commands);
+    require_perm!(state, allow_commands, "command execution");
 
-    if !allow {
-        return "__ERROR__rho.runCommand: extension does not have command execution permission \
-             (enable with `commands = true` in config)"
-            .to_string();
-    }
-
-    // 2. Parse args
+    // Parse args
     let args: Vec<String> = if args_json.is_empty() {
         vec![]
     } else {
         match serde_json::from_str(args_json) {
             Ok(a) => a,
-            Err(e) => {
-                return format!("__ERROR__rho.runCommand: invalid args JSON: {e}");
-            }
+            Err(e) => return err!("invalid args JSON: {e}"),
         }
     };
 
-    // 3. Execute command
+    // Execute command
     match std::process::Command::new(cmd).args(&args).output() {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
             let exit_code = output.status.code().unwrap_or(-1);
-
-            // Build JSON result
-            match serde_json::to_string(&serde_json::json!({
-                "stdout": stdout,
-                "stderr": stderr,
-                "exitCode": exit_code,
-            })) {
-                Ok(json) => json,
-                Err(e) => format!("__ERROR__rho.runCommand: failed to serialise result: {e}"),
-            }
+            json!({ "stdout": stdout, "stderr": stderr, "exitCode": exit_code })
         }
-        Err(e) => {
-            format!("__ERROR__rho.runCommand: failed to execute '{cmd}': {e}")
-        }
+        Err(e) => err!("failed to execute '{cmd}': {e}"),
     }
 }
 
@@ -529,18 +495,8 @@ fn execute_http_request(
 #[op2]
 #[string]
 fn op_rho_fetch_url(state: &mut OpState, #[string] opts_json: &str) -> String {
-    let allow = state
-        .try_borrow::<HostState>()
-        .is_some_and(|h| h.allow_network);
-    if !allow {
-        return "__ERROR__rho.fetchUrl: extension does not have network permission \
-             (enable with `network = true` in config)"
-            .to_string();
-    }
-
-    let Some(url_str) = parse_field(opts_json, "url") else {
-        return "__ERROR__rho.fetchUrl: missing 'url' field".to_string();
-    };
+    require_perm!(state, allow_network, "network");
+    let url_str = require_field!(opts_json, "url");
 
     let opts: serde_json::Value = serde_json::from_str(opts_json).unwrap_or_default();
     let method = opts["method"].as_str().unwrap_or("GET");
@@ -549,16 +505,19 @@ fn op_rho_fetch_url(state: &mut OpState, #[string] opts_json: &str) -> String {
 
     let req = match build_fetch_request(&url_str, method, body, &opts) {
         Ok(r) => r,
-        Err(e) => return format!("__ERROR__rho.fetchUrl: {e}"),
+        Err(e) => return err!("{e}"),
     };
 
     match execute_http_request(req, max_bytes) {
         Ok(json) => json,
-        Err(e) => format!("__ERROR__rho.fetchUrl: {e}"),
+        Err(e) => err!("{e}"),
     }
 }
 
 /// Parse a string field from a JSON object.
+///
+/// Deprecated: use the [`require_field!`] macro instead.
+#[allow(dead_code)]
 fn parse_field(json: &str, field: &str) -> Option<String> {
     let opts: serde_json::Value = serde_json::from_str(json).ok()?;
     opts[field].as_str().map(String::from)
@@ -618,7 +577,7 @@ fn op_rho_url_parse(#[string] spec: &str, #[string] base: &str) -> String {
     let url_result = if !base.is_empty() {
         let base_url = match Url::parse(base) {
             Ok(u) => u,
-            Err(e) => return format!("__ERROR__invalid base URL: {e}"),
+            Err(e) => return err!("invalid base URL: {e}"),
         };
         base_url.join(spec)
     } else {
@@ -627,7 +586,7 @@ fn op_rho_url_parse(#[string] spec: &str, #[string] base: &str) -> String {
 
     let url = match url_result {
         Ok(u) => u,
-        Err(e) => return format!("__ERROR__invalid URL: {e}"),
+        Err(e) => return err!("invalid URL: {e}"),
     };
 
     let password = url.password().unwrap_or("").to_string();
@@ -645,7 +604,7 @@ fn op_rho_url_parse(#[string] spec: &str, #[string] base: &str) -> String {
         host_str.to_string()
     };
 
-    serde_json::json!({
+    json!({
         "href": url.as_str(),
         "protocol": format!("{}:", url.scheme()),
         "username": url.username(),
@@ -658,7 +617,6 @@ fn op_rho_url_parse(#[string] spec: &str, #[string] base: &str) -> String {
         "origin": url.origin().ascii_serialization(),
         "host": host_with_port,
     })
-    .to_string()
 }
 
 /// `op_rho_url_parse_search_params(input)` — parse a URL query string.
@@ -670,7 +628,7 @@ fn op_rho_url_parse_search_params(#[string] input: &str) -> String {
     let pairs: Vec<[String; 2]> = url::form_urlencoded::parse(input.as_bytes())
         .map(|(k, v)| [k.into_owned(), v.into_owned()])
         .collect();
-    serde_json::to_string(&pairs).unwrap_or_else(|_| "[]".to_string())
+    json!(pairs)
 }
 
 /// `op_rho_url_serialize_search_params(pairs_json)` — serialize key/value pairs.
