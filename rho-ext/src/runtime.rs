@@ -158,7 +158,7 @@ impl ExtensionRuntime {
     ///
     /// # Permission mapping
     ///
-    /// | Config field | HostState field |
+    /// | Config field | `HostState` field |
     /// |---|---|
     /// | `commands` | `allow_commands` |
     /// | `allow_paths` | `allowed_paths` (extra, beyond extension root) |
@@ -198,12 +198,7 @@ impl ExtensionRuntime {
         let extra_allowed: Vec<std::path::PathBuf> = permissions
             .allow_paths
             .as_ref()
-            .map(|paths| {
-                paths
-                    .iter()
-                    .map(|p| root_dir.join(p))
-                    .collect()
-            })
+            .map(|paths| paths.iter().map(|p| root_dir.join(p)).collect())
             .unwrap_or_default();
 
         let host_state = HostState::new_with_model(
@@ -231,10 +226,10 @@ impl ExtensionRuntime {
         // Clone the model Arc before moving host_state into the thread.
         // This gives the ExtensionRuntime handle a reference it can use
         // to update the model name from outside.
-        let model = host_state
-            .as_ref()
-            .map(|hs| crate::host::HostState::model_handle(hs))
-            .unwrap_or_else(|| Arc::new(Mutex::new(String::new())));
+        let model = host_state.as_ref().map_or_else(
+            || Arc::new(Mutex::new(String::new())),
+            crate::host::HostState::model_handle,
+        );
 
         let (init_tx, init_rx) =
             std::sync::mpsc::channel::<Result<LoadedExtension, ExtensionError>>();
@@ -413,6 +408,10 @@ impl ExtensionRuntime {
     ///
     /// This is a convenience method that locks the shared model handle
     /// and updates the value. It is safe to call from any thread.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal model mutex is poisoned.
     pub fn set_model(&self, model: impl Into<String>) {
         *self.model.lock().expect("model lock poisoned") = model.into();
     }
@@ -1210,7 +1209,7 @@ mod tests {
         // helper.ts
         std::fs::write(
             dir.path().join("helper.ts"),
-            r#"export function add(a: number, b: number): number { return a + b; }"#,
+            r"export function add(a: number, b: number): number { return a + b; }",
         )
         .unwrap();
 
@@ -1264,7 +1263,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let main_path = dir.path().join("main.ts");
         // No default export
-        std::fs::write(&main_path, r#"export function foo() { return 1; }"#).unwrap();
+        std::fs::write(&main_path, r"export function foo() { return 1; }").unwrap();
 
         let result = ExtensionRuntime::spawn_from_file(&main_path, dir.path());
         assert!(result.is_err(), "should fail for missing default export");
@@ -1475,13 +1474,9 @@ mod tests {
         .unwrap();
 
         let perms = rho_core::config::ExtensionPermissions::default();
-        let mut rt = ExtensionRuntime::spawn_from_file_with_perms(
-            &main_path,
-            dir.path(),
-            &perms,
-            "gpt-4o",
-        )
-        .expect("spawn should succeed");
+        let mut rt =
+            ExtensionRuntime::spawn_from_file_with_perms(&main_path, dir.path(), &perms, "gpt-4o")
+                .expect("spawn should succeed");
 
         // Initial model
         let model = rt.call_tool("getModel", "").await.unwrap();

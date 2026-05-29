@@ -39,7 +39,7 @@ mod tests {
 
     #[test]
     fn transpile_strips_types() {
-        let ts = r#"export async function greet(name: string): Promise<string> { return `Hello, ${name}!`; }"#;
+        let ts = r"export async function greet(name: string): Promise<string> { return `Hello, ${name}!`; }";
         let js = transpile(&Url::parse("file:///test.ts").unwrap(), ts).unwrap();
         // TypeScript annotations should be gone
         assert!(!js.contains(": string"));
@@ -48,7 +48,7 @@ mod tests {
 
     #[test]
     fn transpile_rejects_invalid_syntax() {
-        let bad = r#"export function {{{("#;
+        let bad = r"export function {{{(";
         let result = transpile(&Url::parse("file:///bad.ts").unwrap(), bad);
         assert!(result.is_err());
     }

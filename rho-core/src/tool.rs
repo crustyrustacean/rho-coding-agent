@@ -199,7 +199,7 @@ impl ToolRegistry {
     /// that name existed.
     ///
     /// This is used by the hot-reload system to remove stale extension
-       /// tools before re-registering updated versions.
+    /// tools before re-registering updated versions.
     pub fn unregister(&mut self, name: &ToolName) -> bool {
         let len_before = self.tools.len();
         self.tools.retain(|t| t.name() != *name);

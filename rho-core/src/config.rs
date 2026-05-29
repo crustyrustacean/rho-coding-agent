@@ -443,7 +443,7 @@ impl ExtensionConfig {
                 perms.max_execution_time_s = override_perms.max_execution_time_s;
             }
             if override_perms.allow_paths.is_some() {
-                perms.allow_paths = override_perms.allow_paths.clone();
+                perms.allow_paths.clone_from(&override_perms.allow_paths);
             }
         }
         perms
@@ -737,10 +737,7 @@ impl ConfigLoader {
                     enabled: pe.enabled.or(ue.enabled).unwrap_or_default(),
                     disabled: pe.disabled.or(ue.disabled).unwrap_or_default(),
                     defaults: merge_permissions(user_defaults, project_defaults),
-                    per_extension: pe
-                        .per_extension
-                        .or(ue.per_extension)
-                        .unwrap_or_default(),
+                    per_extension: pe.per_extension.or(ue.per_extension).unwrap_or_default(),
                 }
             },
         }
@@ -800,7 +797,10 @@ pub fn user_config_path() -> PathBuf {
 ///
 /// Project-level fields override user-level fields. `None` fields fall
 /// through to the other tier.
-fn merge_permissions(user: ExtensionPermissions, project: ExtensionPermissions) -> ExtensionPermissions {
+fn merge_permissions(
+    user: ExtensionPermissions,
+    project: ExtensionPermissions,
+) -> ExtensionPermissions {
     ExtensionPermissions {
         network: project.network.or(user.network),
         commands: project.commands.or(user.commands),
@@ -1716,7 +1716,10 @@ max_memory_mb = 128
 
                 let config = ConfigLoader::load(dir.path()).unwrap();
 
-                assert_eq!(config.extensions.enabled, vec!["crates-search", "rust-docs"]);
+                assert_eq!(
+                    config.extensions.enabled,
+                    vec!["crates-search", "rust-docs"]
+                );
                 assert_eq!(config.extensions.disabled, vec!["experimental"]);
                 assert_eq!(config.extensions.defaults.network, Some(true));
                 assert_eq!(config.extensions.defaults.max_memory_mb, Some(64));
@@ -1756,7 +1759,10 @@ max_memory_mb = 128
         let config = ConfigLoader::merge(Some(user_wire), Some(project_wire));
 
         // Project enabled replaces user enabled (Vec replacement semantics)
-        assert_eq!(config.extensions.enabled, vec!["crates-search", "rust-docs"]);
+        assert_eq!(
+            config.extensions.enabled,
+            vec!["crates-search", "rust-docs"]
+        );
         // Project disabled replaces user disabled
         assert_eq!(config.extensions.disabled, vec!["experimental"]);
         // Project defaults override user defaults

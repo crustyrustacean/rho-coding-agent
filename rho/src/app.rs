@@ -184,6 +184,7 @@ impl App {
             cancel: Cancel::new(),
             ext_loader,
             ext_observers,
+            #[allow(clippy::used_underscore_binding)]
             _log_guard,
         })
     }

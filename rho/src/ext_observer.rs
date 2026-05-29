@@ -5,15 +5,16 @@
 //! and any extension observers. [`CompositeObserver`] holds a list of
 //! observers and fans out every call.
 
+use rho_core::AgentObserver;
 use rho_core::agent::{AgentState, InterceptResult};
 use rho_core::tool::{ToolResult, ToolRisk};
-use rho_core::AgentObserver;
 
 /// An [`AgentObserver`] that delegates to zero or more inner observers.
 ///
 /// For interception, the **first `Block` wins** — if any observer blocks
 /// a tool call, the call is denied immediately.
 pub struct CompositeObserver<'a> {
+    /// Inner observers.
     observers: Vec<&'a dyn AgentObserver>,
 }
 
@@ -63,7 +64,7 @@ impl AgentObserver for CompositeObserver<'_> {
 
     fn on_approval_requested(&self, tool_name: &str, risk: ToolRisk) {
         for obs in &self.observers {
-            obs.on_approval_requested(tool_name, risk.clone());
+            obs.on_approval_requested(tool_name, risk);
         }
     }
 

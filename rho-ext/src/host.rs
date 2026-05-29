@@ -97,10 +97,10 @@ impl HostState {
 
         // Add extra allowed paths
         for p in extra_allowed {
-            if let Ok(canonical) = p.canonicalize() {
-                if !allowed.contains(&canonical) {
-                    allowed.push(canonical);
-                }
+            if let Ok(canonical) = p.canonicalize()
+                && !allowed.contains(&canonical)
+            {
+                allowed.push(canonical);
             }
             // Non-existent paths are silently skipped
         }
@@ -114,6 +114,10 @@ impl HostState {
     }
 
     /// Builder: set the model name.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal mutex is poisoned.
     #[must_use]
     pub fn with_model(self, model: impl Into<String>) -> Self {
         *self.model.lock().expect("HostState model lock poisoned") = model.into();
@@ -152,7 +156,10 @@ impl HostState {
         })?;
 
         // Sandbox check: canonical path must be within an allowed root
-        let is_allowed = self.allowed_paths.iter().any(|root| canonical.starts_with(root));
+        let is_allowed = self
+            .allowed_paths
+            .iter()
+            .any(|root| canonical.starts_with(root));
         if !is_allowed {
             return Err(format!(
                 "rho host: path '{}' is outside the extension sandbox",
@@ -193,21 +200,22 @@ impl HostState {
         let canonical_ancestor = loop {
             match check_dir.canonicalize() {
                 Ok(c) => break c,
-                Err(_) => {
-                    match check_dir.parent() {
-                        Some(parent) => check_dir = parent,
-                        None => {
-                            return Err(format!(
-                                "rho host: no existing ancestor directory for '{}'",
-                                absolute.display()
-                            ));
-                        }
+                Err(_) => match check_dir.parent() {
+                    Some(parent) => check_dir = parent,
+                    None => {
+                        return Err(format!(
+                            "rho host: no existing ancestor directory for '{}'",
+                            absolute.display()
+                        ));
                     }
-                }
+                },
             }
         };
 
-        let is_allowed = self.allowed_paths.iter().any(|root| canonical_ancestor.starts_with(root));
+        let is_allowed = self
+            .allowed_paths
+            .iter()
+            .any(|root| canonical_ancestor.starts_with(root));
         if !is_allowed {
             return Err(format!(
                 "rho host: path '{}' is outside the extension sandbox",
@@ -280,10 +288,10 @@ pub fn op_rho_get_model(state: &mut OpState) -> String {
 /// starting with `__ERROR__`.
 #[op2]
 #[string]
-pub fn op_rho_read_file(state: &mut OpState, #[string] path: String) -> String {
+pub fn op_rho_read_file(state: &mut OpState, #[string] path: &str) -> String {
     let canonical = {
         let host = state.borrow::<HostState>();
-        match host.resolve_and_check(&path) {
+        match host.resolve_and_check(path) {
             Ok(p) => p,
             Err(e) => return format!("__ERROR__{e}"),
         }
@@ -329,27 +337,31 @@ pub fn op_rho_read_file(state: &mut OpState, #[string] path: String) -> String {
 /// Returns `"ok"` on success, or an error string starting with `__ERROR__`.
 #[op2]
 #[string]
-pub fn op_rho_write_file(state: &mut OpState, #[string] path: String, #[string] content: String) -> String {
+pub fn op_rho_write_file(
+    state: &mut OpState,
+    #[string] path: &str,
+    #[string] content: &str,
+) -> String {
     let absolute = {
         let host = state.borrow::<HostState>();
-        match host.resolve_and_check_write(&path) {
+        match host.resolve_and_check_write(path) {
             Ok(p) => p,
             Err(e) => return format!("__ERROR__{e}"),
         }
     };
 
     // Create parent directories if needed
-    if let Some(parent) = absolute.parent() {
-        if let Err(e) = std::fs::create_dir_all(parent) {
-            return format!(
-                "__ERROR__rho.writeFile: cannot create parent directory '{}': {e}",
-                parent.display()
-            );
-        }
+    if let Some(parent) = absolute.parent()
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        return format!(
+            "__ERROR__rho.writeFile: cannot create parent directory '{}': {e}",
+            parent.display()
+        );
     }
 
     // Write file
-    match std::fs::write(&absolute, &content) {
+    match std::fs::write(&absolute, content) {
         Ok(()) => "ok".to_string(),
         Err(e) => {
             format!(
@@ -375,26 +387,25 @@ pub fn op_rho_write_file(state: &mut OpState, #[string] path: String, #[string] 
 #[string]
 pub fn op_rho_run_command(
     state: &mut OpState,
-    #[string] cmd: String,
-    #[string] args_json: String,
+    #[string] cmd: &str,
+    #[string] args_json: &str,
 ) -> String {
     // 1. Permission check
     let allow = state
         .try_borrow::<HostState>()
-        .map_or(false, |h| h.allow_commands);
+        .is_some_and(|h| h.allow_commands);
 
     if !allow {
-        return format!(
-            "__ERROR__rho.runCommand: extension does not have command execution permission \
+        return "__ERROR__rho.runCommand: extension does not have command execution permission \
              (enable with `commands = true` in config)"
-        );
+            .to_string();
     }
 
     // 2. Parse args
     let args: Vec<String> = if args_json.is_empty() {
         vec![]
     } else {
-        match serde_json::from_str(&args_json) {
+        match serde_json::from_str(args_json) {
             Ok(a) => a,
             Err(e) => {
                 return format!("__ERROR__rho.runCommand: invalid args JSON: {e}");
@@ -403,7 +414,7 @@ pub fn op_rho_run_command(
     };
 
     // 3. Execute command
-    match std::process::Command::new(&cmd).args(&args).output() {
+    match std::process::Command::new(cmd).args(&args).output() {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -447,23 +458,22 @@ mod tests {
     use super::*;
     use deno_core::JsRuntime;
 
-    /// Helper: create a JsRuntime with the rho_host extension + HostState.
+    /// Helper: create a `JsRuntime` with the `rho_host` extension + `HostState`.
     fn runtime_with_state(cwd: &str) -> JsRuntime {
-        let mut rt = JsRuntime::new(deno_core::RuntimeOptions {
+        let rt = JsRuntime::new(deno_core::RuntimeOptions {
             extensions: vec![super::rho_host::init()],
             ..Default::default()
         });
 
         // Inject HostState
-        rt.op_state().borrow_mut().put(HostState::new(
-            PathBuf::from(cwd),
-            vec![],
-        ));
+        rt.op_state()
+            .borrow_mut()
+            .put(HostState::new(PathBuf::from(cwd), vec![]));
 
         rt
     }
 
-    /// Helper: create a JsRuntime with the rho_host extension but no HostState.
+    /// Helper: create a `JsRuntime` with the `rho_host` extension but no `HostState`.
     fn runtime_without_state() -> JsRuntime {
         JsRuntime::new(deno_core::RuntimeOptions {
             extensions: vec![super::rho_host::init()],
@@ -549,7 +559,7 @@ mod tests {
     fn rho_log_accepts_all_levels() {
         let mut rt = runtime_with_state("/tmp");
         for level in &["trace", "debug", "info", "warn", "error"] {
-            eval(&mut rt, &format!(r#"rho.log("{}", "msg")"#, level));
+            eval(&mut rt, &format!(r#"rho.log("{level}", "msg")"#));
         }
     }
 
@@ -563,35 +573,41 @@ mod tests {
     #[test]
     fn rho_get_cwd_returns_injected_state() {
         let mut rt = runtime_with_state("/my/custom/dir");
-        let result = eval(&mut rt, r#"rho.getCwd()"#);
+        let result = eval(&mut rt, r"rho.getCwd()");
         assert_eq!(result, "/my/custom/dir");
     }
 
     #[test]
     fn rho_get_cwd_falls_back_without_state() {
         let mut rt = runtime_without_state();
-        let result = eval(&mut rt, r#"rho.getCwd()"#);
+        let result = eval(&mut rt, r"rho.getCwd()");
         // Should return some valid path string (current dir)
         assert!(
-            result.starts_with("/"),
-            "expected absolute path, got: {}",
-            result
+            result.starts_with('/'),
+            "expected absolute path, got: {result}"
         );
     }
 
     #[test]
     fn rho_global_is_defined() {
         let mut rt = runtime_with_state("/tmp");
-        let result = eval(&mut rt, r#"typeof rho"#);
+        let result = eval(&mut rt, r"typeof rho");
         assert_eq!(result, "object");
     }
 
     #[test]
     fn rho_global_has_expected_methods() {
         let mut rt = runtime_with_state("/tmp");
-        for method in &["log", "getCwd", "getModel", "readFile", "writeFile", "runCommand"] {
-            let result = eval(&mut rt, &format!(r#"typeof rho.{}"#, method));
-            assert_eq!(result, "function", "rho.{} should be a function", method);
+        for method in &[
+            "log",
+            "getCwd",
+            "getModel",
+            "readFile",
+            "writeFile",
+            "runCommand",
+        ] {
+            let result = eval(&mut rt, &format!(r"typeof rho.{method}"));
+            assert_eq!(result, "function", "rho.{method} should be a function");
         }
     }
 
@@ -614,7 +630,7 @@ mod tests {
         std::fs::write(&file_path, r#"{"key":"value"}"#).unwrap();
 
         let mut rt = runtime_with_state(dir.path().to_str().unwrap());
-        let code = format!(r#"rho.readFile('{}')"#, file_path.display());
+        let code = format!(r"rho.readFile('{}')", file_path.display());
         let result = eval(&mut rt, &code);
         assert_eq!(result, r#"{"key":"value"}"#);
     }
@@ -648,10 +664,16 @@ mod tests {
         std::fs::write(outside_dir.path().join("secret.txt"), "secret").unwrap();
 
         let mut rt = runtime_with_state(dir.path().to_str().unwrap());
-        let code = format!(r#"rho.readFile('{}')"#, outside_dir.path().join("secret.txt").display());
+        let code = format!(
+            r"rho.readFile('{}')",
+            outside_dir.path().join("secret.txt").display()
+        );
         let result = eval_or_error(&mut rt, &code);
         let err = result.unwrap_err();
-        assert!(err.contains("outside"), "expected sandbox error, got: {err}");
+        assert!(
+            err.contains("outside"),
+            "expected sandbox error, got: {err}"
+        );
     }
 
     #[test]
@@ -665,7 +687,10 @@ mod tests {
         let result = eval_or_error(&mut rt, r#"rho.readFile("../../etc/passwd")"#);
         let err = result.unwrap_err();
         // May hit "outside sandbox" or "cannot resolve" — both are fine
-        assert!(err.contains("outside") || err.contains("cannot resolve"), "expected sandbox error, got: {err}");
+        assert!(
+            err.contains("outside") || err.contains("cannot resolve"),
+            "expected sandbox error, got: {err}"
+        );
     }
 
     #[test]
@@ -685,7 +710,10 @@ mod tests {
             vec![dir2.path().to_path_buf()],
         ));
 
-        let code = format!(r#"rho.readFile('{}')"#, dir2.path().join("extra.txt").display());
+        let code = format!(
+            r"rho.readFile('{}')",
+            dir2.path().join("extra.txt").display()
+        );
         let result = eval(&mut rt, &code);
         assert_eq!(result, "extra content");
     }
@@ -698,7 +726,10 @@ mod tests {
 
         let mut rt = runtime_with_state(dir.path().to_str().unwrap());
         // writeFile returns undefined (void), just check no error
-        eval(&mut rt, r#"rho.writeFile("output.txt", "hello from write")"#);
+        eval(
+            &mut rt,
+            r#"rho.writeFile("output.txt", "hello from write")"#,
+        );
 
         let written = std::fs::read_to_string(dir.path().join("output.txt")).unwrap();
         assert_eq!(written, "hello from write");
@@ -721,7 +752,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
 
         let mut rt = runtime_with_state(dir.path().to_str().unwrap());
-        eval(&mut rt, r#"rho.writeFile("deep/nested/dir/file.txt", "deep content")"#);
+        eval(
+            &mut rt,
+            r#"rho.writeFile("deep/nested/dir/file.txt", "deep content")"#,
+        );
 
         let written = std::fs::read_to_string(dir.path().join("deep/nested/dir/file.txt")).unwrap();
         assert_eq!(written, "deep content");
@@ -746,10 +780,16 @@ mod tests {
         let outside_dir = tempfile::tempdir().unwrap();
 
         let mut rt = runtime_with_state(dir.path().to_str().unwrap());
-        let code = format!(r#"rho.writeFile('{}/evil.txt', "pwned")"#, outside_dir.path().display());
+        let code = format!(
+            r#"rho.writeFile('{}/evil.txt', "pwned")"#,
+            outside_dir.path().display()
+        );
         let result = eval_or_error(&mut rt, &code);
         let err = result.unwrap_err();
-        assert!(err.contains("outside"), "expected sandbox error, got: {err}");
+        assert!(
+            err.contains("outside"),
+            "expected sandbox error, got: {err}"
+        );
     }
 
     // ── round-trip test ─────────────────────────────────────────────────────
@@ -761,7 +801,10 @@ mod tests {
         let mut rt = runtime_with_state(dir.path().to_str().unwrap());
 
         // Write
-        eval(&mut rt, r#"rho.writeFile("roundtrip.json", JSON.stringify({a:1,b:2}))"#);
+        eval(
+            &mut rt,
+            r#"rho.writeFile("roundtrip.json", JSON.stringify({a:1,b:2}))"#,
+        );
 
         // Read back
         let result = eval(&mut rt, r#"rho.readFile("roundtrip.json")"#);
@@ -770,20 +813,20 @@ mod tests {
 
     // ── runCommand tests ────────────────────────────────────────────────────
 
-    /// Helper: create a JsRuntime with command execution enabled.
+    /// Helper: create a `JsRuntime` with command execution enabled.
     fn runtime_with_commands(cwd: &str) -> JsRuntime {
-        let mut rt = JsRuntime::new(deno_core::RuntimeOptions {
+        let rt = JsRuntime::new(deno_core::RuntimeOptions {
             extensions: vec![super::rho_host::init()],
             ..Default::default()
         });
 
-        rt.op_state().borrow_mut().put(
-            HostState::new_with_permissions(
+        rt.op_state()
+            .borrow_mut()
+            .put(HostState::new_with_permissions(
                 PathBuf::from(cwd),
                 vec![],
                 true, // allow_commands
-            ),
-        );
+            ));
 
         rt
     }
@@ -807,10 +850,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut rt = runtime_with_commands(dir.path().to_str().unwrap());
 
-        let result = eval(
-            &mut rt,
-            r#"JSON.stringify(rho.runCommand("echo"))"#,
-        );
+        let result = eval(&mut rt, r#"JSON.stringify(rho.runCommand("echo"))"#);
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["exitCode"], 0);
     }
@@ -848,10 +888,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut rt = runtime_with_commands(dir.path().to_str().unwrap());
 
-        let result = eval_or_error(
-            &mut rt,
-            r#"rho.runCommand("no_such_binary_xyz_123")"#,
-        );
+        let result = eval_or_error(&mut rt, r#"rho.runCommand("no_such_binary_xyz_123")"#);
         let err = result.unwrap_err();
         assert!(
             err.contains("failed to execute"),
@@ -865,10 +902,7 @@ mod tests {
         // Default runtime (no commands permission)
         let mut rt = runtime_with_state(dir.path().to_str().unwrap());
 
-        let result = eval_or_error(
-            &mut rt,
-            r#"rho.runCommand("echo", ["hello"])"#,
-        );
+        let result = eval_or_error(&mut rt, r#"rho.runCommand("echo", ["hello"])"#);
         let err = result.unwrap_err();
         assert!(
             err.contains("command execution permission"),
@@ -880,10 +914,7 @@ mod tests {
     fn run_command_blocked_without_host_state() {
         let mut rt = runtime_without_state();
 
-        let result = eval_or_error(
-            &mut rt,
-            r#"rho.runCommand("echo", ["hello"])"#,
-        );
+        let result = eval_or_error(&mut rt, r#"rho.runCommand("echo", ["hello"])"#);
         let err = result.unwrap_err();
         assert!(
             err.contains("command execution permission"),
@@ -900,30 +931,28 @@ mod tests {
             ..Default::default()
         });
 
-        rt.op_state().borrow_mut().put(
-            HostState::new_with_model(
-                PathBuf::from("/tmp"),
-                vec![],
-                false,
-                "claude-sonnet-4-20250514".to_string(),
-            ),
-        );
+        rt.op_state().borrow_mut().put(HostState::new_with_model(
+            PathBuf::from("/tmp"),
+            vec![],
+            false,
+            "claude-sonnet-4-20250514".to_string(),
+        ));
 
-        let result = eval(&mut rt, r#"rho.getModel()"#);
+        let result = eval(&mut rt, r"rho.getModel()");
         assert_eq!(result, "claude-sonnet-4-20250514");
     }
 
     #[test]
     fn get_model_returns_empty_without_host_state() {
         let mut rt = runtime_without_state();
-        let result = eval(&mut rt, r#"rho.getModel()"#);
+        let result = eval(&mut rt, r"rho.getModel()");
         assert_eq!(result, "");
     }
 
     #[test]
     fn get_model_returns_empty_by_default() {
         let mut rt = runtime_with_state("/tmp");
-        let result = eval(&mut rt, r#"rho.getModel()"#);
+        let result = eval(&mut rt, r"rho.getModel()");
         assert_eq!(result, "");
     }
 
@@ -938,12 +967,8 @@ mod tests {
         });
 
         // Build HostState with the shared model handle
-        let host_state = HostState::new_with_model(
-            PathBuf::from("/tmp"),
-            vec![],
-            false,
-            "gpt-4o".to_string(),
-        );
+        let host_state =
+            HostState::new_with_model(PathBuf::from("/tmp"), vec![], false, "gpt-4o".to_string());
         // We need to replace the model Arc with our shared one
         {
             let op_state = rt.op_state();
@@ -956,14 +981,14 @@ mod tests {
         }
 
         // Initial value
-        let result = eval(&mut rt, r#"rho.getModel()"#);
+        let result = eval(&mut rt, r"rho.getModel()");
         assert_eq!(result, "gpt-4o");
 
         // Update from outside
         *model.lock().unwrap() = "claude-sonnet-4-20250514".to_string();
 
         // Extension should see the new value
-        let result = eval(&mut rt, r#"rho.getModel()"#);
+        let result = eval(&mut rt, r"rho.getModel()");
         assert_eq!(result, "claude-sonnet-4-20250514");
     }
 }

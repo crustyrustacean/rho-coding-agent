@@ -118,7 +118,8 @@ impl ExtensionLoader {
     /// returns `Ok(())` as long as the discovery scan succeeds.
     pub fn load_all(&mut self, dirs: &[PathBuf]) -> Result<(), ExtensionError> {
         let extensions = discover_and_filter(dirs, &self.config)?;
-        self.spawn_extensions(extensions)
+        self.spawn_extensions(extensions);
+        Ok(())
     }
 
     /// Register all loaded extension tools into the given registry.
@@ -192,10 +193,8 @@ impl ExtensionLoader {
         let mut report = ReloadReport::default();
 
         // Build a map of fresh extensions for quick lookup.
-        let fresh_map: HashMap<String, DiscoveredExtension> = fresh
-            .into_iter()
-            .map(|e| (e.name.clone(), e))
-            .collect();
+        let fresh_map: HashMap<String, DiscoveredExtension> =
+            fresh.into_iter().map(|e| (e.name.clone(), e)).collect();
 
         // ── Phase 1: Remove extensions that are no longer discovered ──────
         let current_names: Vec<String> = self.loaded.keys().cloned().collect();
@@ -247,10 +246,10 @@ impl ExtensionLoader {
         for name in report.added.iter().chain(report.reloaded.iter()) {
             if let Some(state) = self.loaded.get(name) {
                 let rt = state.runtime.lock().await;
-                if rt.manifest().hooks.on_load.is_some() {
-                    if let Err(e) = rt.call_hook("onLoad", "").await {
-                        warn!(extension = %name, error = %e, "onLoad hook failed after reload");
-                    }
+                if rt.manifest().hooks.on_load.is_some()
+                    && let Err(e) = rt.call_hook("onLoad", "").await
+                {
+                    warn!(extension = %name, error = %e, "onLoad hook failed after reload");
                 }
             }
         }
@@ -272,7 +271,7 @@ impl ExtensionLoader {
 
     /// Shut down all loaded extensions.
     pub async fn shutdown_all(&mut self) {
-        for (name, mut state) in self.loaded.drain() {
+        for (name, state) in self.loaded.drain() {
             let mut rt = state.runtime.lock().await;
             if let Err(e) = rt.shutdown() {
                 warn!(extension = %name, error = %e, "shutdown failed");
@@ -311,6 +310,7 @@ impl ExtensionLoader {
     }
 
     /// Get a reference to the shared runtime for an extension.
+    #[allow(dead_code)]
     fn get_runtime(&self, name: &str) -> Option<Arc<Mutex<ExtensionRuntime>>> {
         self.loaded.get(name).map(|s| s.runtime.clone())
     }
@@ -358,8 +358,12 @@ impl ExtensionLoader {
         mtime: SystemTime,
     ) -> Result<(), ExtensionError> {
         let perms = self.config.permissions_for(name);
-        let rt =
-            ExtensionRuntime::spawn_from_file_with_perms(&disc.entry_path, &disc.root_dir, &perms, "")?;
+        let rt = ExtensionRuntime::spawn_from_file_with_perms(
+            &disc.entry_path,
+            &disc.root_dir,
+            &perms,
+            "",
+        )?;
 
         let manifest = rt.manifest().clone();
         let tool_names: Vec<String> = manifest.tools.iter().map(|t| t.name.clone()).collect();
@@ -380,10 +384,7 @@ impl ExtensionLoader {
     }
 
     /// Spawn multiple discovered extensions, logging failures.
-    fn spawn_extensions(
-        &mut self,
-        extensions: Vec<DiscoveredExtension>,
-    ) -> Result<(), ExtensionError> {
+    fn spawn_extensions(&mut self, extensions: Vec<DiscoveredExtension>) {
         for disc in extensions {
             let name = disc.name.clone();
             let mtime = mtime_of(&disc.entry_path);
@@ -421,7 +422,6 @@ impl ExtensionLoader {
                 }
             }
         }
-        Ok(())
     }
 }
 
@@ -432,9 +432,8 @@ fn discover_and_filter(
     dirs: &[PathBuf],
     config: &ExtensionConfig,
 ) -> Result<Vec<DiscoveredExtension>, ExtensionError> {
-    let discovered = discover::discover(dirs).map_err(|e| {
-        ExtensionError::ModuleLoad(format!("extension directory scan failed: {e}"))
-    })?;
+    let discovered = discover::discover(dirs)
+        .map_err(|e| ExtensionError::ModuleLoad(format!("extension directory scan failed: {e}")))?;
     let deduped = discover::deduplicate(discovered);
     let filtered = discover::filter_by_config(&deduped, config);
     Ok(filtered)
@@ -452,7 +451,6 @@ fn mtime_of(path: &std::path::Path) -> SystemTime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rho_core::config::ExtensionPermissions;
 
     /// Minimal TS extension source.
     const EXT_SOURCE: &str = r#"
@@ -654,7 +652,9 @@ mod tests {
     #[test]
     fn build_observers_returns_one_per_extension() {
         let dir1 = make_ext_dir("ext1", EXT_SOURCE);
-        let dir2 = make_ext_dir("ext2", r#"
+        let dir2 = make_ext_dir(
+            "ext2",
+            r#"
             export default {
                 name: "ext2",
                 tools: [{
@@ -665,7 +665,8 @@ mod tests {
                     execute: async () => "echo",
                 }],
             };
-        "#);
+        "#,
+        );
         let mut loader = ExtensionLoader::new(permissive_config());
         // We need a single scan dir for both extensions
         let combined = tempfile::tempdir().unwrap();
@@ -674,7 +675,9 @@ mod tests {
         std::fs::create_dir_all(&e1).unwrap();
         std::fs::create_dir_all(&e2).unwrap();
         std::fs::write(e1.join("mod.ts"), EXT_SOURCE).unwrap();
-        std::fs::write(e2.join("mod.ts"), r#"
+        std::fs::write(
+            e2.join("mod.ts"),
+            r#"
             export default {
                 name: "ext2",
                 tools: [{
@@ -685,7 +688,9 @@ mod tests {
                     execute: async () => "echo",
                 }],
             };
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         drop(dir1);
         drop(dir2);
 
@@ -700,7 +705,9 @@ mod tests {
 
     #[tokio::test]
     async fn fire_on_load_calls_hook() {
-        let dir = make_ext_dir("hooked", r#"
+        let dir = make_ext_dir(
+            "hooked",
+            r#"
             let loaded = false;
             export default {
                 name: "hooked",
@@ -715,7 +722,8 @@ mod tests {
                     onLoad: async () => { loaded = true; },
                 },
             };
-        "#);
+        "#,
+        );
 
         let mut loader = ExtensionLoader::new(permissive_config());
         loader.load_all(&[dir.path().to_path_buf()]).unwrap();

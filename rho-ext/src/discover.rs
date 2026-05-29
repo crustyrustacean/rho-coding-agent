@@ -163,8 +163,8 @@ pub fn filter_by_config(
 /// one per extension in the input.
 ///
 /// This should be called after `filter_by_config`.
-pub fn resolve_permissions<'a>(
-    extensions: &'a [DiscoveredExtension],
+pub fn resolve_permissions(
+    extensions: &[DiscoveredExtension],
     config: &ExtensionConfig,
 ) -> Vec<(DiscoveredExtension, rho_core::config::ExtensionPermissions)> {
     extensions
@@ -505,12 +505,22 @@ mod tests {
         let resolved = resolve_permissions(&exts, &config);
 
         // "a" gets per-extension override
-        let perms_a = resolved.iter().find(|(e, _)| e.name == "a").unwrap().1.clone();
+        let perms_a = resolved
+            .iter()
+            .find(|(e, _)| e.name == "a")
+            .unwrap()
+            .1
+            .clone();
         assert_eq!(perms_a.network, Some(true)); // inherited from defaults
         assert_eq!(perms_a.max_memory_mb, Some(256)); // overridden
 
         // "b" gets only defaults
-        let perms_b = resolved.iter().find(|(e, _)| e.name == "b").unwrap().1.clone();
+        let perms_b = resolved
+            .iter()
+            .find(|(e, _)| e.name == "b")
+            .unwrap()
+            .1
+            .clone();
         assert_eq!(perms_b.network, Some(true));
         assert_eq!(perms_b.max_memory_mb, Some(64));
     }

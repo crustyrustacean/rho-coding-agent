@@ -578,7 +578,7 @@ mod internal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use deno_core::{JsRuntime, RuntimeOptions};
+    use deno_core::{JsRuntime, PollEventLoopOptions, RuntimeOptions};
     use url::Url;
 
     /// Helper: load a TS module, extract its manifest.
@@ -603,8 +603,8 @@ mod tests {
                     .load_main_es_module_from_code(&specifier, js)
                     .await
                     .expect("module load should succeed");
-                let _ = rt.mod_evaluate(mod_id);
-                rt.run_event_loop(Default::default())
+                drop(rt.mod_evaluate(mod_id));
+                rt.run_event_loop(PollEventLoopOptions::default())
                     .await
                     .expect("event loop should complete");
 
@@ -661,9 +661,9 @@ mod tests {
     #[test]
     fn no_default_export() {
         let err = extract_from_ts(
-            r#"
+            r"
             export function foo() { return 1; }
-            "#,
+            ",
         )
         .unwrap_err();
 
@@ -689,11 +689,11 @@ mod tests {
     #[test]
     fn missing_name_field() {
         let err = extract_from_ts(
-            r#"
+            r"
             export default {
                 tools: [],
             };
-            "#,
+            ",
         )
         .unwrap_err();
 

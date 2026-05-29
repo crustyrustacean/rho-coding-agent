@@ -1,7 +1,7 @@
 //! End-to-end integration tests for the rho extension runtime.
 //!
-//! These tests exercise the full pipeline — discovery, spawn, DenoTool
-//! registration in a ToolRegistry, execution through the Tool trait, and
+//! These tests exercise the full pipeline — discovery, spawn, `DenoTool`
+//! registration in a `ToolRegistry`, execution through the Tool trait, and
 //! observer hook dispatch — exactly what rho does at startup.
 //!
 //! Unlike the unit tests in `src/`, these tests use the public API only.
@@ -9,14 +9,14 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use rho_core::tool::{CancellationToken, ToolOutcome, ToolRegistry, ToolResult};
-use rho_core::newtypes::ToolName;
+use rho_core::AgentObserver;
 use rho_core::config::ExtensionPermissions;
+use rho_core::newtypes::ToolName;
+use rho_core::tool::{CancellationToken, ToolOutcome, ToolRegistry, ToolResult};
+use rho_ext::ExtensionRuntime;
 use rho_ext::deno_observer::DenoObserver;
 use rho_ext::deno_tool::DenoTool;
 use rho_ext::discover::{deduplicate, discover};
-use rho_core::AgentObserver;
-use rho_ext::ExtensionRuntime;
 use tokio::sync::Mutex;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -56,14 +56,14 @@ export default {
     .unwrap();
 }
 
-/// Write the math_utils extension (multi-file with imports) into `dir`.
+/// Write the `math_utils` extension (multi-file with imports) into `dir`.
 fn write_math_utils(dir: &std::path::Path) {
     let math_dir = dir.join("math_utils");
     std::fs::create_dir_all(&math_dir).unwrap();
 
     std::fs::write(
         math_dir.join("ops.ts"),
-        r#"export function add(a: number, b: number): number { return a + b; }"#,
+        r"export function add(a: number, b: number): number { return a + b; }",
     )
     .unwrap();
 
@@ -168,7 +168,10 @@ async fn full_pipeline_discover_load_execute() {
         .expect("greet tool should be registered");
 
     let result = greet_tool
-        .execute(serde_json::json!({"name": "world"}), CancellationToken::new())
+        .execute(
+            serde_json::json!({"name": "world"}),
+            CancellationToken::new(),
+        )
         .await
         .unwrap();
 
@@ -187,7 +190,10 @@ async fn full_pipeline_discover_load_execute() {
         .expect("compute tool should be registered");
 
     let result = compute_tool
-        .execute(serde_json::json!({"a": 21, "b": 21}), CancellationToken::new())
+        .execute(
+            serde_json::json!({"a": 21, "b": 21}),
+            CancellationToken::new(),
+        )
         .await
         .unwrap();
 
@@ -258,11 +264,8 @@ export default {
     )
     .unwrap();
 
-    let runtime = ExtensionRuntime::spawn_from_file(
-        &dir.path().join("no_force.ts"),
-        dir.path(),
-    )
-    .expect("spawn should succeed");
+    let runtime = ExtensionRuntime::spawn_from_file(&dir.path().join("no_force.ts"), dir.path())
+        .expect("spawn should succeed");
 
     assert!(runtime.manifest().hooks.on_tool_call.is_some());
 
@@ -277,11 +280,14 @@ export default {
 
     let mut rt = runtime.lock().await;
     let result = rt.call_hook("onToolCall", &blocked_payload).await.unwrap();
-    let parsed: serde_json::Value = serde_json::from_str(&result)
-        .expect("hook should return valid JSON");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&result).expect("hook should return valid JSON");
 
     assert_eq!(parsed["block"], true, "should block --force commands");
-    assert_eq!(parsed["reason"], "force flags blocked by no-force extension");
+    assert_eq!(
+        parsed["reason"],
+        "force flags blocked by no-force extension"
+    );
 
     // Verify it allows normal commands
     let allowed_payload = serde_json::json!({
@@ -348,11 +354,7 @@ export default {
     .unwrap();
 
     // Discover from both directories
-    let discovered = discover(&[
-        user_dir.path().to_path_buf(),
-        proj_ext_dir.clone(),
-    ])
-    .unwrap();
+    let discovered = discover(&[user_dir.path().to_path_buf(), proj_ext_dir.clone()]).unwrap();
 
     let discovered = deduplicate(discovered);
     assert_eq!(discovered.len(), 1, "should have one extension after dedup");
@@ -407,11 +409,17 @@ async fn two_extensions_coexist_in_shared_registry() {
     let compute = registry.get_by_name(&ToolName::from("compute")).unwrap();
 
     let r1 = greet
-        .execute(serde_json::json!({"name": "Alice"}), CancellationToken::new())
+        .execute(
+            serde_json::json!({"name": "Alice"}),
+            CancellationToken::new(),
+        )
         .await
         .unwrap();
     let r2 = compute
-        .execute(serde_json::json!({"a": 10, "b": 20}), CancellationToken::new())
+        .execute(
+            serde_json::json!({"a": 10, "b": 20}),
+            CancellationToken::new(),
+        )
         .await
         .unwrap();
     let r3 = greet
@@ -419,7 +427,10 @@ async fn two_extensions_coexist_in_shared_registry() {
         .await
         .unwrap();
     let r4 = compute
-        .execute(serde_json::json!({"a": 100, "b": 200}), CancellationToken::new())
+        .execute(
+            serde_json::json!({"a": 100, "b": 200}),
+            CancellationToken::new(),
+        )
         .await
         .unwrap();
 
@@ -433,7 +444,7 @@ async fn two_extensions_coexist_in_shared_registry() {
     }
 }
 
-/// Helper: assert a ToolOutcome::Immediate with the expected output.
+/// Helper: assert a `ToolOutcome::Immediate` with the expected output.
 fn assert_tool_output(outcome: &ToolOutcome, expected: &str) {
     match outcome {
         ToolOutcome::Immediate(tr) => {
@@ -486,11 +497,8 @@ export default {
     )
     .unwrap();
 
-    let mut runtime = ExtensionRuntime::spawn_from_file(
-        &dir.path().join("file_io.ts"),
-        dir.path(),
-    )
-    .expect("spawn should succeed");
+    let mut runtime = ExtensionRuntime::spawn_from_file(&dir.path().join("file_io.ts"), dir.path())
+        .expect("spawn should succeed");
 
     // Test readFile
     let result = runtime.call_tool("read_config", "").await.unwrap();
@@ -592,11 +600,8 @@ export default {
     .unwrap();
 
     // No commands permission (default)
-    let mut runtime = ExtensionRuntime::spawn_from_file(
-        &dir.path().join("runner.ts"),
-        dir.path(),
-    )
-    .expect("spawn should succeed");
+    let mut runtime = ExtensionRuntime::spawn_from_file(&dir.path().join("runner.ts"), dir.path())
+        .expect("spawn should succeed");
 
     let result = runtime.call_tool("git_version", "").await.unwrap();
     assert!(

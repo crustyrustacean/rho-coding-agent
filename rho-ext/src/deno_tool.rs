@@ -143,7 +143,7 @@ mod tests {
     use crate::manifest::ParameterDef;
     use std::collections::HashMap;
 
-    /// Helper: create an ExtensionRuntime from inline TS and wrap it.
+    /// Helper: create an `ExtensionRuntime` from inline TS and wrap it.
     fn make_runtime_and_tool(
         ts_source: &str,
         tool_name: &str,

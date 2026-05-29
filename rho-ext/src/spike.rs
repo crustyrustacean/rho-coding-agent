@@ -220,8 +220,10 @@ mod tests {
                     .load_main_es_module_from_code(&specifier, js)
                     .await
                     .unwrap();
-                let _ = rt.mod_evaluate(mod_id);
-                rt.run_event_loop(Default::default()).await.unwrap();
+                drop(rt.mod_evaluate(mod_id));
+                rt.run_event_loop(deno_core::PollEventLoopOptions::default())
+                    .await
+                    .unwrap();
 
                 // Extract the "greet" function from the module namespace
                 let namespace = rt.get_module_namespace(mod_id).unwrap();
@@ -245,7 +247,10 @@ mod tests {
 
                     let call_future = rt.call_with_args(&greet_global, &[arg_global]);
                     let result = rt
-                        .with_event_loop_promise(call_future, Default::default())
+                        .with_event_loop_promise(
+                            call_future,
+                            deno_core::PollEventLoopOptions::default(),
+                        )
                         .await
                         .unwrap();
 

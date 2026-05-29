@@ -173,7 +173,7 @@ mod tests {
         let helper_path = dir.path().join("helper.ts");
         std::fs::write(
             &helper_path,
-            r#"export function add(a: number, b: number): number { return a + b; }"#,
+            r"export function add(a: number, b: number): number { return a + b; }",
         )
         .unwrap();
 
@@ -212,7 +212,7 @@ mod tests {
 
         // Create a file outside root
         let outside_path = outside_dir.path().join("outside.ts");
-        std::fs::write(&outside_path, r#"export const x = 1;"#).unwrap();
+        std::fs::write(&outside_path, r"export const x = 1;").unwrap();
 
         let outside_url = Url::from_file_path(&outside_path).unwrap();
         let loader = RhoModuleLoader::new(root_dir.path().to_path_buf());
@@ -243,7 +243,7 @@ mod tests {
     fn load_passes_through_javascript() {
         let dir = tempfile::tempdir().unwrap();
         let js_path = dir.path().join("pure.js");
-        std::fs::write(&js_path, r#"export const x = 42;"#).unwrap();
+        std::fs::write(&js_path, r"export const x = 42;").unwrap();
 
         let js_url = Url::from_file_path(&js_path).unwrap();
         let loader = RhoModuleLoader::new(dir.path().to_path_buf());
