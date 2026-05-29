@@ -22,6 +22,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use deno_core::{OpState, op2};
+use url::Url;
 
 /// Maximum file size that `readFile` will return (1 MiB).
 const MAX_READ_BYTES: u64 = 1024 * 1024;
@@ -605,19 +606,112 @@ fn build_fetch_request(
     Ok(req_builder)
 }
 
+// ── URL ops ──────────────────────────────────────────────────────────────────
+
+/// `op_rho_url_parse(spec, base)` — parse a URL string.
+///
+/// If `base` is non-empty, `spec` is resolved relative to `base`.
+/// Returns a JSON object with URL components, or an error string.
+#[op2]
+#[string]
+fn op_rho_url_parse(#[string] spec: &str, #[string] base: &str) -> String {
+    let url_result = if !base.is_empty() {
+        let base_url = match Url::parse(base) {
+            Ok(u) => u,
+            Err(e) => return format!("__ERROR__invalid base URL: {e}"),
+        };
+        base_url.join(spec)
+    } else {
+        Url::parse(spec)
+    };
+
+    let url = match url_result {
+        Ok(u) => u,
+        Err(e) => return format!("__ERROR__invalid URL: {e}"),
+    };
+
+    let password = url.password().unwrap_or("").to_string();
+    let query = url.query().map_or_else(String::new, |q| format!("?{q}"));
+    let fragment = url
+        .fragment()
+        .map_or_else(String::new, |f| format!("#{f}"));
+    let port_str = url
+        .port()
+        .map_or_else(String::new, |p| p.to_string());
+    let host_str = url.host_str().unwrap_or("");
+    let host_with_port = if url.port().is_some() {
+        format!("{host_str}:{}", url.port().unwrap())
+    } else {
+        host_str.to_string()
+    };
+
+    serde_json::json!({
+        "href": url.as_str(),
+        "protocol": format!("{}:", url.scheme()),
+        "username": url.username(),
+        "password": password,
+        "hostname": host_str,
+        "port": port_str,
+        "pathname": url.path(),
+        "search": query,
+        "hash": fragment,
+        "origin": url.origin().ascii_serialization(),
+        "host": host_with_port,
+    })
+    .to_string()
+}
+
+/// `op_rho_url_parse_search_params(input)` — parse a URL query string.
+///
+/// Returns a JSON array of `["key", "value"]` pairs.
+#[op2]
+#[string]
+fn op_rho_url_parse_search_params(#[string] input: &str) -> String {
+    let pairs: Vec<[String; 2]> = url::form_urlencoded::parse(input.as_bytes())
+        .map(|(k, v)| [k.into_owned(), v.into_owned()])
+        .collect();
+    serde_json::to_string(&pairs).unwrap_or_else(|_| "[]".to_string())
+}
+
+/// `op_rho_url_serialize_search_params(pairs_json)` — serialize key/value pairs.
+///
+/// Takes a JSON array of `["key", "value"]` pairs and returns a URL-encoded
+/// query string (without the leading `?`).
+#[op2]
+#[string]
+fn op_rho_url_serialize_search_params(#[string] pairs_json: &str) -> String {
+    let pairs: Vec<[String; 2]> = serde_json::from_str(pairs_json).unwrap_or_default();
+    let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+    for pair in pairs {
+        serializer.append_pair(&pair[0], &pair[1]);
+    }
+    serializer.finish()
+}
+
 // ── Extension definition ─────────────────────────────────────────────────────
 
 // The `rho_host` deno_core extension.
 //
-// Registers the ops above and provides an ESM shim that creates the `rho`
-// global object on `globalThis`.
+// Registers the ops above and provides ESM shims that create the `rho`
+// global object and standard Web APIs (`console`, `fetch`, `URL`, etc.)
+// on `globalThis`.
 //
 // Usage: `rho_host::init()` → add to `RuntimeOptions.extensions`.
 deno_core::extension!(
     rho_host,
-    ops = [op_rho_log, op_rho_get_cwd, op_rho_get_model, op_rho_read_file, op_rho_write_file, op_rho_run_command, op_rho_fetch_url],
-    esm_entry_point = "ext:rho_host/host_shim.js",
-    esm = [ dir "src", "host_shim.js" ],
+    ops = [
+        op_rho_log,
+        op_rho_get_cwd,
+        op_rho_get_model,
+        op_rho_read_file,
+        op_rho_write_file,
+        op_rho_run_command,
+        op_rho_fetch_url,
+        op_rho_url_parse,
+        op_rho_url_parse_search_params,
+        op_rho_url_serialize_search_params,
+    ],
+    js = [ dir "src", "std_shim.js", "host_shim.js" ],
 );
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -1161,5 +1255,608 @@ mod tests {
         // Extension should see the new value
         let result = eval(&mut rt, r"rho.getModel()");
         assert_eq!(result, "claude-sonnet-4-20250514");
+    }
+
+    // =========================================================================
+    // Phase 2: Standard Web API shims
+    // =========================================================================
+
+    // -- console tests ---------------------------------------------------------
+
+    #[test]
+    fn console_is_defined() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r"typeof console");
+        assert_eq!(result, "object");
+    }
+
+    #[test]
+    fn console_has_standard_methods() {
+        let mut rt = runtime_with_state("/tmp");
+        for method in &["log", "debug", "info", "warn", "error", "trace", "assert", "clear", "dir", "table", "count", "countReset", "time", "timeEnd", "group", "groupEnd", "groupCollapsed"] {
+            let result = eval(&mut rt, &format!(r"typeof console.{method}"));
+            assert_eq!(result, "function", "console.{method} should be a function");
+        }
+    }
+
+    #[test]
+    fn console_log_does_not_crash() {
+        let mut rt = runtime_with_state("/tmp");
+        eval(&mut rt, r"console.log('hello from console')");
+    }
+
+    #[test]
+    fn console_log_serializes_objects() {
+        let mut rt = runtime_with_state("/tmp");
+        eval(&mut rt, r"console.log({ key: 'value' })");
+    }
+
+    #[test]
+    fn console_error_does_not_crash() {
+        let mut rt = runtime_with_state("/tmp");
+        eval(&mut rt, r"console.error('error message')");
+    }
+
+    #[test]
+    fn console_assert_passes() {
+        let mut rt = runtime_with_state("/tmp");
+        eval(&mut rt, r"console.assert(true, 'should not fire')");
+    }
+
+    // -- URL tests --------------------------------------------------------------
+
+    #[test]
+    fn url_class_is_defined() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r"typeof URL");
+        assert_eq!(result, "function");
+    }
+
+    #[test]
+    fn url_parses_absolute() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r#"
+            const u = new URL("https://example.com:8080/path?q=hello#section");
+            JSON.stringify({
+                href: u.href,
+                protocol: u.protocol,
+                hostname: u.hostname,
+                port: u.port,
+                pathname: u.pathname,
+                search: u.search,
+                hash: u.hash,
+                origin: u.origin,
+            })
+        "#);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["href"], "https://example.com:8080/path?q=hello#section");
+        assert_eq!(parsed["protocol"], "https:");
+        assert_eq!(parsed["hostname"], "example.com");
+        assert_eq!(parsed["port"], "8080");
+        assert_eq!(parsed["pathname"], "/path");
+        assert_eq!(parsed["search"], "?q=hello");
+        assert_eq!(parsed["hash"], "#section");
+        assert_eq!(parsed["origin"], "https://example.com:8080");
+    }
+
+    #[test]
+    fn url_parses_relative_with_base() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r#"
+            const u = new URL("/other", "https://example.com/path/page");
+            u.href
+        "#);
+        assert_eq!(result, "https://example.com/other");
+    }
+
+    #[test]
+    fn url_throws_on_invalid() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval_or_error(&mut rt, r"new URL('not a url')");
+        let err = result.unwrap_err();
+        assert!(err.contains("invalid URL"), "expected URL parse error, got: {err}");
+    }
+
+    #[test]
+    fn url_to_string_and_to_json() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r#"
+            const u = new URL("https://example.com/path");
+            u.toString() === u.href && u.toJSON() === u.href
+        "#);
+        assert_eq!(result, "true");
+    }
+
+    #[test]
+    fn url_username_and_password() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r#"
+            const u = new URL("https://user:pass@example.com");
+            JSON.stringify({ user: u.username, pass: u.password })
+        "#);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["user"], "user");
+        assert_eq!(parsed["pass"], "pass");
+    }
+
+    // -- URLSearchParams tests --------------------------------------------------
+
+    #[test]
+    fn url_search_params_class_is_defined() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r"typeof URLSearchParams");
+        assert_eq!(result, "function");
+    }
+
+    #[test]
+    fn url_search_params_from_string() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r#"
+            const sp = new URLSearchParams("a=1&b=2&c=3");
+            JSON.stringify({ a: sp.get('a'), b: sp.get('b'), c: sp.get('c') })
+        "#);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["a"], "1");
+        assert_eq!(parsed["b"], "2");
+        assert_eq!(parsed["c"], "3");
+    }
+
+    #[test]
+    fn url_search_params_set_and_delete() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r#"
+            const sp = new URLSearchParams("a=1");
+            sp.set('a', 'updated');
+            sp.append('b', '2');
+            sp.delete('b');
+            JSON.stringify({ a: sp.get('a'), b: sp.get('b'), size: sp.size })
+        "#);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["a"], "updated");
+        assert!(parsed["b"].is_null(), "expected null after delete, got: {}", parsed["b"]);
+        assert_eq!(parsed["size"], 1);
+    }
+
+    #[test]
+    fn url_search_params_to_string() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r#"
+            const sp = new URLSearchParams("key=value&foo=bar");
+            sp.toString()
+        "#);
+        assert_eq!(result, "key=value&foo=bar");
+    }
+
+    #[test]
+    fn url_search_params_has_and_has_all() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r#"
+            const sp = new URLSearchParams("a=1&a=2&b=3");
+            JSON.stringify({
+                has_a: sp.has('a'),
+                has_b: sp.has('b'),
+                has_c: sp.has('c'),
+                all_a: sp.getAll('a')
+            })
+        "#);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["has_a"], true);
+        assert_eq!(parsed["has_b"], true);
+        assert_eq!(parsed["has_c"], false);
+        assert_eq!(parsed["all_a"], serde_json::json!(["1", "2"]));
+    }
+
+    #[test]
+    fn url_search_params_iteration() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r#"
+            const sp = new URLSearchParams("x=1&y=2");
+            const entries = [...sp.entries()];
+            const keys = [...sp.keys()];
+            JSON.stringify({ entries, keys, size: sp.size })
+        "#);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["entries"], serde_json::json!([["x", "1"], ["y", "2"]]));
+        assert_eq!(parsed["keys"], serde_json::json!(["x", "y"]));
+        assert_eq!(parsed["size"], 2);
+    }
+
+    #[test]
+    fn url_search_params_from_object() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r#"
+            const sp = new URLSearchParams({ a: '1', b: '2' });
+            sp.toString()
+        "#);
+        assert_eq!(result, "a=1&b=2");
+    }
+
+    #[test]
+    fn url_search_params_sort() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r#"
+            const sp = new URLSearchParams("c=3&a=1&b=2");
+            sp.sort();
+            sp.toString()
+        "#);
+        assert_eq!(result, "a=1&b=2&c=3");
+    }
+
+    // -- Headers class tests -----------------------------------------------------
+
+    #[test]
+    fn headers_class_is_defined() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r"typeof Headers");
+        assert_eq!(result, "function");
+    }
+
+    #[test]
+    fn headers_set_get_has() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r#"
+            const h = new Headers({ 'Content-Type': 'text/html' });
+            h.set('X-Custom', 'value');
+            JSON.stringify({
+                ct: h.get('content-type'),
+                custom: h.get('x-custom'),
+                has_ct: h.has('content-type'),
+                has_missing: h.has('missing'),
+            })
+        "#);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["ct"], "text/html");
+        assert_eq!(parsed["custom"], "value");
+        assert_eq!(parsed["has_ct"], true);
+        assert_eq!(parsed["has_missing"], false);
+    }
+
+    #[test]
+    fn headers_case_insensitive() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r#"
+            const h = new Headers();
+            h.set('Content-Type', 'application/json');
+            h.get('content-type') // case-insensitive lookup
+        "#);
+        assert_eq!(result, "application/json");
+    }
+
+    #[test]
+    fn headers_append() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r#"
+            const h = new Headers();
+            h.append('Set-Cookie', 'a=1');
+            h.append('Set-Cookie', 'b=2');
+            h.get('set-cookie')
+        "#);
+        assert_eq!(result, "a=1, b=2");
+    }
+
+    #[test]
+    fn headers_delete() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r#"
+            const h = new Headers({ 'X-Test': 'yes' });
+            h.delete('x-test');
+            h.has('x-test')
+        "#);
+        assert_eq!(result, "false");
+    }
+
+    // -- Response class tests ----------------------------------------------------
+
+    #[test]
+    fn response_class_is_defined() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r"typeof Response");
+        assert_eq!(result, "function");
+    }
+
+    #[test]
+    fn response_ok_and_status() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r#"
+            const r = new Response("hello", { status: 200 });
+            JSON.stringify({ ok: r.ok, status: r.status, statusText: r.statusText, body: r.body })
+        "#);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["ok"], true);
+        assert_eq!(parsed["status"], 200);
+        assert_eq!(parsed["statusText"], "OK");
+        assert_eq!(parsed["body"], "hello");
+    }
+
+    #[test]
+    fn response_error_status() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r#"
+            const r = new Response("not found", { status: 404 });
+            JSON.stringify({ ok: r.ok, status: r.status, statusText: r.statusText })
+        "#);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["ok"], false);
+        assert_eq!(parsed["status"], 404);
+        assert_eq!(parsed["statusText"], "Not Found");
+    }
+
+    #[test]
+    fn response_json_method() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r#"
+            const r = Response.json({ key: "value" });
+            JSON.stringify({ body: r.body, status: r.status })
+        "#);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["body"], r#"{"key":"value"}"#);
+        assert_eq!(parsed["status"], 200);
+    }
+
+    #[test]
+    fn response_static_methods() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r#"
+            const err = Response.error();
+            const redir = Response.redirect("https://example.com");
+            JSON.stringify({ err_status: err.status, redir_status: redir.status })
+        "#);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["err_status"], 0);
+        assert_eq!(parsed["redir_status"], 302);
+    }
+
+    // -- Request class tests ----------------------------------------------------
+
+    #[test]
+    fn request_class_is_defined() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r"typeof Request");
+        assert_eq!(result, "function");
+    }
+
+    #[test]
+    fn request_constructs() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r#"
+            const r = new Request("https://example.com/api", { method: "POST" });
+            JSON.stringify({ url: r.url, method: r.method })
+        "#);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["url"], "https://example.com/api");
+        assert_eq!(parsed["method"], "POST");
+    }
+
+    // -- fetch function tests ---------------------------------------------------
+
+    #[test]
+    fn fetch_is_defined() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r"typeof fetch");
+        assert_eq!(result, "function");
+    }
+
+    // Note: fetch() calls op_rho_fetch_url which requires network permission.
+    // The actual HTTP functionality is tested in runtime::tests::fetch_url_works_with_network_permission.
+    // Here we test that fetch() is a function and rejects without permission.
+
+    #[test]
+    fn fetch_blocked_without_network_permission() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut rt = JsRuntime::new(deno_core::RuntimeOptions {
+            extensions: vec![super::rho_host::init()],
+            ..Default::default()
+        });
+        // Default HostState: no network permission
+        rt.op_state().borrow_mut().put(HostState::new(
+            dir.path().to_path_buf(),
+            vec![],
+        ));
+
+        // Use rho.fetchUrl (synchronous, throws immediately) rather than
+        // fetch (async, errors are unhandled promise rejections).
+        let result = eval_or_error(&mut rt, r"rho.fetchUrl({ url: 'https://example.com' })");
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("network permission"),
+            "expected network permission error, got: {err}"
+        );
+    }
+
+    // -- btoa / atob tests -------------------------------------------------------
+
+    #[test]
+    fn btoa_is_defined() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r"typeof btoa");
+        assert_eq!(result, "function");
+    }
+
+    #[test]
+    fn atob_is_defined() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r"typeof atob");
+        assert_eq!(result, "function");
+    }
+
+    #[test]
+    fn btoa_encodes_basic() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r"btoa('hello')");
+        assert_eq!(result, "aGVsbG8=");
+    }
+
+    #[test]
+    fn atob_decodes_basic() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r"atob('aGVsbG8=')");
+        assert_eq!(result, "hello");
+    }
+
+    #[test]
+    fn btoa_atob_roundtrip() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r"atob(btoa('test string 123!'))");
+        assert_eq!(result, "test string 123!");
+    }
+
+    #[test]
+    fn btoa_atob_utf8_roundtrip() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r"atob(btoa('hello world'))");
+        assert_eq!(result, "hello world");
+    }
+
+    // -- setTimeout / setInterval stub tests --------------------------------------
+
+    #[test]
+    fn set_timeout_is_defined() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r"typeof setTimeout");
+        assert_eq!(result, "function");
+    }
+
+    #[test]
+    fn set_timeout_returns_negative_id() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r"setTimeout(() => {}, 1000)");
+        assert_eq!(result, "-1");
+    }
+
+    #[test]
+    fn set_interval_is_defined() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r"typeof setInterval");
+        assert_eq!(result, "function");
+    }
+
+    #[test]
+    fn clear_timeout_does_not_crash() {
+        let mut rt = runtime_with_state("/tmp");
+        eval(&mut rt, r"clearTimeout(123)");
+    }
+
+    #[test]
+    fn clear_interval_does_not_crash() {
+        let mut rt = runtime_with_state("/tmp");
+        eval(&mut rt, r"clearInterval(456)");
+    }
+
+    // -- structuredClone test ----------------------------------------------------
+
+    #[test]
+    fn structured_clone_is_defined() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r"typeof structuredClone");
+        assert_eq!(result, "function");
+    }
+
+    #[test]
+    fn structured_clone_clones_object() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r#"
+            const obj = { a: 1, b: { c: 2 } };
+            const clone = structuredClone(obj);
+            clone.b.c = 99;
+            obj.b.c === 2 && clone.b.c === 99
+        "#);
+        assert_eq!(result, "true");
+    }
+
+    // -- TextEncoder / TextDecoder tests ------------------------------------------
+
+    #[test]
+    fn text_encoder_is_defined() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r"typeof TextEncoder");
+        assert_eq!(result, "function");
+    }
+
+    #[test]
+    fn text_decoder_is_defined() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r"typeof TextDecoder");
+        assert_eq!(result, "function");
+    }
+
+    #[test]
+    fn text_encoder_decode_roundtrip() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r#"
+            const enc = new TextEncoder();
+            const dec = new TextDecoder();
+            dec.decode(enc.encode("hello world"))
+        "#);
+        assert_eq!(result, "hello world");
+    }
+
+    // -- URL op direct tests ----------------------------------------------------
+
+    #[test]
+    fn url_op_parses_absolute_url() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r#"
+            const json = Deno.core.ops.op_rho_url_parse("https://user:pass@example.com:8080/path?q=1#frag", "");
+            const parsed = JSON.parse(json);
+            parsed.href === "https://user:pass@example.com:8080/path?q=1#frag" &&
+            parsed.username === "user" && parsed.password === "pass" &&
+            parsed.hostname === "example.com" && parsed.origin === "https://example.com:8080"
+        "#);
+        assert_eq!(result, "true");
+    }
+
+    #[test]
+    fn url_op_parses_with_base() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r#"
+            const json = Deno.core.ops.op_rho_url_parse("bar", "https://example.com/foo/");
+            JSON.parse(json).href
+        "#);
+        assert_eq!(result, "https://example.com/foo/bar");
+    }
+
+    #[test]
+    fn url_op_rejects_invalid() {
+        let mut rt = runtime_with_state("/tmp");
+        // Direct op call returns __ERROR__ string (the JS URL class wraps this in unwrapOpResult)
+        let result = eval(&mut rt, r"Deno.core.ops.op_rho_url_parse(':::invalid', '')");
+        assert!(
+            result.starts_with("__ERROR__"),
+            "expected __ERROR__ prefix, got: {result}"
+        );
+    }
+
+    #[test]
+    fn url_op_parse_search_params() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r#"
+            const json = Deno.core.ops.op_rho_url_parse_search_params("a=hello&b=world");
+            const parsed = JSON.parse(json);
+            parsed.length === 2 && parsed[0][0] === "a" && parsed[0][1] === "hello"
+        "#);
+        assert_eq!(result, "true");
+    }
+
+    #[test]
+    fn url_op_serialize_search_params() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r#"
+            Deno.core.ops.op_rho_url_serialize_search_params(JSON.stringify([["x", "1"], ["y", "2"]]))
+        "#);
+        assert_eq!(result, "x=1&y=2");
+    }
+
+    #[test]
+    fn url_op_serialize_empty_params() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r"Deno.core.ops.op_rho_url_serialize_search_params('[]')");
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn url_op_parse_empty_search_params() {
+        let mut rt = runtime_with_state("/tmp");
+        let result = eval(&mut rt, r"Deno.core.ops.op_rho_url_parse_search_params('')");
+        assert_eq!(result, "[]");
     }
 }

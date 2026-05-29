@@ -1,9 +1,9 @@
 // rho_host extension shim - creates the `rho` global.
 //
 // This module is loaded as the ESM entry point of the `rho_host` deno_core
-// extension. It builds the `rho` namespace object and assigns it to
-// `globalThis.rho` so that extension code can call `rho.log(...)`,
-// `rho.getCwd()`, etc.
+// extension. It builds the `rho` namespace object on `globalThis.rho`.
+// Standard Web API shims (console, fetch, URL, etc.) are loaded separately
+// as a plain JS script via the extension's `js` parameter.
 //
 // The actual work is done by Rust ops registered in `host.rs`. This file
 // only provides the JavaScript-facing wrapper.
