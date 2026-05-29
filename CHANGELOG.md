@@ -1,3 +1,22 @@
+## [0.53.0] - 2026-05-29
+
+### 🚀 Features
+
+- Replace one-off `HttpExecutor` with general-purpose `AsyncDispatcher` for safe async→sync bridging
+- Add standard Web API shims for extensions: `console`, `fetch()`, `URL`, `URLSearchParams`, `Headers`, `Response`, `Request`, `btoa`/`atob`, `TextEncoder`/`TextDecoder`, `structuredClone`, `setTimeout`/`setInterval` (stubs)
+- Add `op_rho_url_parse`, `op_rho_url_parse_search_params`, `op_rho_url_serialize_search_params` ops (backed by `url` crate)
+- Add boilerplate-reduction macros: `err!`, `json!`, `require_perm!`, `require_field!`, `js_fn!`, `js_json_fn!`, `rho_js!`, `ops_list!`
+
+### 🛠️ Internal
+
+- Change extension JS loading from ESM to plain `js` scripts (deno_core 0.401.0 limitation)
+- Block-scope `std_shim.js` to avoid `const` collisions with `host_shim.js`
+- Refactor existing ops to use new macros (-76 lines boilerplate)
+
+### 🧪 Tests
+
+- Add 74 new tests (219 unit + 7 integration, all passing)
+
 ## [0.52.0] - 2026-05-29
 
 ### 🚀 Features

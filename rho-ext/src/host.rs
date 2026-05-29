@@ -574,14 +574,14 @@ fn build_fetch_request(
 #[op2]
 #[string]
 fn op_rho_url_parse(#[string] spec: &str, #[string] base: &str) -> String {
-    let url_result = if !base.is_empty() {
+    let url_result = if base.is_empty() {
+        Url::parse(spec)
+    } else {
         let base_url = match Url::parse(base) {
             Ok(u) => u,
             Err(e) => return err!("invalid base URL: {e}"),
         };
         base_url.join(spec)
-    } else {
-        Url::parse(spec)
     };
 
     let url = match url_result {

@@ -96,6 +96,11 @@ impl AsyncDispatcher {
     ///
     /// Panics if the background thread has shut down (should never happen
     /// since the global singleton lives for the process lifetime).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(String)` if the background runtime has been shut down
+    /// or if the future resolves with an error.
     pub fn block_on<F>(&self, future: F) -> Result<String, String>
     where
         F: std::future::Future<Output = Result<String, String>> + Send + 'static,
