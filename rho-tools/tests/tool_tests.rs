@@ -7,6 +7,7 @@ use rho_core::{
     SandboxRoot, ShellOutput,
     tool::{CancellationToken, Tool, ToolOutcome},
 };
+use rho_tools::CargoTest;
 use rho_tools::{CommandDenylist, EditFile, ListDir, ReadFile, RunCommand, WriteFile};
 use std::fs;
 use tempfile::TempDir;
@@ -2303,4 +2304,268 @@ async fn edit_file_hashline_diff_shows_old_content_on_minus_lines() {
         plus_line.contains("BETA"),
         "'+ 'line should show NEW content (BETA): {plus_line}"
     );
+} // ── CargoTest with --format json integration tests ──────────────────────────
+
+/// Simulates the agent workflow: `CargoTest` parses JSON test output.
+#[tokio::test]
+async fn cargo_test_parses_all_passed_json_output() {
+    use rho_test_helpers::{FileTestEnv, MockShellExecutor};
+
+    let env = FileTestEnv::new();
+
+    // All tests passed JSON output
+    let test_json = r#"{"type":"test","name":"tests::test_passes","event":"ok","duration_ms":5}
+{"type":"test","name":"tests::test_ignored","event":"ignored","duration_ms":0}
+{"type":"test","name":"tests::test_passes_too","event":"ok","duration_ms":3}
+"#;
+    let mock = MockShellExecutor::new(vec![ShellOutput::new(
+        test_json.to_owned(),
+        String::new(),
+        0,
+    )]);
+
+    let tool = CargoTest {
+        root: env.sandbox().clone(),
+        executor: Box::new(mock),
+    };
+
+    let outcome = tool
+        .execute(serde_json::json!({}), CancellationToken::new())
+        .await
+        .unwrap();
+
+    match &outcome {
+        ToolOutcome::Immediate(r) => {
+            assert!(!r.is_error, "all passed should not be error: {}", r.output);
+            assert!(r.output.contains("2 passed"), "expected 2 passed");
+            assert!(r.output.contains("1 ignored"), "expected 1 ignored");
+            assert!(r.output.contains("0 failed"), "expected 0 failed");
+        }
+        ToolOutcome::Streamed(_) => panic!("expected immediate"),
+    }
+}
+
+#[tokio::test]
+async fn cargo_test_reports_failures() {
+    use rho_test_helpers::{FileTestEnv, MockShellExecutor};
+
+    let env = FileTestEnv::new();
+
+    let test_json = r#"{"type":"test","name":"tests::test_ok","event":"ok","duration_ms":2}
+{"type":"test","name":"tests::test_fails","event":"failed","duration_ms":10,"stdout":"","stderr":"assertion failed: 1 + 1 != 3"}
+{"type":"test","name":"tests::test_ignored","event":"ignored","duration_ms":0}
+{"type":"test","name":"tests::test_also_fails","event":"failed","duration_ms":7,"stdout":"panicked at src/lib.rs:42","stderr":""}
+"#;
+    let mock = MockShellExecutor::new(vec![ShellOutput::new(
+        test_json.to_owned(),
+        String::new(),
+        1,
+    )]);
+
+    let tool = CargoTest {
+        root: env.sandbox().clone(),
+        executor: Box::new(mock),
+    };
+
+    let outcome = tool
+        .execute(serde_json::json!({}), CancellationToken::new())
+        .await
+        .unwrap();
+
+    match &outcome {
+        ToolOutcome::Immediate(r) => {
+            assert!(r.is_error, "failures should be error: {}", r.output);
+            assert!(r.output.contains("1 passed"), "expected 1 passed");
+            assert!(r.output.contains("2 failed"), "expected 2 failed");
+            assert!(r.output.contains("1 ignored"), "expected 1 ignored");
+            assert!(
+                r.output.contains("tests::test_fails"),
+                "should mention failing test"
+            );
+            assert!(
+                r.output.contains("tests::test_also_fails"),
+                "should mention other failing test"
+            );
+            assert!(
+                r.output.contains("assertion failed"),
+                "should include failure output"
+            );
+        }
+        ToolOutcome::Streamed(_) => panic!("expected immediate"),
+    }
+}
+
+#[tokio::test]
+async fn cargo_test_empty_output_means_no_tests() {
+    use rho_test_helpers::{FileTestEnv, MockShellExecutor};
+
+    let env = FileTestEnv::new();
+
+    let mock = MockShellExecutor::new(vec![ShellOutput::new(String::new(), String::new(), 0)]);
+
+    let tool = CargoTest {
+        root: env.sandbox().clone(),
+        executor: Box::new(mock),
+    };
+
+    let outcome = tool
+        .execute(serde_json::json!({}), CancellationToken::new())
+        .await
+        .unwrap();
+
+    match &outcome {
+        ToolOutcome::Immediate(r) => {
+            assert!(!r.is_error, "no tests should not be error: {}", r.output);
+            assert!(r.output.contains("no tests"));
+        }
+        ToolOutcome::Streamed(_) => panic!("expected immediate"),
+    }
+}
+
+#[tokio::test]
+async fn cargo_test_ignores_non_test_ndjson_lines() {
+    use rho_test_helpers::{FileTestEnv, MockShellExecutor};
+
+    let env = FileTestEnv::new();
+
+    let test_json = r#"{"type":"test","name":"tests::ok","event":"ok","duration_ms":1}
+{"reason":"suite-finished","name":"tests","success":true}
+{"type":"test","name":"tests::slow","event":"ok","duration_ms":99}
+"#;
+    let mock = MockShellExecutor::new(vec![ShellOutput::new(
+        test_json.to_owned(),
+        String::new(),
+        0,
+    )]);
+
+    let tool = CargoTest {
+        root: env.sandbox().clone(),
+        executor: Box::new(mock),
+    };
+
+    let outcome = tool
+        .execute(serde_json::json!({}), CancellationToken::new())
+        .await
+        .unwrap();
+
+    match &outcome {
+        ToolOutcome::Immediate(r) => {
+            assert!(!r.is_error, "should succeed: {}", r.output);
+            assert!(r.output.contains("2 passed"), "expected 2 passed");
+        }
+        ToolOutcome::Streamed(_) => panic!("expected immediate"),
+    }
+}
+
+#[tokio::test]
+async fn cargo_test_passes_package_and_test_name_arguments() {
+    use rho_test_helpers::{FileTestEnv, MockShellExecutor};
+
+    let env = FileTestEnv::new();
+
+    let mock = MockShellExecutor::new(vec![ShellOutput::new(
+        r#"{"type":"test","name":"my_test","event":"ok","duration_ms":1}
+"#
+        .to_owned(),
+        String::new(),
+        0,
+    )]);
+
+    let tool = CargoTest {
+        root: env.sandbox().clone(),
+        executor: Box::new(mock.clone()),
+    };
+
+    let outcome = tool
+        .execute(
+            serde_json::json!({
+                "package": "my_crate",
+                "test_name": "my_test"
+            }),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+    assert!(!immediate_is_error(&outcome), "should succeed");
+
+    // Verify the executor received the correct command with --format json
+    let commands = mock.commands();
+    assert_eq!(commands.len(), 1);
+    let cmd = &commands[0];
+    assert!(cmd.contains("cargo test"), "should run cargo test");
+    assert!(cmd.contains("--package"), "should include --package");
+    assert!(cmd.contains("my_crate"), "should include package name");
+    assert!(cmd.contains("my_test"), "should include test name");
+    assert!(
+        cmd.contains("--format json"),
+        "should include --format json"
+    );
+}
+
+#[tokio::test]
+async fn cargo_test_is_risk_read() {
+    let (_dir, root) = setup();
+    let mock = MockShellExecutor::new(vec![]);
+    assert_eq!(
+        CargoTest {
+            root,
+            executor: Box::new(mock),
+        }
+        .risk(),
+        rho_core::ToolRisk::Read
+    );
+}
+
+#[tokio::test]
+async fn cargo_test_respects_cancellation() {
+    use rho_test_helpers::{FileTestEnv, MockShellExecutor};
+
+    let env = FileTestEnv::new();
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+
+    let mock = MockShellExecutor::new(vec![]);
+    let tool = CargoTest {
+        root: env.sandbox().clone(),
+        executor: Box::new(mock),
+    };
+
+    let outcome = tool.execute(serde_json::json!({}), cancel).await.unwrap();
+
+    assert!(immediate_is_error(&outcome));
+}
+
+#[tokio::test]
+async fn cargo_test_with_failing_exit_code_but_no_test_json_uses_raw_output() {
+    use rho_test_helpers::{FileTestEnv, MockShellExecutor};
+
+    let env = FileTestEnv::new();
+
+    let mock = MockShellExecutor::new(vec![ShellOutput::new(
+        "error: no test target matched".to_owned(),
+        String::new(),
+        101,
+    )]);
+
+    let tool = CargoTest {
+        root: env.sandbox().clone(),
+        executor: Box::new(mock),
+    };
+
+    let outcome = tool
+        .execute(serde_json::json!({}), CancellationToken::new())
+        .await
+        .unwrap();
+
+    match &outcome {
+        ToolOutcome::Immediate(r) => {
+            assert!(r.is_error, "failure should be error");
+            assert!(
+                r.output.contains("error: no test target matched"),
+                "should include raw output"
+            );
+        }
+        ToolOutcome::Streamed(_) => panic!("expected immediate"),
+    }
 }

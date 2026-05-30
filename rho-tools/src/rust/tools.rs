@@ -278,13 +278,16 @@ impl Tool for RustcExplain {
 
 // ── CargoTest tool ───────────────────────────────────────────────────────────
 
-/// Run `cargo test` and return test results.
+/// Run `cargo test -- --format json` and return structured test results.
 ///
-/// Runs tests and reports failures with structured output.
+/// Parses JSON test output (each line is a JSON object with fields:
+/// `name`, `event`, `duration_ms`, `stdout`, `stderr`) and returns a clear summary
+/// showing passed/failed/ignored counts with details for failures.
 ///
 /// ## Optional parameters
 ///
-/// - `package` — restrict tests to a single workspace member.
+/// - `package` — restrict tests to a single workspace member (passed as
+///   `--package <name>`). Omit to test the entire workspace.
 /// - `test_name` — run only the specified test.
 pub struct CargoTest {
     /// Sandbox root used as the working directory.
@@ -340,7 +343,7 @@ impl Tool for CargoTest {
             .get("test_name")
             .and_then(serde_json::Value::as_str);
 
-        let mut cmd = String::from("cargo test");
+        let mut cmd = String::from("cargo test -- --format json");
         if let Some(pkg) = package {
             cmd.push_str(" --package ");
             cmd.push_str(pkg);
@@ -355,16 +358,91 @@ impl Tool for CargoTest {
             .execute(&cmd, self.root.path(), None, cancel, None)
             .await?;
 
-        if shell_output.exit_code == 0 {
-            Ok(ToolOutcome::Immediate(ToolResult::success(
-                "All tests passed".to_string(),
-            )))
-        } else {
-            Ok(ToolOutcome::Immediate(ToolResult::success(format!(
-                "Tests failed:\n{}",
-                shell_output.stdout
-            ))))
+        let stdout = &shell_output.stdout;
+
+        // Parse each line as JSON to extract test events
+        let mut passed = 0u32;
+        let mut failed = 0u32;
+        let mut ignored = 0u32;
+        let mut failures: Vec<String> = Vec::new();
+
+        for line in stdout.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                // Only process test events (type == "test")
+                if val.get("type").and_then(|v| v.as_str()) != Some("test") {
+                    continue;
+                }
+
+                let name = val
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("<unknown>");
+                let event = val
+                    .get("event")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("<unknown>");
+
+                match event {
+                    "ok" => passed += 1,
+                    "failed" => {
+                        failed += 1;
+                        let msg = val
+                            .get("stdout")
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                            .or_else(|| {
+                                val.get("stderr")
+                                    .and_then(|v| v.as_str())
+                                    .filter(|s| !s.is_empty())
+                            })
+                            .map(str::to_owned)
+                            .unwrap_or_default();
+                        failures.push(format!("  FAILED: {name}\n    {msg}"));
+                    }
+                    "ignored" => ignored += 1,
+                    _ => {}
+                }
+            }
         }
+
+        let has_any_tests = passed > 0 || failed > 0 || ignored > 0;
+        let has_failures = failed > 0 || shell_output.exit_code != 0;
+
+        if !has_any_tests {
+            // No test JSON lines found. Fall back to raw output.
+            if shell_output.exit_code == 0 {
+                return Ok(ToolOutcome::Immediate(ToolResult::success(
+                    "no tests to run".to_string(),
+                )));
+            }
+            return Ok(ToolOutcome::Immediate(ToolResult::error(format!(
+                "Tests failed:\n{stdout}"
+            ))));
+        }
+
+        let summary = if has_failures {
+            let mut output =
+                format!("Test results: {passed} passed, {failed} failed, {ignored} ignored\n");
+            if !failures.is_empty() {
+                output.push_str("\nFailures:\n");
+                for f in &failures {
+                    output.push_str(f);
+                    output.push('\n');
+                }
+            }
+            ToolOutcome::Immediate(ToolResult::error(output))
+        } else {
+            ToolOutcome::Immediate(ToolResult::success(format!(
+                "Test results: {passed} passed, {failed} failed, {ignored} ignored"
+            )))
+        };
+
+        Ok(summary)
     }
 }
 

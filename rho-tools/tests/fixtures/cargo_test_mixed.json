@@ -1,0 +1,10 @@
+[
+  {"type":"suite","event":"started","test_count":3},
+  {"type":"test","event":"started","name":"it_works"},
+  {"type":"test","event":"started","name":"it_fails"},
+  {"type":"test","event":"started","name":"it_ignored"},
+  {"type":"test","name":"it_ignored","event":"ignored"},
+  {"type":"test","name":"it_works","event":"ok"},
+  {"type":"test","name":"it_fails","event":"failed","stdout":"\nthread 'it_fails' panicked at src/main.rs:3:25:\noops\n"},
+  {"type":"suite","event":"failed","passed":1,"failed":1,"ignored":1,"measured":0,"filtered_out":0,"exec_time":0.00015}
+]
