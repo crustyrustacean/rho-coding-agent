@@ -9,10 +9,8 @@
 //! - [`json!`] — serialize to JSON string (errors on failure)
 //! - [`require_perm!`] — permission guard using a `HostState` field
 //! - [`require_field!`] — extract a required field from JSON input
-//! - [`ops_list!`] — build an array for `deno_core::extension!()` registration
 //! - [`js_fn!`] — generate JS wrapper function strings (fixed arity)
 //! - [`js_json_fn!`] — generate JS wrapper that marshals JS objects to JSON strings
-//! - [`rho_js!`] — wrap JS wrappers into a complete `globalThis.rho` object
 
 /// Return an error string with the `__ERROR__` prefix.
 ///
@@ -57,7 +55,8 @@ macro_rules! require_perm {
             return $crate::err!(
                 "rho op: extension does not have {} permission \
                  (enable with `{} = true` in config)",
-                $perm_name, stringify!($field)
+                $perm_name,
+                stringify!($field)
             );
         }
     };
@@ -85,14 +84,6 @@ macro_rules! require_field {
     };
 }
 
-/// Build a list of op functions for `deno_core::extension!()` registration.
-#[macro_export]
-macro_rules! ops_list {
-    [$($op:path),* $(,)?] => {
-        [$($op),*]
-    };
-}
-
 /// Generate a JS wrapper function string for the `rho` global object.
 ///
 /// Fixed-arity variants handle the most common patterns:
@@ -109,85 +100,211 @@ macro_rules! ops_list {
 macro_rules! js_fn {
     // ── 0-param variants ─────────────────────────────────────────────────
     (   $name:literal, $op:literal, void ) => {
-        concat!("  ", $name, "() {\n",
-                "    ops.", $op, "();\n",
-                "  },\n")
+        concat!("  ", $name, "() {\n", "    ops.", $op, "();\n", "  },\n")
     };
     (   $name:literal, $op:literal, unwrap ) => {
-        concat!("  ", $name, "() {\n",
-                "    return unwrapResult(ops.", $op, "());\n",
-                "  },\n")
+        concat!(
+            "  ",
+            $name,
+            "() {\n",
+            "    return unwrapResult(ops.",
+            $op,
+            "());\n",
+            "  },\n"
+        )
     };
     (   $name:literal, $op:literal, json ) => {
-        concat!("  ", $name, "() {\n",
-                "    return JSON.parse(unwrapResult(ops.", $op, "()));\n",
-                "  },\n")
+        concat!(
+            "  ",
+            $name,
+            "() {\n",
+            "    return JSON.parse(unwrapResult(ops.",
+            $op,
+            "()));\n",
+            "  },\n"
+        )
     };
     (   $name:literal, $op:literal, void_unwrap ) => {
-        concat!("  ", $name, "() {\n",
-                "    unwrapResult(ops.", $op, "());\n",
-                "  },\n")
+        concat!(
+            "  ",
+            $name,
+            "() {\n",
+            "    unwrapResult(ops.",
+            $op,
+            "());\n",
+            "  },\n"
+        )
     };
 
     // ── 1-param variants ──────────────────────────────────────────────────
     (   $name:literal, $op:literal, void,       $p1:literal ) => {
-        concat!("  ", $name, "(", $p1, ") {\n",
-                "    ops.", $op, "(", $p1, ");\n",
-                "  },\n")
+        concat!(
+            "  ", $name, "(", $p1, ") {\n", "    ops.", $op, "(", $p1, ");\n", "  },\n"
+        )
     };
     (   $name:literal, $op:literal, unwrap,     $p1:literal ) => {
-        concat!("  ", $name, "(", $p1, ") {\n",
-                "    return unwrapResult(ops.", $op, "(", $p1, "));\n",
-                "  },\n")
+        concat!(
+            "  ",
+            $name,
+            "(",
+            $p1,
+            ") {\n",
+            "    return unwrapResult(ops.",
+            $op,
+            "(",
+            $p1,
+            "));\n",
+            "  },\n"
+        )
     };
     (   $name:literal, $op:literal, json,       $p1:literal ) => {
-        concat!("  ", $name, "(", $p1, ") {\n",
-                "    return JSON.parse(unwrapResult(ops.", $op, "(", $p1, ")));\n",
-                "  },\n")
+        concat!(
+            "  ",
+            $name,
+            "(",
+            $p1,
+            ") {\n",
+            "    return JSON.parse(unwrapResult(ops.",
+            $op,
+            "(",
+            $p1,
+            ")));\n",
+            "  },\n"
+        )
     };
     (   $name:literal, $op:literal, void_unwrap, $p1:literal ) => {
-        concat!("  ", $name, "(", $p1, ") {\n",
-                "    unwrapResult(ops.", $op, "(", $p1, "));\n",
-                "  },\n")
+        concat!(
+            "  ",
+            $name,
+            "(",
+            $p1,
+            ") {\n",
+            "    unwrapResult(ops.",
+            $op,
+            "(",
+            $p1,
+            "));\n",
+            "  },\n"
+        )
     };
 
     // ── 2-param variants ──────────────────────────────────────────────────
     (   $name:literal, $op:literal, void,       $p1:literal, $p2:literal ) => {
-        concat!("  ", $name, "(", $p1, ", ", $p2, ") {\n",
-                "    ops.", $op, "(", $p1, ", ", $p2, ");\n",
-                "  },\n")
+        concat!(
+            "  ", $name, "(", $p1, ", ", $p2, ") {\n", "    ops.", $op, "(", $p1, ", ", $p2,
+            ");\n", "  },\n"
+        )
     };
     (   $name:literal, $op:literal, unwrap,     $p1:literal, $p2:literal ) => {
-        concat!("  ", $name, "(", $p1, ", ", $p2, ") {\n",
-                "    return unwrapResult(ops.", $op, "(", $p1, ", ", $p2, "));\n",
-                "  },\n")
+        concat!(
+            "  ",
+            $name,
+            "(",
+            $p1,
+            ", ",
+            $p2,
+            ") {\n",
+            "    return unwrapResult(ops.",
+            $op,
+            "(",
+            $p1,
+            ", ",
+            $p2,
+            "));\n",
+            "  },\n"
+        )
     };
     (   $name:literal, $op:literal, json,       $p1:literal, $p2:literal ) => {
-        concat!("  ", $name, "(", $p1, ", ", $p2, ") {\n",
-                "    return JSON.parse(unwrapResult(ops.", $op, "(", $p1, ", ", $p2, ")));\n",
-                "  },\n")
+        concat!(
+            "  ",
+            $name,
+            "(",
+            $p1,
+            ", ",
+            $p2,
+            ") {\n",
+            "    return JSON.parse(unwrapResult(ops.",
+            $op,
+            "(",
+            $p1,
+            ", ",
+            $p2,
+            ")));\n",
+            "  },\n"
+        )
     };
     (   $name:literal, $op:literal, void_unwrap, $p1:literal, $p2:literal ) => {
-        concat!("  ", $name, "(", $p1, ", ", $p2, ") {\n",
-                "    unwrapResult(ops.", $op, "(", $p1, ", ", $p2, "));\n",
-                "  },\n")
+        concat!(
+            "  ",
+            $name,
+            "(",
+            $p1,
+            ", ",
+            $p2,
+            ") {\n",
+            "    unwrapResult(ops.",
+            $op,
+            "(",
+            $p1,
+            ", ",
+            $p2,
+            "));\n",
+            "  },\n"
+        )
     };
 
     // ── 3-param variants ──────────────────────────────────────────────────
     (   $name:literal, $op:literal, void,       $p1:literal, $p2:literal, $p3:literal ) => {
-        concat!("  ", $name, "(", $p1, ", ", $p2, ", ", $p3, ") {\n",
-                "    ops.", $op, "(", $p1, ", ", $p2, ", ", $p3, ");\n",
-                "  },\n")
+        concat!(
+            "  ", $name, "(", $p1, ", ", $p2, ", ", $p3, ") {\n", "    ops.", $op, "(", $p1, ", ",
+            $p2, ", ", $p3, ");\n", "  },\n"
+        )
     };
     (   $name:literal, $op:literal, unwrap,     $p1:literal, $p2:literal, $p3:literal ) => {
-        concat!("  ", $name, "(", $p1, ", ", $p2, ", ", $p3, ") {\n",
-                "    return unwrapResult(ops.", $op, "(", $p1, ", ", $p2, ", ", $p3, "));\n",
-                "  },\n")
+        concat!(
+            "  ",
+            $name,
+            "(",
+            $p1,
+            ", ",
+            $p2,
+            ", ",
+            $p3,
+            ") {\n",
+            "    return unwrapResult(ops.",
+            $op,
+            "(",
+            $p1,
+            ", ",
+            $p2,
+            ", ",
+            $p3,
+            "));\n",
+            "  },\n"
+        )
     };
     (   $name:literal, $op:literal, json,       $p1:literal, $p2:literal, $p3:literal ) => {
-        concat!("  ", $name, "(", $p1, ", ", $p2, ", ", $p3, ") {\n",
-                "    return JSON.parse(unwrapResult(ops.", $op, "(", $p1, ", ", $p2, ", ", $p3, ")));\n",
-                "  },\n")
+        concat!(
+            "  ",
+            $name,
+            "(",
+            $p1,
+            ", ",
+            $p2,
+            ", ",
+            $p3,
+            ") {\n",
+            "    return JSON.parse(unwrapResult(ops.",
+            $op,
+            "(",
+            $p1,
+            ", ",
+            $p2,
+            ", ",
+            $p3,
+            ")));\n",
+            "  },\n"
+        )
     };
 }
 
@@ -200,65 +317,48 @@ macro_rules! js_fn {
 macro_rules! js_json_fn {
     // With JSON.parse on return
     (   $name:literal, $op:literal ) => {
-        concat!("  ", $name, "(opts) {\n",
-                "    const optsJson = typeof opts === \"string\" ? opts : JSON.stringify(opts);\n",
-                "    const result = unwrapResult(ops.", $op, "(optsJson));\n",
-                "    return JSON.parse(result);\n",
-                "  },\n")
+        concat!(
+            "  ",
+            $name,
+            "(opts) {\n",
+            "    const optsJson = typeof opts === \"string\" ? opts : JSON.stringify(opts);\n",
+            "    const result = unwrapResult(ops.",
+            $op,
+            "(optsJson));\n",
+            "    return JSON.parse(result);\n",
+            "  },\n"
+        )
     };
     // With unwrap only (no JSON.parse)
     (   $name:literal, $op:literal, unwrap ) => {
-        concat!("  ", $name, "(opts) {\n",
-                "    const optsJson = typeof opts === \"string\" ? opts : JSON.stringify(opts);\n",
-                "    return unwrapResult(ops.", $op, "(optsJson));\n",
-                "  },\n")
+        concat!(
+            "  ",
+            $name,
+            "(opts) {\n",
+            "    const optsJson = typeof opts === \"string\" ? opts : JSON.stringify(opts);\n",
+            "    return unwrapResult(ops.",
+            $op,
+            "(optsJson));\n",
+            "  },\n"
+        )
     };
     // With void_unwrap (throw on error, no return)
     (   $name:literal, $op:literal, void_unwrap ) => {
-        concat!("  ", $name, "(opts) {\n",
-                "    const optsJson = typeof opts === \"string\" ? opts : JSON.stringify(opts);\n",
-                "    unwrapResult(ops.", $op, "(optsJson));\n",
-                "  },\n")
-    };
-}
-
-/// Generate the complete `globalThis.rho` JS object from a list of method wrappers.
-///
-/// Unlike most other macros in this module, this produces a `String` (not `&str`)
-/// because it needs to concatenate the output of other macros at runtime.
-///
-/// # Examples
-///
-/// ```ignore
-/// const RHO_HOST_JS: String = rho_js! {
-///     js_fn!("log", "op_rho_log", void, "level", "message"),
-///     js_fn!("getCwd", "op_rho_get_cwd", unwrap),
-/// }
-/// ```
-#[macro_export]
-macro_rules! rho_js {
-    { $($wrapper:expr),* $(,)? } => {
-        [
-            "const ops = Deno.core.ops;\n",
-            "\n",
-            "function unwrapResult(result) {\n",
-            "  if (typeof result === \"string\" && result.startsWith(\"__ERROR__\")) {\n",
-            "    throw new Error(result.slice(\"__ERROR__\".length));\n",
-            "  }\n",
-            "  return result;\n",
-            "}\n",
-            "\n",
-            "globalThis.rho = {\n",
-            $($wrapper,)*
-            "};\n"
-        ].concat()
+        concat!(
+            "  ",
+            $name,
+            "(opts) {\n",
+            "    const optsJson = typeof opts === \"string\" ? opts : JSON.stringify(opts);\n",
+            "    unwrapResult(ops.",
+            $op,
+            "(optsJson));\n",
+            "  },\n"
+        )
     };
 }
 
 #[cfg(test)]
 mod tests {
-    use deno_core::OpState;
-
     #[test]
     fn err_macro_basic() {
         let s = err!("something went wrong");
@@ -304,13 +404,6 @@ mod tests {
         assert!(result.starts_with("__ERROR__missing required field 'url'"));
     }
 
-    #[test]
-    fn ops_list_macro() {
-        fn dummy(_: &mut OpState) -> String { "ok".into() }
-        let list = ops_list![dummy];
-        assert_eq!(list.len(), 1);
-    }
-
     // ── js_fn! tests ──
 
     #[test]
@@ -322,37 +415,68 @@ mod tests {
     #[test]
     fn js_fn_void_2param() {
         let js = js_fn!("log", "op_rho_log", void, "level", "message");
-        assert_eq!(js, "  log(level, message) {\n    ops.op_rho_log(level, message);\n  },\n");
+        assert_eq!(
+            js,
+            "  log(level, message) {\n    ops.op_rho_log(level, message);\n  },\n"
+        );
     }
 
     #[test]
     fn js_fn_unwrap_0param() {
         let js = js_fn!("getCwd", "op_rho_get_cwd", unwrap);
-        assert_eq!(js, "  getCwd() {\n    return unwrapResult(ops.op_rho_get_cwd());\n  },\n");
+        assert_eq!(
+            js,
+            "  getCwd() {\n    return unwrapResult(ops.op_rho_get_cwd());\n  },\n"
+        );
     }
 
     #[test]
     fn js_fn_unwrap_1param() {
         let js = js_fn!("readFile", "op_rho_read_file", unwrap, "path");
-        assert_eq!(js, "  readFile(path) {\n    return unwrapResult(ops.op_rho_read_file(path));\n  },\n");
+        assert_eq!(
+            js,
+            "  readFile(path) {\n    return unwrapResult(ops.op_rho_read_file(path));\n  },\n"
+        );
     }
 
     #[test]
     fn js_fn_json_0param() {
         let js = js_fn!("getModel", "op_rho_get_model", json);
-        assert_eq!(js, "  getModel() {\n    return JSON.parse(unwrapResult(ops.op_rho_get_model()));\n  },\n");
+        assert_eq!(
+            js,
+            "  getModel() {\n    return JSON.parse(unwrapResult(ops.op_rho_get_model()));\n  },\n"
+        );
     }
 
     #[test]
     fn js_fn_void_unwrap_1param() {
-        let js = js_fn!("writeFile", "op_rho_write_file", void_unwrap, "path", "content");
-        assert_eq!(js, "  writeFile(path, content) {\n    unwrapResult(ops.op_rho_write_file(path, content));\n  },\n");
+        let js = js_fn!(
+            "writeFile",
+            "op_rho_write_file",
+            void_unwrap,
+            "path",
+            "content"
+        );
+        assert_eq!(
+            js,
+            "  writeFile(path, content) {\n    unwrapResult(ops.op_rho_write_file(path, content));\n  },\n"
+        );
     }
 
     #[test]
     fn js_fn_3param() {
-        let js = js_fn!("setModel", "op_rho_set_model", void, "name", "version", "extra");
-        assert_eq!(js, "  setModel(name, version, extra) {\n    ops.op_rho_set_model(name, version, extra);\n  },\n");
+        let js = js_fn!(
+            "setModel",
+            "op_rho_set_model",
+            void,
+            "name",
+            "version",
+            "extra"
+        );
+        assert_eq!(
+            js,
+            "  setModel(name, version, extra) {\n    ops.op_rho_set_model(name, version, extra);\n  },\n"
+        );
     }
 
     // ── js_json_fn! tests ──
@@ -370,29 +494,5 @@ mod tests {
         let js = js_json_fn!("writeConfig", "op_rho_write_config", unwrap);
         assert!(js.contains("return unwrapResult"));
         assert!(!js.contains("JSON.parse"));
-    }
-
-    // ── rho_js! integration test ──
-
-    #[test]
-    fn rho_js_macro_complete() {
-        let js = rho_js! {
-            js_fn!("log", "op_rho_log", void, "level", "message"),
-            js_fn!("getCwd", "op_rho_get_cwd", unwrap),
-            js_fn!("readFile", "op_rho_read_file", unwrap, "path"),
-            js_fn!("writeFile", "op_rho_write_file", void_unwrap, "path", "content"),
-            js_json_fn!("runCommand", "op_rho_run_command"),
-            js_json_fn!("fetchUrl", "op_rho_fetch_url"),
-        };
-        assert!(js.contains("const ops = Deno.core.ops;"));
-        assert!(js.contains("function unwrapResult"));
-        assert!(js.contains("globalThis.rho = {"));
-        assert!(js.contains("log(level, message)"));
-        assert!(js.contains("getCwd()"));
-        assert!(js.contains("readFile(path)"));
-        assert!(js.contains("writeFile(path, content)"));
-        assert!(js.contains("runCommand(opts)"));
-        assert!(js.contains("fetchUrl(opts)"));
-        assert!(js.contains("};\n"));
     }
 }

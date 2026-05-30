@@ -35,9 +35,7 @@ use std::thread::{self, JoinHandle};
 /// A task to be executed on the background dispatcher.
 struct AsyncTask {
     /// The boxed async function to run. Returns `Result<String, String>`.
-    future: std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<String, String>> + Send>,
-    >,
+    future: std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send>>,
     /// Channel to send the result back to the caller.
     reply: mpsc::Sender<Result<String, String>>,
 }
@@ -118,7 +116,6 @@ impl AsyncDispatcher {
             .recv()
             .unwrap_or_else(|_| panic!("AsyncDispatcher background thread has shut down"))
     }
-
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -126,8 +123,8 @@ impl AsyncDispatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
     /// Helper: create a fresh dispatcher (not the global singleton).
@@ -227,9 +224,12 @@ mod tests {
 
     #[test]
     fn global_singleton_is_shared() {
-        let d1 = AsyncDispatcher::global() as *const AsyncDispatcher;
-        let d2 = AsyncDispatcher::global() as *const AsyncDispatcher;
-        assert_eq!(d1, d2, "global() should return the same instance");
+        let d1 = AsyncDispatcher::global();
+        let d2 = AsyncDispatcher::global();
+        assert!(
+            std::ptr::eq(d1, d2),
+            "global() should return the same instance"
+        );
     }
 
     #[test]

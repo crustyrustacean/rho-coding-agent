@@ -77,6 +77,8 @@ pub enum ToolRisk {
     Write,
     /// The tool may execute commands or cause irreversible effects.
     Destructive,
+    /// The tool makes network requests.
+    Network,
 }
 
 /// A single parameter definition.
@@ -349,12 +351,13 @@ mod internal {
                 "read" => ToolRisk::Read,
                 "write" => ToolRisk::Write,
                 "destructive" => ToolRisk::Destructive,
+                "network" => ToolRisk::Network,
                 other => {
                     return Err(ExtractError::ToolInvalidField {
                         index: i as usize,
                         field: "risk".to_string(),
                         reason: format!(
-                            "expected 'read', 'write', or 'destructive', got '{other}'"
+                            "expected 'read', 'write', 'destructive', or 'network', got '{other}'"
                         ),
                     });
                 }
@@ -392,6 +395,12 @@ mod internal {
     }
 
     /// Extract parameter definitions from a tool's `parameters` object.
+    ///
+    /// Supports two formats:
+    /// - **Flat** (rho-native): `{ paramName: { type, description?, required? } }`
+    /// - **JSON Schema**: `{ type: "object", properties: { ... }, required: [...] }`
+    ///
+    /// JSON Schema format is detected by the presence of a `"properties"` key.
     fn extract_parameters(
         scope: &mut PinnedRef<'_, HandleScope<'_>>,
         tool_obj: Local<Object>,
@@ -412,6 +421,19 @@ mod internal {
             }
         })?;
 
+        // Detect JSON Schema format: if "properties" key exists, convert to flat.
+        let has_properties = {
+            let k = v8_str(scope, "properties")?;
+            parameters_obj
+                .get(scope, k.into())
+                .is_some_and(|v| !v.is_undefined() && !v.is_null())
+        };
+
+        if has_properties {
+            return extract_parameters_json_schema(scope, parameters_obj, tool_index);
+        }
+
+        // Flat format
         let Some(prop_names) = parameters_obj
             .get_own_property_names(scope, deno_core::v8::GetPropertyNamesArgs::default())
         else {
@@ -457,6 +479,95 @@ mod internal {
                     None => false,
                 }
             };
+
+            params.insert(
+                prop_name_str,
+                ParameterDef {
+                    param_type: ptype,
+                    description: desc,
+                    required,
+                },
+            );
+        }
+
+        Ok(params)
+    }
+
+    /// Extract parameters in JSON Schema format and convert to flat.
+    ///
+    /// Expected structure:
+    /// ```text
+    /// { type: "object", properties: { name: { type, description? } }, required?: ["name"] }
+    /// ```
+    fn extract_parameters_json_schema(
+        scope: &mut PinnedRef<'_, HandleScope<'_>>,
+        parameters_obj: Local<Object>,
+        tool_index: usize,
+    ) -> Result<HashMap<String, ParameterDef>, ExtractError> {
+        // Extract the "properties" object
+        let properties_key = v8_str(scope, "properties")?;
+        let Some(properties_val) = parameters_obj.get(scope, properties_key.into()) else {
+            return Ok(HashMap::new());
+        };
+        let Ok(properties_obj) = Local::<Object>::try_from(properties_val) else {
+            return Ok(HashMap::new());
+        };
+
+        // Extract the "required" array (if present)
+        let required_set: std::collections::HashSet<String> = {
+            let mut set = std::collections::HashSet::new();
+            let req_key = v8_str(scope, "required")?;
+            if let Some(req_arr) = parameters_obj
+                .get(scope, req_key.into())
+                .filter(|v| !v.is_undefined() && !v.is_null())
+                .and_then(|v| Local::<deno_core::v8::Array>::try_from(v).ok())
+            {
+                for j in 0..req_arr.length() {
+                    let name_val = req_arr
+                        .get_index(scope, j)
+                        .unwrap_or_else(|| deno_core::v8::undefined(scope).into());
+                    set.insert(name_val.to_rust_string_lossy(scope));
+                }
+            }
+            set
+        };
+
+        // Walk properties
+        let Some(prop_names) = properties_obj
+            .get_own_property_names(scope, deno_core::v8::GetPropertyNamesArgs::default())
+        else {
+            return Ok(HashMap::new());
+        };
+
+        let mut params = HashMap::new();
+        for i in 0..prop_names.length() {
+            let prop_name_val = prop_names
+                .get_index(scope, i)
+                .unwrap_or_else(|| deno_core::v8::undefined(scope).into());
+            let prop_name_str = prop_name_val.to_rust_string_lossy(scope);
+
+            let param_val = properties_obj
+                .get(scope, prop_name_val)
+                .unwrap_or_else(|| deno_core::v8::undefined(scope).into());
+            let Ok(param_def) = Local::<Object>::try_from(param_val) else {
+                continue;
+            };
+
+            let ptype = {
+                let k = v8_str(scope, "type")?;
+                let v = param_def
+                    .get(scope, k.into())
+                    .filter(|v| !v.is_undefined() && !v.is_null())
+                    .ok_or_else(|| ExtractError::ToolInvalidField {
+                        index: tool_index,
+                        field: format!("parameters.properties.{prop_name_str}.type"),
+                        reason: "missing required field".into(),
+                    })?;
+                v.to_rust_string_lossy(scope)
+            };
+
+            let desc = optional_string(scope, param_def, "description");
+            let required = required_set.contains(&prop_name_str);
 
             params.insert(
                 prop_name_str,
@@ -1014,6 +1125,125 @@ mod tests {
             err,
             ManifestError::InvalidField { ref field, .. } if field.starts_with("commands[0].name")
         ));
+    }
+
+    // -- Test: tool with network risk --
+
+    #[test]
+    fn tool_with_network_risk() {
+        let ext = extract_from_ts(
+            r#"
+            export default {
+                name: "risk-test",
+                tools: [{
+                    name: "fetch",
+                    description: "Fetches from the internet",
+                    risk: "network" as const,
+                    parameters: {},
+                    execute: async () => { return { output: "" }; },
+                }],
+            };
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(ext.tools[0].risk, ToolRisk::Network);
+    }
+
+    // -- Test: parameters in JSON Schema format --
+
+    #[test]
+    fn parameters_json_schema_format() {
+        let ext = extract_from_ts(
+            r#"
+            export default {
+                name: "json-schema-test",
+                tools: [{
+                    name: "search",
+                    description: "Search for something",
+                    risk: "read" as const,
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            query: { type: "string", description: "Search query" },
+                            limit: { type: "number" },
+                        },
+                        required: ["query"],
+                    },
+                    execute: async () => { return { output: "ok" }; },
+                }],
+            };
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(ext.tools.len(), 1);
+        let params = &ext.tools[0].parameters;
+        assert_eq!(params.len(), 2);
+
+        // query should be required
+        assert_eq!(params["query"].param_type, "string");
+        assert_eq!(params["query"].description.as_deref(), Some("Search query"));
+        assert!(params["query"].required);
+
+        // limit should not be required
+        assert_eq!(params["limit"].param_type, "number");
+        assert!(!params["limit"].required);
+    }
+
+    // -- Test: JSON Schema with empty required array --
+
+    #[test]
+    fn parameters_json_schema_empty_required() {
+        let ext = extract_from_ts(
+            r#"
+            export default {
+                name: "json-schema-optional-test",
+                tools: [{
+                    name: "echo",
+                    description: "Echo",
+                    risk: "read" as const,
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            msg: { type: "string", description: "Message" },
+                        },
+                        required: [],
+                    },
+                    execute: async () => { return { output: "ok" }; },
+                }],
+            };
+            "#,
+        )
+        .unwrap();
+
+        assert!(!ext.tools[0].parameters["msg"].required);
+    }
+
+    // -- Test: flat format still works --
+
+    #[test]
+    fn parameters_flat_format_still_works() {
+        let ext = extract_from_ts(
+            r#"
+            export default {
+                name: "flat-format-test",
+                tools: [{
+                    name: "ping",
+                    description: "Ping",
+                    risk: "read" as const,
+                    parameters: {
+                        host: { type: "string", description: "Host", required: true },
+                    },
+                    execute: async () => { return { output: "ok" }; },
+                }],
+            };
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(ext.tools[0].parameters["host"].param_type, "string");
+        assert!(ext.tools[0].parameters["host"].required);
     }
 
     // -- Test: full manifest (tools + hooks + commands) --

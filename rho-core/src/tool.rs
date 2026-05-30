@@ -31,6 +31,8 @@ pub enum ToolRisk {
     Write,
     /// The tool may execute commands, delete data, or cause irreversible effects.
     Destructive,
+    /// The tool makes network requests.
+    Network,
 }
 
 // ── ToolResult / ToolOutcome ──────────────────────────────────────────────────

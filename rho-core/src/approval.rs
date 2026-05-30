@@ -42,7 +42,10 @@ pub struct DefaultApprovalPolicy;
 
 impl ApprovalPolicy for DefaultApprovalPolicy {
     fn requires_approval(&self, _tool_name: &ToolName, risk: ToolRisk) -> bool {
-        matches!(risk, ToolRisk::Write | ToolRisk::Destructive)
+        matches!(
+            risk,
+            ToolRisk::Write | ToolRisk::Destructive | ToolRisk::Network
+        )
     }
 }
 

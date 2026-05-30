@@ -101,6 +101,7 @@ impl AgentObserver for ReplObserver {
             ToolRisk::Read => "read",
             ToolRisk::Write => "write",
             ToolRisk::Destructive => "destructive",
+            ToolRisk::Network => "network",
         };
         println!("⚠ {tool_name} ({risk_label}) requires approval");
     }

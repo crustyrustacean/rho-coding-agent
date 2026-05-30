@@ -466,6 +466,7 @@ fn risk_label(risk: ToolRisk) -> &'static str {
         ToolRisk::Read => "read",
         ToolRisk::Write => "write",
         ToolRisk::Destructive => "destructive",
+        ToolRisk::Network => "network",
     }
 }
 

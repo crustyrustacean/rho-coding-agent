@@ -17,6 +17,7 @@ impl ApprovalGate for ReplApprovalGate {
             ToolRisk::Read => "read",
             ToolRisk::Write => "write",
             ToolRisk::Destructive => "destructive",
+            ToolRisk::Network => "network",
         };
         crate::presenter::ReplPresenter::approval_prompt(
             &call.function.name,

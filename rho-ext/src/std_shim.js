@@ -191,22 +191,16 @@ console.countReset = (() => {
 console.dir = (obj) => console.log(obj);
 console.table = (data) => console.log(JSON.stringify(data, null, 2));
 
-console.time = (() => {
-  const timers = {};
-  return (label = "default") => {
-    timers[label] = Date.now();
-  };
-})();
-
-console.timeEnd = (() => {
-  const timers = {};
-  return (label = "default") => {
-    if (label in timers) {
-      console.log(`${label}: ${Date.now() - timers[label]}ms`);
-      delete timers[label];
-    }
-  };
-})();
+const _timers = {};
+console.time = (label = "default") => {
+  _timers[label] = Date.now();
+};
+console.timeEnd = (label = "default") => {
+  if (label in _timers) {
+    console.log(`${label}: ${Date.now() - _timers[label]}ms`);
+    delete _timers[label];
+  }
+};
 
 console.timeLog = () => {};
 

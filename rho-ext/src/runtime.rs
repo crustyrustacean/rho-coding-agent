@@ -35,6 +35,7 @@ use std::rc::Rc;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 use deno_core::v8::{self, Global, HandleScope, Local, Object, PinnedRef};
 use deno_core::{JsRuntime, ModuleLoader, RuntimeOptions};
@@ -93,6 +94,9 @@ struct FunctionHandles {
 /// the thread joins).
 ///
 /// For explicit shutdown with panic observation, use [`ExtensionRuntime::shutdown`].
+/// Default call timeout for extension tool/hook/command invocations.
+const DEFAULT_CALL_TIMEOUT: Duration = Duration::from_secs(30);
+
 pub struct ExtensionRuntime {
     /// Channel sender for dispatching requests to the extension thread.
     tx: Option<mpsc::Sender<Request>>,
@@ -105,6 +109,10 @@ pub struct ExtensionRuntime {
     /// Allows the caller to update the model name that extensions see
     /// via `rho.getModel()` without going through the V8 thread.
     model: Arc<Mutex<String>>,
+    /// Maximum duration to wait for an extension call to complete.
+    ///
+    /// A `Duration::ZERO` means no timeout (wait indefinitely).
+    call_timeout: Duration,
 }
 
 impl ExtensionRuntime {
@@ -201,13 +209,10 @@ impl ExtensionRuntime {
             .map(|paths| paths.iter().map(|p| root_dir.join(p)).collect())
             .unwrap_or_default();
 
-        let host_state = HostState::new_with_network(
-            root_dir_buf.clone(),
-            extra_allowed,
-            allow_commands,
-            allow_network,
-            model.to_string(),
-        );
+        let host_state = HostState::new(root_dir_buf.clone(), extra_allowed)
+            .with_commands(allow_commands)
+            .with_network(allow_network)
+            .with_model(model);
 
         Self::spawn_inner(specifier, js, Some(root_dir_buf), Some(host_state))
     }
@@ -387,6 +392,7 @@ impl ExtensionRuntime {
             handle: Some(handle),
             manifest,
             model,
+            call_timeout: DEFAULT_CALL_TIMEOUT,
         })
     }
 
@@ -458,6 +464,20 @@ impl ExtensionRuntime {
             .await
     }
 
+    /// Set the call timeout for this runtime.
+    ///
+    /// A `Duration::ZERO` disables the timeout (waits indefinitely).
+    /// The default timeout is 30 seconds.
+    pub fn set_timeout(&mut self, timeout: Duration) {
+        self.call_timeout = timeout;
+    }
+
+    /// Return the current call timeout.
+    #[must_use]
+    pub fn default_timeout(&self) -> Duration {
+        self.call_timeout
+    }
+
     /// Internal dispatch.
     async fn call_internal(
         &self,
@@ -476,9 +496,17 @@ impl ExtensionRuntime {
             })
             .map_err(|_| ExtensionError::RuntimeShutdown)?;
 
-        reply_rx
-            .await
-            .map_err(|_| ExtensionError::RuntimeShutdown)?
+        if self.call_timeout > Duration::ZERO {
+            match tokio::time::timeout(self.call_timeout, reply_rx).await {
+                Ok(Ok(result)) => result,
+                Ok(Err(_)) => Err(ExtensionError::RuntimeShutdown),
+                Err(_) => Err(ExtensionError::Timeout(self.call_timeout)),
+            }
+        } else {
+            reply_rx
+                .await
+                .map_err(|_| ExtensionError::RuntimeShutdown)?
+        }
     }
 
     /// Shut down the extension thread and wait for it to exit.
@@ -1578,8 +1606,10 @@ mod tests {
         )
         .unwrap();
 
-        let mut perms = rho_core::config::ExtensionPermissions::default();
-        perms.network = Some(true);
+        let perms = rho_core::config::ExtensionPermissions {
+            network: Some(true),
+            ..Default::default()
+        };
         let mut rt = ExtensionRuntime::spawn_from_file_with_perms(
             &main_path,
             dir.path(),
@@ -1604,10 +1634,109 @@ mod tests {
         );
         // Should be some kind of connection error (not permission)
         assert!(
-            result.contains("FETCH_ERROR") || result.contains("connection refused") || result.contains("error"),
+            result.contains("FETCH_ERROR")
+                || result.contains("connection refused")
+                || result.contains("error"),
             "expected a connection error, got: {result}"
         );
 
+        rt.shutdown().unwrap();
+    }
+
+    // =========================================================================
+    // Timeout tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn call_tool_times_out_on_slow_extension() {
+        let dir = tempfile::tempdir().unwrap();
+        let main_path = dir.path().join("slow.ts");
+        std::fs::write(
+            &main_path,
+            r#"
+            export default {
+                name: "slow-test",
+                tools: [{
+                    name: "slow",
+                    description: "Sleeps via runCommand",
+                    risk: "read" as const,
+                    parameters: {},
+                    execute: async () => {
+                        return JSON.stringify(rho.runCommand("sleep", ["10"]));
+                    },
+                }],
+            };
+            "#,
+        )
+        .unwrap();
+
+        let perms = rho_core::config::ExtensionPermissions {
+            commands: Some(true),
+            ..Default::default()
+        };
+        let mut rt = ExtensionRuntime::spawn_from_file_with_perms(
+            &main_path,
+            dir.path(),
+            &perms,
+            "test-model",
+        )
+        .expect("spawn should succeed");
+
+        // Set a very short timeout — the sleep will take 10s, timeout is 100ms
+        rt.set_timeout(std::time::Duration::from_millis(100));
+
+        let err = rt.call_tool("slow", "").await.unwrap_err();
+        assert!(
+            matches!(err, ExtensionError::Timeout(d) if d == std::time::Duration::from_millis(100)),
+            "expected Timeout(100ms), got: {err}"
+        );
+
+        rt.shutdown().unwrap();
+    }
+
+    #[tokio::test]
+    async fn call_tool_respects_zero_timeout_as_no_timeout() {
+        let mut rt = spawn_runtime(
+            r#"
+            export default {
+                name: "no-timeout-test",
+                tools: [{
+                    name: "fast",
+                    description: "Fast",
+                    risk: "read" as const,
+                    parameters: {},
+                    execute: async () => "quick",
+                }],
+            };
+            "#,
+        );
+
+        // Zero timeout means no timeout (disabled)
+        rt.set_timeout(std::time::Duration::ZERO);
+
+        let result = rt.call_tool("fast", "").await.unwrap();
+        assert_eq!(result, "quick");
+
+        rt.shutdown().unwrap();
+    }
+
+    #[tokio::test]
+    async fn default_timeout_is_thirty_seconds() {
+        let mut rt = spawn_runtime(
+            r#"
+            export default {
+                name: "timeout-config-test",
+                tools: [{
+                    name: "ping",
+                    description: "Ping",
+                    risk: "read" as const,
+                    parameters: {},
+                    execute: async () => "pong",
+                }],
+            };
+            "#,
+        );
+        assert_eq!(rt.default_timeout(), std::time::Duration::from_secs(30));
         rt.shutdown().unwrap();
     }
 }

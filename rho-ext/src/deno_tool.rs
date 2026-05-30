@@ -46,6 +46,7 @@ fn to_core_risk(risk: ToolRisk) -> CoreToolRisk {
         ToolRisk::Read => CoreToolRisk::Read,
         ToolRisk::Write => CoreToolRisk::Write,
         ToolRisk::Destructive => CoreToolRisk::Destructive,
+        ToolRisk::Network => CoreToolRisk::Network,
     }
 }
 
@@ -449,5 +450,6 @@ mod tests {
             to_core_risk(ToolRisk::Destructive),
             CoreToolRisk::Destructive
         );
+        assert_eq!(to_core_risk(ToolRisk::Network), CoreToolRisk::Network);
     }
 }

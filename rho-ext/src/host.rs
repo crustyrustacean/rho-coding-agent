@@ -25,7 +25,7 @@ use deno_core::{OpState, op2};
 use url::Url;
 
 // Import Phase 3 boilerplate-reduction macros.
-use crate::{err, json, require_perm, require_field};
+use crate::{err, json, require_field, require_perm};
 
 /// Maximum file size that `readFile` will return (1 MiB).
 const MAX_READ_BYTES: u64 = 1024 * 1024;
@@ -67,47 +67,12 @@ pub struct HostState {
 }
 
 impl HostState {
-    /// Create a new `HostState` with the given cwd and optional extra
-    /// allowed paths.
+    /// Create a new `HostState`.
     ///
     /// The `cwd` itself is always added to the allowed set. Additional
     /// paths in `extra_allowed` are canonicalised; non-existent paths
     /// are silently skipped.
     pub fn new(cwd: PathBuf, extra_allowed: Vec<PathBuf>) -> Self {
-        Self::new_with_permissions(cwd, extra_allowed, false)
-    }
-
-    /// Create a new `HostState` with full permission control.
-    ///
-    /// See [`HostState::new`] for path handling details.
-    pub fn new_with_permissions(
-        cwd: PathBuf,
-        extra_allowed: Vec<PathBuf>,
-        allow_commands: bool,
-    ) -> Self {
-        Self::new_with_network(cwd, extra_allowed, allow_commands, false, String::new())
-    }
-
-    /// Create a new `HostState` with full control, including the model name.
-    ///
-    /// See [`HostState::new`] for path handling details.
-    pub fn new_with_model(
-        cwd: PathBuf,
-        extra_allowed: Vec<PathBuf>,
-        allow_commands: bool,
-        model: String,
-    ) -> Self {
-        Self::new_with_network(cwd, extra_allowed, allow_commands, false, model)
-    }
-
-    /// Create a new `HostState` with full control, including network permission.
-    pub fn new_with_network(
-        cwd: PathBuf,
-        extra_allowed: Vec<PathBuf>,
-        allow_commands: bool,
-        allow_network: bool,
-        model: String,
-    ) -> Self {
         let mut allowed = Vec::new();
 
         // Always include cwd (canonicalise if possible, use as-is if not)
@@ -130,9 +95,9 @@ impl HostState {
         Self {
             cwd,
             allowed_paths: allowed,
-            allow_commands,
-            allow_network,
-            model: Arc::new(Mutex::new(model)),
+            allow_commands: false,
+            allow_network: false,
+            model: Arc::new(Mutex::new(String::new())),
         }
     }
 
@@ -437,10 +402,7 @@ pub fn op_rho_run_command(
 /// This replaces the dedicated `HttpExecutor` thread — the shared
 /// [`AsyncDispatcher`](crate::async_dispatcher::AsyncDispatcher) handles
 /// the async-to-sync bridging.
-fn execute_http_request(
-    request: reqwest::Request,
-    max_bytes: u64,
-) -> Result<String, String> {
+fn execute_http_request(request: reqwest::Request, max_bytes: u64) -> Result<String, String> {
     let dispatcher = crate::async_dispatcher::AsyncDispatcher::global();
     dispatcher.block_on(async move {
         let client = reqwest::Client::builder()
@@ -552,7 +514,9 @@ fn build_fetch_request(
 
     if let Some(headers) = opts["headers"].as_object() {
         for (key, value) in headers {
-            let Some(val_str) = value.as_str() else { continue };
+            let Some(val_str) = value.as_str() else {
+                continue;
+            };
             let Ok(name) = reqwest::header::HeaderName::from_bytes(key.as_bytes()) else {
                 continue;
             };
@@ -591,12 +555,8 @@ fn op_rho_url_parse(#[string] spec: &str, #[string] base: &str) -> String {
 
     let password = url.password().unwrap_or("").to_string();
     let query = url.query().map_or_else(String::new, |q| format!("?{q}"));
-    let fragment = url
-        .fragment()
-        .map_or_else(String::new, |f| format!("#{f}"));
-    let port_str = url
-        .port()
-        .map_or_else(String::new, |p| p.to_string());
+    let fragment = url.fragment().map_or_else(String::new, |f| format!("#{f}"));
+    let port_str = url.port().map_or_else(String::new, |p| p.to_string());
     let host_str = url.host_str().unwrap_or("");
     let host_with_port = if url.port().is_some() {
         format!("{host_str}:{}", url.port().unwrap())
@@ -1044,11 +1004,7 @@ mod tests {
 
         rt.op_state()
             .borrow_mut()
-            .put(HostState::new_with_permissions(
-                PathBuf::from(cwd),
-                vec![],
-                true, // allow_commands
-            ));
+            .put(HostState::new(PathBuf::from(cwd), vec![]).with_commands(true));
 
         rt
     }
@@ -1153,12 +1109,9 @@ mod tests {
             ..Default::default()
         });
 
-        rt.op_state().borrow_mut().put(HostState::new_with_model(
-            PathBuf::from("/tmp"),
-            vec![],
-            false,
-            "claude-sonnet-4-20250514".to_string(),
-        ));
+        rt.op_state().borrow_mut().put(
+            HostState::new(PathBuf::from("/tmp"), vec![]).with_model("claude-sonnet-4-20250514"),
+        );
 
         let result = eval(&mut rt, r"rho.getModel()");
         assert_eq!(result, "claude-sonnet-4-20250514");
@@ -1189,8 +1142,7 @@ mod tests {
         });
 
         // Build HostState with the shared model handle
-        let host_state =
-            HostState::new_with_model(PathBuf::from("/tmp"), vec![], false, "gpt-4o".to_string());
+        let host_state = HostState::new(PathBuf::from("/tmp"), vec![]).with_model("gpt-4o");
         // We need to replace the model Arc with our shared one
         {
             let op_state = rt.op_state();
@@ -1231,7 +1183,25 @@ mod tests {
     #[test]
     fn console_has_standard_methods() {
         let mut rt = runtime_with_state("/tmp");
-        for method in &["log", "debug", "info", "warn", "error", "trace", "assert", "clear", "dir", "table", "count", "countReset", "time", "timeEnd", "group", "groupEnd", "groupCollapsed"] {
+        for method in &[
+            "log",
+            "debug",
+            "info",
+            "warn",
+            "error",
+            "trace",
+            "assert",
+            "clear",
+            "dir",
+            "table",
+            "count",
+            "countReset",
+            "time",
+            "timeEnd",
+            "group",
+            "groupEnd",
+            "groupCollapsed",
+        ] {
             let result = eval(&mut rt, &format!(r"typeof console.{method}"));
             assert_eq!(result, "function", "console.{method} should be a function");
         }
@@ -1261,6 +1231,32 @@ mod tests {
         eval(&mut rt, r"console.assert(true, 'should not fire')");
     }
 
+    #[test]
+    fn console_time_and_time_end_share_state() {
+        let mut rt = runtime_with_state("/tmp");
+        // Monkey-patch console.log to capture the last logged message
+        let result = eval(
+            &mut rt,
+            r#"
+            let lastLog = "";
+            const origLog = console.log;
+            console.log = (...args) => { lastLog = args.join(" "); };
+            console.time("my-timer");
+            console.timeEnd("my-timer");
+            // If timers are shared, lastLog should be "my-timer: Nms" (N >= 0)
+            // If they are NOT shared, lastLog will still be "" because timeEnd
+            // won't find the timer in its own separate map and does nothing.
+            const found = lastLog.startsWith("my-timer:");
+            console.log = origLog; // restore
+            found
+            "#,
+        );
+        assert_eq!(
+            result, "true",
+            "console.timeEnd should find the timer set by console.time (shared state)"
+        );
+    }
+
     // -- URL tests --------------------------------------------------------------
 
     #[test]
@@ -1273,7 +1269,9 @@ mod tests {
     #[test]
     fn url_parses_absolute() {
         let mut rt = runtime_with_state("/tmp");
-        let result = eval(&mut rt, r#"
+        let result = eval(
+            &mut rt,
+            r#"
             const u = new URL("https://example.com:8080/path?q=hello#section");
             JSON.stringify({
                 href: u.href,
@@ -1285,9 +1283,13 @@ mod tests {
                 hash: u.hash,
                 origin: u.origin,
             })
-        "#);
+        "#,
+        );
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
-        assert_eq!(parsed["href"], "https://example.com:8080/path?q=hello#section");
+        assert_eq!(
+            parsed["href"],
+            "https://example.com:8080/path?q=hello#section"
+        );
         assert_eq!(parsed["protocol"], "https:");
         assert_eq!(parsed["hostname"], "example.com");
         assert_eq!(parsed["port"], "8080");
@@ -1300,10 +1302,13 @@ mod tests {
     #[test]
     fn url_parses_relative_with_base() {
         let mut rt = runtime_with_state("/tmp");
-        let result = eval(&mut rt, r#"
+        let result = eval(
+            &mut rt,
+            r#"
             const u = new URL("/other", "https://example.com/path/page");
             u.href
-        "#);
+        "#,
+        );
         assert_eq!(result, "https://example.com/other");
     }
 
@@ -1312,26 +1317,35 @@ mod tests {
         let mut rt = runtime_with_state("/tmp");
         let result = eval_or_error(&mut rt, r"new URL('not a url')");
         let err = result.unwrap_err();
-        assert!(err.contains("invalid URL"), "expected URL parse error, got: {err}");
+        assert!(
+            err.contains("invalid URL"),
+            "expected URL parse error, got: {err}"
+        );
     }
 
     #[test]
     fn url_to_string_and_to_json() {
         let mut rt = runtime_with_state("/tmp");
-        let result = eval(&mut rt, r#"
+        let result = eval(
+            &mut rt,
+            r#"
             const u = new URL("https://example.com/path");
             u.toString() === u.href && u.toJSON() === u.href
-        "#);
+        "#,
+        );
         assert_eq!(result, "true");
     }
 
     #[test]
     fn url_username_and_password() {
         let mut rt = runtime_with_state("/tmp");
-        let result = eval(&mut rt, r#"
+        let result = eval(
+            &mut rt,
+            r#"
             const u = new URL("https://user:pass@example.com");
             JSON.stringify({ user: u.username, pass: u.password })
-        "#);
+        "#,
+        );
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["user"], "user");
         assert_eq!(parsed["pass"], "pass");
@@ -1349,10 +1363,13 @@ mod tests {
     #[test]
     fn url_search_params_from_string() {
         let mut rt = runtime_with_state("/tmp");
-        let result = eval(&mut rt, r#"
+        let result = eval(
+            &mut rt,
+            r#"
             const sp = new URLSearchParams("a=1&b=2&c=3");
             JSON.stringify({ a: sp.get('a'), b: sp.get('b'), c: sp.get('c') })
-        "#);
+        "#,
+        );
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["a"], "1");
         assert_eq!(parsed["b"], "2");
@@ -1362,33 +1379,45 @@ mod tests {
     #[test]
     fn url_search_params_set_and_delete() {
         let mut rt = runtime_with_state("/tmp");
-        let result = eval(&mut rt, r#"
+        let result = eval(
+            &mut rt,
+            r#"
             const sp = new URLSearchParams("a=1");
             sp.set('a', 'updated');
             sp.append('b', '2');
             sp.delete('b');
             JSON.stringify({ a: sp.get('a'), b: sp.get('b'), size: sp.size })
-        "#);
+        "#,
+        );
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["a"], "updated");
-        assert!(parsed["b"].is_null(), "expected null after delete, got: {}", parsed["b"]);
+        assert!(
+            parsed["b"].is_null(),
+            "expected null after delete, got: {}",
+            parsed["b"]
+        );
         assert_eq!(parsed["size"], 1);
     }
 
     #[test]
     fn url_search_params_to_string() {
         let mut rt = runtime_with_state("/tmp");
-        let result = eval(&mut rt, r#"
+        let result = eval(
+            &mut rt,
+            r#"
             const sp = new URLSearchParams("key=value&foo=bar");
             sp.toString()
-        "#);
+        "#,
+        );
         assert_eq!(result, "key=value&foo=bar");
     }
 
     #[test]
     fn url_search_params_has_and_has_all() {
         let mut rt = runtime_with_state("/tmp");
-        let result = eval(&mut rt, r#"
+        let result = eval(
+            &mut rt,
+            r#"
             const sp = new URLSearchParams("a=1&a=2&b=3");
             JSON.stringify({
                 has_a: sp.has('a'),
@@ -1396,7 +1425,8 @@ mod tests {
                 has_c: sp.has('c'),
                 all_a: sp.getAll('a')
             })
-        "#);
+        "#,
+        );
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["has_a"], true);
         assert_eq!(parsed["has_b"], true);
@@ -1407,14 +1437,20 @@ mod tests {
     #[test]
     fn url_search_params_iteration() {
         let mut rt = runtime_with_state("/tmp");
-        let result = eval(&mut rt, r#"
+        let result = eval(
+            &mut rt,
+            r#"
             const sp = new URLSearchParams("x=1&y=2");
             const entries = [...sp.entries()];
             const keys = [...sp.keys()];
             JSON.stringify({ entries, keys, size: sp.size })
-        "#);
+        "#,
+        );
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
-        assert_eq!(parsed["entries"], serde_json::json!([["x", "1"], ["y", "2"]]));
+        assert_eq!(
+            parsed["entries"],
+            serde_json::json!([["x", "1"], ["y", "2"]])
+        );
         assert_eq!(parsed["keys"], serde_json::json!(["x", "y"]));
         assert_eq!(parsed["size"], 2);
     }
@@ -1422,21 +1458,27 @@ mod tests {
     #[test]
     fn url_search_params_from_object() {
         let mut rt = runtime_with_state("/tmp");
-        let result = eval(&mut rt, r#"
+        let result = eval(
+            &mut rt,
+            r"
             const sp = new URLSearchParams({ a: '1', b: '2' });
             sp.toString()
-        "#);
+        ",
+        );
         assert_eq!(result, "a=1&b=2");
     }
 
     #[test]
     fn url_search_params_sort() {
         let mut rt = runtime_with_state("/tmp");
-        let result = eval(&mut rt, r#"
+        let result = eval(
+            &mut rt,
+            r#"
             const sp = new URLSearchParams("c=3&a=1&b=2");
             sp.sort();
             sp.toString()
-        "#);
+        "#,
+        );
         assert_eq!(result, "a=1&b=2&c=3");
     }
 
@@ -1452,7 +1494,9 @@ mod tests {
     #[test]
     fn headers_set_get_has() {
         let mut rt = runtime_with_state("/tmp");
-        let result = eval(&mut rt, r#"
+        let result = eval(
+            &mut rt,
+            r"
             const h = new Headers({ 'Content-Type': 'text/html' });
             h.set('X-Custom', 'value');
             JSON.stringify({
@@ -1461,7 +1505,8 @@ mod tests {
                 has_ct: h.has('content-type'),
                 has_missing: h.has('missing'),
             })
-        "#);
+        ",
+        );
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["ct"], "text/html");
         assert_eq!(parsed["custom"], "value");
@@ -1472,34 +1517,43 @@ mod tests {
     #[test]
     fn headers_case_insensitive() {
         let mut rt = runtime_with_state("/tmp");
-        let result = eval(&mut rt, r#"
+        let result = eval(
+            &mut rt,
+            r"
             const h = new Headers();
             h.set('Content-Type', 'application/json');
             h.get('content-type') // case-insensitive lookup
-        "#);
+        ",
+        );
         assert_eq!(result, "application/json");
     }
 
     #[test]
     fn headers_append() {
         let mut rt = runtime_with_state("/tmp");
-        let result = eval(&mut rt, r#"
+        let result = eval(
+            &mut rt,
+            r"
             const h = new Headers();
             h.append('Set-Cookie', 'a=1');
             h.append('Set-Cookie', 'b=2');
             h.get('set-cookie')
-        "#);
+        ",
+        );
         assert_eq!(result, "a=1, b=2");
     }
 
     #[test]
     fn headers_delete() {
         let mut rt = runtime_with_state("/tmp");
-        let result = eval(&mut rt, r#"
+        let result = eval(
+            &mut rt,
+            r"
             const h = new Headers({ 'X-Test': 'yes' });
             h.delete('x-test');
             h.has('x-test')
-        "#);
+        ",
+        );
         assert_eq!(result, "false");
     }
 
@@ -1515,10 +1569,13 @@ mod tests {
     #[test]
     fn response_ok_and_status() {
         let mut rt = runtime_with_state("/tmp");
-        let result = eval(&mut rt, r#"
+        let result = eval(
+            &mut rt,
+            r#"
             const r = new Response("hello", { status: 200 });
             JSON.stringify({ ok: r.ok, status: r.status, statusText: r.statusText, body: r.body })
-        "#);
+        "#,
+        );
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["ok"], true);
         assert_eq!(parsed["status"], 200);
@@ -1529,10 +1586,13 @@ mod tests {
     #[test]
     fn response_error_status() {
         let mut rt = runtime_with_state("/tmp");
-        let result = eval(&mut rt, r#"
+        let result = eval(
+            &mut rt,
+            r#"
             const r = new Response("not found", { status: 404 });
             JSON.stringify({ ok: r.ok, status: r.status, statusText: r.statusText })
-        "#);
+        "#,
+        );
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["ok"], false);
         assert_eq!(parsed["status"], 404);
@@ -1542,10 +1602,13 @@ mod tests {
     #[test]
     fn response_json_method() {
         let mut rt = runtime_with_state("/tmp");
-        let result = eval(&mut rt, r#"
+        let result = eval(
+            &mut rt,
+            r#"
             const r = Response.json({ key: "value" });
             JSON.stringify({ body: r.body, status: r.status })
-        "#);
+        "#,
+        );
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["body"], r#"{"key":"value"}"#);
         assert_eq!(parsed["status"], 200);
@@ -1554,11 +1617,14 @@ mod tests {
     #[test]
     fn response_static_methods() {
         let mut rt = runtime_with_state("/tmp");
-        let result = eval(&mut rt, r#"
+        let result = eval(
+            &mut rt,
+            r#"
             const err = Response.error();
             const redir = Response.redirect("https://example.com");
             JSON.stringify({ err_status: err.status, redir_status: redir.status })
-        "#);
+        "#,
+        );
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["err_status"], 0);
         assert_eq!(parsed["redir_status"], 302);
@@ -1576,10 +1642,13 @@ mod tests {
     #[test]
     fn request_constructs() {
         let mut rt = runtime_with_state("/tmp");
-        let result = eval(&mut rt, r#"
+        let result = eval(
+            &mut rt,
+            r#"
             const r = new Request("https://example.com/api", { method: "POST" });
             JSON.stringify({ url: r.url, method: r.method })
-        "#);
+        "#,
+        );
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["url"], "https://example.com/api");
         assert_eq!(parsed["method"], "POST");
@@ -1606,10 +1675,9 @@ mod tests {
             ..Default::default()
         });
         // Default HostState: no network permission
-        rt.op_state().borrow_mut().put(HostState::new(
-            dir.path().to_path_buf(),
-            vec![],
-        ));
+        rt.op_state()
+            .borrow_mut()
+            .put(HostState::new(dir.path().to_path_buf(), vec![]));
 
         // Use rho.fetchUrl (synchronous, throws immediately) rather than
         // fetch (async, errors are unhandled promise rejections).
@@ -1712,12 +1780,15 @@ mod tests {
     #[test]
     fn structured_clone_clones_object() {
         let mut rt = runtime_with_state("/tmp");
-        let result = eval(&mut rt, r#"
+        let result = eval(
+            &mut rt,
+            r"
             const obj = { a: 1, b: { c: 2 } };
             const clone = structuredClone(obj);
             clone.b.c = 99;
             obj.b.c === 2 && clone.b.c === 99
-        "#);
+        ",
+        );
         assert_eq!(result, "true");
     }
 
@@ -1740,11 +1811,14 @@ mod tests {
     #[test]
     fn text_encoder_decode_roundtrip() {
         let mut rt = runtime_with_state("/tmp");
-        let result = eval(&mut rt, r#"
+        let result = eval(
+            &mut rt,
+            r#"
             const enc = new TextEncoder();
             const dec = new TextDecoder();
             dec.decode(enc.encode("hello world"))
-        "#);
+        "#,
+        );
         assert_eq!(result, "hello world");
     }
 
@@ -1753,23 +1827,29 @@ mod tests {
     #[test]
     fn url_op_parses_absolute_url() {
         let mut rt = runtime_with_state("/tmp");
-        let result = eval(&mut rt, r#"
+        let result = eval(
+            &mut rt,
+            r#"
             const json = Deno.core.ops.op_rho_url_parse("https://user:pass@example.com:8080/path?q=1#frag", "");
             const parsed = JSON.parse(json);
             parsed.href === "https://user:pass@example.com:8080/path?q=1#frag" &&
             parsed.username === "user" && parsed.password === "pass" &&
             parsed.hostname === "example.com" && parsed.origin === "https://example.com:8080"
-        "#);
+        "#,
+        );
         assert_eq!(result, "true");
     }
 
     #[test]
     fn url_op_parses_with_base() {
         let mut rt = runtime_with_state("/tmp");
-        let result = eval(&mut rt, r#"
+        let result = eval(
+            &mut rt,
+            r#"
             const json = Deno.core.ops.op_rho_url_parse("bar", "https://example.com/foo/");
             JSON.parse(json).href
-        "#);
+        "#,
+        );
         assert_eq!(result, "https://example.com/foo/bar");
     }
 
@@ -1787,27 +1867,36 @@ mod tests {
     #[test]
     fn url_op_parse_search_params() {
         let mut rt = runtime_with_state("/tmp");
-        let result = eval(&mut rt, r#"
+        let result = eval(
+            &mut rt,
+            r#"
             const json = Deno.core.ops.op_rho_url_parse_search_params("a=hello&b=world");
             const parsed = JSON.parse(json);
             parsed.length === 2 && parsed[0][0] === "a" && parsed[0][1] === "hello"
-        "#);
+        "#,
+        );
         assert_eq!(result, "true");
     }
 
     #[test]
     fn url_op_serialize_search_params() {
         let mut rt = runtime_with_state("/tmp");
-        let result = eval(&mut rt, r#"
+        let result = eval(
+            &mut rt,
+            r#"
             Deno.core.ops.op_rho_url_serialize_search_params(JSON.stringify([["x", "1"], ["y", "2"]]))
-        "#);
+        "#,
+        );
         assert_eq!(result, "x=1&y=2");
     }
 
     #[test]
     fn url_op_serialize_empty_params() {
         let mut rt = runtime_with_state("/tmp");
-        let result = eval(&mut rt, r"Deno.core.ops.op_rho_url_serialize_search_params('[]')");
+        let result = eval(
+            &mut rt,
+            r"Deno.core.ops.op_rho_url_serialize_search_params('[]')",
+        );
         assert_eq!(result, "");
     }
 

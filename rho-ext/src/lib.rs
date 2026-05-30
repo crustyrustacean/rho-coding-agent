@@ -14,11 +14,10 @@ pub mod discover;
 pub mod error;
 pub mod host;
 pub mod loader;
-pub mod ops;
 pub mod manifest;
 pub mod module_loader;
+pub mod ops;
 pub mod runtime;
-pub mod spike;
 pub mod transpile;
 
 pub use deno_observer::DenoObserver;
