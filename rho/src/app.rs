@@ -135,13 +135,38 @@ impl App {
         let context_files = scan_context_files(&sandbox, headless);
 
         // ── 9. System prompt ─────────────────────────────────────────────
-        let system_prompt = compose_full_system_prompt(
+        let mut system_prompt = compose_full_system_prompt(
             &sandbox,
             &context_files,
             &config,
             cli.system.as_deref(),
             cli.compact,
         );
+
+        // Inject extension awareness so the model knows about loaded extensions.
+        if !ext_loader.is_empty() {
+            use std::fmt::Write;
+            let _ = write!(system_prompt, "\n\n# Loaded Extensions\n\n");
+            system_prompt.push_str(
+                "The following extensions are active and have contributed tools \
+                 to your tool registry. You may use these tools normally.\n",
+            );
+            for (ext_name, tool_names) in ext_loader.extension_tools() {
+                let _ = write!(system_prompt, "\n- **{ext_name}**: ");
+                if tool_names.is_empty() {
+                    system_prompt.push_str("(no tools)\n");
+                } else {
+                    system_prompt.push('`');
+                    system_prompt.push_str(&tool_names.join("`, `"));
+                    system_prompt.push('`');
+                    system_prompt.push('\n');
+                }
+            }
+            system_prompt.push_str(
+                "\nExtension tools appear in your tool definitions alongside \
+                 built-in tools. Use them the same way.\n",
+            );
+        }
 
         // ── 10. Model [INTERACTIVE] ──────────────────────────────────────
         let model =

@@ -611,3 +611,79 @@ export default {
 
     runtime.shutdown().unwrap();
 }
+
+#[tokio::test]
+async fn extension_fetch_js_shim_works_with_http_url() {
+    // Tests the globalThis.fetch() JS shim (not rho.fetchUrl).
+    // Reproduces the bug where fetch("http://127.0.0.1:8000")
+    // returned "invalid URL: relative URL without a base".
+    let dir = tempfile::tempdir().unwrap();
+
+    std::fs::write(
+        dir.path().join("fetcher.ts"),
+        r#"
+export default {
+    name: "fetcher",
+    tools: [{
+        name: "probe",
+        description: "Probe a URL",
+        risk: "read" as const,
+        parameters: {
+            url: { type: "string", description: "URL to fetch", required: true },
+        },
+        execute: async (args: string) => {
+            const { url } = JSON.parse(args);
+            try {
+                const resp = await fetch(url);
+                return JSON.stringify({
+                    ok: resp.ok,
+                    status: resp.status,
+                    body: resp.body,
+                });
+            } catch (e) {
+                return "FETCH_ERROR: " + String(e);
+            }
+        },
+    }],
+};
+"#,
+    )
+    .unwrap();
+
+    let perms = ExtensionPermissions {
+        network: Some(true),
+        ..Default::default()
+    };
+
+    let mut runtime = ExtensionRuntime::spawn_from_file_with_perms(
+        &dir.path().join("fetcher.ts"),
+        dir.path(),
+        &perms,
+        "test-model",
+    )
+    .expect("spawn should succeed");
+
+    // Use a non-routable port — should get a connection error, NOT a URL error.
+    let result = runtime
+        .call_tool("probe", r#"{ "url": "http://127.0.0.1:1" }"#)
+        .await
+        .unwrap();
+
+    assert!(
+        !result.contains("invalid URL"),
+        "fetch() should not fail with URL parse error, got: {result}"
+    );
+    assert!(
+        !result.contains("relative URL"),
+        "fetch() should not fail with 'relative URL' error, got: {result}"
+    );
+    // The fetch should reach the network layer (connection refused expected).
+    assert!(
+        result.contains("connection refused")
+            || result.contains("error")
+            || result.contains("FETCH_ERROR"),
+        "expected a network-level error, got: {result}"
+    );
+
+    runtime.shutdown().unwrap();
+}

@@ -297,6 +297,22 @@ impl ExtensionLoader {
         self.loaded.keys().cloned().collect()
     }
 
+    /// Return the names of tools contributed by each loaded extension.
+    ///
+    /// Returns a list of `(extension_name, tool_names)` pairs in stable
+    /// order (sorted by extension name). Used to inject extension awareness
+    /// into the system prompt.
+    #[must_use]
+    pub fn extension_tools(&self) -> Vec<(String, Vec<String>)> {
+        let mut pairs: Vec<(String, Vec<String>)> = self
+            .loaded
+            .iter()
+            .map(|(name, state)| (name.clone(), state.tool_names.clone()))
+            .collect();
+        pairs.sort_by(|a, b| a.0.cmp(&b.0));
+        pairs
+    }
+
     /// Update the model name in all loaded extension runtimes.
     ///
     /// This allows extensions to see the current model via `rho.getModel()`
