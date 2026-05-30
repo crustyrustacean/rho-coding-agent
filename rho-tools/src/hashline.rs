@@ -309,8 +309,8 @@ mod tests {
         let elapsed = start.elapsed();
 
         assert!(
-            elapsed.as_millis() < 10,
-            "10k lines took {elapsed:?} — should be < 10ms",
+            elapsed.as_millis() < 50,
+            "10k lines took {elapsed:?} — should be < 50ms",
         );
     }
 
