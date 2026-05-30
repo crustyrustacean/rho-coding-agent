@@ -417,8 +417,21 @@ fn build_composite<'a>(
 }
 
 /// Hot-reload extensions.
+///
+/// Re-reads the extension config from disk before reloading so that
+/// newly-created or newly-enabled extensions are picked up.
 async fn reload_extensions(app: &mut App) {
     let dirs = crate::app::extension_dirs(&app.session.header().cwd);
+
+    // Re-read the config so that extensions added to the enabled list
+    // during this session are picked up by the filter.
+    let sandbox_path = app.session.header().cwd.clone();
+    let fresh_config = rho_core::ConfigLoader::load(&sandbox_path).unwrap_or_else(|e| {
+        P::error(&format!("config reload failed: {e}"));
+        rho_core::RhoConfig::default()
+    });
+    app.ext_loader.set_config(fresh_config.extensions);
+
     match app.ext_loader.reload(&dirs, &mut app.registry).await {
         Ok(report) => {
             // Refresh the extension observers after reload.

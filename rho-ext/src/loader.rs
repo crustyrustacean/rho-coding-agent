@@ -107,6 +107,15 @@ impl ExtensionLoader {
         }
     }
 
+    /// Replace the stored extension configuration.
+    ///
+    /// This should be called before [`reload`] when config files have been
+    /// edited during the session, so that newly-enabled extensions are
+    /// picked up by the filter.
+    pub fn set_config(&mut self, config: ExtensionConfig) {
+        self.config = config;
+    }
+
     /// Discover and load all extensions from the given directories.
     ///
     /// This is the initial load — call [`ExtensionLoader::register_tools`]

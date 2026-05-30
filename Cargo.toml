@@ -29,7 +29,7 @@ tracing = "0.1.44"
 bytes = "1"
 
 [workspace.package]
-version = "0.57.0"
+version = "0.57.1"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/crustyrustacean/rho-coding-agent"
@@ -48,3 +48,14 @@ lto = true
 codegen-units = 1
 panic = 'abort'
 strip = true
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+missing_docs_in_private_items = "warn"
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+multiple_crate_versions = "allow"
+unnecessary_literal_bound = "allow"
