@@ -266,7 +266,11 @@ fn summarise_arguments(arguments: &str) -> String {
                         let v_str = match v {
                             serde_json::Value::String(s) => {
                                 if s.len() > 40 {
-                                    format!("{}…", &s[..38])
+                                    let mut end = 38;
+                                    while !s.is_char_boundary(end) {
+                                        end -= 1;
+                                    }
+                                    format!("{}…", &s[..end])
                                 } else {
                                     s.clone()
                                 }
@@ -274,7 +278,11 @@ fn summarise_arguments(arguments: &str) -> String {
                             other => {
                                 let s = other.to_string();
                                 if s.len() > 40 {
-                                    format!("{}…", &s[..38])
+                                    let mut end = 38;
+                                    while !s.is_char_boundary(end) {
+                                        end -= 1;
+                                    }
+                                    format!("{}…", &s[..end])
                                 } else {
                                     s
                                 }
@@ -293,7 +301,11 @@ fn summarise_arguments(arguments: &str) -> String {
             other => {
                 let s = other.to_string();
                 if s.len() > 60 {
-                    format!("{}…", &s[..58])
+                    let mut end = 58;
+                    while !s.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    format!("{}…", &s[..end])
                 } else {
                     s
                 }
@@ -302,7 +314,11 @@ fn summarise_arguments(arguments: &str) -> String {
     } else {
         // Not valid JSON — truncate the raw string
         if arguments.len() > 60 {
-            format!("{}…", &arguments[..58])
+            let mut end = 58;
+            while !arguments.is_char_boundary(end) {
+                end -= 1;
+            }
+            format!("{}…", &arguments[..end])
         } else {
             arguments.to_owned()
         }
