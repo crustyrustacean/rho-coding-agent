@@ -74,7 +74,11 @@ impl AgentObserver for ReplObserver {
 
     fn on_tool_call(&self, name: &str, arguments: &str) {
         let preview = if arguments.len() > 120 {
-            format!("{}…", &arguments[..120])
+            let mut end = 120;
+            while end > 0 && !arguments.is_char_boundary(end) {
+                end -= 1;
+            }
+            format!("{}…", &arguments[..end])
         } else {
             arguments.to_owned()
         };
@@ -84,7 +88,11 @@ impl AgentObserver for ReplObserver {
     fn on_tool_result(&self, name: &str, result: &ToolResult) {
         if result.is_error {
             let preview = if result.output.len() > 100 {
-                format!("{}…", &result.output[..100])
+                let mut end = 100;
+                while end > 0 && !result.output.is_char_boundary(end) {
+                    end -= 1;
+                }
+                format!("{}…", &result.output[..end])
             } else {
                 result.output.clone()
             };
