@@ -87,6 +87,13 @@ pub enum ToolError {
         /// The timeout duration in milliseconds.
         duration_ms: u64,
     },
+
+    /// A generic tool error (e.g., misconfiguration, unavailable resource).
+    #[error("{message}")]
+    Internal {
+        /// Human-readable error description.
+        message: String,
+    },
 }
 
 /// A specialised `Result` type for rho-tools operations.

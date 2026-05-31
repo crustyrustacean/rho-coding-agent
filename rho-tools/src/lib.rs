@@ -29,7 +29,16 @@ pub mod error;
 pub mod files;
 pub mod hashline;
 pub mod rust;
+pub mod session_summary;
 pub mod shell;
+
+pub use session_summary::SessionSummary;
+
+/// Shared session-path holder for [`SessionSummary`].
+pub type SessionPathHolder = Arc<Mutex<Option<PathBuf>>>;
+
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 pub use crate::error::ToolError;
 pub use crates_io::CratesIoLookup;
@@ -46,7 +55,11 @@ use rho_core::{SandboxRoot, ToolRegistry};
 /// the project sandbox. The default shell executor is [`PowerShellExecutor`]
 /// with a [`CommandDenylist`] built from the default PowerShell list plus any
 /// config-supplied additions.
-pub fn register_all(registry: &mut ToolRegistry, root: SandboxRoot, config: &rho_core::RhoConfig) {
+pub fn register_all(
+    registry: &mut ToolRegistry,
+    root: SandboxRoot,
+    config: &rho_core::RhoConfig,
+) -> SessionPathHolder {
     registry.register(Box::new(ReadFile { root: root.clone() }));
     registry.register(Box::new(WriteFile { root: root.clone() }));
     registry.register(Box::new(ListDir { root: root.clone() }));
@@ -92,4 +105,9 @@ pub fn register_all(registry: &mut ToolRegistry, root: SandboxRoot, config: &rho
         executor,
         denylist,
     }));
+
+    // Session summary tool (context recovery)
+    let (session_summary, path_holder) = SessionSummary::new();
+    registry.register(Box::new(session_summary));
+    path_holder
 }

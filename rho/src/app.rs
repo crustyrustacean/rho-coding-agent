@@ -111,7 +111,7 @@ impl App {
 
         // ── 7. Tool registry ────────────────────────────────────────────
         let mut tool_registry = ToolRegistry::new();
-        register_all(&mut tool_registry, sandbox.clone(), &config);
+        let session_path_holder = register_all(&mut tool_registry, sandbox.clone(), &config);
 
         // ── 7b. Extensions ───────────────────────────────────────────────
         let mut ext_loader = ExtensionLoader::new(config.extensions.clone());
@@ -194,6 +194,7 @@ impl App {
             &sandbox,
             token_budget,
             redactor,
+            &session_path_holder,
         )?;
 
         // ── 15. Budget diagnostics ───────────────────────────────────────
@@ -414,6 +415,7 @@ fn build_token_budget(config: &RhoConfig, cli: &Cli) -> TokenBudget {
 /// - `--session <path>` — resume from a specific JSONL file (with stale-CWD detection)
 /// - `--ephemeral` — in-memory session, no disk I/O
 /// - Default — persisted session at `~/.rho/sessions/<project-hash>/`
+#[allow(clippy::too_many_arguments)]
 fn build_session(
     cli: &Cli,
     model: &str,
@@ -422,15 +424,32 @@ fn build_session(
     sandbox: &SandboxRoot,
     token_budget: TokenBudget,
     redactor: Redactor,
+    session_path_holder: &rho_tools::SessionPathHolder,
 ) -> Result<Session> {
     if cli.r#continue {
         let path = rho_core::find_latest_session(sandbox.path())
             .ok_or_else(|| anyhow::anyhow!("no previous sessions found for this project"))?;
         P::session_resumed(&path);
-        resume_session(&path, model, tool_schemas, sandbox, token_budget, redactor)
+        resume_session(
+            &path,
+            model,
+            tool_schemas,
+            sandbox,
+            token_budget,
+            redactor,
+            session_path_holder,
+        )
     } else if let Some(ref path) = cli.session {
         P::session_resumed(path);
-        resume_session(path, model, tool_schemas, sandbox, token_budget, redactor)
+        resume_session(
+            path,
+            model,
+            tool_schemas,
+            sandbox,
+            token_budget,
+            redactor,
+            session_path_holder,
+        )
     } else if cli.ephemeral {
         let s = Session::in_memory(
             model,
@@ -440,6 +459,7 @@ fn build_session(
         )
         .with_token_budget(token_budget)
         .with_redactor(redactor);
+        // Ephemeral sessions have no path — holder stays None.
         Ok(s)
     } else {
         let s = Session::new(
@@ -452,6 +472,7 @@ fn build_session(
         .with_redactor(redactor);
         if let Some(path) = s.save_path() {
             P::session_created(path);
+            rho_tools::SessionSummary::set_path(session_path_holder, path.to_path_buf());
         }
         // Show a hint if there are previous sessions for this project.
         let previous = rho_core::list_sessions(sandbox.path());
@@ -472,6 +493,7 @@ fn resume_session(
     sandbox: &SandboxRoot,
     token_budget: TokenBudget,
     redactor: Redactor,
+    session_path_holder: &rho_tools::SessionPathHolder,
 ) -> Result<Session> {
     let mut s = Session::open(path).map_err(|e| anyhow::anyhow!("failed to open session: {e}"))?;
 
@@ -486,6 +508,7 @@ fn resume_session(
     s.set_token_budget(token_budget);
     s.set_redactor(redactor);
     s.set_tools(tool_schemas.to_vec());
+    rho_tools::SessionSummary::set_path(session_path_holder, path.to_path_buf());
     Ok(s)
 }
 
