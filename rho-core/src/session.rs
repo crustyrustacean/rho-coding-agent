@@ -80,14 +80,18 @@
 //! - `Session::flush` writes any unwritten entries to disk.
 
 pub mod compaction;
+pub mod context_stats;
 pub mod entry;
 pub mod error;
 pub mod estimator;
+pub mod header;
 pub mod persist;
 
 pub use compaction::{CompactionStrategy, MechanicalCompactionStrategy};
+pub use context_stats::ContextStats;
 pub use entry::{CompactionSummary, Entry, EntryPayload, EntryResolution};
 pub use estimator::{HeuristicEstimator, TokenEstimator};
+pub use header::SessionHeader;
 pub use persist::PersistState;
 pub use persist::{SessionMetadata, find_latest_session, list_sessions};
 pub use persist::{default_save_path, open_session, project_hash};
@@ -107,75 +111,6 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use tracing::warn;
-
-// ── ContextStats ─────────────────────────────────────────────────────────────
-
-/// A snapshot of context window usage.
-///
-/// Returned by [`Session::context_stats`] so the REPL and TUI can display
-/// how full the context window is, how many entries are in the active path,
-/// and how much budget remains for conversation.
-#[derive(Clone, Debug)]
-pub struct ContextStats {
-    /// Total context window size (tokens).
-    pub context_window: usize,
-    /// Tokens reserved for the model's completion.
-    pub completion_reserve: usize,
-    /// Estimated tokens consumed by the fitted messages (system + conversation).
-    pub estimated_used: usize,
-    /// Number of messages in the fitted path (after eviction).
-    pub message_count: usize,
-    /// Total entries in the session tree (including compacted/attached).
-    pub entry_count: usize,
-    /// Entries in the active leaf-to-root path.
-    pub path_entry_count: usize,
-}
-
-impl ContextStats {
-    /// Estimated remaining tokens in the prompt budget.
-    ///
-    /// This is `prompt_budget - estimated_used`. Negative values (i.e.
-    /// over-budget) saturate to zero.
-    pub fn estimated_remaining(&self) -> usize {
-        let prompt_budget = self.context_window.saturating_sub(self.completion_reserve);
-        prompt_budget.saturating_sub(self.estimated_used)
-    }
-
-    /// Context utilization as a percentage (0–100).
-    ///
-    /// Based on estimated usage relative to the prompt budget.
-    pub fn utilization_percent(&self) -> u8 {
-        let prompt_budget = self.context_window.saturating_sub(self.completion_reserve);
-        if prompt_budget == 0 {
-            return 100;
-        }
-        let pct = (self.estimated_used as u64 * 100 / prompt_budget as u64).min(100);
-        #[allow(clippy::cast_possible_truncation)]
-        let result = pct as u8;
-        result
-    }
-}
-
-// ── SessionHeader ─────────────────────────────────────────────────────────────
-
-/// Metadata about a session's identity and origin.
-///
-/// `version` starts at 1 and will be incremented if the on-disk format changes
-/// in a way that requires migration. `parent_session` links to a prior session
-/// file if this session was forked from one (Phase 5+).
-#[derive(Clone, Debug)]
-pub struct SessionHeader {
-    /// Unique identifier for this session.
-    pub id: SessionId,
-    /// On-disk format version (starts at 1).
-    pub version: u32,
-    /// When this session was created.
-    pub created_at: SystemTime,
-    /// The working directory the session was started in.
-    pub cwd: PathBuf,
-    /// Path to a parent session file, if this session was forked.
-    pub parent_session: Option<PathBuf>,
-}
 
 // ── Session ───────────────────────────────────────────────────────────────────
 
