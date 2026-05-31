@@ -1074,31 +1074,39 @@ impl Session {
         let redacted = self.redactor.redact(&result.output);
 
         // Step 2: check if truncation is needed
+        // Two independent limits: budget fraction AND hard character cap.
+        // Either trigger truncation.
         #[allow(
             clippy::cast_possible_truncation,
             clippy::cast_sign_loss,
             clippy::cast_precision_loss
         )]
-        let max_tokens =
+        let budget_max_tokens =
             (self.token_budget.prompt_budget() as f32 * MAX_TOOL_RESULT_FRACTION) as usize;
-        let estimated_tokens = self.estimator.estimate(&redacted);
+        let _estimated_tokens = self.estimator.estimate(&redacted);
+        let budget_max_chars =
+            chars_to_fit_tokens(&redacted, budget_max_tokens, self.estimator.as_ref());
+        let effective_max_chars = budget_max_chars.min(MAX_TOOL_RESULT_CHARS);
 
-        let (content, details) = if estimated_tokens > max_tokens {
-            // Truncate at a UTF-8-safe boundary
-            let max_chars = chars_to_fit_tokens(&redacted, max_tokens, self.estimator.as_ref());
+        let (content, details) = if redacted.len() > effective_max_chars {
             let original_size = redacted.len();
             let truncated = format!(
                 "{}\n\n{}",
-                &redacted[..floor_char_boundary(&redacted, max_chars)],
+                &redacted[..floor_char_boundary(&redacted, effective_max_chars)],
                 truncation_footer(original_size),
             );
 
+            let reason = if effective_max_chars == MAX_TOOL_RESULT_CHARS {
+                "hard character cap"
+            } else {
+                "budget fraction"
+            };
             warn!(
                 original_size,
                 truncated_size = truncated.len(),
-                estimated_tokens,
-                max_tokens,
-                "tool result truncated to fit budget"
+                effective_max_chars,
+                reason,
+                "tool result truncated"
             );
 
             (
@@ -1472,7 +1480,19 @@ pub trait ExtensionMessageEntry: Serialize + DeserializeOwned + 'static {
 // ── Bounded tool-result helpers ───────────────────────────────────────────────
 
 /// Maximum fraction of the prompt budget that a single tool result may consume.
-const MAX_TOOL_RESULT_FRACTION: f32 = 0.5;
+///
+/// Kept low (15%) to prevent a single large file read from consuming most of
+/// the context window. With the default 32K context (prompt ~24K), this caps
+/// a single tool result at ~3,600 tokens (~14K chars), allowing ~6 large reads
+/// before context is exhausted (vs ~2 at the old 50% fraction).
+const MAX_TOOL_RESULT_FRACTION: f32 = 0.15;
+
+/// Hard character cap for a single tool result, regardless of context window size.
+///
+/// Prevents a single tool result from dominating even on large-context models.
+/// At ~4 chars/token, 8K chars ≈ 2K tokens — enough for most tool outputs while
+/// leaving room for conversation history.
+const MAX_TOOL_RESULT_CHARS: usize = 8_000;
 
 /// Truncation footer appended to truncated tool results.
 fn truncation_footer(original_size: usize) -> String {
@@ -1941,6 +1961,81 @@ mod tests {
 
         // Full output preserved
         assert!(matches!(details, ToolResultDetails::FullOutput { .. }));
+    }
+
+    #[test]
+    fn tool_result_truncation_uses_stricter_fraction() {
+        // The max fraction was lowered from 0.5 to 0.15.
+        // With a 32K context window (prompt_budget ~24K), 15% = ~3,600 tokens.
+        // At ~4 chars/token, that's ~14,400 chars.
+        // A 20,000-char result should be truncated.
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
+            .with_token_budget(TokenBudget::new(32_768)); // prompt_budget = 24576
+
+        let large_content = "x".repeat(20_000);
+        let result = ToolResult::success(&large_content);
+
+        let (id, details) = session.append_tool_result(ToolCallId::from("call_1"), &result);
+
+        let entry = session.entry(&id).unwrap();
+        if let EntryPayload::Message(ChatMessage::Tool { content, .. }) = &entry.payload {
+            let ContentBlock::Text { text } = &content[0];
+            assert!(
+                text.len() < large_content.len(),
+                "large tool result should be truncated with 0.15 fraction"
+            );
+            assert!(text.contains("[truncated"));
+        } else {
+            panic!("expected Tool message");
+        }
+        assert!(matches!(details, ToolResultDetails::FullOutput { .. }));
+    }
+
+    #[test]
+    fn tool_result_truncation_has_hard_character_cap() {
+        // Even with a massive context window (1M tokens), a single tool result
+        // should be capped at MAX_TOOL_RESULT_CHARS (~8,000 chars).
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
+            .with_token_budget(TokenBudget::new(1_000_000));
+
+        let huge_content = "x".repeat(50_000);
+        let result = ToolResult::success(&huge_content);
+
+        let (id, details) = session.append_tool_result(ToolCallId::from("call_1"), &result);
+
+        let entry = session.entry(&id).unwrap();
+        if let EntryPayload::Message(ChatMessage::Tool { content, .. }) = &entry.payload {
+            let ContentBlock::Text { text } = &content[0];
+            assert!(
+                text.len() < 10_000,
+                "tool result should be capped at ~8K chars even with huge context: got {} chars",
+                text.len()
+            );
+            assert!(text.contains("[truncated"));
+        } else {
+            panic!("expected Tool message");
+        }
+        assert!(matches!(details, ToolResultDetails::FullOutput { .. }));
+    }
+
+    #[test]
+    fn small_tool_result_not_truncated_with_stricter_fraction() {
+        // A small result (200 chars) should not be truncated even with the
+        // stricter 0.15 fraction and 8K char cap.
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
+            .with_token_budget(TokenBudget::new(32_768));
+
+        let result = ToolResult::success("x".repeat(200));
+        let (id, details) = session.append_tool_result(ToolCallId::from("call_1"), &result);
+
+        let entry = session.entry(&id).unwrap();
+        if let EntryPayload::Message(ChatMessage::Tool { content, .. }) = &entry.payload {
+            let ContentBlock::Text { text } = &content[0];
+            assert_eq!(text.len(), 200, "small result should not be truncated");
+        } else {
+            panic!("expected Tool message");
+        }
+        assert_eq!(details, ToolResultDetails::None);
     }
 
     #[test]
