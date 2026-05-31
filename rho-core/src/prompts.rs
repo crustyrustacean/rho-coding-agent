@@ -150,4 +150,37 @@ mod tests {
             "prompt must cover PowerShell error handling"
         );
     }
+
+    // ── Progress checkpointing checks ─────────────────────────────────────
+
+    #[test]
+    fn base_prompt_instructs_checkpointing() {
+        let prompt = base_prompt();
+        assert!(
+            prompt.contains(".rho/checkpoint.md"),
+            "prompt must instruct agent to write progress to .rho/checkpoint.md"
+        );
+        assert!(
+            prompt.contains("Progress checkpointing"),
+            "prompt must have a progress checkpointing section"
+        );
+    }
+
+    #[test]
+    fn base_prompt_checkpointing_says_before_each_step() {
+        let prompt = base_prompt();
+        assert!(
+            prompt.contains("before starting each step"),
+            "prompt must instruct checkpointing before each step, not after"
+        );
+    }
+
+    #[test]
+    fn base_prompt_checkpointing_says_re_read_on_loss() {
+        let prompt = base_prompt();
+        assert!(
+            prompt.contains("re-read") || prompt.contains("re-read `.rho/checkpoint"),
+            "prompt must instruct agent to re-read checkpoint when losing context"
+        );
+    }
 }
