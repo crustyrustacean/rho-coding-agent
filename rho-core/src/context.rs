@@ -206,7 +206,7 @@ pub trait ContextManager: Send + Sync {
             // Skip entries that don't participate in the model's context.
             match &entry.resolution {
                 EntryResolution::Compacted { .. } | EntryResolution::Attached => continue,
-                EntryResolution::Full => {}
+                EntryResolution::Full | EntryResolution::Pinned => {}
             }
 
             match &entry.payload {
@@ -407,6 +407,148 @@ impl SlidingWindowContextManager {
 }
 
 impl ContextManager for SlidingWindowContextManager {
+    /// Override `fit_path` to respect pinned entries during eviction.
+    ///
+    /// Pinned entries render like `Full` but are protected from the sliding
+    /// window's turn eviction, the same way the first and last user turns are.
+    #[allow(clippy::too_many_lines)]
+    fn fit_path(
+        &self,
+        entries: &[&Entry],
+        budget: TokenBudget,
+        estimator: &dyn TokenEstimator,
+        tool_schemas: &[rho_ai::ToolDefinition],
+    ) -> Vec<ChatMessage> {
+        // Steps 1–4: Convert entries to messages, tracking pinned status.
+        let mut messages = Vec::with_capacity(entries.len());
+        let mut pinned_indices = Vec::new();
+        for entry in entries {
+            match &entry.resolution {
+                EntryResolution::Compacted { .. } | EntryResolution::Attached => continue,
+                EntryResolution::Full => {}
+                EntryResolution::Pinned => {
+                    pinned_indices.push(messages.len());
+                }
+            }
+
+            match &entry.payload {
+                EntryPayload::Message(msg) => {
+                    messages.push(msg.clone());
+                }
+                EntryPayload::CustomMessage { content, .. } => {
+                    messages.push(ChatMessage::User {
+                        content: content.clone(),
+                    });
+                }
+                EntryPayload::Compaction { summary, .. }
+                | EntryPayload::BranchSummary { summary, .. } => {
+                    messages.push(render_compaction_summary(summary));
+                }
+                EntryPayload::Custom { .. }
+                | EntryPayload::Label { .. }
+                | EntryPayload::LeafMoved { .. }
+                | EntryPayload::ModelChange { .. }
+                | EntryPayload::SessionInfo { .. }
+                | EntryPayload::SessionEnded { .. } => {}
+            }
+        }
+
+        // Steps 5–6: Subtract overhead.
+        let schema_overhead = estimate_tool_schema_overhead(tool_schemas, estimator);
+        let system_overhead = messages
+            .iter()
+            .find(|m| matches!(m, ChatMessage::System { .. }))
+            .map_or(0, approximate_tokens);
+        let adjusted_budget = TokenBudget::with_reserve(
+            budget.context_window.saturating_sub(schema_overhead),
+            budget.completion_reserve + system_overhead,
+        );
+
+        // Step 7: Turn-aware eviction respecting pinned entries.
+        let (system, mut turns) = Self::group(&messages);
+        let system_tokens = system.as_ref().map_or(0, approximate_tokens);
+        let available = adjusted_budget
+            .prompt_budget()
+            .saturating_sub(system_tokens);
+
+        let turn_tokens: Vec<usize> = turns
+            .iter()
+            .map(|t| t.iter().map(approximate_tokens).sum())
+            .collect();
+        let total: usize = turn_tokens.iter().sum();
+        let mut excess = total.saturating_sub(available);
+
+        // Build the set of pinned turn indices.
+        let mut pinned_turns: Vec<usize> = Vec::new();
+        let mut msg_offset = 0;
+        for (turn_idx, turn) in turns.iter().enumerate() {
+            let turn_start = msg_offset;
+            let turn_end = msg_offset + turn.len();
+            for &pi in &pinned_indices {
+                if pi >= turn_start && pi < turn_end {
+                    pinned_turns.push(turn_idx);
+                    break;
+                }
+            }
+            msg_offset = turn_end;
+        }
+
+        let first_user_turn = turns.iter().position(|t| {
+            t.first()
+                .is_some_and(|m| matches!(m, ChatMessage::User { .. }))
+        });
+        let last_user_turn = turns.iter().rposition(|t| {
+            t.first()
+                .is_some_and(|m| matches!(m, ChatMessage::User { .. }))
+        });
+        let max_droppable = turns.len().saturating_sub(1);
+
+        let mut evict = vec![false; turns.len()];
+        let mut drop = 0;
+
+        for (idx, &t) in turn_tokens.iter().enumerate() {
+            if excess == 0 {
+                break;
+            }
+            if idx >= max_droppable {
+                break;
+            }
+            if first_user_turn == Some(idx) || last_user_turn == Some(idx) {
+                continue;
+            }
+            if pinned_turns.contains(&idx) {
+                continue;
+            }
+            evict[idx] = true;
+            drop += 1;
+            excess = excess.saturating_sub(t);
+        }
+
+        for idx in (0..turns.len()).rev() {
+            if evict[idx] {
+                turns.remove(idx);
+            }
+        }
+
+        let mut result = Vec::new();
+        if let Some(sys) = system {
+            result.push(sys);
+        }
+        for turn in turns {
+            result.extend(turn);
+        }
+
+        debug!(
+            input_messages = messages.len(),
+            output_messages = result.len(),
+            turns_dropped = drop,
+            pinned_turns = pinned_turns.len(),
+            "fit_path with pinning completed"
+        );
+
+        result
+    }
+
     fn fit(&self, messages: &[ChatMessage], budget: TokenBudget) -> Vec<ChatMessage> {
         let (system, mut turns) = Self::group(messages);
 
@@ -1120,5 +1262,82 @@ mod tests {
         )];
         let overhead = estimate_tool_schema_overhead(&tools, &estimator);
         assert!(overhead > 0, "tool schemas should have nonzero overhead");
+    }
+
+    // ── Pinned entry tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn pinned_entry_survives_eviction_while_unpinned_are_evicted() {
+        // A pinned entry in the middle should survive eviction even when
+        // the budget is too tight to keep everything.
+        let entries = [
+            test_entry(
+                EntryPayload::Message(ChatMessage::system_text("sys")),
+                EntryResolution::Full,
+            ),
+            test_entry(
+                EntryPayload::Message(ChatMessage::user_text("important plan")),
+                EntryResolution::Pinned,
+            ),
+            test_entry(
+                EntryPayload::Message(ChatMessage::assistant_text("ok")),
+                EntryResolution::Full,
+            ),
+            test_entry(
+                EntryPayload::Message(ChatMessage::user_text("filler")),
+                EntryResolution::Full,
+            ),
+            test_entry(
+                EntryPayload::Message(ChatMessage::assistant_text("ok too")),
+                EntryResolution::Full,
+            ),
+            test_entry(
+                EntryPayload::Message(ChatMessage::user_text("current")),
+                EntryResolution::Full,
+            ),
+        ];
+        let refs: Vec<&Entry> = entries.iter().collect();
+
+        let cm = SlidingWindowContextManager::new();
+        let estimator = HeuristicEstimator::new();
+        // Tiny budget — forces eviction of middle turns
+        let result = cm.fit_path(&refs, TokenBudget::new(1), &estimator, &[]);
+
+        // The pinned "important plan" must survive
+        let has_plan = result.iter().any(|m| {
+            if let ChatMessage::User { content } = m {
+                content.iter().any(|b| {
+                    let ContentBlock::Text { text } = b;
+                    text.contains("important plan")
+                })
+            } else {
+                false
+            }
+        });
+        assert!(has_plan, "pinned entry should survive eviction");
+    }
+
+    #[test]
+    fn pinned_entry_renders_like_full_in_context() {
+        // A pinned entry should appear in the output like a Full entry.
+        let entries = [
+            test_entry(
+                EntryPayload::Message(ChatMessage::system_text("sys")),
+                EntryResolution::Full,
+            ),
+            test_entry(
+                EntryPayload::Message(ChatMessage::user_text("pinned msg")),
+                EntryResolution::Pinned,
+            ),
+        ];
+        let refs: Vec<&Entry> = entries.iter().collect();
+
+        let cm = SlidingWindowContextManager::new();
+        let estimator = HeuristicEstimator::new();
+        let result = cm.fit_path(&refs, TokenBudget::default(), &estimator, &[]);
+
+        assert_eq!(result.len(), 2);
+        assert!(matches!(result[0], ChatMessage::System { .. }));
+        assert!(matches!(result[1], ChatMessage::User { .. }));
     }
 }

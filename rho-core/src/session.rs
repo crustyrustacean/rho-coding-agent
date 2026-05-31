@@ -902,7 +902,9 @@ impl Session {
         // Append the Compaction entry
         let compaction_id = self.append_compaction(summary, first_kept_id, tokens_before);
 
-        // Transition the compacted entries' resolution to Compacted
+        // Transition the compacted entries' resolution to Compacted.
+        // Also clear any pins, since pinned entries are about to be compacted
+        // and the compaction summary replaces them in context.
         for entry_id in &compacted_ids {
             if let Some(entry) = self.entries.get_mut(entry_id) {
                 entry.resolution = EntryResolution::Compacted {
@@ -1181,6 +1183,35 @@ impl Session {
             EntryPayload::Label { target_id, label },
             EntryResolution::Attached,
         )
+    }
+
+    /// Pin an entry so it is protected from context eviction.
+    ///
+    /// Pinned entries render normally (like `Full`) but the sliding window
+    /// will never evict them. Use this to protect plan discussions, objectives,
+    /// or other high-value context from being lost during budget pressure.
+    ///
+    /// No-op if the entry is already pinned.
+    pub fn pin_entry(&mut self, entry_id: &EntryId) {
+        if let Some(entry) = self.entries.get_mut(entry_id)
+            && !matches!(entry.resolution, EntryResolution::Pinned)
+        {
+            entry.resolution = EntryResolution::Pinned;
+        }
+    }
+
+    /// Unpin an entry, returning it to `Full` resolution.
+    ///
+    /// Used by compaction to clear pins before compacting entries, and by
+    /// the agent to release pins that are no longer needed.
+    ///
+    /// No-op if the entry is not pinned.
+    pub fn unpin_entry(&mut self, entry_id: &EntryId) {
+        if let Some(entry) = self.entries.get_mut(entry_id)
+            && matches!(entry.resolution, EntryResolution::Pinned)
+        {
+            entry.resolution = EntryResolution::Full;
+        }
     }
 
     /// Append a custom state entry (extension data that does NOT participate
@@ -4034,5 +4065,67 @@ mod tests {
         };
         assert_eq!(stats.utilization_percent(), 100); // capped at 100
         assert_eq!(stats.estimated_remaining(), 0); // saturates at 0
+    }
+
+    #[test]
+    fn pin_entry_sets_resolution_to_pinned() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let id = session.append_user_message("important plan");
+
+        session.pin_entry(&id);
+        assert!(
+            matches!(
+                session.entry(&id).unwrap().resolution,
+                EntryResolution::Pinned
+            ),
+            "entry should be pinned"
+        );
+    }
+
+    #[test]
+    fn pin_entry_is_idempotent() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let id = session.append_user_message("important plan");
+
+        session.pin_entry(&id);
+        session.pin_entry(&id); // second call is a no-op
+        assert!(
+            matches!(
+                session.entry(&id).unwrap().resolution,
+                EntryResolution::Pinned
+            ),
+            "entry should still be pinned"
+        );
+    }
+
+    #[test]
+    fn unpin_entry_restores_full_resolution() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let id = session.append_user_message("important plan");
+
+        session.pin_entry(&id);
+        session.unpin_entry(&id);
+        assert!(
+            matches!(
+                session.entry(&id).unwrap().resolution,
+                EntryResolution::Full
+            ),
+            "entry should be back to Full"
+        );
+    }
+
+    #[test]
+    fn unpin_entry_is_noop_for_non_pinned() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let id = session.append_user_message("hello");
+        // Don't pin — unpin should be a no-op
+        session.unpin_entry(&id);
+        assert!(
+            matches!(
+                session.entry(&id).unwrap().resolution,
+                EntryResolution::Full
+            ),
+            "entry should still be Full"
+        );
     }
 }

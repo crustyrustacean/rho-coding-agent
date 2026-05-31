@@ -79,6 +79,10 @@ pub enum EntryResolution {
     /// Content is preserved as structured detail but doesn't participate in
     /// the model's context. Tools can read it; the LLM doesn't see it.
     Attached,
+    /// Content participates in the model's context (like `Full`) but is
+    /// protected from eviction by the sliding window. Used to pin important
+    /// entries (e.g., plan discussions) so they survive context pressure.
+    Pinned,
 }
 
 // ── EntryPayload ──────────────────────────────────────────────────────────────
