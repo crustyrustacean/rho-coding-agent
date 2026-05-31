@@ -113,6 +113,14 @@ pub struct AgentLoopConfig {
     ///   before the final output.
     #[serde(default = "default_show_reasoning")]
     pub show_reasoning: bool,
+    /// Context utilization percentage (0–100) at which the agent loop
+    /// injects a nudge reminding the agent to conserve context. Set to 0
+    /// to disable.
+    #[serde(default = "default_context_pressure_threshold")]
+    pub context_pressure_threshold: u8,
+    /// Minimum number of iterations between context-pressure nudges.
+    #[serde(default = "default_context_pressure_interval")]
+    pub context_pressure_interval: u32,
 }
 
 impl Default for AgentLoopConfig {
@@ -125,6 +133,8 @@ impl Default for AgentLoopConfig {
             token_budget: default_token_budget(),
             stuck_loop_threshold: default_stuck_loop_threshold(),
             show_reasoning: default_show_reasoning(),
+            context_pressure_threshold: default_context_pressure_threshold(),
+            context_pressure_interval: default_context_pressure_interval(),
         }
     }
 }
@@ -155,6 +165,14 @@ fn default_stuck_loop_threshold() -> u32 {
 /// Default value for `show_reasoning`.
 fn default_show_reasoning() -> bool {
     false
+}
+/// Default value for `context_pressure_threshold`.
+fn default_context_pressure_threshold() -> u8 {
+    75
+}
+/// Default value for `context_pressure_interval`.
+fn default_context_pressure_interval() -> u32 {
+    5
 }
 
 // ── ProviderConfig ────────────────────────────────────────────────────────────
@@ -586,6 +604,12 @@ struct WireAgentLoopConfig {
     /// Whether to display full reasoning content.
     #[serde(default)]
     show_reasoning: Option<bool>,
+    /// Context pressure threshold percentage.
+    #[serde(default)]
+    context_pressure_threshold: Option<u8>,
+    /// Context pressure interval (iterations between nudges).
+    #[serde(default)]
+    context_pressure_interval: Option<u32>,
 }
 
 // ── ConfigLoader ──────────────────────────────────────────────────────────────
@@ -640,10 +664,10 @@ impl ConfigLoader {
     /// project `[provider]` > user `[provider]` > empty. Project-level
     /// `[[providers]]` **replaces** user-level `[[providers]]` (same as
     /// other `Vec` fields — no appending).
+    #[allow(clippy::too_many_lines)]
     fn merge(user: Option<WireConfig>, project: Option<WireConfig>) -> RhoConfig {
         let user = user.unwrap_or_default();
         let project = project.unwrap_or_default();
-
         let user_agent = user.agent.unwrap_or_default();
         let project_agent = project.agent.unwrap_or_default();
 
@@ -674,6 +698,14 @@ impl ConfigLoader {
                     .show_reasoning
                     .or(user_agent.show_reasoning)
                     .unwrap_or(default_show_reasoning()),
+                context_pressure_threshold: project_agent
+                    .context_pressure_threshold
+                    .or(user_agent.context_pressure_threshold)
+                    .unwrap_or(default_context_pressure_threshold()),
+                context_pressure_interval: project_agent
+                    .context_pressure_interval
+                    .or(user_agent.context_pressure_interval)
+                    .unwrap_or(default_context_pressure_interval()),
             },
             provider: {
                 // New `[[providers]]` format takes precedence over legacy `[provider]`.
