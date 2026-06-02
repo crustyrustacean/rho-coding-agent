@@ -195,9 +195,6 @@ mod tests {
     )]
     use super::*;
     use crate::message::{ChatMessage, ContentBlock};
-    use crate::newtypes::ToolName;
-    use crate::tool::ToolResult;
-    use serde::{Deserialize, Serialize};
 
     // ── TokenBudget tests ──────────────────────────────────────────────
 

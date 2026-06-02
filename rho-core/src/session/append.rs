@@ -328,9 +328,7 @@ mod tests {
     use crate::context::TokenBudget;
     use crate::message::ContentBlock;
     use crate::newtypes::ToolCallId;
-    use crate::newtypes::ToolName;
     use crate::tool::ToolResult;
-    use serde::{Deserialize, Serialize};
 
     // ── Append operation tests ──────────────────────────────────────────
 

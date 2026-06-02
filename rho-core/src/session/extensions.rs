@@ -109,7 +109,7 @@ mod tests {
         clippy::cast_sign_loss,
         clippy::cast_precision_loss
     )]
-    use super::super::{Entry, EntryPayload, EntryResolution, Session};
+    use super::super::{EntryPayload, EntryResolution, Session};
     use super::*;
     use crate::message::{ChatMessage, ContentBlock};
     use crate::newtypes::EntryId;

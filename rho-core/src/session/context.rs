@@ -249,7 +249,6 @@ mod tests {
     use crate::context::TokenBudget;
     use crate::message::{ChatMessage, ContentBlock};
     use crate::newtypes::ToolName;
-    use serde::{Deserialize, Serialize};
 
     // ── Context building tests (Task 8) ────────────────────────────────
 
