@@ -299,7 +299,7 @@ mod tests {
     #[test]
     fn estimator_default_is_heuristic() {
         let session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
-        let tokens = session.estimator().estimate("hello");
+        let tokens = session.estimator().estimate("test-model", "hello");
         assert!(tokens > 0);
     }
 

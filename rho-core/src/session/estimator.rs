@@ -51,8 +51,9 @@ use std::collections::HashMap;
 ///
 /// [`calibrate`]: TokenEstimator::calibrate
 pub trait TokenEstimator: Send + Sync {
-    /// Estimate the token count for `content`.
-    fn estimate(&self, content: &str) -> usize;
+    /// Estimate the token count for `content` using the given `model`'s
+    /// calibrated or bootstrap chars-per-token ratio.
+    fn estimate(&self, model: &str, content: &str) -> usize;
 
     /// Update internal state given an actual token count from the API.
     ///
@@ -176,15 +177,8 @@ impl HeuristicEstimator {
 }
 
 impl TokenEstimator for HeuristicEstimator {
-    fn estimate(&self, content: &str) -> usize {
-        // When called without a model context, use the conservative unknown ratio.
-        #[allow(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            clippy::cast_precision_loss
-        )]
-        let tokens = (content.len() as f32 / UNKNOWN_CHARS_PER_TOKEN) as usize;
-        tokens.max(1)
+    fn estimate(&self, model: &str, content: &str) -> usize {
+        self.estimate_for_model(model, content)
     }
 
     fn calibrate(&mut self, model: &str, estimated: usize, actual: usize) {
@@ -230,7 +224,7 @@ mod tests {
     #[test]
     fn heuristic_estimator_returns_nonzero_for_nonempty() {
         let est = HeuristicEstimator::new();
-        let tokens = est.estimate("hello world");
+        let tokens = est.estimate("test-model", "hello world");
         assert!(
             tokens > 0,
             "should estimate > 0 tokens for non-empty string"
@@ -241,7 +235,7 @@ mod tests {
     fn heuristic_estimator_returns_one_for_empty() {
         let est = HeuristicEstimator::new();
         // max(1) ensures at least 1 token even for empty
-        assert!(est.estimate("") >= 1);
+        assert!(est.estimate("test-model", "") >= 1);
     }
 
     #[test]

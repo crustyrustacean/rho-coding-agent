@@ -258,6 +258,11 @@ pub struct AgentConfig {
     /// Minimum number of iterations between context-pressure nudges.
     /// Prevents the nudge from being injected on every tool execution.
     pub context_pressure_interval: u32,
+    /// Context utilization percentage (0–100) at which the agent loop
+    /// automatically compacts older entries to free context space.
+    /// Compaction runs proactively *before* eviction is needed.
+    /// Set to 0 to disable. Should be >= `context_pressure_threshold`.
+    pub auto_compact_threshold: u8,
 }
 
 impl std::fmt::Debug for AgentConfig {
@@ -274,6 +279,7 @@ impl std::fmt::Debug for AgentConfig {
                 &self.context_pressure_threshold,
             )
             .field("context_pressure_interval", &self.context_pressure_interval)
+            .field("auto_compact_threshold", &self.auto_compact_threshold)
             .finish()
     }
 }
@@ -289,6 +295,7 @@ impl Default for AgentConfig {
             show_reasoning: false,
             context_pressure_threshold: 75,
             context_pressure_interval: 5,
+            auto_compact_threshold: 0,
         }
     }
 }
@@ -309,6 +316,7 @@ impl AgentConfig {
             show_reasoning: config.agent.show_reasoning,
             context_pressure_threshold: config.agent.context_pressure_threshold,
             context_pressure_interval: config.agent.context_pressure_interval,
+            auto_compact_threshold: config.agent.auto_compact_threshold,
         }
     }
 }
@@ -537,6 +545,11 @@ impl LoopContext<'_> {
 
     // ── ExecutingTool ────────────────────────────────────────────────────
 
+    /// Return the auto-compact threshold, or `None` if disabled.
+    fn auto_compact_threshold(&self) -> Option<u8> {
+        let t = self.params.config.auto_compact_threshold;
+        if t == 0 { None } else { Some(t) }
+    }
     /// Execute a single tool call and handle the result (including stuck-loop
     /// detection).
     async fn handle_execution(
@@ -589,6 +602,33 @@ impl LoopContext<'_> {
         ) {
             info!(utilization = %self.session.context_stats().utilization_percent(), "context pressure nudge injected");
             self.session.append_user_message(&nudge);
+        }
+
+        // Auto-compact: proactively compact older entries when utilization
+        // crosses the auto-compact threshold.
+        if let Some(threshold) = self.auto_compact_threshold() {
+            let stats = self.session.context_stats();
+            if stats.utilization_percent() >= threshold {
+                let strategy = crate::session::MechanicalCompactionStrategy::new();
+                let budget = self.session.message_budget();
+                let compact_threshold = budget / 4;
+                match self
+                    .session
+                    .compact_older_than(compact_threshold, &strategy)
+                    .await
+                {
+                    Ok(_) => {
+                        info!(
+                            utilization = %stats.utilization_percent(),
+                            compact_threshold,
+                            "auto-compacted context after tool execution"
+                        );
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "auto-compact failed after tool execution");
+                    }
+                }
+            }
         }
 
         Ok(self.advance_to_next_call(remaining))

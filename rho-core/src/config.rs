@@ -121,6 +121,12 @@ pub struct AgentLoopConfig {
     /// Minimum number of iterations between context-pressure nudges.
     #[serde(default = "default_context_pressure_interval")]
     pub context_pressure_interval: u32,
+    /// Context utilization percentage (0–100) at which the agent loop
+    /// automatically compacts older entries to free context space.
+    /// Compaction runs proactively *before* eviction is needed.
+    /// Set to 0 to disable. Should be >= `context_pressure_threshold`.
+    #[serde(default = "default_auto_compact_threshold")]
+    pub auto_compact_threshold: u8,
 }
 
 impl Default for AgentLoopConfig {
@@ -135,6 +141,7 @@ impl Default for AgentLoopConfig {
             show_reasoning: default_show_reasoning(),
             context_pressure_threshold: default_context_pressure_threshold(),
             context_pressure_interval: default_context_pressure_interval(),
+            auto_compact_threshold: default_auto_compact_threshold(),
         }
     }
 }
@@ -173,6 +180,11 @@ fn default_context_pressure_threshold() -> u8 {
 /// Default value for `context_pressure_interval`.
 fn default_context_pressure_interval() -> u32 {
     5
+}
+
+/// Default value for `auto_compact_threshold`.
+fn default_auto_compact_threshold() -> u8 {
+    0
 }
 
 // ── ProviderConfig ────────────────────────────────────────────────────────────
@@ -610,6 +622,9 @@ struct WireAgentLoopConfig {
     /// Context pressure interval (iterations between nudges).
     #[serde(default)]
     context_pressure_interval: Option<u32>,
+    /// Auto-compact threshold percentage.
+    #[serde(default)]
+    auto_compact_threshold: Option<u8>,
 }
 
 // ── ConfigLoader ──────────────────────────────────────────────────────────────
@@ -706,6 +721,10 @@ impl ConfigLoader {
                     .context_pressure_interval
                     .or(user_agent.context_pressure_interval)
                     .unwrap_or(default_context_pressure_interval()),
+                auto_compact_threshold: project_agent
+                    .auto_compact_threshold
+                    .or(user_agent.auto_compact_threshold)
+                    .unwrap_or(default_auto_compact_threshold()),
             },
             provider: {
                 // New `[[providers]]` format takes precedence over legacy `[provider]`.

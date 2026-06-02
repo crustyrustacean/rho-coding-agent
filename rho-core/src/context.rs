@@ -318,7 +318,8 @@ pub(crate) fn estimate_tool_schema_overhead(
     // Each schema is ~200-500 chars; we count the whole tools array.
     // We add a small per-schema overhead for JSON structural tokens.
     let serialized = serde_json::to_string(schemas).unwrap_or_default();
-    estimator.estimate(&serialized)
+    // No model context available — use empty string (conservative unknown ratio).
+    estimator.estimate("", &serialized)
 }
 
 /// A role-tagged message for counting evicted messages by type.

@@ -38,13 +38,14 @@ pub(crate) fn floor_char_boundary(s: &str, max_chars: usize) -> usize {
 pub(crate) fn chars_to_fit_tokens(
     s: &str,
     target_tokens: usize,
+    model: &str,
     estimator: &dyn TokenEstimator,
 ) -> usize {
     // Use the estimator's ratio: if a string of length L has T tokens,
     // then chars/token ≈ L/T, so chars ≈ target_tokens * (L/T).
     // But we can also just iterate: start from the full string and shrink.
     // For simplicity, use a proportional estimate.
-    let total_tokens = estimator.estimate(s);
+    let total_tokens = estimator.estimate(model, s);
     if total_tokens == 0 {
         return s.len();
     }
@@ -72,12 +73,13 @@ pub(crate) fn chars_to_fit_tokens(
 /// giving more accurate budget decisions.
 pub(crate) fn estimate_entry_tokens_for_compaction(
     entry: &Entry,
+    model: &str,
     estimator: &dyn TokenEstimator,
 ) -> usize {
     match &entry.payload {
         EntryPayload::Message(msg) => {
             let text = format_message_text(msg);
-            estimator.estimate(&text).max(1)
+            estimator.estimate(model, &text).max(1)
         }
         EntryPayload::Compaction {
             summary,
@@ -87,13 +89,13 @@ pub(crate) fn estimate_entry_tokens_for_compaction(
             // For existing compaction entries, use the recorded tokens_before
             // plus the summary's own token cost
             let summary_text = format_compaction_summary_text(summary);
-            *tokens_before + estimator.estimate(&summary_text)
+            *tokens_before + estimator.estimate(model, &summary_text)
         }
         EntryPayload::BranchSummary { summary, .. } => {
             let text = format_compaction_summary_text(summary);
-            estimator.estimate(&text).max(1)
+            estimator.estimate(model, &text).max(1)
         }
-        EntryPayload::Custom { data, .. } => estimator.estimate(&data.to_string()).max(1),
+        EntryPayload::Custom { data, .. } => estimator.estimate(model, &data.to_string()).max(1),
         EntryPayload::CustomMessage { content, .. } => {
             let text: String = content
                 .iter()
@@ -101,16 +103,16 @@ pub(crate) fn estimate_entry_tokens_for_compaction(
                     ContentBlock::Text { text } => text.as_str(),
                 })
                 .collect();
-            estimator.estimate(&text).max(1)
+            estimator.estimate(model, &text).max(1)
         }
-        EntryPayload::ModelChange { model } => estimator.estimate(model).max(1),
+        EntryPayload::ModelChange { model } => estimator.estimate(model, model).max(1),
         EntryPayload::Label { label, .. } => {
             let text = label.as_deref().unwrap_or("");
-            estimator.estimate(text).max(1)
+            estimator.estimate(model, text).max(1)
         }
-        EntryPayload::SessionInfo { name } => estimator.estimate(name).max(1),
+        EntryPayload::SessionInfo { name } => estimator.estimate(model, name).max(1),
         EntryPayload::LeafMoved { .. } => 1,
-        EntryPayload::SessionEnded { reason } => estimator.estimate(reason).max(1),
+        EntryPayload::SessionEnded { reason } => estimator.estimate(model, reason).max(1),
     }
 }
 

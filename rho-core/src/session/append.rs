@@ -63,13 +63,14 @@ impl Session {
         )]
         let max_tokens = (self.token_budget.prompt_budget() as f32
             * super::truncation::MAX_TOOL_RESULT_FRACTION) as usize;
-        let estimated_tokens = self.estimator.estimate(&redacted);
+        let estimated_tokens = self.estimator.estimate(&self.model, &redacted);
 
         let (content, details) = if estimated_tokens > max_tokens {
             // Truncate at a UTF-8-safe boundary
             let max_chars = super::truncation::chars_to_fit_tokens(
                 &redacted,
                 max_tokens,
+                &self.model,
                 self.estimator.as_ref(),
             );
             let original_size = redacted.len();

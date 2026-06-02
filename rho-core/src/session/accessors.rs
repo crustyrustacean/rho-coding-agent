@@ -108,7 +108,7 @@ impl Session {
     /// system prompt was set.
     pub fn system_overhead(&self) -> usize {
         self.system_prompt()
-            .map_or(0, |text| self.estimator.estimate(text))
+            .map_or(0, |text| self.estimator.estimate(&self.model, text))
     }
 
     /// Estimate the token overhead of the tool schemas.

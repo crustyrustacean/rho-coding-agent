@@ -77,6 +77,7 @@ impl Session {
 
             cumulative_tokens += super::truncation::estimate_entry_tokens_for_compaction(
                 entry,
+                &self.model,
                 self.estimator.as_ref(),
             );
             compact_end = i + 1;
