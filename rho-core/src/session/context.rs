@@ -75,8 +75,10 @@ impl Session {
                 continue;
             }
 
-            cumulative_tokens +=
-                super::truncation::estimate_entry_tokens_for_compaction(entry, self.estimator.as_ref());
+            cumulative_tokens += super::truncation::estimate_entry_tokens_for_compaction(
+                entry,
+                self.estimator.as_ref(),
+            );
             compact_end = i + 1;
 
             if cumulative_tokens >= threshold {
@@ -242,8 +244,8 @@ mod tests {
         clippy::cast_sign_loss,
         clippy::cast_precision_loss
     )]
-    use super::*;
     use super::super::{CompactionSummary, EntryPayload};
+    use super::*;
     use crate::context::TokenBudget;
     use crate::message::{ChatMessage, ContentBlock};
     use crate::newtypes::ToolName;
@@ -812,7 +814,10 @@ mod tests {
 
         // The compacted entry should still be accessible via entry()
         let entry = session.entry(&user_id);
-        assert!(entry.is_some(), "compacted entry should still be in the tree");
+        assert!(
+            entry.is_some(),
+            "compacted entry should still be in the tree"
+        );
     }
 
     #[tokio::test]
@@ -829,8 +834,7 @@ mod tests {
         let compaction_id = session.compact_older_than(1, &strategy).await.unwrap();
 
         let compaction_entry = session.entry(&compaction_id).unwrap();
-        if let EntryPayload::Compaction { first_kept, .. } = &compaction_entry.payload
-        {
+        if let EntryPayload::Compaction { first_kept, .. } = &compaction_entry.payload {
             assert!(
                 session.entry(first_kept).is_some(),
                 "first_kept should reference a valid entry"

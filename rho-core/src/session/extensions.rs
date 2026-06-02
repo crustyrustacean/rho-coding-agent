@@ -4,8 +4,8 @@
 // and [`ExtensionMessageEntry`] for LLM-visible content (Full resolution).
 
 use crate::message::ContentBlock;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 // ── ExtensionEntry trait ─────────────────────────────────────────────────────
 
@@ -109,8 +109,8 @@ mod tests {
         clippy::cast_sign_loss,
         clippy::cast_precision_loss
     )]
-    use super::*;
     use super::super::{Entry, EntryPayload, EntryResolution, Session};
+    use super::*;
     use crate::message::{ChatMessage, ContentBlock};
     use crate::newtypes::EntryId;
     use serde::{Deserialize, Serialize};

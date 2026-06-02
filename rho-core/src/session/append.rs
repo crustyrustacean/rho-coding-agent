@@ -67,8 +67,11 @@ impl Session {
 
         let (content, details) = if estimated_tokens > max_tokens {
             // Truncate at a UTF-8-safe boundary
-            let max_chars =
-                super::truncation::chars_to_fit_tokens(&redacted, max_tokens, self.estimator.as_ref());
+            let max_chars = super::truncation::chars_to_fit_tokens(
+                &redacted,
+                max_tokens,
+                self.estimator.as_ref(),
+            );
             let original_size = redacted.len();
             let truncated = format!(
                 "{}\n\n{}",
@@ -322,12 +325,12 @@ mod tests {
         clippy::cast_precision_loss
     )]
     use super::*;
+    use crate::context::TokenBudget;
     use crate::message::ContentBlock;
+    use crate::newtypes::ToolCallId;
     use crate::newtypes::ToolName;
     use crate::tool::ToolResult;
     use serde::{Deserialize, Serialize};
-    use crate::context::TokenBudget;
-    use crate::newtypes::ToolCallId;
 
     // ── Append operation tests ──────────────────────────────────────────
 

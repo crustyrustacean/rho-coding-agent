@@ -80,30 +80,29 @@
 //! - `Session::flush` writes any unwritten entries to disk.
 
 pub mod accessors;
+pub mod append;
 pub mod builder;
 pub mod compaction;
+pub mod context;
 pub mod context_stats;
 pub mod entry;
 pub mod error;
 pub mod estimator;
+pub mod extensions;
 pub mod header;
 pub mod persist;
 pub mod tree;
 pub mod truncation;
-pub mod append;
-pub mod context;
-pub mod extensions;
 
 pub use compaction::{CompactionStrategy, MechanicalCompactionStrategy};
 pub use context_stats::ContextStats;
 pub use entry::{CompactionSummary, Entry, EntryPayload, EntryResolution};
 pub use estimator::{HeuristicEstimator, TokenEstimator};
+pub use extensions::{ExtensionEntry, ExtensionMessageEntry};
 pub use header::SessionHeader;
 pub use persist::PersistState;
 pub use persist::{SessionMetadata, find_latest_session, list_sessions};
 pub use persist::{default_save_path, open_session, project_hash};
-pub use extensions::{ExtensionEntry, ExtensionMessageEntry};
-
 
 use crate::context::{ContextManager, TokenBudget};
 use crate::newtypes::EntryId;
@@ -185,8 +184,6 @@ impl std::fmt::Debug for Session {
             .finish_non_exhaustive()
     }
 }
-
-
 
 #[cfg(test)]
 mod tests {
