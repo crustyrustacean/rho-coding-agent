@@ -159,7 +159,7 @@ pub async fn run_repl(app: &mut App) -> Result<()> {
                 P::conversation_cleared();
                 continue;
             }
-            "/models" => {
+            "/models" | "/model" => {
                 list_models(app).await;
                 continue;
             }
