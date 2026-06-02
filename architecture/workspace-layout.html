@@ -252,13 +252,22 @@
 │       ├── sandbox.rs       # `SandboxRoot` — file sandbox validation
 │       ├── schema.rs        # `ToolSchema` — wire-format tool definitions
 │       ├── provider.rs      # `Provider` trait, `OpenAiCompatibleProvider`, `ProviderRegistry`
-│       ├── session.rs       # `Session`, `Entry`, tree persistence, compaction
+│       ├── session.rs       # `Session` struct, module declarations, re-exports
 │       ├── session/
-│       │   ├── compaction.rs # `CompactionStrategy`, `MechanicalCompactionStrategy`
-│       │   ├── entry.rs     # `Entry`, `EntryPayload`, `EntryResolution`
-│       │   ├── error.rs     # `SessionError`
-│       │   ├── estimator.rs # `TokenEstimator`, `HeuristicEstimator`
-│       │   └── persist.rs   # JSONL persistence, `SessionMetadata`
+│       │   ├── accessors.rs    # Header, leaf, entry, flush, path, getters/setters
+│       │   ├── append.rs       # Append ops, close, extension typed methods, append_entry core
+│       │   ├── builder.rs      # `new`, `in_memory`, `with_*` builder methods
+│       │   ├── compaction.rs   # `CompactionStrategy`, `MechanicalCompactionStrategy`
+│       │   ├── context.rs      # `path_messages`, `send_current`, `compact_older_than`, `context_stats`
+│       │   ├── context_stats.rs # `ContextStats` struct
+│       │   ├── entry.rs        # `Entry`, `EntryPayload`, `EntryResolution`
+│       │   ├── error.rs        # `SessionError`
+│       │   ├── estimator.rs    # `TokenEstimator`, `HeuristicEstimator`
+│       │   ├── extensions.rs   # `ExtensionEntry`, `ExtensionMessageEntry` traits
+│       │   ├── header.rs       # `SessionHeader`
+│       │   ├── persist.rs      # JSONL persistence, `SessionMetadata`
+│       │   ├── tree.rs         # `path_to_root`, `branch_to`, `branch_with_summary`
+│       │   └── truncation.rs   # Bounded truncation, char boundary, footer
 │       └── shell.rs         # `ShellExecutor` trait, `ShellOutput`
 ├── rho-highlight/           # Tree-sitter syntax analysis
 │   └── src/
