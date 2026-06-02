@@ -1437,7 +1437,11 @@ fn check_boundary_at_byte(
 
     let node_text = &info.text;
     let preview = if node_text.len() > 40 {
-        format!("{}...", &node_text[..40])
+        let mut end = 40;
+        while !node_text.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}...", &node_text[..end])
     } else {
         node_text.to_owned()
     };
