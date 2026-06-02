@@ -116,7 +116,13 @@ impl Session {
     /// Tool schemas are sent with every request but are not part of the
     /// message history. This returns their estimated token count.
     pub fn schema_overhead(&self) -> usize {
-        crate::context::estimate_tool_schema_overhead(&self.tools, self.estimator.as_ref())
+        if let Some(cached) = self.schema_overhead_cache.get() {
+            return cached;
+        }
+        let computed =
+            crate::context::estimate_tool_schema_overhead(&self.tools, self.estimator.as_ref());
+        self.schema_overhead_cache.set(Some(computed));
+        computed
     }
 
     /// The token budget available for conversation messages after
@@ -260,6 +266,34 @@ mod tests {
         assert_eq!(
             session.message_budget(),
             session.token_budget().prompt_budget()
+        );
+    }
+
+    #[test]
+    fn schema_overhead_cache_invalidated_on_set_tools() {
+        let tools = vec![rho_ai::ToolDefinition::new(
+            "read_file",
+            "Read a file",
+            serde_json::json!({
+                "type": "object",
+                "properties": {"path": {"type": "string"}}
+            }),
+        )];
+        let mut session = Session::in_memory("m", Some("sys"), tools, "/tmp");
+
+        // First call computes and caches.
+        let overhead_with_tools = session.schema_overhead();
+        assert!(overhead_with_tools > 0, "should have overhead with tools");
+
+        // Second call returns the cached value.
+        assert_eq!(session.schema_overhead(), overhead_with_tools);
+
+        // Replace tools with empty set — cache must be invalidated.
+        session.set_tools(vec![]);
+        assert_eq!(
+            session.schema_overhead(),
+            0,
+            "overhead should be 0 after tools are cleared"
         );
     }
 

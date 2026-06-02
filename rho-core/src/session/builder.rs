@@ -72,6 +72,7 @@ impl Session {
             token_budget: TokenBudget::default(),
             redactor: Redactor::new(),
             details_store: HashMap::new(),
+            schema_overhead_cache: std::cell::Cell::new(None),
             persist: PersistState::with_path(save_path, 0),
         }
     }
@@ -123,6 +124,7 @@ impl Session {
             token_budget: TokenBudget::default(),
             redactor: Redactor::new(),
             details_store: HashMap::new(),
+            schema_overhead_cache: std::cell::Cell::new(None),
             persist: PersistState::in_memory(),
         }
     }
@@ -173,6 +175,7 @@ impl Session {
             token_budget: TokenBudget::default(),
             redactor: Redactor::new(),
             details_store: HashMap::new(),
+            schema_overhead_cache: std::cell::Cell::new(None),
             persist: persist_state,
         }
     }
@@ -224,6 +227,7 @@ impl Session {
     /// a different set of tools).
     pub fn set_tools(&mut self, tools: Vec<rho_ai::ToolDefinition>) {
         self.tools = tools;
+        self.schema_overhead_cache.set(None);
     }
 
     /// Override the secret redactor (useful when resuming a session with

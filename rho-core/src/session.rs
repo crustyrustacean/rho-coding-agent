@@ -170,6 +170,12 @@ pub struct Session {
     details_store: HashMap<EntryId, ToolResultDetails>,
     /// Persistence state (save path, flushed count).
     persist: PersistState,
+    /// Cached token overhead of the tool schemas.
+    ///
+    /// Set to `Some(n)` after the first computation and invalidated when
+    /// [`set_tools`](Session::set_tools) changes the schema set. Uses
+    /// [`Cell`] for interior mutability so the accessor remains `&self`.
+    schema_overhead_cache: std::cell::Cell<Option<usize>>,
 }
 
 impl std::fmt::Debug for Session {
