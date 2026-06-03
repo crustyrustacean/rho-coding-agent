@@ -1,6 +1,6 @@
 //! Session tree entry types.
 //!
-//! The session tree is the core data structure of Phase 2.5. Entries form a
+//! The session tree is the core data structure. Entries form a
 //! parent-linked tree with a movable leaf pointer. Each entry carries an
 //! explicit [`EntryResolution`] that determines whether it participates in the
 //! model's context — this is the *adaptive resolution* framing: preserve fine
@@ -206,6 +206,8 @@ pub struct CompactionSummary {
     pub original_request: Option<String>,
     /// Tool calls grouped by tool name, with one-line argument summaries.
     pub tool_calls: BTreeMap<ToolName, Vec<String>>,
+    /// Result summaries
+    pub key_findings: BTreeMap<ToolName, Vec<String>>,
     /// Total estimated tokens across all compacted entries.
     pub tokens_compacted: usize,
     /// Number of entries that were compacted.
@@ -286,6 +288,7 @@ mod tests {
             entry_count: 5,
             time_span: Duration::from_secs(30),
             notes: None,
+            key_findings: BTreeMap::new(),
         };
         let payload = EntryPayload::Compaction {
             summary,
@@ -306,6 +309,7 @@ mod tests {
             entry_count: 3,
             time_span: Duration::from_secs(10),
             notes: None,
+            key_findings: BTreeMap::new(),
         };
         let payload = EntryPayload::BranchSummary {
             summary,
@@ -476,6 +480,7 @@ mod tests {
             entry_count: 12,
             time_span: Duration::from_mins(2),
             notes: Some("LLM notes here".to_owned()),
+            key_findings: BTreeMap::new(),
         };
         let json = serde_json::to_string(&summary).unwrap();
         let back: CompactionSummary = serde_json::from_str(&json).unwrap();
@@ -491,6 +496,7 @@ mod tests {
             entry_count: 0,
             time_span: Duration::ZERO,
             notes: None,
+            key_findings: BTreeMap::new(),
         };
         let json = serde_json::to_string(&summary).unwrap();
         let back: CompactionSummary = serde_json::from_str(&json).unwrap();

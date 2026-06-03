@@ -330,6 +330,7 @@ mod tests {
     use crate::message::ContentBlock;
     use crate::newtypes::ToolCallId;
     use crate::tool::ToolResult;
+    use std::collections::BTreeMap;
 
     // ── Append operation tests ──────────────────────────────────────────
 
@@ -498,6 +499,7 @@ mod tests {
             entry_count: 2,
             time_span: std::time::Duration::from_secs(30),
             notes: None,
+            key_findings: BTreeMap::new(),
         };
 
         let id = session.append_compaction(summary, user_id, 200);
@@ -519,6 +521,7 @@ mod tests {
             entry_count: 1,
             time_span: std::time::Duration::from_secs(10),
             notes: None,
+            key_findings: BTreeMap::new(),
         };
 
         let id = session.append_branch_summary(summary, from_id);

@@ -517,6 +517,7 @@ mod tests {
             entry_count: 2,
             time_span: std::time::Duration::from_secs(10),
             notes: None,
+            key_findings: std::collections::BTreeMap::new(),
         };
         session.append_compaction(summary, asst_id.clone(), 200);
 
@@ -529,6 +530,7 @@ mod tests {
             entry_count: 1,
             time_span: std::time::Duration::from_secs(5),
             notes: None,
+            key_findings: std::collections::BTreeMap::new(),
         };
         session.append_branch_summary(branch_summary, EntryId::from("old_leaf"));
 

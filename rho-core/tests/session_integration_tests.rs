@@ -88,6 +88,7 @@ fn entry_round_trip_all_variants() {
                     entry_count: 2,
                     time_span: Duration::from_secs(10),
                     notes: None,
+                    key_findings: BTreeMap::new(),
                 },
                 first_kept: EntryId::new(),
                 tokens_before: 200,
@@ -106,6 +107,7 @@ fn entry_round_trip_all_variants() {
                     entry_count: 1,
                     time_span: Duration::from_secs(5),
                     notes: Some("notes".to_owned()),
+                    key_findings: BTreeMap::new(),
                 },
                 from_id: EntryId::new(),
             },
@@ -370,6 +372,7 @@ fn branch_summary_correct_from_id() {
         entry_count: 2,
         time_span: Duration::from_secs(10),
         notes: None,
+        key_findings: BTreeMap::new(),
     };
 
     session
@@ -1211,6 +1214,7 @@ fn compaction_summary_rendering_byte_stable() {
         entry_count: 15,
         time_span: Duration::from_secs(120),
         notes: Some("compacted to fit budget".to_owned()),
+        key_findings: BTreeMap::new(),
     };
 
     let msg1 = render_compaction_summary(&summary);
@@ -1225,6 +1229,45 @@ fn compaction_summary_rendering_byte_stable() {
         assert!(text.contains("read_file: 2 calls"));
         assert!(text.contains("run_command: 1 calls"));
         assert!(text.contains("compacted to fit budget"));
+    } else {
+        panic!("expected User message");
+    }
+}
+
+#[test]
+fn compaction_summary_renders_key_findings() {
+    use rho_core::context::render_compaction_summary;
+    use rho_core::newtypes::ToolName;
+
+    let mut tool_calls = BTreeMap::new();
+    tool_calls.insert(ToolName::from("read_file"), vec!["main.rs".to_owned()]);
+    let mut key_findings = BTreeMap::new();
+    key_findings.insert(
+        ToolName::from("read_file"),
+        vec!["245 lines, nom parser".to_owned()],
+    );
+
+    let summary = CompactionSummary {
+        original_request: Some("read the code".to_owned()),
+        tool_calls,
+        tokens_compacted: 500,
+        entry_count: 3,
+        time_span: Duration::from_secs(10),
+        notes: None,
+        key_findings,
+    };
+
+    let msg = render_compaction_summary(&summary);
+    if let ChatMessage::User { content } = &msg {
+        let ContentBlock::Text { text } = &content[0];
+        assert!(
+            text.contains("Key findings"),
+            "should render Key findings section"
+        );
+        assert!(
+            text.contains("245 lines, nom parser"),
+            "should render the finding content"
+        );
     } else {
         panic!("expected User message");
     }

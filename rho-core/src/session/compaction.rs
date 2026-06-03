@@ -29,7 +29,7 @@ use crate::error::Result;
 use crate::message::ChatMessage;
 use crate::newtypes::ToolName;
 use crate::session::entry::{CompactionSummary, Entry, EntryPayload};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 
 // ── CompactionStrategy trait ──────────────────────────────────────────────────
@@ -95,6 +95,8 @@ impl CompactionStrategy for MechanicalCompactionStrategy {
         let mut tokens_compacted: usize = 0;
         let mut first_timestamp: Option<std::time::SystemTime> = None;
         let mut last_timestamp: Option<std::time::SystemTime> = None;
+        let mut key_findings: BTreeMap<ToolName, Vec<String>> = BTreeMap::new();
+        let mut tool_call_names: HashMap<String, ToolName> = HashMap::new();
 
         for entry in entries {
             // Track time span
@@ -127,9 +129,24 @@ impl CompactionStrategy for MechanicalCompactionStrategy {
                                 .entry(call.function.name.clone())
                                 .or_default()
                                 .push(summarise_arguments(&call.function.arguments));
+                            tool_call_names.insert(call.id.to_string(), call.function.name.clone());
                         }
                     }
-                    ChatMessage::System { .. } | ChatMessage::Tool { .. } => {}
+                    ChatMessage::System { .. } => {}
+                    ChatMessage::Tool {
+                        tool_call_id,
+                        content,
+                    } => {
+                        if let Some(name) = tool_call_names.get(&tool_call_id.to_string()) {
+                            let text = extract_text(content);
+                            if !text.is_empty() {
+                                key_findings
+                                    .entry(name.clone())
+                                    .or_default()
+                                    .push(summarise_result(&text));
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -146,11 +163,28 @@ impl CompactionStrategy for MechanicalCompactionStrategy {
             entry_count: entries.len(),
             time_span,
             notes: None,
+            key_findings,
         })
     }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Produce a one-line summary of a tool result.
+///
+/// Truncates to ~150 characters at a UTF-8-safe boundary.
+fn summarise_result(text: &str) -> String {
+    let trimmed = text.trim();
+    if trimmed.len() <= 150 {
+        trimmed.to_owned()
+    } else {
+        let mut end = 147;
+        while !trimmed.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}…", &trimmed[..end])
+    }
+}
 
 /// Estimate the token count for an entry using the chars/4 heuristic.
 ///
@@ -610,6 +644,105 @@ mod tests {
         assert_eq!(s1.entry_count, s2.entry_count);
         assert_eq!(s1.time_span, s2.time_span);
         assert_eq!(s1.notes, s2.notes);
+    }
+
+    #[tokio::test]
+    async fn mechanical_extracts_tool_results() {
+        let entries = [
+            full_entry(EntryPayload::Message(ChatMessage::user_text("do it"))),
+            full_entry(EntryPayload::Message(ChatMessage::Assistant {
+                content: vec![],
+                tool_calls: vec![ModelToolCall {
+                    id: ToolCallId::from("call_1"),
+                    call_type: "function".to_owned(),
+                    function: ToolCallFunction {
+                        name: ToolName::from("cargo_test"),
+                        arguments: r"{}".to_owned(),
+                    },
+                }],
+            })),
+            full_entry(EntryPayload::Message(ChatMessage::tool_result(
+                ToolCallId::from("call_1"),
+                "running 3 tests\ntest_foo ... ok\ntest_bar ... FAILED\ntest_baz ... ok\n1 failed",
+            ))),
+        ];
+        let refs: Vec<&Entry> = entries.iter().collect();
+
+        let strategy = MechanicalCompactionStrategy::new();
+        let summary = strategy.compact(&refs).await.unwrap();
+
+        assert!(
+            summary
+                .key_findings
+                .contains_key(&ToolName::from("cargo_test")),
+            "key_findings should contain the tool name"
+        );
+        let findings = &summary.key_findings[&ToolName::from("cargo_test")];
+        assert_eq!(findings.len(), 1);
+        assert!(
+            findings[0].contains("FAILED"),
+            "finding should contain the test result"
+        );
+    }
+
+    #[tokio::test]
+    async fn mechanical_key_findings_groups_by_tool_name() {
+        let entries = [
+            full_entry(EntryPayload::Message(ChatMessage::user_text("do it"))),
+            full_entry(EntryPayload::Message(ChatMessage::Assistant {
+                content: vec![],
+                tool_calls: vec![ModelToolCall {
+                    id: ToolCallId::from("call_1"),
+                    call_type: "function".to_owned(),
+                    function: ToolCallFunction {
+                        name: ToolName::from("read_file"),
+                        arguments: r#"{"path":"a.rs"}"#.to_owned(),
+                    },
+                }],
+            })),
+            full_entry(EntryPayload::Message(ChatMessage::tool_result(
+                ToolCallId::from("call_1"),
+                "contents of a.rs",
+            ))),
+            full_entry(EntryPayload::Message(ChatMessage::Assistant {
+                content: vec![],
+                tool_calls: vec![ModelToolCall {
+                    id: ToolCallId::from("call_2"),
+                    call_type: "function".to_owned(),
+                    function: ToolCallFunction {
+                        name: ToolName::from("read_file"),
+                        arguments: r#"{"path":"b.rs"}"#.to_owned(),
+                    },
+                }],
+            })),
+            full_entry(EntryPayload::Message(ChatMessage::tool_result(
+                ToolCallId::from("call_2"),
+                "contents of b.rs",
+            ))),
+        ];
+        let refs: Vec<&Entry> = entries.iter().collect();
+
+        let strategy = MechanicalCompactionStrategy::new();
+        let summary = strategy.compact(&refs).await.unwrap();
+
+        // Both read_file results should be grouped under one tool name
+        assert_eq!(summary.key_findings.len(), 1);
+        let findings = &summary.key_findings[&ToolName::from("read_file")];
+        assert_eq!(findings.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn mechanical_key_findings_empty_for_no_tool_results() {
+        let entries = [
+            full_entry(EntryPayload::Message(ChatMessage::user_text("just talk"))),
+            full_entry(EntryPayload::Message(ChatMessage::assistant_text("ok"))),
+        ];
+        let refs: Vec<&Entry> = entries.iter().collect();
+
+        let strategy = MechanicalCompactionStrategy::new();
+        let summary = strategy.compact(&refs).await.unwrap();
+
+        assert!(summary.key_findings.is_empty());
     }
 
     // ── Argument summarisation tests ──────────────────────────────────────

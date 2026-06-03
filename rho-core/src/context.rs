@@ -294,6 +294,18 @@ pub fn render_compaction_summary(summary: &crate::session::CompactionSummary) ->
         }
     }
 
+    // Key findings
+    if !summary.key_findings.is_empty() {
+        body.push_str("Key findings:\n");
+        for (tool_name, findings) in &summary.key_findings {
+            let _ = write!(body, "  - {tool_name}:");
+            for finding in findings {
+                let _ = write!(body, " {finding};");
+            }
+            body.push('\n');
+        }
+    }
+
     // Notes
     if let Some(ref notes) = summary.notes {
         let _ = writeln!(body, "{notes}");
@@ -1112,6 +1124,7 @@ mod tests {
             entry_count: 3,
             time_span: Duration::from_secs(30),
             notes: None,
+            key_findings: std::collections::BTreeMap::new(),
         };
 
         let first_kept = EntryId::new();
@@ -1160,6 +1173,7 @@ mod tests {
             entry_count: 1,
             time_span: Duration::from_secs(5),
             notes: None,
+            key_findings: std::collections::BTreeMap::new(),
         };
 
         let from_id = EntryId::new();

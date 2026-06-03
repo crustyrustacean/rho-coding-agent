@@ -431,6 +431,7 @@ mod tests {
             entry_count: 1,
             time_span: std::time::Duration::from_secs(30),
             notes: None,
+            key_findings: std::collections::BTreeMap::new(),
         };
 
         session
@@ -466,6 +467,7 @@ mod tests {
             entry_count: 0,
             time_span: std::time::Duration::ZERO,
             notes: None,
+            key_findings: std::collections::BTreeMap::new(),
         };
 
         let result = session.branch_with_summary(&fake_id, summary, EntryId::new());
