@@ -3,7 +3,10 @@
 use super::{ContextStats, Entry, EntryId, EntryResolution, Session};
 use crate::error::Result;
 use crate::message::ChatMessage;
+use crate::newtypes::ToolCallId;
+use crate::session::entry::EntryPayload;
 use crate::session::error::SessionError;
+use crate::session::outliner::OutlineContext;
 
 impl Session {
     // ── Outlining & Summarization (Phase 1) ───────────────────────────
@@ -17,12 +20,18 @@ impl Session {
     /// Only `Full` or `Pinned` entries can be outlined. Returns an error if
     /// the entry doesn't exist or is already at a non-outlineable resolution.
     ///
+    /// # Panics
+    ///
+    /// If the entry existed during the initial immutable borrow but was
+    /// removed before the second lookup (impossible in single-threaded access).
+    ///
     /// # Errors
     ///
     /// Returns `RhoError::Session` if the entry doesn't exist or its
     /// resolution is not `Full` or `Pinned`.
     pub fn outline_entry(&mut self, id: &EntryId) -> Result<()> {
-        let entry = self.entries.get_mut(id).ok_or_else(|| {
+        // Check existence and resolution with immutable borrow.
+        let entry = self.entries.get(id).ok_or_else(|| {
             crate::error::RhoError::Session(SessionError::Persistence(format!(
                 "entry {id} not found"
             )))
@@ -39,7 +48,15 @@ impl Session {
             .into());
         }
 
-        let outline = super::outliner::generate_outline(entry);
+        // Resolve context while we still have an immutable borrow.
+        let ctx = self.resolve_outline_context(entry);
+        let outline = super::outliner::generate_outline(entry, &ctx);
+
+        // Now take the mutable borrow to update resolution.
+        let entry = self
+            .entries
+            .get_mut(id)
+            .expect("entry confirmed to exist above");
         entry.resolution = EntryResolution::Outlined { outline };
         self.flush()?;
         Ok(())
@@ -47,12 +64,18 @@ impl Session {
 
     /// Transition an entry from its current resolution to Summarized.
     ///
+    /// # Panics
+    ///
+    /// If the entry existed during the initial immutable borrow but was
+    /// removed before the second lookup (impossible in single-threaded access).
+    ///
     /// # Errors
     ///
     /// Returns `RhoError::Session` if the entry doesn't exist or its
     /// resolution is not `Full` or `Pinned`.
     pub fn summarize_entry(&mut self, id: &EntryId) -> Result<()> {
-        let entry = self.entries.get_mut(id).ok_or_else(|| {
+        // Check existence and resolution with immutable borrow.
+        let entry = self.entries.get(id).ok_or_else(|| {
             crate::error::RhoError::Session(SessionError::Persistence(format!(
                 "entry {id} not found"
             )))
@@ -69,13 +92,76 @@ impl Session {
             .into());
         }
 
-        let summary = super::outliner::generate_summary(entry);
+        // Resolve context while we still have an immutable borrow.
+        let ctx = self.resolve_outline_context(entry);
+        let summary = super::outliner::generate_summary(entry, &ctx);
+
+        // Now take the mutable borrow to update resolution.
+        let entry = self
+            .entries
+            .get_mut(id)
+            .expect("entry confirmed to exist above");
         entry.resolution = EntryResolution::Summarized { summary };
         self.flush()?;
         Ok(())
     }
 
     // ── Compaction ────────────────────────────────────────────────────────
+
+    /// Resolve the [`OutlineContext`] for an entry by looking up the parent
+    /// assistant entry (for tool calls) and the details store.
+    fn resolve_outline_context(&self, entry: &Entry) -> OutlineContext {
+        // For Tool messages, try to find the parent Assistant entry to get
+        // the tool name and arguments.
+        let (tool_name, tool_arguments) = if let EntryPayload::Message(ChatMessage::Tool {
+            ref tool_call_id,
+            ..
+        }) = entry.payload
+        {
+            self.find_tool_call_info(entry, tool_call_id)
+        } else {
+            (None, None)
+        };
+
+        // Retrieve structured details from the details store.
+        let details = self.details_store.get(&entry.id).cloned();
+
+        OutlineContext {
+            tool_name,
+            tool_arguments,
+            details,
+        }
+    }
+
+    /// Look up the tool name and arguments for a given `tool_call_id` by
+    /// searching the parent `Assistant` entry in the session tree.
+    fn find_tool_call_info(
+        &self,
+        entry: &Entry,
+        tool_call_id: &ToolCallId,
+    ) -> (Option<crate::newtypes::ToolName>, Option<String>) {
+        let Some(parent_id) = entry.parent_id.as_ref() else {
+            return (None, None);
+        };
+
+        let Some(parent) = self.entries.get(parent_id) else {
+            return (None, None);
+        };
+
+        if let EntryPayload::Message(ChatMessage::Assistant { ref tool_calls, .. }) = parent.payload
+        {
+            for tc in tool_calls {
+                if tc.id == *tool_call_id {
+                    return (
+                        Some(tc.function.name.clone()),
+                        Some(tc.function.arguments.clone()),
+                    );
+                }
+            }
+        }
+
+        (None, None)
+    }
 
     /// Compact the oldest entries whose total estimated tokens exceed
     /// `threshold`, using the given [`CompactionStrategy`](super::compaction::CompactionStrategy).
