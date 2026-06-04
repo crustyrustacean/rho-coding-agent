@@ -61,6 +61,9 @@ pub struct Entry {
 ///   `fit_path`.
 /// - **Attached** — the entry is preserved for tools and extensions to read,
 ///   but does not participate in the model's context.
+/// - **Pinned** — like `Full`, but protected from eviction.
+/// - **Outlined** — a structural summary replaces content at ~10–20% tokens.
+/// - **Summarized** — a short prose summary replaces content at ~5–10% tokens.
 ///
 /// Resolution transitions are one-way in Phase 2.5: `Full → Compacted` or
 /// `Full → Attached`. Reverse transitions may be supported in a future phase
@@ -83,6 +86,19 @@ pub enum EntryResolution {
     /// protected from eviction by the sliding window. Used to pin important
     /// entries (e.g., plan discussions) so they survive context pressure.
     Pinned,
+    /// Reduced-fidelity structural summary participates in context.
+    /// Tool results preserve `tool_call_id`; content is replaced by the outline.
+    /// ~10–20% of original tokens.
+    Outlined {
+        /// The outline text rendered in place of the full payload.
+        outline: String,
+    },
+    /// Very short prose summary participates in context.
+    /// ~5–10% of original tokens.
+    Summarized {
+        /// The summary text rendered in place of the full payload.
+        summary: String,
+    },
 }
 
 // ── EntryPayload ──────────────────────────────────────────────────────────────
@@ -262,6 +278,34 @@ mod tests {
     #[test]
     fn resolution_attached_round_trips() {
         let res = EntryResolution::Attached;
+        let json = serde_json::to_string(&res).unwrap();
+        let back: EntryResolution = serde_json::from_str(&json).unwrap();
+        assert_eq!(res, back);
+    }
+
+    #[test]
+    fn resolution_pinned_round_trips() {
+        let res = EntryResolution::Pinned;
+        let json = serde_json::to_string(&res).unwrap();
+        let back: EntryResolution = serde_json::from_str(&json).unwrap();
+        assert_eq!(res, back);
+    }
+
+    #[test]
+    fn resolution_outlined_round_trips() {
+        let res = EntryResolution::Outlined {
+            outline: "read_file: src/parser.rs (342 lines)".to_owned(),
+        };
+        let json = serde_json::to_string(&res).unwrap();
+        let back: EntryResolution = serde_json::from_str(&json).unwrap();
+        assert_eq!(res, back);
+    }
+
+    #[test]
+    fn resolution_summarized_round_trips() {
+        let res = EntryResolution::Summarized {
+            summary: "Fixed parser bug in parse_expression()".to_owned(),
+        };
         let json = serde_json::to_string(&res).unwrap();
         let back: EntryResolution = serde_json::from_str(&json).unwrap();
         assert_eq!(res, back);

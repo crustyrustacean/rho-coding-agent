@@ -90,6 +90,7 @@ pub mod error;
 pub mod estimator;
 pub mod extensions;
 pub mod header;
+pub mod outliner;
 pub mod persist;
 pub mod tree;
 pub mod truncation;

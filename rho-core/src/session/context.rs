@@ -6,6 +6,75 @@ use crate::message::ChatMessage;
 use crate::session::error::SessionError;
 
 impl Session {
+    // ── Outlining & Summarization (Phase 1) ───────────────────────────
+
+    /// Transition an entry from its current resolution to Outlined.
+    ///
+    /// Generates a reduced-fidelity outline of the entry's content and
+    /// updates the resolution. The original payload is preserved in the tree
+    /// and can be accessed via `entry(id)`.
+    ///
+    /// Only `Full` or `Pinned` entries can be outlined. Returns an error if
+    /// the entry doesn't exist or is already at a non-outlineable resolution.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RhoError::Session` if the entry doesn't exist or its
+    /// resolution is not `Full` or `Pinned`.
+    pub fn outline_entry(&mut self, id: &EntryId) -> Result<()> {
+        let entry = self.entries.get_mut(id).ok_or_else(|| {
+            crate::error::RhoError::Session(SessionError::Persistence(format!(
+                "entry {id} not found"
+            )))
+        })?;
+
+        if !matches!(
+            entry.resolution,
+            EntryResolution::Full | EntryResolution::Pinned
+        ) {
+            return Err(SessionError::Persistence(format!(
+                "cannot outline entry {id}: resolution is {:?}, expected Full or Pinned",
+                entry.resolution
+            ))
+            .into());
+        }
+
+        let outline = super::outliner::generate_outline(entry);
+        entry.resolution = EntryResolution::Outlined { outline };
+        self.flush()?;
+        Ok(())
+    }
+
+    /// Transition an entry from its current resolution to Summarized.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RhoError::Session` if the entry doesn't exist or its
+    /// resolution is not `Full` or `Pinned`.
+    pub fn summarize_entry(&mut self, id: &EntryId) -> Result<()> {
+        let entry = self.entries.get_mut(id).ok_or_else(|| {
+            crate::error::RhoError::Session(SessionError::Persistence(format!(
+                "entry {id} not found"
+            )))
+        })?;
+
+        if !matches!(
+            entry.resolution,
+            EntryResolution::Full | EntryResolution::Pinned
+        ) {
+            return Err(SessionError::Persistence(format!(
+                "cannot summarize entry {id}: resolution is {:?}",
+                entry.resolution
+            ))
+            .into());
+        }
+
+        let summary = super::outliner::generate_summary(entry);
+        entry.resolution = EntryResolution::Summarized { summary };
+        self.flush()?;
+        Ok(())
+    }
+
     // ── Compaction ────────────────────────────────────────────────────────
 
     /// Compact the oldest entries whose total estimated tokens exceed
@@ -852,5 +921,216 @@ mod tests {
         } else {
             panic!("expected Compaction payload");
         }
+    }
+
+    // ── outline_entry / summarize_entry tests (Phase 1 Step 4) ──────────
+
+    #[test]
+    fn outline_entry_transitions_resolution() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let user_id = session.append_user_message("hello");
+
+        session.outline_entry(&user_id).unwrap();
+
+        let entry = session.entry(&user_id).unwrap();
+        assert!(
+            matches!(entry.resolution, EntryResolution::Outlined { .. }),
+            "entry should be Outlined after outline_entry"
+        );
+    }
+
+    #[test]
+    fn summarize_entry_transitions_resolution() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let user_id = session.append_user_message("hello");
+
+        session.summarize_entry(&user_id).unwrap();
+
+        let entry = session.entry(&user_id).unwrap();
+        assert!(
+            matches!(entry.resolution, EntryResolution::Summarized { .. }),
+            "entry should be Summarized after summarize_entry"
+        );
+    }
+
+    #[test]
+    fn outline_entry_renders_at_reduced_fidelity() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let long_text: String = "x".repeat(2000);
+        let user_id = session.append_user_message(&long_text);
+
+        session.outline_entry(&user_id).unwrap();
+
+        let messages = session.path_messages();
+        // The outlined entry should appear but with short content
+        let has_outline = messages.iter().any(|m| {
+            if let ChatMessage::User { content } = m {
+                content.iter().any(|b| match b {
+                    ContentBlock::Text { text } => text.len() < 300 && text.ends_with('…'),
+                })
+            } else {
+                false
+            }
+        });
+        assert!(
+            has_outline,
+            "outlined entry should render with truncated text"
+        );
+    }
+
+    #[test]
+    fn outline_entry_errors_on_non_full_resolution() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let user_id = session.append_user_message("hello");
+
+        // First outline it (valid)
+        session.outline_entry(&user_id).unwrap();
+
+        // Try to outline again (invalid — already outlined)
+        let result = session.outline_entry(&user_id);
+        assert!(result.is_err(), "cannot outline an already-outlined entry");
+    }
+
+    #[test]
+    fn outline_entry_errors_on_missing_entry() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let fake_id = EntryId::new();
+        let result = session.outline_entry(&fake_id);
+        assert!(result.is_err(), "cannot outline a non-existent entry");
+    }
+
+    #[test]
+    fn outline_entry_works_on_pinned_entry() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let user_id = session.append_user_message("important plan");
+
+        // Manually set resolution to Pinned (pin_entry API not yet implemented)
+        if let Some(entry) = session.entries.get_mut(&user_id) {
+            entry.resolution = EntryResolution::Pinned;
+        }
+
+        // Outlining a pinned entry should work (pin protects from eviction,
+        // outlining is a downgrade of fidelity, not eviction)
+        session.outline_entry(&user_id).unwrap();
+
+        let entry = session.entry(&user_id).unwrap();
+        assert!(
+            matches!(entry.resolution, EntryResolution::Outlined { .. }),
+            "pinned entry should become Outlined"
+        );
+    }
+
+    #[test]
+    fn outline_entry_preserves_original_payload() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let long_text: String = "x".repeat(2000);
+        let user_id = session.append_user_message(&long_text);
+
+        session.outline_entry(&user_id).unwrap();
+
+        // The original payload should still be in the tree
+        let entry = session.entry(&user_id).unwrap();
+        if let EntryPayload::Message(ChatMessage::User { content }) = &entry.payload {
+            let full_text: String = content
+                .iter()
+                .map(|b| match b {
+                    ContentBlock::Text { text } => text.as_str(),
+                })
+                .collect();
+            assert_eq!(
+                full_text.len(),
+                2000,
+                "original payload should be preserved"
+            );
+        } else {
+            panic!("expected User message payload");
+        }
+    }
+    #[test]
+    fn summarize_entry_errors_on_non_full_resolution() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let user_id = session.append_user_message("hello");
+
+        // Summarize it
+        session.summarize_entry(&user_id).unwrap();
+
+        // Try again (invalid)
+        let result = session.summarize_entry(&user_id);
+        assert!(
+            result.is_err(),
+            "cannot summarize an already-summarized entry"
+        );
+    }
+
+    // ── Persistence round-trip (Phase 1 Step 5) ─────────────────────────
+
+    #[test]
+    fn outlined_entry_persists_and_reloads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("outlined.jsonl");
+
+        let user_id;
+        {
+            let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+            user_id = session.append_user_message("hello world");
+            session.outline_entry(&user_id).unwrap();
+
+            session.persist.save_path = Some(path.clone());
+            session.persist.flushed_count = 0;
+            session.flush().unwrap();
+        }
+
+        let reopened = Session::open(&path).unwrap();
+        let entry = reopened.entry(&user_id).unwrap();
+        assert!(
+            matches!(&entry.resolution, EntryResolution::Outlined { outline } if outline.contains("hello")),
+            "outlined entry should survive JSONL round-trip"
+        );
+    }
+
+    #[test]
+    fn summarized_entry_persists_and_reloads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("summarized.jsonl");
+
+        let user_id;
+        {
+            let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+            user_id = session.append_user_message("hello world");
+            session.summarize_entry(&user_id).unwrap();
+
+            session.persist.save_path = Some(path.clone());
+            session.persist.flushed_count = 0;
+            session.flush().unwrap();
+        }
+
+        let reopened = Session::open(&path).unwrap();
+        let entry = reopened.entry(&user_id).unwrap();
+        assert!(
+            matches!(&entry.resolution, EntryResolution::Summarized { summary } if summary.contains("hello")),
+            "summarized entry should survive JSONL round-trip"
+        );
+    }
+
+    #[test]
+    fn old_jsonl_without_new_variants_loads_cleanly() {
+        // Simulate loading a JSONL file that only has Full/Compacted/Attached/Pinned
+        // resolutions — the Outlined and Summarized variants should not cause issues.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old.jsonl");
+
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        session.append_user_message("hello");
+        session.append_assistant_message(ChatMessage::assistant_text("hi"));
+
+        session.persist.save_path = Some(path.clone());
+        session.persist.flushed_count = 0;
+        session.flush().unwrap();
+
+        // Reopen — no new variants in this file
+        let reopened = Session::open(&path).unwrap();
+        assert_eq!(reopened.entry_count(), 3); // root + user + assistant
+        let messages = reopened.path_messages();
+        assert_eq!(messages.len(), 3);
     }
 }

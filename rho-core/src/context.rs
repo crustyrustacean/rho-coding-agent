@@ -12,7 +12,7 @@
 //!    separated from its matching `Tool` result messages. Violating this causes the
 //!    model API to return a 400 error.
 
-use crate::message::ChatMessage;
+use crate::message::{ChatMessage, ContentBlock};
 
 use crate::session::{Entry, EntryPayload, EntryResolution, TokenEstimator};
 use tracing::{debug, warn};
@@ -204,9 +204,20 @@ pub trait ContextManager: Send + Sync {
         let mut messages = Vec::with_capacity(entries.len());
         for entry in entries {
             // Skip entries that don't participate in the model's context.
-            match &entry.resolution {
+            // Outlined/summarized entries render at reduced fidelity.
+            let reduced_text: Option<&str> = match &entry.resolution {
                 EntryResolution::Compacted { .. } | EntryResolution::Attached => continue,
-                EntryResolution::Full | EntryResolution::Pinned => {}
+                EntryResolution::Full | EntryResolution::Pinned => None,
+                EntryResolution::Outlined { outline } => Some(outline.as_str()),
+                EntryResolution::Summarized { summary } => Some(summary.as_str()),
+            };
+
+            // Render at reduced fidelity if applicable.
+            if let Some(text) = reduced_text {
+                if let Some(msg) = render_reduced_fidelity(entry, text) {
+                    messages.push(msg);
+                }
+                continue;
             }
 
             match &entry.payload {
@@ -250,6 +261,33 @@ pub trait ContextManager: Send + Sync {
         );
 
         self.fit(&messages, adjusted_budget)
+    }
+}
+
+/// Render an entry at reduced fidelity, preserving message type integrity.
+///
+/// - Tool messages: keep `tool_call_id`, replace content with text
+/// - Assistant messages with `tool_calls`: keep `tool_calls`, replace content
+/// - Everything else: render as `ChatMessage::User`
+///
+/// Returns `None` for payloads that don't have a message representation
+/// (e.g., `Custom`, `Label`, `ModelChange`).
+fn render_reduced_fidelity(entry: &Entry, text: &str) -> Option<ChatMessage> {
+    match &entry.payload {
+        EntryPayload::Message(msg) => match msg {
+            ChatMessage::Tool { tool_call_id, .. } => {
+                Some(ChatMessage::tool_result(tool_call_id.clone(), text))
+            }
+            ChatMessage::Assistant { tool_calls, .. } => Some(ChatMessage::Assistant {
+                content: vec![ContentBlock::Text {
+                    text: text.to_owned(),
+                }],
+                tool_calls: tool_calls.clone(),
+            }),
+            _ => Some(ChatMessage::user_text(text)),
+        },
+        EntryPayload::CustomMessage { .. } => Some(ChatMessage::user_text(text)),
+        _ => None,
     }
 }
 
@@ -436,12 +474,23 @@ impl ContextManager for SlidingWindowContextManager {
         let mut messages = Vec::with_capacity(entries.len());
         let mut pinned_indices = Vec::new();
         for entry in entries {
-            match &entry.resolution {
+            let reduced_text: Option<&str> = match &entry.resolution {
                 EntryResolution::Compacted { .. } | EntryResolution::Attached => continue,
-                EntryResolution::Full => {}
+                EntryResolution::Full => None,
                 EntryResolution::Pinned => {
                     pinned_indices.push(messages.len());
+                    None
                 }
+                EntryResolution::Outlined { outline } => Some(outline.as_str()),
+                EntryResolution::Summarized { summary } => Some(summary.as_str()),
+            };
+
+            // Render at reduced fidelity if applicable.
+            if let Some(text) = reduced_text {
+                if let Some(msg) = render_reduced_fidelity(entry, text) {
+                    messages.push(msg);
+                }
+                continue;
             }
 
             match &entry.payload {
@@ -1354,5 +1403,330 @@ mod tests {
         assert_eq!(result.len(), 2);
         assert!(matches!(result[0], ChatMessage::System { .. }));
         assert!(matches!(result[1], ChatMessage::User { .. }));
+    }
+
+    // ── Outlined / Summarized rendering tests (Phase 1 Steps 2–3) ──────
+
+    #[test]
+    fn outlined_tool_result_preserves_tool_call_id() {
+        // An outlined Tool message must preserve its tool_call_id so the
+        // Assistant+Tool pair integrity is maintained.
+        let entries = [
+            test_entry(
+                EntryPayload::Message(ChatMessage::system_text("sys")),
+                EntryResolution::Full,
+            ),
+            test_entry(
+                EntryPayload::Message(assistant_with_tool_call("call_1")),
+                EntryResolution::Full,
+            ),
+            test_entry(
+                EntryPayload::Message(ChatMessage::tool_result(
+                    ToolCallId::from("call_1"),
+                    "x".repeat(2000),
+                )),
+                EntryResolution::Outlined {
+                    outline: "read_file: src/parser.rs (342 lines)".to_owned(),
+                },
+            ),
+        ];
+        let refs: Vec<&Entry> = entries.iter().collect();
+
+        let cm = SlidingWindowContextManager::new();
+        let estimator = HeuristicEstimator::new();
+        let result = cm.fit_path(&refs, TokenBudget::default(), &estimator, &[]);
+
+        // The outlined tool result should render as Tool (not User),
+        // preserving the tool_call_id.
+        let tool_msg = result.iter().find(
+            |m| matches!(m, ChatMessage::Tool { tool_call_id, .. } if &**tool_call_id == "call_1"),
+        );
+        assert!(
+            tool_msg.is_some(),
+            "outlined tool result should preserve tool_call_id"
+        );
+        // Verify it has the outline text, not the full content.
+        if let Some(ChatMessage::Tool { content, .. }) = tool_msg {
+            let text: String = content
+                .iter()
+                .map(|b| match b {
+                    ContentBlock::Text { text } => text.clone(),
+                })
+                .collect();
+            assert_eq!(text, "read_file: src/parser.rs (342 lines)");
+            assert!(
+                text.len() < 100,
+                "outline should be much shorter than original 2000 chars"
+            );
+        } else {
+            panic!("expected Tool message");
+        }
+    }
+
+    #[test]
+    fn outlined_user_message_renders_as_user() {
+        // Outlined User message renders as ChatMessage::User with outline text.
+        let entries = [
+            test_entry(
+                EntryPayload::Message(ChatMessage::system_text("sys")),
+                EntryResolution::Full,
+            ),
+            test_entry(
+                EntryPayload::Message(ChatMessage::user_text(
+                    "this is a very long user message that should be outlined",
+                )),
+                EntryResolution::Outlined {
+                    outline: "User: asked to refactor parser".to_owned(),
+                },
+            ),
+        ];
+        let refs: Vec<&Entry> = entries.iter().collect();
+
+        let cm = SlidingWindowContextManager::new();
+        let estimator = HeuristicEstimator::new();
+        let result = cm.fit_path(&refs, TokenBudget::default(), &estimator, &[]);
+
+        assert_eq!(result.len(), 2);
+        assert!(matches!(result[0], ChatMessage::System { .. }));
+        if let ChatMessage::User { content } = &result[1] {
+            let ContentBlock::Text { text } = &content[0];
+            assert_eq!(text, "User: asked to refactor parser");
+        } else {
+            panic!("expected User message");
+        }
+    }
+
+    #[test]
+    fn outlined_assistant_preserves_tool_calls() {
+        // Outlined Assistant with tool_calls preserves the tool_calls field.
+        let entries = [
+            test_entry(
+                EntryPayload::Message(ChatMessage::system_text("sys")),
+                EntryResolution::Full,
+            ),
+            test_entry(
+                EntryPayload::Message(ChatMessage::Assistant {
+                    content: vec![ContentBlock::Text {
+                        text: "I'll read the files".to_owned(),
+                    }],
+                    tool_calls: vec![ModelToolCall {
+                        id: ToolCallId::from("call_1"),
+                        call_type: "function".to_owned(),
+                        function: ToolCallFunction {
+                            name: ToolName::from("read_file"),
+                            arguments: r#"{\"path\":\"main.rs\"}"#.to_owned(),
+                        },
+                    }],
+                }),
+                EntryResolution::Outlined {
+                    outline: "Assistant: 1 tool call (read_file)".to_owned(),
+                },
+            ),
+        ];
+        let refs: Vec<&Entry> = entries.iter().collect();
+
+        let cm = SlidingWindowContextManager::new();
+        let estimator = HeuristicEstimator::new();
+        let result = cm.fit_path(&refs, TokenBudget::default(), &estimator, &[]);
+
+        assert_eq!(result.len(), 2);
+        if let ChatMessage::Assistant {
+            content,
+            tool_calls,
+        } = &result[1]
+        {
+            assert_eq!(tool_calls.len(), 1, "tool_calls should be preserved");
+            assert_eq!(&*tool_calls[0].id, "call_1");
+            let text: String = content
+                .iter()
+                .map(|b| match b {
+                    ContentBlock::Text { text } => text.clone(),
+                })
+                .collect();
+            assert_eq!(text, "Assistant: 1 tool call (read_file)");
+        } else {
+            panic!("expected Assistant message");
+        }
+    }
+
+    #[test]
+    fn summarized_entry_renders_as_reduced_text() {
+        // Summarized entries render like outlined, but with the summary text.
+        let entries = [
+            test_entry(
+                EntryPayload::Message(ChatMessage::system_text("sys")),
+                EntryResolution::Full,
+            ),
+            test_entry(
+                EntryPayload::Message(ChatMessage::user_text("long message")),
+                EntryResolution::Summarized {
+                    summary: "Fixed parser bug".to_owned(),
+                },
+            ),
+        ];
+        let refs: Vec<&Entry> = entries.iter().collect();
+
+        let cm = SlidingWindowContextManager::new();
+        let estimator = HeuristicEstimator::new();
+        let result = cm.fit_path(&refs, TokenBudget::default(), &estimator, &[]);
+
+        assert_eq!(result.len(), 2);
+        if let ChatMessage::User { content } = &result[1] {
+            let ContentBlock::Text { text } = &content[0];
+            assert_eq!(text, "Fixed parser bug");
+        } else {
+            panic!("expected User message");
+        }
+    }
+
+    #[test]
+    fn outlined_entry_consumes_fewer_tokens() {
+        // A full entry at ~500 tokens, outlined at ~20 tokens.
+        // Verify fit_path message list has the outlined version.
+        let entries = [
+            test_entry(
+                EntryPayload::Message(ChatMessage::system_text("sys")),
+                EntryResolution::Full,
+            ),
+            test_entry(
+                EntryPayload::Message(ChatMessage::user_text("x".repeat(2000))),
+                EntryResolution::Outlined {
+                    outline: "short outline".to_owned(),
+                },
+            ),
+            test_entry(
+                EntryPayload::Message(ChatMessage::user_text("y".repeat(2000))),
+                EntryResolution::Full,
+            ),
+        ];
+        let refs: Vec<&Entry> = entries.iter().collect();
+
+        let cm = SlidingWindowContextManager::new();
+        let estimator = HeuristicEstimator::new();
+        let result = cm.fit_path(&refs, TokenBudget::default(), &estimator, &[]);
+
+        // The outlined message should appear with short text
+        let outlined_msg = result.iter().find(|m| {
+            if let ChatMessage::User { content } = m {
+                content.iter().any(|b| {
+                    let ContentBlock::Text { text } = b;
+                    text == "short outline"
+                })
+            } else {
+                false
+            }
+        });
+        assert!(
+            outlined_msg.is_some(),
+            "outlined entry should render with short text"
+        );
+
+        // Verify token count is much less than full content
+        let outlined_tokens = outlined_msg.map_or(0, approximate_tokens);
+        assert!(
+            outlined_tokens < 20,
+            "outlined entry should use very few tokens, got {outlined_tokens}"
+        );
+    }
+
+    #[test]
+    fn outlined_tool_pair_keeps_integrity_in_default_fit_path() {
+        // Verify that the default fit_path (non-SlidingWindow) also
+        // preserves tool_call_id for outlined Tool messages.
+        use crate::context::ContextManager;
+
+        struct TestManager;
+        impl ContextManager for TestManager {
+            fn fit(&self, messages: &[ChatMessage], _budget: TokenBudget) -> Vec<ChatMessage> {
+                // Pass everything through — no eviction.
+                messages.to_vec()
+            }
+        }
+
+        let entries = [
+            test_entry(
+                EntryPayload::Message(ChatMessage::system_text("sys")),
+                EntryResolution::Full,
+            ),
+            test_entry(
+                EntryPayload::Message(assistant_with_tool_call("call_1")),
+                EntryResolution::Full,
+            ),
+            test_entry(
+                EntryPayload::Message(ChatMessage::tool_result(
+                    ToolCallId::from("call_1"),
+                    "big content".to_owned(),
+                )),
+                EntryResolution::Outlined {
+                    outline: "result outline".to_owned(),
+                },
+            ),
+        ];
+        let refs: Vec<&Entry> = entries.iter().collect();
+
+        let cm = TestManager;
+        let estimator = HeuristicEstimator::new();
+        let result = cm.fit_path(&refs, TokenBudget::default(), &estimator, &[]);
+
+        let has_tool = result.iter().any(
+            |m| matches!(m, ChatMessage::Tool { tool_call_id, .. } if &**tool_call_id == "call_1"),
+        );
+        assert!(has_tool, "default fit_path should preserve tool_call_id");
+    }
+
+    #[test]
+    fn sliding_window_outlined_turn_survives_eviction() {
+        // An outlined entry in a turn that would otherwise be evicted should
+        // still participate (at reduced cost) and may help avoid eviction
+        // of other turns.
+        let entries = [
+            test_entry(
+                EntryPayload::Message(ChatMessage::system_text("sys")),
+                EntryResolution::Full,
+            ),
+            test_entry(
+                EntryPayload::Message(ChatMessage::user_text("first user")),
+                EntryResolution::Full,
+            ),
+            test_entry(
+                EntryPayload::Message(ChatMessage::assistant_text("ok")),
+                EntryResolution::Full,
+            ),
+            // This outlined entry is between the two user anchors.
+            // With a generous budget, it should appear.
+            test_entry(
+                EntryPayload::Message(ChatMessage::user_text("outlined task")),
+                EntryResolution::Outlined {
+                    outline: "asked to read files".to_owned(),
+                },
+            ),
+            test_entry(
+                EntryPayload::Message(ChatMessage::assistant_text("ok too")),
+                EntryResolution::Full,
+            ),
+            test_entry(
+                EntryPayload::Message(ChatMessage::user_text("current")),
+                EntryResolution::Full,
+            ),
+        ];
+        let refs: Vec<&Entry> = entries.iter().collect();
+
+        let cm = SlidingWindowContextManager::new();
+        let estimator = HeuristicEstimator::new();
+        // Generous budget — everything fits
+        let result = cm.fit_path(&refs, TokenBudget::default(), &estimator, &[]);
+
+        // The outlined entry should appear as a User message with the outline text
+        let has_outline = result.iter().any(|m| {
+            if let ChatMessage::User { content } = m {
+                content.iter().any(|b| {
+                    let ContentBlock::Text { text } = b;
+                    text == "asked to read files"
+                })
+            } else {
+                false
+            }
+        });
+        assert!(has_outline, "outlined entry should render in output");
     }
 }
