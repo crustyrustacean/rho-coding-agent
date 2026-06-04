@@ -81,12 +81,10 @@ fn build_parameters_schema(
         "type".to_string(),
         serde_json::Value::String("object".to_string()),
     );
-    if !properties.is_empty() {
-        schema.insert(
-            "properties".to_string(),
-            serde_json::Value::Object(properties),
-        );
-    }
+    schema.insert(
+        "properties".to_string(),
+        serde_json::Value::Object(properties),
+    );
     if !required.is_empty() {
         schema.insert("required".to_string(), serde_json::Value::Array(required));
     }
@@ -416,7 +414,10 @@ mod tests {
     fn schema_empty_params() {
         let schema = build_parameters_schema(&HashMap::new());
         assert_eq!(schema["type"], "object");
-        assert!(schema.get("properties").is_none());
+        assert_eq!(
+            schema["properties"],
+            serde_json::Value::Object(serde_json::Map::new())
+        );
         assert!(schema.get("required").is_none());
     }
 

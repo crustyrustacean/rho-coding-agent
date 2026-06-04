@@ -736,6 +736,15 @@ mod tests {
         eval(&mut rt, r#"rho.log("info", "hello from test")"#);
     }
 
+    /// Escape a path for safe embedding in a JavaScript single-quoted string literal.
+    ///
+    /// On Windows, `display()` produces backslash-separated paths which
+    /// JavaScript interprets as escape sequences. Replacing `\` with `\\`
+    /// prevents that.
+    fn js_escape(path: impl std::fmt::Display) -> String {
+        path.to_string().replace('\\', "\\\\")
+    }
+
     #[test]
     fn rho_log_accepts_all_levels() {
         let mut rt = runtime_with_state("/tmp");
@@ -762,11 +771,9 @@ mod tests {
     fn rho_get_cwd_falls_back_without_state() {
         let mut rt = runtime_without_state();
         let result = eval(&mut rt, r"rho.getCwd()");
-        // Should return some valid path string (current dir)
-        assert!(
-            result.starts_with('/'),
-            "expected absolute path, got: {result}"
-        );
+        // Should return some valid absolute path string (current dir)
+        let is_absolute = std::path::Path::new(&result).is_absolute();
+        assert!(is_absolute, "expected absolute path, got: {result}");
     }
 
     #[test]
@@ -812,7 +819,7 @@ mod tests {
         std::fs::write(&file_path, r#"{"key":"value"}"#).unwrap();
 
         let mut rt = runtime_with_state(dir.path().to_str().unwrap());
-        let code = format!(r"rho.readFile('{}')", file_path.display());
+        let code = format!(r"rho.readFile('{}')", js_escape(file_path.display()));
         let result = eval(&mut rt, &code);
         assert_eq!(result, r#"{"key":"value"}"#);
     }
@@ -848,7 +855,7 @@ mod tests {
         let mut rt = runtime_with_state(dir.path().to_str().unwrap());
         let code = format!(
             r"rho.readFile('{}')",
-            outside_dir.path().join("secret.txt").display()
+            js_escape(outside_dir.path().join("secret.txt").display())
         );
         let result = eval_or_error(&mut rt, &code);
         let err = result.unwrap_err();
@@ -894,7 +901,7 @@ mod tests {
 
         let code = format!(
             r"rho.readFile('{}')",
-            dir2.path().join("extra.txt").display()
+            js_escape(dir2.path().join("extra.txt").display())
         );
         let result = eval(&mut rt, &code);
         assert_eq!(result, "extra content");
@@ -949,7 +956,10 @@ mod tests {
         let file_path = dir.path().join("abs.txt");
 
         let mut rt = runtime_with_state(dir.path().to_str().unwrap());
-        let code = format!(r#"rho.writeFile('{}', "abs content")"#, file_path.display());
+        let code = format!(
+            r#"rho.writeFile('{}', "abs content")"#,
+            js_escape(file_path.display())
+        );
         eval(&mut rt, &code);
 
         let written = std::fs::read_to_string(&file_path).unwrap();

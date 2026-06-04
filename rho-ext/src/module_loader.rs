@@ -266,6 +266,10 @@ mod tests {
 
     #[test]
     fn specifier_to_path_file_url() {
+        // Use a URL that is valid on both Unix and Windows.
+        #[cfg(windows)]
+        let url = Url::parse("file:///C:/tmp/test.ts").unwrap();
+        #[cfg(not(windows))]
         let url = Url::parse("file:///tmp/test.ts").unwrap();
         let path = specifier_to_path(&url).unwrap();
         assert!(path.to_string_lossy().contains("test.ts"));
