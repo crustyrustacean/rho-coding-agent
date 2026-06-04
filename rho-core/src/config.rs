@@ -98,6 +98,16 @@ pub struct AgentLoopConfig {
     /// [`SlidingWindowContextManager`]: crate::context::SlidingWindowContextManager
     #[serde(default = "default_token_budget")]
     pub token_budget: u32,
+    /// Tokens reserved for the model's completion (output) in each request.
+    /// Sent as `max_tokens` in every LLM API call. Defaults to 8,192.
+    ///
+    /// Reasoning models (Qwen3, DeepSeek-R1, etc.) can spend thousands of
+    /// tokens on chain-of-thought before producing their response. If the
+    /// reserve is too small, the model is cut off mid-reasoning and the
+    /// user sees "ran out of tokens" despite having plenty of context.
+    /// Increase this for reasoning models (e.g. 16,384 or 32,768).
+    #[serde(default = "default_completion_reserve")]
+    pub completion_reserve: u32,
     /// Number of consecutive identical (`tool_name`, `arguments`, `output`)
     /// repetitions before the agent injects a stuck-loop nudge.
     /// Set to 0 to disable. Defaults to 3.
@@ -137,6 +147,7 @@ impl Default for AgentLoopConfig {
             retry_budget: default_retry_budget(),
             initial_backoff_ms: default_initial_backoff_ms(),
             token_budget: default_token_budget(),
+            completion_reserve: default_completion_reserve(),
             stuck_loop_threshold: default_stuck_loop_threshold(),
             show_reasoning: default_show_reasoning(),
             context_pressure_threshold: default_context_pressure_threshold(),
@@ -164,6 +175,13 @@ fn default_initial_backoff_ms() -> u64 {
 /// prompt (~4,700 tokens), compared to ~3,500 with the old 8K default.
 fn default_token_budget() -> u32 {
     32_768
+}
+/// Default value for `completion_reserve`.
+///
+/// 8,192 tokens is sufficient for non-reasoning models. Reasoning models
+/// may need 16,384–32,768 or more.
+fn default_completion_reserve() -> u32 {
+    8_192
 }
 /// Default value for `stuck_loop_threshold`.
 fn default_stuck_loop_threshold() -> u32 {
@@ -610,6 +628,9 @@ struct WireAgentLoopConfig {
     /// Context window token budget.
     #[serde(default)]
     token_budget: Option<u32>,
+    /// Completion (output) reserve.
+    #[serde(default)]
+    completion_reserve: Option<u32>,
     /// Stuck-loop detection threshold.
     #[serde(default)]
     stuck_loop_threshold: Option<u32>,
@@ -705,6 +726,10 @@ impl ConfigLoader {
                     .token_budget
                     .or(user_agent.token_budget)
                     .unwrap_or(default_token_budget()),
+                completion_reserve: project_agent
+                    .completion_reserve
+                    .or(user_agent.completion_reserve)
+                    .unwrap_or(default_completion_reserve()),
                 stuck_loop_threshold: project_agent
                     .stuck_loop_threshold
                     .or(user_agent.stuck_loop_threshold)
@@ -1314,6 +1339,77 @@ token_budget = 16384
     fn token_budget_default_is_32k() {
         let config = AgentLoopConfig::default();
         assert_eq!(config.token_budget, 32_768);
+    }
+
+    #[test]
+    fn completion_reserve_default_is_8k() {
+        let config = AgentLoopConfig::default();
+        assert_eq!(config.completion_reserve, 8_192);
+    }
+
+    #[test]
+    fn completion_reserve_from_config() {
+        let dir = TempDir::new().unwrap();
+        temp_env::with_vars(
+            [
+                ("HOME", Some(dir.path().to_path_buf())),
+                ("USERPROFILE", Some(dir.path().to_path_buf())),
+                ("XDG_CONFIG_HOME", Some(dir.path().to_path_buf())),
+            ],
+            || {
+                let rho_dir = dir.path().join(".rho");
+                std::fs::create_dir_all(&rho_dir).unwrap();
+
+                std::fs::write(
+                    rho_dir.join("config.toml"),
+                    r"
+[agent]
+completion_reserve = 16384
+",
+                )
+                .unwrap();
+
+                let config = ConfigLoader::load(dir.path()).unwrap();
+                assert_eq!(config.agent.completion_reserve, 16_384);
+                // Other agent fields should still be defaults.
+                assert_eq!(config.agent.token_budget, 32_768);
+            },
+        );
+    }
+
+    #[test]
+    fn completion_reserve_project_overrides_user() {
+        let user_config: WireConfig = toml::from_str(
+            r"
+[agent]
+completion_reserve = 8192
+",
+        )
+        .unwrap();
+        let project_config: WireConfig = toml::from_str(
+            r"
+[agent]
+completion_reserve = 32768
+",
+        )
+        .unwrap();
+
+        let config = ConfigLoader::merge(Some(user_config), Some(project_config));
+        assert_eq!(config.agent.completion_reserve, 32_768);
+    }
+
+    #[test]
+    fn completion_reserve_user_preserved_when_no_project() {
+        let user_config: WireConfig = toml::from_str(
+            r"
+[agent]
+completion_reserve = 16384
+",
+        )
+        .unwrap();
+
+        let config = ConfigLoader::merge(Some(user_config), None);
+        assert_eq!(config.agent.completion_reserve, 16_384);
     }
 
     #[test]

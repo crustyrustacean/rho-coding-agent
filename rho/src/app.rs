@@ -405,7 +405,9 @@ fn build_agent_config(config: &RhoConfig, cli: &Cli) -> AgentConfig {
 
 /// Determine the token budget from CLI or config.
 fn build_token_budget(config: &RhoConfig, cli: &Cli) -> TokenBudget {
-    TokenBudget::new(cli.token_budget.unwrap_or(config.agent.token_budget) as usize)
+    let context_window = cli.token_budget.unwrap_or(config.agent.token_budget) as usize;
+    let completion_reserve = config.agent.completion_reserve as usize;
+    TokenBudget::with_reserve(context_window, completion_reserve)
 }
 
 /// Construct the session.
