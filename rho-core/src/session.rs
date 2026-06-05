@@ -88,6 +88,7 @@ pub mod context_stats;
 pub mod entry;
 pub mod error;
 pub mod estimator;
+pub mod eviction;
 pub mod extensions;
 pub mod header;
 pub mod outliner;

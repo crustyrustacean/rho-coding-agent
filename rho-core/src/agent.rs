@@ -901,6 +901,7 @@ impl LoopContext<'_> {
     /// Execute a single streaming request, consume the stream, and build an
     /// [`AssistantResponse`].
     async fn send_streaming(&mut self) -> Result<AssistantResponse> {
+        self.session.prepare_context();
         let llm_request = build_llm_request(self.session);
 
         info!(

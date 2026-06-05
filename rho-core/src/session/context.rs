@@ -10,7 +10,6 @@ use crate::session::outliner::OutlineContext;
 
 impl Session {
     // ── Outlining & Summarization (Phase 1) ───────────────────────────
-
     /// Transition an entry from its current resolution to Outlined.
     ///
     /// Generates a reduced-fidelity outline of the entry's content and
@@ -104,6 +103,66 @@ impl Session {
         entry.resolution = EntryResolution::Summarized { summary };
         self.flush()?;
         Ok(())
+    }
+
+    // ── Turn-internal eviction (Phase 3) ────────────────────────────
+
+    /// Apply selective downgrades to bring the context within budget.
+    ///
+    /// Analyzes the current entry path and, if over budget, downgrades
+    /// individual entries (tool results first, largest first, oldest first)
+    /// from `Full` to `Outlined`, or `Outlined` to `Summarized`.
+    ///
+    /// Called automatically before building LLM requests via
+    /// [`prepare_context`](Self::prepare_context).
+    fn apply_downgrade_plan(&mut self, plan: &super::eviction::DowngradePlan) {
+        for action in &plan.actions {
+            let result = match action.target {
+                super::eviction::DowngradeTarget::Outline => self.outline_entry(&action.entry_id),
+                super::eviction::DowngradeTarget::Summarize => {
+                    self.summarize_entry(&action.entry_id)
+                }
+            };
+            if let Err(e) = result {
+                tracing::debug!(
+                    entry_id = %action.entry_id,
+                    target = ?action.target,
+                    error = %e,
+                    "failed to apply downgrade, skipping"
+                );
+            }
+        }
+    }
+
+    /// Prepare the session context for an LLM request.
+    ///
+    /// If the current entry path exceeds the token budget, this applies
+    /// selective downgrades (Phase 3) to bring it within budget without
+    /// evicting entire turns. The actual eviction via turn dropping still
+    /// happens in [`ContextManager::fit_path`], but `prepare_context`
+    /// reduces the number of turns that need to be evicted.
+    ///
+    /// This is called automatically by [`send_current`](Self::send_current)
+    /// and should also be called before [`build_llm_request`] in the agent
+    /// loop.
+    pub fn prepare_context(&mut self) {
+        let path = self.path_to_root();
+        let entries: Vec<&Entry> = path.into_iter().rev().collect();
+
+        let plan = super::eviction::plan_downgrades(
+            &entries,
+            self.token_budget,
+            self.estimator.as_ref(),
+            &self.tools,
+        );
+
+        if !plan.is_empty() {
+            tracing::debug!(
+                actions = plan.actions.len(),
+                "applying selective downgrade plan"
+            );
+            self.apply_downgrade_plan(&plan);
+        }
     }
 
     // ── Compaction ────────────────────────────────────────────────────────
@@ -324,6 +383,7 @@ impl Session {
     ) -> crate::error::Result<crate::conversation::AssistantResponse> {
         use crate::agent::{consume_stream, route_response};
 
+        self.prepare_context();
         let fitted = self.path_messages();
 
         // Estimate tokens for the request before sending (for calibration).
@@ -403,8 +463,8 @@ mod tests {
     use super::super::{CompactionSummary, EntryPayload};
     use super::*;
     use crate::context::TokenBudget;
-    use crate::message::{ChatMessage, ContentBlock};
-    use crate::newtypes::ToolName;
+    use crate::message::{ChatMessage, ContentBlock, ModelToolCall, ToolCallFunction};
+    use crate::newtypes::{ToolCallId, ToolName};
 
     // ── Context building tests (Task 8) ────────────────────────────────
 
@@ -1218,5 +1278,120 @@ mod tests {
         assert_eq!(reopened.entry_count(), 3); // root + user + assistant
         let messages = reopened.path_messages();
         assert_eq!(messages.len(), 3);
+    }
+
+    // ── prepare_context tests (Phase 3) ───────────────────────────────
+
+    #[test]
+    fn prepare_context_downgrades_tool_result_when_over_budget() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
+            .with_token_budget(TokenBudget::with_reserve(100, 50));
+
+        let tool_id;
+        {
+            session.append_user_message("original request");
+            session.append_assistant_message(assistant_with_tool_call("call_1"));
+            let result = crate::tool::ToolResult {
+                output: "x".repeat(500),
+                is_error: false,
+                details: crate::tool::ToolResultDetails::None,
+            };
+            tool_id = session
+                .append_tool_result(ToolCallId::from("call_1"), &result)
+                .0;
+            session.append_user_message("current question");
+        }
+
+        // Before prepare_context, the tool result should be Full
+        let entry = session.entry(&tool_id).unwrap();
+        assert!(matches!(entry.resolution, EntryResolution::Full));
+
+        session.prepare_context();
+
+        // After prepare_context, the tool result should be downgraded
+        let entry = session.entry(&tool_id).unwrap();
+        assert!(
+            matches!(entry.resolution, EntryResolution::Outlined { .. }),
+            "tool result should be outlined after prepare_context"
+        );
+    }
+
+    #[test]
+    fn prepare_context_does_nothing_when_within_budget() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
+            .with_token_budget(TokenBudget::new(32_768));
+
+        let tool_id;
+        {
+            session.append_user_message("original");
+            session.append_assistant_message(assistant_with_tool_call("call_1"));
+            let result = crate::tool::ToolResult {
+                output: "small result".to_owned(),
+                is_error: false,
+                details: crate::tool::ToolResultDetails::None,
+            };
+            tool_id = session
+                .append_tool_result(ToolCallId::from("call_1"), &result)
+                .0;
+            session.append_user_message("current");
+        }
+
+        session.prepare_context();
+
+        let entry = session.entry(&tool_id).unwrap();
+        assert!(
+            matches!(entry.resolution, EntryResolution::Full),
+            "tool result should stay Full when within budget"
+        );
+    }
+
+    #[test]
+    fn prepare_context_protects_first_user_turn() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
+            .with_token_budget(TokenBudget::with_reserve(100, 50));
+
+        let user_id = session.append_user_message("remember: TIGER-7742");
+        session.append_assistant_message(ChatMessage::assistant_text("ok"));
+        session.append_user_message("current");
+
+        session.prepare_context();
+
+        let entry = session.entry(&user_id).unwrap();
+        assert!(
+            matches!(entry.resolution, EntryResolution::Full),
+            "first user turn should be protected from downgrade"
+        );
+    }
+
+    #[test]
+    fn prepare_context_protects_last_turn() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
+            .with_token_budget(TokenBudget::with_reserve(100, 50));
+
+        session.append_user_message("original");
+        session.append_user_message(&"x".repeat(500));
+        let last_id = session.append_user_message("current");
+
+        session.prepare_context();
+
+        let entry = session.entry(&last_id).unwrap();
+        assert!(
+            matches!(entry.resolution, EntryResolution::Full),
+            "last turn should be protected from downgrade"
+        );
+    }
+
+    fn assistant_with_tool_call(call_id: &str) -> ChatMessage {
+        ChatMessage::Assistant {
+            content: vec![],
+            tool_calls: vec![ModelToolCall {
+                id: ToolCallId::from(call_id),
+                call_type: "function".to_owned(),
+                function: ToolCallFunction {
+                    name: ToolName::from("read_file"),
+                    arguments: r#"{\"path\":\"main.rs\"}"#.to_owned(),
+                },
+            }],
+        }
     }
 }

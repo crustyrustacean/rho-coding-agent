@@ -222,8 +222,11 @@ async fn run_single_task(
         agent_config.max_iterations = max_iterations;
     }
 
-    // Apply token budget override.
+    // Apply token budget override, respecting the configured completion reserve.
+    // Scale the reserve proportionally for small budgets so prompt_budget > 0.
     let budget = token_budget.unwrap_or(rho_config.agent.token_budget) as usize;
+    let reserve = rho_config.agent.completion_reserve as usize;
+    let effective_reserve = reserve.min(budget / 4); // cap reserve at 25% of total
 
     // Build redactor from config (respects enabled toggle and custom patterns).
     let redactor = rho_core::Redactor::from_config(
@@ -238,7 +241,7 @@ async fn run_single_task(
         registry.tool_definitions(),
         &project_dir,
     )
-    .with_token_budget(TokenBudget::new(budget))
+    .with_token_budget(TokenBudget::with_reserve(budget, effective_reserve))
     .with_redactor(redactor);
 
     // Wrap the provider's service to count token usage.
