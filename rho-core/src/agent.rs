@@ -608,7 +608,7 @@ impl LoopContext<'_> {
         if matches!(self.phase, crate::session::phase::SessionPhase::Execution) {
             self.has_had_edits = true;
         }
-        debug!(phase = %self.phase, tool = %call.function.name, "phase updated after tool execution");
+        info!(phase = %self.phase, tool = %call.function.name, "phase updated");
 
         // Context-pressure check: inject a nudge if utilization is high.
         if let Some(nudge) = Self::check_context_pressure(
