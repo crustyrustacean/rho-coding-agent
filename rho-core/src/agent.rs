@@ -400,6 +400,10 @@ struct LoopContext<'a> {
     repetition_counts: HashMap<(String, String), (String, u32)>,
     /// Number of completed LLM round-trips in this `run_loop` invocation.
     iterations: u32,
+    /// Current session phase (Exploration, Execution, Verification, Conclusion).
+    phase: crate::session::phase::SessionPhase,
+    /// Whether any edit/write tools have been executed in this loop.
+    has_had_edits: bool,
 }
 
 impl LoopContext<'_> {
@@ -486,6 +490,7 @@ impl LoopContext<'_> {
                         "model returned reasoning content with stop finish_reason"
                     );
                 }
+                self.phase = crate::session::phase::SessionPhase::Conclusion;
                 self.params.observer.on_state_change(AgentState::Idle);
                 let reply = self.format_reply(text, &reasoning_content);
                 Ok(State::Done(reply))
@@ -593,6 +598,17 @@ impl LoopContext<'_> {
             .observer
             .on_tool_result(&call.function.name, &result);
         let _ = self.session.append_tool_result(call_id, &result);
+
+        // Phase detection: update session phase based on tool name.
+        self.phase = crate::session::phase::transition_phase(
+            self.phase,
+            &call.function.name,
+            self.has_had_edits,
+        );
+        if matches!(self.phase, crate::session::phase::SessionPhase::Execution) {
+            self.has_had_edits = true;
+        }
+        debug!(phase = %self.phase, tool = %call.function.name, "phase updated after tool execution");
 
         // Context-pressure check: inject a nudge if utilization is high.
         if let Some(nudge) = Self::check_context_pressure(
@@ -962,6 +978,8 @@ pub async fn run_loop(
         params,
         repetition_counts: HashMap::new(),
         iterations: 0,
+        phase: crate::session::phase::SessionPhase::default(),
+        has_had_edits: false,
     };
 
     let mut state = State::Thinking;
