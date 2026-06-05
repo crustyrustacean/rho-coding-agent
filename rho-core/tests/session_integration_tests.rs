@@ -89,6 +89,7 @@ fn entry_round_trip_all_variants() {
                     time_span: Duration::from_secs(10),
                     notes: None,
                     key_findings: BTreeMap::new(),
+                    phases: Vec::new(),
                 },
                 first_kept: EntryId::new(),
                 tokens_before: 200,
@@ -108,6 +109,7 @@ fn entry_round_trip_all_variants() {
                     time_span: Duration::from_secs(5),
                     notes: Some("notes".to_owned()),
                     key_findings: BTreeMap::new(),
+                    phases: Vec::new(),
                 },
                 from_id: EntryId::new(),
             },
@@ -373,6 +375,7 @@ fn branch_summary_correct_from_id() {
         time_span: Duration::from_secs(10),
         notes: None,
         key_findings: BTreeMap::new(),
+        phases: Vec::new(),
     };
 
     session
@@ -1215,6 +1218,7 @@ fn compaction_summary_rendering_byte_stable() {
         time_span: Duration::from_secs(120),
         notes: Some("compacted to fit budget".to_owned()),
         key_findings: BTreeMap::new(),
+        phases: Vec::new(),
     };
 
     let msg1 = render_compaction_summary(&summary);
@@ -1255,6 +1259,7 @@ fn compaction_summary_renders_key_findings() {
         time_span: Duration::from_secs(10),
         notes: None,
         key_findings,
+        phases: Vec::new(),
     };
 
     let msg = render_compaction_summary(&summary);

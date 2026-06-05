@@ -28,7 +28,8 @@
 use crate::error::Result;
 use crate::message::ChatMessage;
 use crate::newtypes::ToolName;
-use crate::session::entry::{CompactionSummary, Entry, EntryPayload};
+use crate::session::entry::{CompactionPhase, CompactionSummary, Entry, EntryPayload};
+use crate::session::phase::SessionPhase;
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 
@@ -98,58 +99,25 @@ impl CompactionStrategy for MechanicalCompactionStrategy {
         let mut key_findings: BTreeMap<ToolName, Vec<String>> = BTreeMap::new();
         let mut tool_call_names: HashMap<String, ToolName> = HashMap::new();
 
+        // Phase-aware tracking: we replay the phase state machine across
+        // entries and group tool activity into phase segments.
+        let mut phase_tracker = PhaseTracker::new();
+
         for entry in entries {
-            // Track time span
-            if first_timestamp.is_none() || entry.timestamp < first_timestamp.unwrap() {
-                first_timestamp = Some(entry.timestamp);
-            }
-            if last_timestamp.is_none() || entry.timestamp > last_timestamp.unwrap() {
-                last_timestamp = Some(entry.timestamp);
-            }
-
-            // Estimate tokens for this entry
+            track_time_bounds(entry, &mut first_timestamp, &mut last_timestamp);
             tokens_compacted += estimate_entry_tokens(entry);
-
-            if let EntryPayload::Message(msg) = &entry.payload {
-                match msg {
-                    ChatMessage::User { content } => {
-                        // Capture the first user message as the original request
-                        if original_request.is_none() {
-                            let text = extract_text(content);
-                            if !text.is_empty() {
-                                original_request = Some(text);
-                            }
-                        }
-                    }
-                    ChatMessage::Assistant {
-                        tool_calls: calls, ..
-                    } => {
-                        for call in calls {
-                            tool_calls
-                                .entry(call.function.name.clone())
-                                .or_default()
-                                .push(summarise_arguments(&call.function.arguments));
-                            tool_call_names.insert(call.id.to_string(), call.function.name.clone());
-                        }
-                    }
-                    ChatMessage::System { .. } => {}
-                    ChatMessage::Tool {
-                        tool_call_id,
-                        content,
-                    } => {
-                        if let Some(name) = tool_call_names.get(&tool_call_id.to_string()) {
-                            let text = extract_text(content);
-                            if !text.is_empty() {
-                                key_findings
-                                    .entry(name.clone())
-                                    .or_default()
-                                    .push(summarise_result(&text));
-                            }
-                        }
-                    }
-                }
-            }
+            process_entry(
+                entry,
+                &mut original_request,
+                &mut tool_calls,
+                &mut key_findings,
+                &mut tool_call_names,
+                &mut phase_tracker,
+            );
         }
+
+        // Flush any remaining segment
+        phase_tracker.flush();
 
         let time_span = match (first_timestamp, last_timestamp) {
             (Some(first), Some(last)) => last.duration_since(first).unwrap_or(Duration::ZERO),
@@ -164,11 +132,162 @@ impl CompactionStrategy for MechanicalCompactionStrategy {
             time_span,
             notes: None,
             key_findings,
+            phases: phase_tracker.into_phases(),
         })
     }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Flush a non-empty phase segment into the phases vector.
+///
+/// A segment is only flushed if it contains any tool activity (calls or
+/// findings). Empty segments (e.g., user messages before any tool calls)
+/// are silently discarded to avoid cluttering the summary with empty phases.
+fn flush_phase_segment(segment: &mut CompactionPhase, phases: &mut Vec<CompactionPhase>) {
+    let has_content = !segment.tool_calls.is_empty() || !segment.key_findings.is_empty();
+    if has_content {
+        let flushed = std::mem::take(segment);
+        phases.push(flushed);
+    }
+}
+
+/// Tracks session phase transitions across compacted entries and accumulates
+/// tool activity into phase segments.
+struct PhaseTracker {
+    /// Current phase being tracked.
+    current_phase: SessionPhase,
+    /// Whether any edit/write tools have been executed.
+    has_had_edits: bool,
+    /// Accumulator for the current phase segment.
+    current_segment: CompactionPhase,
+    /// Completed phase segments.
+    phases: Vec<CompactionPhase>,
+}
+
+impl PhaseTracker {
+    /// Create a new phase tracker starting in Exploration.
+    fn new() -> Self {
+        Self {
+            current_phase: SessionPhase::Exploration,
+            has_had_edits: false,
+            current_segment: CompactionPhase::default(),
+            phases: Vec::new(),
+        }
+    }
+
+    /// Flush the current segment into the phases list.
+    fn flush(&mut self) {
+        flush_phase_segment(&mut self.current_segment, &mut self.phases);
+    }
+
+    /// Consume the tracker and return the completed phase segments.
+    fn into_phases(self) -> Vec<CompactionPhase> {
+        self.phases
+    }
+
+    /// Handle a tool call: transition phase and ensure the current
+    /// segment matches.
+    fn on_tool_call(&mut self, tool_name: &str) {
+        self.current_phase = crate::session::phase::transition_phase(
+            self.current_phase,
+            tool_name,
+            self.has_had_edits,
+        );
+        if matches!(self.current_phase, SessionPhase::Execution) {
+            self.has_had_edits = true;
+        }
+        let phase_str = self.current_phase.as_str().to_owned();
+        if self.current_segment.phase != phase_str {
+            flush_phase_segment(&mut self.current_segment, &mut self.phases);
+            self.current_segment.phase = phase_str;
+        }
+    }
+}
+
+/// Track time bounds across entries.
+fn track_time_bounds(
+    entry: &Entry,
+    first: &mut Option<std::time::SystemTime>,
+    last: &mut Option<std::time::SystemTime>,
+) {
+    if first.is_none() || entry.timestamp < first.unwrap() {
+        *first = Some(entry.timestamp);
+    }
+    if last.is_none() || entry.timestamp > last.unwrap() {
+        *last = Some(entry.timestamp);
+    }
+}
+
+/// Process a single entry for compaction.
+fn process_entry(
+    entry: &Entry,
+    original_request: &mut Option<String>,
+    tool_calls: &mut BTreeMap<ToolName, Vec<String>>,
+    key_findings: &mut BTreeMap<ToolName, Vec<String>>,
+    tool_call_names: &mut HashMap<String, ToolName>,
+    phase_tracker: &mut PhaseTracker,
+) {
+    if let EntryPayload::Message(msg) = &entry.payload {
+        match msg {
+            ChatMessage::User { content } => {
+                if original_request.is_none() {
+                    let text = extract_text(content);
+                    if !text.is_empty() {
+                        *original_request = Some(text);
+                    }
+                }
+                phase_tracker.flush();
+                let text = extract_text(content);
+                if !text.is_empty() {
+                    phase_tracker.current_segment.user_messages.push(text);
+                }
+            }
+            ChatMessage::Assistant {
+                tool_calls: calls, ..
+            } => {
+                for call in calls {
+                    tool_calls
+                        .entry(call.function.name.clone())
+                        .or_default()
+                        .push(summarise_arguments(&call.function.arguments));
+                    tool_call_names.insert(call.id.to_string(), call.function.name.clone());
+
+                    phase_tracker.on_tool_call(&call.function.name);
+
+                    phase_tracker
+                        .current_segment
+                        .tool_calls
+                        .entry(call.function.name.clone())
+                        .or_default()
+                        .push(summarise_arguments(&call.function.arguments));
+                }
+            }
+            ChatMessage::System { .. } => {}
+            ChatMessage::Tool {
+                tool_call_id,
+                content,
+            } => {
+                if let Some(name) = tool_call_names.get(&tool_call_id.to_string()) {
+                    let text = extract_text(content);
+                    if !text.is_empty() {
+                        key_findings
+                            .entry(name.clone())
+                            .or_default()
+                            .push(summarise_result(&text));
+
+                        phase_tracker
+                            .current_segment
+                            .key_findings
+                            .entry(name.clone())
+                            .or_default()
+                            .push(summarise_result(&text));
+                    }
+                }
+            }
+        }
+    }
+}
 
 /// Produce a one-line summary of a tool result.
 ///
@@ -264,6 +383,16 @@ fn summary_text_chars(summary: &CompactionSummary) -> usize {
     }
     for (name, calls) in &summary.tool_calls {
         chars += name.len() + calls.iter().map(|c| c.len() + 2).sum::<usize>();
+    }
+    // Phase-structured content
+    for segment in &summary.phases {
+        chars += segment.phase.len() + 10; // phase header overhead
+        for (name, calls) in &segment.tool_calls {
+            chars += name.len() + calls.iter().map(|c| c.len() + 2).sum::<usize>();
+        }
+        for findings in segment.key_findings.values() {
+            chars += findings.iter().map(|f| f.len() + 2).sum::<usize>();
+        }
     }
     if let Some(ref notes) = summary.notes {
         chars += notes.len();

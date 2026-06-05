@@ -500,6 +500,7 @@ mod tests {
             time_span: std::time::Duration::from_secs(30),
             notes: None,
             key_findings: BTreeMap::new(),
+            phases: Vec::new(),
         };
 
         let id = session.append_compaction(summary, user_id, 200);
@@ -522,6 +523,7 @@ mod tests {
             time_span: std::time::Duration::from_secs(10),
             notes: None,
             key_findings: BTreeMap::new(),
+            phases: Vec::new(),
         };
 
         let id = session.append_branch_summary(summary, from_id);

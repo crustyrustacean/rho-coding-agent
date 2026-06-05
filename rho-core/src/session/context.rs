@@ -566,6 +566,7 @@ mod tests {
             time_span: std::time::Duration::from_secs(45),
             notes: Some("compacted for budget".to_owned()),
             key_findings: std::collections::BTreeMap::new(),
+            phases: Vec::new(),
         };
 
         let first_kept = session.leaf().unwrap();
@@ -622,6 +623,7 @@ mod tests {
             time_span: std::time::Duration::from_secs(10),
             notes: None,
             key_findings: std::collections::BTreeMap::new(),
+            phases: Vec::new(),
         };
 
         session
@@ -772,6 +774,7 @@ mod tests {
             time_span: std::time::Duration::from_secs(30),
             notes: Some("notes here".to_owned()),
             key_findings: std::collections::BTreeMap::new(),
+            phases: Vec::new(),
         };
 
         let msg1 = render_compaction_summary(&summary);
@@ -808,6 +811,7 @@ mod tests {
             time_span: std::time::Duration::from_secs(5),
             notes: None,
             key_findings: std::collections::BTreeMap::new(),
+            phases: Vec::new(),
         };
 
         let msg = render_compaction_summary(&summary);

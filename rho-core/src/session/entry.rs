@@ -193,6 +193,26 @@ pub enum EntryPayload {
 
 // ── CompactionSummary ─────────────────────────────────────────────────────────
 
+/// A phase-structured segment of compacted session activity.
+///
+/// Groups tool calls, findings, and context by [`SessionPhase`] so that
+/// compaction summaries tell the model *what happened* in each phase
+/// (exploration, execution, verification) rather than just listing tool
+/// names.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CompactionPhase {
+    /// The session phase this segment represents ("exploration",
+    /// "execution", "verification", "conclusion").
+    pub phase: String,
+    /// Tool calls in this phase, grouped by tool name, with one-line
+    /// argument summaries.
+    pub tool_calls: BTreeMap<ToolName, Vec<String>>,
+    /// Key findings from tool results in this phase.
+    pub key_findings: BTreeMap<ToolName, Vec<String>>,
+    /// User messages in this phase (provides context for the phase).
+    pub user_messages: Vec<String>,
+}
+
 /// A structured summary produced by a [`CompactionStrategy`](crate::session::CompactionStrategy).
 ///
 /// This is the data that `fit_path` renders into a synthetic `User` message
@@ -208,13 +228,19 @@ pub enum EntryPayload {
 /// ```text
 /// [Compacted: {entry_count} entries, {tokens_compacted} tokens, span {duration}]
 /// Original request: "{original_request, if present}"
-/// Tool activity:
-///   - {tool_name}: {N} calls — {args_summary_1}, {args_summary_2}, ...
+///
+/// **Exploration:** Read main.rs, lib.rs. Initial cargo_check: 1 error.
+/// **Execution:** Edited main.rs (3 edits).
+/// **Verification:** cargo_check clean, cargo_test: 1 passed.
 /// {notes, if present}
 /// ```
 ///
+/// When `phases` is non-empty, the renderer produces phase-structured
+/// narrative. When empty (legacy sessions), it falls back to flat tool-name
+/// grouping via `tool_calls` and `key_findings`.
+///
 /// **Note:** The full `CompactionStrategy` trait and `MechanicalCompactionStrategy`
-/// implementation are Task 9. This struct definition is provided here so that
+/// implementation are in `compaction.rs`. This struct definition is here so that
 /// `EntryPayload::Compaction` and `EntryPayload::BranchSummary` are constructable.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CompactionSummary {
@@ -224,6 +250,16 @@ pub struct CompactionSummary {
     pub tool_calls: BTreeMap<ToolName, Vec<String>>,
     /// Result summaries
     pub key_findings: BTreeMap<ToolName, Vec<String>>,
+    /// Phase-structured breakdown of compacted activity.
+    ///
+    /// When non-empty, `render_compaction_summary` produces phase-structured
+    /// narrative (e.g., "Exploration: Read main.rs, lib.rs."). When empty,
+    /// falls back to flat `tool_calls`/`key_findings` grouping.
+    ///
+    /// Defaults to `Vec::new()` for backwards compatibility with sessions
+    /// persisted before Phase 5.
+    #[serde(default)]
+    pub phases: Vec<CompactionPhase>,
     /// Total estimated tokens across all compacted entries.
     pub tokens_compacted: usize,
     /// Number of entries that were compacted.
@@ -333,6 +369,7 @@ mod tests {
             time_span: Duration::from_secs(30),
             notes: None,
             key_findings: BTreeMap::new(),
+            phases: Vec::new(),
         };
         let payload = EntryPayload::Compaction {
             summary,
@@ -354,6 +391,7 @@ mod tests {
             time_span: Duration::from_secs(10),
             notes: None,
             key_findings: BTreeMap::new(),
+            phases: Vec::new(),
         };
         let payload = EntryPayload::BranchSummary {
             summary,
@@ -525,6 +563,7 @@ mod tests {
             time_span: Duration::from_mins(2),
             notes: Some("LLM notes here".to_owned()),
             key_findings: BTreeMap::new(),
+            phases: Vec::new(),
         };
         let json = serde_json::to_string(&summary).unwrap();
         let back: CompactionSummary = serde_json::from_str(&json).unwrap();
@@ -541,6 +580,7 @@ mod tests {
             time_span: Duration::ZERO,
             notes: None,
             key_findings: BTreeMap::new(),
+            phases: Vec::new(),
         };
         let json = serde_json::to_string(&summary).unwrap();
         let back: CompactionSummary = serde_json::from_str(&json).unwrap();

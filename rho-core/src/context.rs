@@ -301,7 +301,22 @@ fn render_reduced_fidelity(entry: &Entry, text: &str) -> Option<ChatMessage> {
 /// Tool activity:
 ///   - {tool_name}: {N} calls — {args_summary_1}, {args_summary_2}, ...
 /// {notes, if present}
+/// Render a [`CompactionSummary`](crate::session::CompactionSummary) as a
+/// synthetic `User` message for inclusion in the LLM context.
+///
+/// # Phase-Aware Rendering (Phase 5)
+///
+/// When the summary contains `phases` (non-empty), the renderer produces
+/// phase-structured narrative like:
+///
+/// ```text
+/// **Exploration:** Read main.rs, lib.rs. Found: error[E0308].
+/// **Execution:** Edited src/parser.rs (3 edits).
+/// **Verification:** cargo_check, cargo_test.
 /// ```
+///
+/// When `phases` is empty (legacy sessions persisted before Phase 5),
+/// falls back to flat tool-name grouping via `tool_calls` and `key_findings`.
 pub fn render_compaction_summary(summary: &crate::session::CompactionSummary) -> ChatMessage {
     use std::fmt::Write;
 
@@ -319,37 +334,250 @@ pub fn render_compaction_summary(summary: &crate::session::CompactionSummary) ->
         let _ = writeln!(body, "Original request: \"{req}\"");
     }
 
-    // Tool activity
-    if !summary.tool_calls.is_empty() {
-        body.push_str("Tool activity:\n");
-        for (tool_name, calls) in &summary.tool_calls {
-            let _ = write!(body, "  - {tool_name}: {} calls", calls.len());
-            if !calls.is_empty() {
-                body.push_str(" — ");
-                let _ = write!(body, "{}", calls.join(", "));
+    // Phase-structured narrative (Phase 5)
+    // When `phases` is non-empty, render phase-by-phase with narrative
+    // summaries. When empty (legacy sessions), fall back to flat tool-name
+    // grouping.
+    if summary.phases.is_empty() {
+        // Legacy fallback: flat tool-name grouping
+        if !summary.tool_calls.is_empty() {
+            body.push_str("Tool activity:\n");
+            for (tool_name, calls) in &summary.tool_calls {
+                let _ = write!(body, "  - {tool_name}: {} calls", calls.len());
+                if !calls.is_empty() {
+                    body.push_str(" — ");
+                    let _ = write!(body, "{}", calls.join(", "));
+                }
+                body.push('\n');
             }
-            body.push('\n');
+        }
+
+        if !summary.key_findings.is_empty() {
+            body.push_str("Key findings:\n");
+            for (tool_name, findings) in &summary.key_findings {
+                let _ = write!(body, "  - {tool_name}:");
+                for finding in findings {
+                    let _ = write!(body, " {finding};");
+                }
+                body.push('\n');
+            }
+        }
+    } else {
+        body.push('\n');
+        for segment in &summary.phases {
+            let _ = write!(body, "**{}:** ", capitalize_phase(&segment.phase));
+            render_phase_narrative(&mut body, segment);
         }
     }
 
-    // Key findings
-    if !summary.key_findings.is_empty() {
-        body.push_str("Key findings:\n");
-        for (tool_name, findings) in &summary.key_findings {
-            let _ = write!(body, "  - {tool_name}:");
-            for finding in findings {
-                let _ = write!(body, " {finding};");
-            }
-            body.push('\n');
-        }
-    }
-
-    // Notes
     if let Some(ref notes) = summary.notes {
         let _ = writeln!(body, "{notes}");
     }
 
     ChatMessage::user_text(body)
+}
+
+/// Capitalize the first letter of a phase string.
+fn capitalize_phase(phase: &str) -> String {
+    let mut chars = phase.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+    }
+}
+
+/// Render a phase segment as a narrative summary line.
+fn render_phase_narrative(body: &mut String, segment: &crate::session::CompactionPhase) {
+    use std::fmt::Write;
+
+    let mut parts: Vec<String> = Vec::new();
+
+    for (tool_name, calls) in &segment.tool_calls {
+        let count = calls.len();
+        let narrative = tool_narrative(tool_name, count, calls);
+        parts.push(narrative);
+    }
+
+    if !parts.is_empty() {
+        let _ = write!(body, "{}.", parts.join(". "));
+    }
+
+    if !segment.key_findings.is_empty() {
+        let mut findings_parts: Vec<String> = Vec::new();
+        for findings in segment.key_findings.values() {
+            for finding in findings {
+                findings_parts.push(finding.clone());
+            }
+        }
+        if !findings_parts.is_empty() {
+            if !parts.is_empty() {
+                let _ = write!(body, " ");
+            }
+            let _ = write!(body, "Found: {}.", findings_parts.join(", "));
+        }
+    }
+
+    let _ = writeln!(body);
+}
+
+/// Produce a narrative fragment for a tool call group.
+fn tool_narrative(tool_name: &str, count: usize, calls: &[String]) -> String {
+    match tool_name {
+        "read_file" => file_read_narrative(count, calls, "Read", "reads"),
+        "list_dir" => format!("Listed {} ({count} listings)", dir_from_args(calls)),
+        "edit_file" => file_op_narrative(count, calls, "Edited", "edits"),
+        "write_file" => file_op_narrative(count, calls, "Wrote", "writes"),
+        "run_command" => {
+            if count == 1 {
+                format!(
+                    "Ran: {}",
+                    calls.first().map_or("command", |c| cmd_from_args(c))
+                )
+            } else {
+                format!("Ran {count} commands")
+            }
+        }
+        "cargo_check" => "cargo_check".to_owned(),
+        "cargo_test" => "cargo_test".to_owned(),
+        "cargo_clippy" => "cargo_clippy".to_owned(),
+        "cargo_fix" => format!("cargo_fix ({count} applications)"),
+        "rustdoc_lookup" => {
+            if count == 1 {
+                format!(
+                    "Looked up {}",
+                    calls
+                        .first()
+                        .map_or("documentation", |c| topic_from_args(c))
+                )
+            } else {
+                format!("Looked up {count} documentation items")
+            }
+        }
+        "crates_io_lookup" => {
+            if count == 1 {
+                format!(
+                    "Searched crates.io for {}",
+                    calls.first().map_or("crate", |c| crate_from_args(c))
+                )
+            } else {
+                format!("Searched crates.io ({count} lookups)")
+            }
+        }
+        "rustc_explain" => {
+            if count == 1 {
+                format!(
+                    "Explained error {}",
+                    calls.first().map_or("code", |c| error_code_from_args(c))
+                )
+            } else {
+                format!("Explained {count} error codes")
+            }
+        }
+        _ => format!("{tool_name} ({count} calls)"),
+    }
+}
+
+/// Narrative for file read operations (single or multi-file).
+fn file_read_narrative(count: usize, calls: &[String], verb: &str, unit: &str) -> String {
+    if count == 1 {
+        format!(
+            "{verb} {}",
+            calls.first().map_or("file", |c| path_from_args(c))
+        )
+    } else {
+        file_multi_narrative(count, calls, verb, unit)
+    }
+}
+
+/// Narrative for file write/edit operations (single or multi-file).
+fn file_op_narrative(count: usize, calls: &[String], verb: &str, unit: &str) -> String {
+    if count == 1 {
+        format!("{verb} {}", path_from_args(calls.first().map_or("", |c| c)))
+    } else {
+        file_multi_narrative(count, calls, verb, unit)
+    }
+}
+
+/// Narrative for multi-file operations.
+fn file_multi_narrative(count: usize, calls: &[String], verb: &str, unit: &str) -> String {
+    let paths: Vec<&str> = calls.iter().take(3).map(|c| path_from_args(c)).collect();
+    let paths_str = paths.join(", ");
+    if count <= 3 {
+        format!("{verb} {paths_str} ({count} {unit})")
+    } else {
+        format!("{verb} {paths_str} and {} more ({count} {unit})", count - 3)
+    }
+}
+
+/// Extract a path from argument summaries like `path=src/main.rs, offset=10`.
+fn path_from_args(args: &str) -> &str {
+    for pair in args.split(", ") {
+        let trimmed = pair.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("path=") {
+            return rest;
+        }
+    }
+    args.trim_end_matches('\u{2026}')
+        .trim_end_matches(" \u{2026}")
+}
+
+/// Extract a directory from argument summaries.
+fn dir_from_args(calls: &[String]) -> String {
+    let first = calls.first().map_or("", |s| s.as_str());
+    for pair in first.split(", ") {
+        let trimmed = pair.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("path=") {
+            return rest.to_owned();
+        }
+    }
+    "directory".to_owned()
+}
+
+/// Extract a command from argument summaries like `command=cargo test`.
+fn cmd_from_args(args: &str) -> &str {
+    for pair in args.split(", ") {
+        let trimmed = pair.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("command=") {
+            return rest;
+        }
+    }
+    args
+}
+
+/// Extract a topic from argument summaries like `query=HashMap::get`.
+fn topic_from_args(args: &str) -> &str {
+    for pair in args.split(", ") {
+        let trimmed = pair.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("query=") {
+            return rest;
+        }
+    }
+    args.trim_end_matches('\u{2026}')
+        .trim_end_matches(" \u{2026}")
+}
+
+/// Extract a crate name from argument summaries like `query=serde`.
+fn crate_from_args(args: &str) -> &str {
+    for pair in args.split(", ") {
+        let trimmed = pair.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("query=") {
+            return rest;
+        }
+    }
+    args.trim_end_matches('\u{2026}')
+        .trim_end_matches(" \u{2026}")
+}
+
+/// Extract an error code from argument summaries like `error_code=E0308`.
+fn error_code_from_args(args: &str) -> &str {
+    for pair in args.split(", ") {
+        let trimmed = pair.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("error_code=") {
+            return rest;
+        }
+    }
+    args.trim_end_matches('\u{2026}')
+        .trim_end_matches(" \u{2026}")
 }
 
 /// Estimate the token overhead of tool schemas.
@@ -1174,6 +1402,7 @@ mod tests {
             time_span: Duration::from_secs(30),
             notes: None,
             key_findings: std::collections::BTreeMap::new(),
+            phases: Vec::new(),
         };
 
         let first_kept = EntryId::new();
@@ -1223,6 +1452,7 @@ mod tests {
             time_span: Duration::from_secs(5),
             notes: None,
             key_findings: std::collections::BTreeMap::new(),
+            phases: Vec::new(),
         };
 
         let from_id = EntryId::new();

@@ -99,7 +99,7 @@ pub mod truncation;
 
 pub use compaction::{CompactionStrategy, MechanicalCompactionStrategy};
 pub use context_stats::ContextStats;
-pub use entry::{CompactionSummary, Entry, EntryPayload, EntryResolution};
+pub use entry::{CompactionPhase, CompactionSummary, Entry, EntryPayload, EntryResolution};
 pub use estimator::{HeuristicEstimator, TokenEstimator};
 pub use extensions::{ExtensionEntry, ExtensionMessageEntry};
 pub use header::SessionHeader;
@@ -521,6 +521,7 @@ mod tests {
             time_span: std::time::Duration::from_secs(10),
             notes: None,
             key_findings: std::collections::BTreeMap::new(),
+            phases: Vec::new(),
         };
         session.append_compaction(summary, asst_id.clone(), 200);
 
@@ -534,6 +535,7 @@ mod tests {
             time_span: std::time::Duration::from_secs(5),
             notes: None,
             key_findings: std::collections::BTreeMap::new(),
+            phases: Vec::new(),
         };
         session.append_branch_summary(branch_summary, EntryId::from("old_leaf"));
 

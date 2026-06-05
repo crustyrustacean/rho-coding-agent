@@ -88,11 +88,11 @@ pub(crate) fn estimate_entry_tokens_for_compaction(
         } => {
             // For existing compaction entries, use the recorded tokens_before
             // plus the summary's own token cost
-            let summary_text = format_compaction_summary_text(summary);
+            let summary_text = summary_text_chars(summary);
             *tokens_before + estimator.estimate(model, &summary_text)
         }
         EntryPayload::BranchSummary { summary, .. } => {
-            let text = format_compaction_summary_text(summary);
+            let text = summary_text_chars(summary);
             estimator.estimate(model, &text).max(1)
         }
         EntryPayload::Custom { data, .. } => estimator.estimate(model, &data.to_string()).max(1),
@@ -149,7 +149,7 @@ fn format_message_text(msg: &ChatMessage) -> String {
 }
 
 /// Format a `CompactionSummary` into a single string for token estimation.
-fn format_compaction_summary_text(summary: &CompactionSummary) -> String {
+fn summary_text_chars(summary: &CompactionSummary) -> String {
     let mut text = String::new();
     if let Some(ref req) = summary.original_request {
         text.push_str(req);
@@ -160,6 +160,25 @@ fn format_compaction_summary_text(summary: &CompactionSummary) -> String {
         for call in calls {
             text.push(' ');
             text.push_str(call);
+        }
+    }
+    // Phase-structured content
+    for segment in &summary.phases {
+        text.push(' ');
+        text.push_str(&segment.phase);
+        for (name, calls) in &segment.tool_calls {
+            text.push(' ');
+            text.push_str(name);
+            for call in calls {
+                text.push(' ');
+                text.push_str(call);
+            }
+        }
+        for findings in segment.key_findings.values() {
+            for finding in findings {
+                text.push(' ');
+                text.push_str(finding);
+            }
         }
     }
     if let Some(ref notes) = summary.notes {
