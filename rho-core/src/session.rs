@@ -204,6 +204,9 @@ mod tests {
     )]
     use super::*;
     use crate::message::{ChatMessage, ContentBlock};
+    use crate::session::context_stats::{
+        PhaseTokenDistribution, ResolutionTokenDistribution, RoleTokenDistribution,
+    };
 
     // ── TokenBudget tests ──────────────────────────────────────────────
 
@@ -659,9 +662,9 @@ mod tests {
             message_count: 10,
             entry_count: 15,
             path_entry_count: 12,
-            role_tokens: Default::default(),
-            resolution_tokens: Default::default(),
-            phase_tokens: Default::default(),
+            role_tokens: RoleTokenDistribution::default(),
+            resolution_tokens: ResolutionTokenDistribution::default(),
+            phase_tokens: PhaseTokenDistribution::default(),
             compaction_tokens: 0,
             compacted_entry_count: 0,
         };
@@ -681,9 +684,9 @@ mod tests {
             message_count: 0,
             entry_count: 0,
             path_entry_count: 0,
-            role_tokens: Default::default(),
-            resolution_tokens: Default::default(),
-            phase_tokens: Default::default(),
+            role_tokens: RoleTokenDistribution::default(),
+            resolution_tokens: ResolutionTokenDistribution::default(),
+            phase_tokens: PhaseTokenDistribution::default(),
             compaction_tokens: 0,
             compacted_entry_count: 0,
         };
@@ -700,9 +703,9 @@ mod tests {
             message_count: 5,
             entry_count: 5,
             path_entry_count: 5,
-            role_tokens: Default::default(),
-            resolution_tokens: Default::default(),
-            phase_tokens: Default::default(),
+            role_tokens: RoleTokenDistribution::default(),
+            resolution_tokens: ResolutionTokenDistribution::default(),
+            phase_tokens: PhaseTokenDistribution::default(),
             compaction_tokens: 0,
             compacted_entry_count: 0,
         };
