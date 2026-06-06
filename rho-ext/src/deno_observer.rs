@@ -37,7 +37,7 @@ use crate::ExtensionRuntime;
 
 /// An [`AgentObserver`] that forwards agent loop events to a TypeScript extension.
 ///
-/// Wraps an `Arc<Mutex<ExtensionRuntime>>` (same pattern as [`DenoTool`]).
+/// Wraps an `Arc<Mutex<ExtensionRuntime>>` (same pattern as `DenoTool`).
 /// Only hooks declared in the manifest are forwarded — the observer checks
 /// which hooks exist before sending a request to the extension thread.
 pub struct DenoObserver {

@@ -2,10 +2,10 @@
 //!
 //! When the session tree grows beyond the token budget, older entries can be
 //! *compacted* — summarised into a [`CompactionSummary`] and transitioned from
-//! [`Full`](EntryResolution::Full) to
-//! [`Compacted`](EntryResolution::Compacted) resolution. The original entries
+//! [`Full`](super::entry::EntryResolution::Full) to
+//! [`Compacted`](super::entry::EntryResolution::Compacted) resolution. The original entries
 //! remain in the tree (accessible via [`Session::entry`]), but are bypassed by
-//! [`fit_path`](ContextManager::fit_path), which instead renders the summary as
+//! the path messages builder, which instead renders the summary as
 //! a synthetic `User` message.
 //!
 //! # Strategy trait

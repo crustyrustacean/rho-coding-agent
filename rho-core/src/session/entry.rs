@@ -195,7 +195,7 @@ pub enum EntryPayload {
 
 /// A phase-structured segment of compacted session activity.
 ///
-/// Groups tool calls, findings, and context by [`SessionPhase`] so that
+/// Groups tool calls, findings, and context by [`super::phase::SessionPhase`] so that
 /// compaction summaries tell the model *what happened* in each phase
 /// (exploration, execution, verification) rather than just listing tool
 /// names.

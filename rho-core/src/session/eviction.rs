@@ -3,8 +3,8 @@
 //! Phase 3: Instead of evicting entire turns when the context window is full,
 //! this module plans selective downgrades of individual entries *within* turns.
 //!
-//! The [`plan_downgrades`] function takes the current entry path and budget,
-//! and returns a list of [`DowngradeAction`] entries specifying which entries
+//! The planner function takes the current entry path and budget,
+//! and returns a list of downgrade actions specifying which entries
 //! should be downgraded and to what resolution. The caller (typically
 //! `Session::path_messages`) applies these actions.
 //!

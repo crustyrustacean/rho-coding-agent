@@ -1,8 +1,7 @@
 //! Streaming types for chat completions.
 //!
 //! [`StreamChunk`] is the unified streaming event type. Real SSE connections
-//! produce many small deltas; the default [`ChatClient::chat_stream`] wrapper
-//! converts a full [`ModelResponse`] into a `Vec<StreamChunk>` via
+//! produce many small deltas; the default client implementation converts a a full [`ModelResponse`] into a `Vec<StreamChunk>` via
 //! [`StreamChunk::from_response`].
 
 use crate::response::{FinishReason, ModelResponse};
@@ -11,11 +10,8 @@ use crate::response::{FinishReason, ModelResponse};
 
 /// A single event from a streaming chat completion response.
 ///
-/// Produced by [`ChatClient::chat_stream`] — either incrementally from an SSE
+/// Produced by [`RhoAiClient`](super::client::RhoAiClient) — either incrementally from an SSE
 /// connection or, for the default fallback, as a batch converted from a full
-/// [`ModelResponse`].
-///
-/// [ChatClient::chat_stream]: crate::client::ChatClient::chat_stream
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StreamChunk {
     /// Incremental text content.
@@ -40,7 +36,7 @@ pub enum StreamChunk {
 impl StreamChunk {
     /// Convert a full [`ModelResponse`] into a sequence of [`StreamChunk`]s.
     ///
-    /// This is used by the default [`ChatClient::chat_stream`] implementation
+    /// This is used by the default client implementation
     /// to wrap a non-streaming response into the streaming API.
     ///
     /// Produces:
@@ -48,8 +44,6 @@ impl StreamChunk {
     /// - `ReasoningDelta` if the response has non-empty reasoning content
     /// - `ToolCallDelta` for each tool call
     /// - `Done` with the finish reason
-    ///
-    /// [ChatClient::chat_stream]: crate::client::ChatClient::chat_stream
     pub fn from_response(response: &ModelResponse) -> Vec<Self> {
         let mut chunks = Vec::new();
 

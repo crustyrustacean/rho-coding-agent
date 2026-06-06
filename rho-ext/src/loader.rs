@@ -109,7 +109,7 @@ impl ExtensionLoader {
 
     /// Replace the stored extension configuration.
     ///
-    /// This should be called before [`reload`] when config files have been
+    /// This should be called before reloading extensions when config files have been
     /// edited during the session, so that newly-enabled extensions are
     /// picked up by the filter.
     pub fn set_config(&mut self, config: ExtensionConfig) {

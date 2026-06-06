@@ -1,8 +1,8 @@
 //! Agent loop state machine.
 //!
 //! [`run_loop`] drives the conversation until the model stops or a budget is
-//! exhausted. Internally, the loop is a state machine where each [`State`]
-//! transition is handled by a method on [`LoopContext`]. Every transition is
+//! exhausted. Internally, the loop is a state machine where each state
+//! transition is handled by a method on the loop context struct. Every transition is
 //! independently testable.
 //!
 //! # State machine
@@ -989,7 +989,7 @@ impl LoopContext<'_> {
 ///
 /// # Errors
 ///
-/// - [`RhoError::MaxIterationsExceeded`] — loop ran past `config.max_iterations`
+/// - [`AgentError::MaxIterationsExceeded`] — loop ran past `config.max_iterations`
 /// - [`RhoError::RetryBudgetExhausted`] — transient error retried too many times
 /// - Any fatal error from the client or tool registry
 #[tracing::instrument(skip_all, fields(input_len = message.len()))]

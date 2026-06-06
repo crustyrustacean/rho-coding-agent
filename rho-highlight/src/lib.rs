@@ -38,8 +38,8 @@
 //!
 //! | Module | Contents |
 //! |---|---|
-//! | [`parse`] | [`parse`] — produce a tree-sitter `Tree` from source |
-//! | [`highlight`] | [`highlight`] — produce classified [`HighlightSpan`]s |
+//! | [`parse()`] | [`mod@parse`] — produce a tree-sitter `Tree` from source |
+//! | [`highlight()`] | [`mod@highlight`] — produce classified [`HighlightSpan`]s |
 //! | [`query`] | [`node_at`] — structural node queries |
 //! | [`lang`] | [`Language`] enum — grammar selection |
 //! | [`error`] | [`HighlightError`] |

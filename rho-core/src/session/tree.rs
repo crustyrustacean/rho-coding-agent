@@ -100,7 +100,7 @@ impl Session {
     ///
     /// # Errors
     ///
-    /// Returns [`RhoError::EntryNotFound`] if `id` does not exist in the
+    /// Returns [`super::error::SessionError::EntryNotFound`] if `id` does not exist in the
     /// session tree.
     ///
     /// # No-op
@@ -164,7 +164,7 @@ impl Session {
     ///
     /// # Errors
     ///
-    /// Returns [`RhoError::EntryNotFound`] if `id` does not exist.
+    /// Returns [`super::error::SessionError::EntryNotFound`] if `id` does not exist.
     pub fn branch_with_summary(
         &mut self,
         id: &EntryId,

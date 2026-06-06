@@ -2,10 +2,8 @@
 //!
 //! [`ShellExecutor`] defines the interface for running commands in a shell.
 //! The trait lives in `rho-core` so the tool layer depends on the abstraction,
-//! not on any concrete shell. The first implementation ([`PowerShellExecutor`])
+//! not on any concrete shell. The first implementation (`PowerShellExecutor`)
 //! lives in `rho-tools`.
-//!
-//! [`PowerShellExecutor`]: rho_tools::PowerShellExecutor
 
 use crate::error::Result;
 use crate::tool::CancellationToken;

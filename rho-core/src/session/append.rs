@@ -213,7 +213,7 @@ impl Session {
 
     // ── Typed extension entry methods ─────────────────────────────────────
 
-    /// Write a typed extension state entry using the [`ExtensionEntry`] trait.
+    /// Write a typed extension state entry using the [`ExtensionEntry`](super::extensions::ExtensionEntry) trait.
     ///
     /// The entry is stored as [`Custom`](EntryPayload::Custom) with
     /// `kind = E::KIND` and `data` serialized from `entry`. The resolution
@@ -251,7 +251,7 @@ impl Session {
         }
     }
 
-    /// Write a typed extension message entry using the [`ExtensionMessageEntry`] trait.
+    /// Write a typed extension message entry using the [`ExtensionMessageEntry`](super::extensions::ExtensionMessageEntry) trait.
     ///
     /// The entry is stored as [`CustomMessage`](EntryPayload::CustomMessage)
     /// with `kind = E::KIND` and `content` derived from `entry`. The resolution

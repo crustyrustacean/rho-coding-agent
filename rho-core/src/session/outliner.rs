@@ -5,7 +5,7 @@
 //! producing concise outlines like `"read_file: src/parser.rs (342 lines)"`
 //! instead of blindly truncating the content.
 //!
-//! The [`OutlineContext`] carries optional metadata (tool name, arguments,
+//! The outline context carries optional metadata (tool name, arguments,
 //! structured diagnostics) resolved by the caller (typically
 //! `Session::outline_entry`).
 

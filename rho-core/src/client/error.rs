@@ -1,4 +1,4 @@
-//! Error types for the [`ChatClient`](super::ChatClient) trait and
+//! Error types for the [`LlmService`](rho_ai::LlmService) trait and
 //! [`RhoAiClient`](super::RhoAiClient) implementation.
 //!
 //! This module defines [`ClientError`] for HTTP/API related errors, with a

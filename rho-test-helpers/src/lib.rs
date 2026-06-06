@@ -2,7 +2,7 @@
 //!
 //! # Contents
 //!
-//! - [`MockChatClient`] — an [`LlmService`](rho_ai::LlmService) that returns canned
+//! - [`MockChatClient`] — an [`LlmService`] that returns canned
 //!   [`StreamEvent`](rho_ai::StreamEvent) sequences and records every [`LlmRequest`] it receives.
 //! - [`MockShellExecutor`] — a [`ShellExecutor`] that returns canned [`ShellOutput`]
 //!   values and records every command it receives.
@@ -114,7 +114,7 @@ impl From<Vec<rho_ai::StreamEvent>> for MockResponse {
     }
 }
 
-/// An [`LlmService`](rho_ai::LlmService) that returns pre-loaded results in sequence.
+/// An [`LlmService`] that returns pre-loaded results in sequence.
 ///
 /// Records every [`LlmRequest`] it receives so tests can inspect what the
 /// agent loop sent to the model.
@@ -678,8 +678,6 @@ pub fn trust_store_path(dir: &TempDir) -> PathBuf {
 ///
 /// Use this in integration tests that spawn real PowerShell processes
 /// to skip tests gracefully when no shell is available.
-///
-/// [`PowerShellExecutor::new()`]: rho_tools::PowerShellExecutor
 pub fn detect_shell() -> Option<&'static str> {
     if which_exists("pwsh") {
         Some("pwsh")

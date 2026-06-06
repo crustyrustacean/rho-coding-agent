@@ -173,7 +173,7 @@ impl Session {
     ///
     /// # Errors
     ///
-    /// Returns [`RhoError`] if the file cannot be opened or a write fails.
+    /// Returns [`crate::error::RhoError`] if the file cannot be opened or a write fails.
     pub fn flush(&mut self) -> Result<()> {
         persist::flush_session(self)
     }

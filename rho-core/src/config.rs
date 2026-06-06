@@ -88,8 +88,7 @@ pub struct AgentLoopConfig {
     /// Context window token budget.
     ///
     /// Controls how many tokens the [`SlidingWindowContextManager`] retains
-    /// before evicting older turns. Defaults to 32,768 (see
-    /// [`default_token_budget`]).
+    /// before evicting older turns. Defaults to 32,768.
     ///
     /// The previous default of 8,192 was insufficient: after the system
     /// prompt (~4,700 tokens for `base.md` + `AGENTS.md`), only ~3,500

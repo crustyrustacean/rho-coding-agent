@@ -1,6 +1,6 @@
 //! Retry with exponential backoff.
 //!
-//! Wraps an [`EventStream`](crate::service::EventStream) with automatic retries
+//! Wraps an [`EventStream`] with automatic retries
 //! for transient errors (HTTP 429 rate limits, 5xx server errors, connection failures).
 
 use crate::error::ProviderError;

@@ -50,7 +50,7 @@ pub struct ContextFile {
 /// Persistent storage of trusted context-file hashes.
 ///
 /// Backed by `~/.rho/trusted_projects.toml` (or a test-supplied path).
-/// The file is a TOML array of [`TrustEntry`] records.
+/// The file is a TOML array of trust records.
 #[derive(Debug, Default)]
 pub struct TrustStore {
     /// Path to the backing TOML file.
@@ -290,7 +290,7 @@ pub fn compose_system_prompt(base: &str, context_files: &[ContextFile]) -> Strin
 /// - `context_files` — trusted project context files (from [`ContextScanner`]).
 ///   Pass an empty slice to skip context file injection (e.g. for non-interactive
 ///   benchmarks).
-/// - `config` — application config (used for [`system_prompt.extensions`]).
+/// - `config` — application config (used for system prompt extensions).
 /// - `system_override` — if `Some`, replaces the base prompt and context files
 ///   entirely. The environment and Rust tooling blocks are still appended.
 /// - `compact` — if `true`, uses the compact base prompt (~100 tokens) instead
@@ -301,7 +301,7 @@ pub fn compose_system_prompt(base: &str, context_files: &[ContextFile]) -> Strin
 /// 1. System override **or** (base prompt + context files)
 /// 2. `# Environment` block (working directory, fresh process note)
 /// 3. `# Rust Tooling` block (`cargo_check`, `cargo_clippy`, etc.)
-/// 4. Config-based [`system_prompt.extensions`] fragments
+/// 4. Config-based system prompt extension fragments
 pub fn compose_full_system_prompt(
     sandbox: &SandboxRoot,
     context_files: &[ContextFile],

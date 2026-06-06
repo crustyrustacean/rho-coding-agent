@@ -29,7 +29,7 @@ impl ApprovalGate for BenchApprovalGate {
     }
 }
 
-/// An [`LlmService`] wrapper that counts token usage across all requests.
+/// An [`LlmService`](rho_ai::LlmService) wrapper that counts token usage across all requests.
 struct CountingService {
     /// The underlying LLM service.
     inner: Box<dyn rho_ai::LlmService>,

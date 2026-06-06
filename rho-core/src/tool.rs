@@ -251,12 +251,9 @@ impl ToolRegistry {
     ///
     /// # Errors
     ///
-    /// - [`RhoError::ToolNotFound`] — no tool with the given name is registered
-    /// - [`RhoError::Json`] — arguments could not be parsed
+    /// - [`crate::error::RhoError::ToolNotFound`] — no tool with the given name is registered
+    /// - Argument parsing errors if the JSON arguments are malformed
     /// - Any error returned by [`Tool::execute`]
-    ///
-    /// [`RhoError::ToolNotFound`]: crate::error::RhoError::ToolNotFound
-    /// [`RhoError::Json`]: crate::error::RhoError::Json
     pub async fn execute(
         &self,
         call: &ModelToolCall,

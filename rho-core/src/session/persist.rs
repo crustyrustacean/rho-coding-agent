@@ -290,7 +290,7 @@ impl PersistState {
 ///
 /// # Errors
 ///
-/// Returns [`RhoError`] if:
+/// Returns [`crate::error::RhoError`] if:
 /// - The file cannot be opened.
 /// - The first line is not a valid header.
 /// - Any entry line cannot be deserialized.
@@ -434,7 +434,7 @@ pub fn open_session(path: &Path) -> Result<Session> {
 ///
 /// # Errors
 ///
-/// Returns [`RhoError`] if:
+/// Returns [`crate::error::RhoError`] if:
 /// - The parent directories cannot be created.
 /// - The file cannot be opened for appending.
 /// - A write fails.

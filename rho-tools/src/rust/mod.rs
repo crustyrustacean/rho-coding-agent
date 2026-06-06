@@ -12,7 +12,7 @@
 //! ## Diagnostic parsing
 //!
 //! The [`parse_cargo_diagnostics`] function parses cargo `--message-format=json`
-//! NDJSON output into structured [`Diagnostic`] values from `rho-core`.
+//! NDJSON output into structured [`Diagnostic`](rho_core::Diagnostic) values.
 //!
 //! ## AST context
 //!

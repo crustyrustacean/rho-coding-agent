@@ -137,7 +137,7 @@ impl Session {
     ///
     /// # Errors
     ///
-    /// Returns [`RhoError`] if the file cannot be read, is malformed, or
+    /// Returns [`crate::error::RhoError`] if the file cannot be read, is malformed, or
     /// contains no entries.
     pub fn open(path: &Path) -> Result<Self> {
         persist::open_session(path)

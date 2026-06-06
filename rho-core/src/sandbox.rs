@@ -9,9 +9,9 @@
 //!   and Windows junctions, then the canonical path is checked against the
 //!   canonical root.
 //! - **Not-yet-existing paths** (new files for `WriteFile`) — `canonicalize`
-//!   fails on Windows if the path does not exist. [`canonicalize_for_write`]
-//!   walks up to the nearest existing ancestor, canonicalises that, re-appends
-//!   the remaining components, and verifies containment. Any `..` component
+//!   fails on Windows if the path does not exist. The sandbox uses a
+//!   workaround that walks up to the nearest existing ancestor, canonicalises
+//!   that, re-appends the remaining components, and verifies containment. Any `..` component
 //!   after the existing-ancestor boundary is rejected immediately.
 
 use crate::error::Result;
@@ -267,7 +267,7 @@ const PROJECT_MARKERS: &[&str] = &[
 
 /// Auto-detect the project root by walking up from the current directory.
 ///
-/// Searches for well-known project markers (see [`PROJECT_MARKERS`]).
+/// Searches for well-known project markers (Cargo.toml, .git, package.json, etc.).
 /// Returns the first directory (from CWD upward) that contains any marker.
 /// If no marker is found, returns the current directory.
 ///

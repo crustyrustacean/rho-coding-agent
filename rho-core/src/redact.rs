@@ -103,7 +103,7 @@ fn built_in_patterns() -> [Pattern; 5] {
 /// [`Redactor::from_config`] to include custom regex patterns and respect the
 /// enabled toggle from configuration.
 ///
-/// When `enabled` is `false`, [`redact()`] returns the input unchanged.
+/// When `enabled` is `false`, [`Redactor::redact`] returns the input unchanged.
 pub struct Redactor {
     /// Whether redaction is active. When `false`, `redact()` is a no-op.
     enabled: bool,

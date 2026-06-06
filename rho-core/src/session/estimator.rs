@@ -76,7 +76,7 @@ pub trait TokenEstimator: Send + Sync {
 ///
 /// # Calibration
 ///
-/// After each API round-trip, call [`calibrate`] with the estimated and actual
+/// After each API round-trip, call [`TokenEstimator::calibrate`] with the estimated and actual
 /// token counts. The estimator updates the per-model ratio using an exponential
 /// moving average with α = 0.3:
 ///

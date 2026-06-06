@@ -142,11 +142,11 @@ impl Session {
     /// If the current entry path exceeds the token budget, this applies
     /// selective downgrades (Phase 3) to bring it within budget without
     /// evicting entire turns. The actual eviction via turn dropping still
-    /// happens in [`ContextManager::fit_path`], but `prepare_context`
+    /// happens in the sliding window eviction, but `prepare_context`
     /// reduces the number of turns that need to be evicted.
     ///
     /// This is called automatically by [`send_current`](Self::send_current)
-    /// and should also be called before [`build_llm_request`] in the agent
+    /// and should also be called before building the LLM request in the agent
     /// loop.
     pub fn prepare_context(&mut self) {
         let path = self.path_to_root();
@@ -232,7 +232,7 @@ impl Session {
     /// 1. Walks the leaf-to-root path and selects the oldest contiguous
     ///    entries whose cumulative estimated tokens exceed `threshold`.
     /// 2. Calls `strategy.compact()` on the selected entries to produce a
-    ///    [`CompactionSummary`].
+    ///    [`super::CompactionSummary`].
     /// 3. Appends a [`Compaction`](super::EntryPayload::Compaction) entry to the
     ///    tree.
     /// 4. Transitions the compacted entries' resolution from `Full` to

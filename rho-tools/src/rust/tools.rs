@@ -51,10 +51,10 @@ pub(super) fn execute_cargo_diagnostic_tool(
 /// The tool:
 /// 1. Runs `cargo check --message-format=json` via the configured
 ///    [`ShellExecutor`] within the sandbox root.
-/// 2. Parses the NDJSON output into [`Diagnostic`] values.
+/// 2. Parses the NDJSON output into [`Diagnostic`](rho_core::Diagnostic) values.
 /// 3. Filters out dependency noise (diagnostics from outside the workspace).
 /// 4. Returns a human-readable summary for the model, with structured
-///    [`Diagnostic`] data in [`ToolResultDetails::Diagnostics`].
+///    [`Diagnostic`](rho_core::Diagnostic) data in [`ToolResultDetails::Diagnostics`].
 ///
 /// ## Optional parameters
 ///

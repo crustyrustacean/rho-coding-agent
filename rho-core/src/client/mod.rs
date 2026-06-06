@@ -1,6 +1,6 @@
 //! [`RhoAiClient`] — the concrete LLM service client.
 //!
-//! [`RhoAiClient`] wraps [`rho_ai::OpenAiService`] and implements
+//! [`RhoAiClient`] wraps [`rho_ai::openai::OpenAiService`] and implements
 //! [`LlmService`](rho_ai::LlmService). All HTTP communication and SSE parsing
 //! is delegated to `rho-ai`.
 
@@ -13,7 +13,7 @@ use async_trait::async_trait;
 
 // ── RhoAiClient ──────────────────────────────────────────────────────────────
 
-/// A [`LlmService`](rho_ai::LlmService) backed by [`rho_ai::OpenAiService`].
+/// A [`LlmService`](rho_ai::LlmService) backed by [`rho_ai::openai::OpenAiService`].
 ///
 /// This is the sole client implementation. It delegates all HTTP communication
 /// and SSE parsing to `rho-ai`, adapting between rho-core's types and rho-ai's

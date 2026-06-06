@@ -1,9 +1,9 @@
-//! `DenoTool` — bridges a TypeScript extension's tool into rho's [`Tool`] trait.
+//! `DenoTool` — bridges a TypeScript extension's tool into rho's tool trait.
 //!
-//! Each [`LoadedTool`] in an extension's manifest becomes a [`DenoTool`] that
-//! can be registered in rho-core's [`ToolRegistry`]. When the agent loop calls
-//! [`Tool::execute`], the `DenoTool` forwards the call through
-//! [`ExtensionRuntime::call_tool`] to the V8 isolate on the extension thread.
+//! Each [`LoadedTool`] in an extension's manifest becomes a `DenoTool` that
+//! can be registered in rho-core's tool registry. When the agent loop calls
+//! `Tool::execute`, the `DenoTool` forwards the call through
+//! `ExtensionRuntime::call_tool` to the V8 isolate on the extension thread.
 
 use std::sync::Arc;
 

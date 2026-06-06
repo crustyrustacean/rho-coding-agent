@@ -5,12 +5,12 @@
 //!
 //! # Provided macros
 //!
-//! - [`err!`] — return an `__ERROR__`-prefixed string
-//! - [`json!`] — serialize to JSON string (errors on failure)
-//! - [`require_perm!`] — permission guard using a `HostState` field
-//! - [`require_field!`] — extract a required field from JSON input
-//! - [`js_fn!`] — generate JS wrapper function strings (fixed arity)
-//! - [`js_json_fn!`] — generate JS wrapper that marshals JS objects to JSON strings
+//! - `err!` — return an `__ERROR__`-prefixed string
+//! - `json!` — serialize to JSON string (errors on failure)
+//! - `require_perm!` — permission guard using a `HostState` field
+//! - `require_field!` — extract a required field from JSON input
+//! - `js_fn!` — generate JS wrapper function strings (fixed arity)
+//! - `js_json_fn!` — generate JS wrapper that marshals JS objects to JSON strings
 
 /// Return an error string with the `__ERROR__` prefix.
 ///

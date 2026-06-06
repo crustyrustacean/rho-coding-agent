@@ -9,7 +9,7 @@
 //! ## Shell tools (Phase 2)
 //!
 //! [`RunCommand`], [`PowerShellExecutor`], [`CommandDenylist`] — shell execution
-//! behind the [`ShellExecutor`] trait with command denylist enforcement.
+//! behind the `ShellExecutor` trait with command denylist enforcement.
 //!
 //! ## Rust tools (Phase 3)
 //!
