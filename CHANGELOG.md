@@ -1,3 +1,8 @@
+## [0.68.0] - 2026-06-06
+
+### ⚙️ Miscellaneous Tasks
+
+- *(release)* Prepare 0.67.0
 ## [0.67.0] - 2026-06-06
 
 ### 🐛 Bug Fixes

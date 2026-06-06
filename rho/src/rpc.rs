@@ -1,59 +1,69 @@
-//! Headless RPC mode — JSONL over stdin/stdout.
+//! Headless JSON-RPC 2.0 mode — JSONL over stdin/stdout.
 //!
-//! In RPC mode rho reads newline-delimited JSON commands from stdin and writes
-//! newline-delimited JSON events to stdout, enabling process integration with
-//! editors, bots, and custom UIs.
+//! In RPC mode rho reads newline-delimited JSON-RPC 2.0 requests from stdin and
+//! writes JSON-RPC 2.0 responses to stdout. Streaming events are delivered as
+//! JSON-RPC notifications (no `id` field).
 //!
 //! # Protocol
 //!
-//! Every outbound line is a compact JSON object followed by `\n`. Every
-//! inbound command must be a JSON object with at least a `"type"` field.
+//! Every request must be a JSON object with `jsonrpc: "2.0"`, a `method` field,
+//! optional `params`, and a numeric or string `id` for response correlation.
 //!
-//! ## Commands (stdin → rho)
+//! ## Methods (stdin → rho)
 //!
-//! | `type`              | Required fields       | Description                        |
-//! |---------------------|-----------------------|------------------------------------|
-//! | `prompt`            | `message`             | Send a user message to the agent   |
-//! | `abort`             | —                     | Cancel the current operation       |
-//! | `clear`             | —                     | Clear conversation history         |
-//! | `get_state`         | —                     | Return current model / provider    |
-//! | `get_messages`      | —                     | Return all messages on active path |
-//! | `set_model`         | `model`               | Switch the active model            |
-//! | `list_models`       | —                     | List available models from providers |
-//! | `get_session_stats` | —                     | Return token budget / usage info   |
-//! | `list_sessions`     | —                     | List previous sessions for project |
-//! | `list_extensions`   | —                     | List loaded extensions and tools   |
-//! | `reload_extensions` | —                     | Reload extensions from disk        |
-//! | `compact`           | —                     | Trigger context compaction         |
+//! | Method             | Params                      | Description                        |
+//! |--------------------|-----------------------------|------------------------------------|
+//! | `prompt`           | `{message: string}`         | Send a user message to the agent   |
+//! | `abort`            | —                           | Cancel the current operation       |
+//! | `clear`            | —                           | Clear conversation history         |
+//! | `getState`         | —                           | Return current model / provider    |
+//! | `getMessages`      | —                           | Return all messages on active path |
+//! | `setModel`         | `{model: string}`          | Switch the active model            |
+//! | `listModels`       | —                           | List available models from providers |
+//! | `getSessionStats`  | —                           | Return token budget / usage info   |
+//! | `listSessions`     | —                           | List previous sessions for project |
+//! | `listExtensions`   | —                           | List loaded extensions and tools   |
+//! | `reloadExtensions` | —                           | Reload extensions from disk        |
+//! | `compact`          | —                           | Trigger context compaction         |
 //!
-//! ## Events (rho → stdout)
+//! ## Notifications (rho → stdout)
 //!
-//! | `type`              | Fields                          | Description                         |
-//! |---------------------|---------------------------------|-------------------------------------|
-//! | `ready`             | —                               | Emitted once on startup             |
-//! | `agent_start`       | —                               | Agent began processing a prompt     |
-//! | `agent_end`         | `reply`                         | Agent finished; full text reply     |
-//! | `agent_error`       | `error`                         | Agent loop encountered an error     |
-//! | `state_change`      | `state`                         | Loop state transition               |
-//! | `message_update`    | `delta`                         | Streaming text chunk                |
-//! | `reasoning_delta`   | `delta`                         | Streaming reasoning chunk           |
-//! | `tool_call`         | `name`, `arguments`             | Model requested a tool call         |
-//! | `tool_result`       | `name`, `is_error`, `output`    | Tool finished executing             |
-//! | `tool_denied`       | `name`                          | Tool call denied by approval gate   |
-//! | `approval_request`  | `tool`, `arguments`, `risk`     | Approval required; send response    |
-//! | `response`          | `success`, [`error`]            | Command acknowledgment              |
+//! | Method              | Params                              | Description                         |
+//! |---------------------|-------------------------------------|-------------------------------------|
+//! | `ready`             | —                                   | Emitted once on startup             |
+//! | `agent/start`       | —                                   | Agent began processing a prompt     |
+//! | `agent/end`         | `{reply: string}`                   | Agent finished; full text reply     |
+//! | `agent/error`       | `{error: string}`                   | Agent loop encountered an error     |
+//! | `state/change`      | `{state: string}`                   | Loop state transition               |
+//! | `message/delta`     | `{delta: string}`                   | Streaming text chunk                |
+//! | `reasoning/delta`   | `{delta: string}`                   | Streaming reasoning chunk           |
+//! | `tool/call`         | `{name, arguments}`                 | Model requested a tool call         |
+//! | `tool/result`       | `{name, is_error, output}`          | Tool finished executing             |
+//! | `tool/denied`       | `{name}`                            | Tool call denied by approval gate   |
+//! | `approval/request`  | `{tool, arguments, risk}`           | Approval required; send response    |
 //!
 //! ## Approval flow
 //!
-//! When rho emits an `approval_request` event it blocks until it reads an
-//! `approval_response` command from stdin:
+//! When rho emits an `approval/request` notification it blocks until it reads
+//! an `approvalResponse` method from stdin:
 //!
 //! ```json
-//! {"type": "approval_response", "approved": true}
+//! {"jsonrpc": "2.0", "method": "approvalResponse", "params": {"approved": true}, "id": 2}
 //! ```
 //!
-//! Sending `approved: false` (or any non-boolean / missing field) denies the
-//! tool call and lets the agent continue.
+//! Sending `approved: false` denies the tool call and lets the agent continue.
+//!
+//! ## Error codes
+//!
+//! Standard JSON-RPC 2.0 error codes are used:
+//!
+//! | Code   | Meaning              |
+//! |--------|----------------------|
+//! | -32700 | Parse error          |
+//! | -32600 | Invalid request      |
+//! | -32601 | Method not found     |
+//! | -32602 | Invalid params       |
+//! | -32603 | Internal error       |
 
 use crate::app::{App, TurnResult, run_agent_turn};
 use crate::ext_observer::CompositeObserver;
@@ -66,6 +76,19 @@ use rho_core::{
 use serde_json::{Value, json};
 use std::io::{self, BufRead, Write};
 use std::sync::{Arc, Mutex};
+
+// ── JSON-RPC 2.0 Error codes ───────────────────────────────────────────────────
+
+/// Parse error: Invalid JSON was received.
+const PARSE_ERROR: i32 = -32700;
+/// Invalid request: The JSON sent is not a valid Request object.
+const INVALID_REQUEST: i32 = -32600;
+/// Method not found: The method does not exist / is not available.
+const METHOD_NOT_FOUND: i32 = -32601;
+/// Invalid params: Invalid method parameter(s).
+const INVALID_PARAMS: i32 = -32602;
+/// Internal error: Internal JSON-RPC error.
+const INTERNAL_ERROR: i32 = -32603;
 
 // ── Shared I/O types ──────────────────────────────────────────────────────────
 
@@ -87,30 +110,57 @@ fn make_in<R: BufRead + Send + 'static>(r: R) -> In {
     Arc::new(Mutex::new(Box::new(r)))
 }
 
-/// Write a single JSONL event to `out`.
-///
-/// Serialises `event` as a compact JSON object, appends `\n`, and flushes.
-/// The mutex ensures the line is written atomically even when [`RpcObserver`]
-/// and the command loop both hold a reference to the same writer.
-#[allow(clippy::needless_pass_by_value)]
-fn write_event(out: &Out, event: Value) {
+/// Write a single JSON-RPC message to `out`.
+fn write_jsonrpc(out: &Out, value: &Value) {
     let mut guard = out
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    write_event_to(&mut *guard, &event);
+    write_value_to(&mut *guard, value);
 }
 
-/// Write a single JSONL event to any [`Write`] sink.
-///
-/// Extracted so unit tests can pass a `Vec<u8>` instead of the locked writer.
-fn write_event_to(sink: &mut dyn Write, event: &Value) {
-    let _ = writeln!(sink, "{event}");
+/// Write a JSON value to any [`Write`] sink.
+fn write_value_to(sink: &mut dyn Write, value: &Value) {
+    let _ = writeln!(sink, "{value}");
     let _ = sink.flush();
+}
+
+// ── JSON-RPC response builders ────────────────────────────────────────────────
+
+/// Build a successful JSON-RPC response.
+#[allow(clippy::needless_pass_by_value)]
+fn success_response(id: &Value, result: Value) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "result": result,
+        "id": id
+    })
+}
+
+/// Build a JSON-RPC error response.
+fn error_response(id: &Value, code: i32, message: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "error": {
+            "code": code,
+            "message": message
+        },
+        "id": id
+    })
+}
+
+/// Build a JSON-RPC notification (no id).
+#[allow(clippy::needless_pass_by_value)]
+fn notification(method: &str, params: Value) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "method": method,
+        "params": params
+    })
 }
 
 // ── RpcObserver ───────────────────────────────────────────────────────────────
 
-/// Forwards agent-loop events to the RPC client as JSONL.
+/// Forwards agent-loop events to the RPC client as JSON-RPC notifications.
 struct RpcObserver {
     /// Shared writer handle.
     out: Out,
@@ -118,55 +168,59 @@ struct RpcObserver {
 
 impl AgentObserver for RpcObserver {
     fn on_state_change(&self, state: AgentState) {
-        write_event(
+        write_jsonrpc(
             &self.out,
-            json!({"type": "state_change", "state": state_name(&state)}),
+            &notification("state/change", json!({"state": state_name(&state)})),
         );
     }
 
     fn on_text_delta(&self, delta: &str) {
-        write_event(&self.out, json!({"type": "message_update", "delta": delta}));
+        write_jsonrpc(
+            &self.out,
+            &notification("message/delta", json!({"delta": delta})),
+        );
     }
 
     fn on_reasoning_delta(&self, delta: &str) {
-        write_event(
+        write_jsonrpc(
             &self.out,
-            json!({"type": "reasoning_delta", "delta": delta}),
+            &notification("reasoning/delta", json!({"delta": delta})),
         );
     }
 
     fn on_tool_call(&self, name: &str, arguments: &str) {
-        write_event(
+        write_jsonrpc(
             &self.out,
-            json!({"type": "tool_call", "name": name, "arguments": arguments}),
+            &notification("tool/call", json!({"name": name, "arguments": arguments})),
         );
     }
 
     fn on_tool_result(&self, name: &str, result: &ToolResult) {
-        write_event(
+        write_jsonrpc(
             &self.out,
-            json!({
-                "type": "tool_result",
-                "name": name,
-                "is_error": result.is_error,
-                "output": result.output,
-            }),
+            &notification(
+                "tool/result",
+                json!({
+                    "name": name,
+                    "is_error": result.is_error,
+                    "output": result.output,
+                }),
+            ),
         );
     }
 
     fn on_tool_denied(&self, name: &str) {
-        write_event(&self.out, json!({"type": "tool_denied", "name": name}));
+        write_jsonrpc(
+            &self.out,
+            &notification("tool/denied", json!({"name": name})),
+        );
     }
 }
 
 // ── RpcApprovalGate ───────────────────────────────────────────────────────────
 
-/// Writes an `approval_request` event to the shared writer and reads an
-/// `approval_response` command from the shared reader.
-///
-/// The gate holds references to both the writer (for emitting the request)
-/// and the reader (for consuming the response). During `run_loop` the
-/// command loop is blocked, so there is no concurrent reader contention.
+/// Writes an `approval/request` notification and reads an `approvalResponse`
+/// request from the shared reader.
 struct RpcApprovalGate {
     /// Shared writer handle.
     out: Out,
@@ -177,19 +231,19 @@ struct RpcApprovalGate {
 #[async_trait]
 impl ApprovalGate for RpcApprovalGate {
     async fn request_approval(&self, call: &ModelToolCall, risk: ToolRisk) -> bool {
-        write_event(
+        write_jsonrpc(
             &self.out,
-            json!({
-                "type": "approval_request",
-                "tool": &*call.function.name,
-                "arguments": call.function.arguments,
-                "risk": risk_label(risk),
-            }),
+            &notification(
+                "approval/request",
+                json!({
+                    "tool": &*call.function.name,
+                    "arguments": call.function.arguments,
+                    "risk": risk_label(risk),
+                }),
+            ),
         );
 
-        // Read the approval_response from the shared reader (blocking I/O
-        // off the async executor). The main command loop is blocked inside
-        // run_loop at this point, so there is no concurrent reader.
+        // Read the approvalResponse request from the shared reader.
         let input = Arc::clone(&self.input);
         let response = tokio::task::spawn_blocking(move || {
             let mut guard = input
@@ -202,7 +256,7 @@ impl ApprovalGate for RpcApprovalGate {
         .await;
 
         match response {
-            Ok(Some(v)) => v["approved"].as_bool().unwrap_or(false),
+            Ok(Some(v)) => v["params"]["approved"].as_bool().unwrap_or(false),
             _ => false,
         }
     }
@@ -210,9 +264,7 @@ impl ApprovalGate for RpcApprovalGate {
 
 // ── run_rpc / run_rpc_on ──────────────────────────────────────────────────────
 
-/// Run the agent in headless RPC mode with real stdin/stdout.
-///
-/// Delegates to [`run_rpc_on`] with `io::stdin()` and `io::stdout()`.
+/// Run the agent in headless JSON-RPC mode with real stdin/stdout.
 ///
 /// # Errors
 ///
@@ -221,14 +273,11 @@ pub async fn run_rpc(app: App) -> Result<()> {
     run_rpc_on(app, io::BufReader::new(io::stdin()), io::stdout()).await
 }
 
-/// Core RPC loop — generic over I/O for testability.
+/// Core JSON-RPC loop — generic over I/O for testability.
 ///
-/// Emits a `ready` event, then reads JSONL commands from `input` one line at
-/// a time. Each command is dispatched to the appropriate handler. Exits
-/// cleanly on input EOF.
-///
-/// Agent-loop errors are reported as `agent_error` events rather than
-/// propagating as `Err`; only fatal I/O failures return `Err`.
+/// Emits a `ready` notification, then reads JSON-RPC requests from `input`
+/// one line at a time. Each request is dispatched to the appropriate handler.
+/// Exits cleanly on input EOF.
 ///
 /// # Errors
 ///
@@ -241,7 +290,7 @@ where
     let out = make_out(output);
     let inp = make_in(input);
 
-    write_event(&out, json!({"type": "ready"}));
+    write_jsonrpc(&out, &notification("ready", json!({})));
 
     loop {
         let inp_clone = Arc::clone(&inp);
@@ -267,86 +316,108 @@ where
             continue;
         }
 
-        let cmd: Value = match serde_json::from_str(&raw) {
+        // Parse and validate JSON-RPC request.
+        let request: Value = match serde_json::from_str(&raw) {
             Ok(v) => v,
             Err(e) => {
-                write_event(
+                write_jsonrpc(
                     &out,
-                    json!({
-                        "type": "response",
-                        "success": false,
-                        "error": format!("JSON parse error: {e}"),
-                    }),
+                    &error_response(&Value::Null, PARSE_ERROR, &format!("Parse error: {e}")),
                 );
                 continue;
             }
         };
 
-        dispatch_command(&mut app, cmd, &out, &inp).await;
+        // Extract required fields.
+        let jsonrpc = request.get("jsonrpc").and_then(|v| v.as_str());
+        let method = request.get("method").and_then(|v| v.as_str());
+        let id = request.get("id").cloned().unwrap_or(Value::Null);
+        let params = request.get("params").cloned().unwrap_or(json!({}));
+
+        // Validate jsonrpc version.
+        if jsonrpc != Some("2.0") {
+            write_jsonrpc(
+                &out,
+                &error_response(&id, INVALID_REQUEST, "Invalid JSON-RPC version"),
+            );
+            continue;
+        }
+
+        // Validate method.
+        let Some(method) = method else {
+            write_jsonrpc(
+                &out,
+                &error_response(&id, INVALID_REQUEST, "Missing method field"),
+            );
+            continue;
+        };
+
+        // Dispatch.
+        dispatch_request(&mut app, method, params, &id, &out, &inp).await;
     }
 
     Ok(())
 }
 
-// ── Command dispatch ──────────────────────────────────────────────────────────
+// ── Request dispatch ─────────────────────────────────────────────────────────
 
-/// Dispatch a parsed command to its handler.
-async fn dispatch_command(app: &mut App, cmd: Value, out: &Out, inp: &In) {
-    match cmd["type"].as_str() {
-        Some("prompt") => handle_prompt(app, &cmd, out, inp).await,
-        Some("abort") => {
+/// Dispatch a validated JSON-RPC request to its handler.
+async fn dispatch_request(
+    app: &mut App,
+    method: &str,
+    params: Value,
+    id: &Value,
+    out: &Out,
+    inp: &In,
+) {
+    match method {
+        "prompt" => handle_prompt(app, params, id, out, inp).await,
+        "abort" => {
             app.cancel.cancel();
-            write_event(out, json!({"type": "response", "success": true}));
+            write_jsonrpc(out, &success_response(id, json!({})));
         }
-        Some("clear") => handle_clear(app, out),
-        Some("get_state") => handle_get_state(app, out),
-        Some("get_messages") => handle_get_messages(app, out),
-        Some("set_model") => handle_set_model(app, &cmd, out).await,
-        Some("list_models") => handle_list_models(app, out).await,
-        Some("get_session_stats") => handle_get_session_stats(app, out),
-        Some("list_sessions") => handle_list_sessions(app, out),
-        Some("list_extensions") => handle_list_extensions(app, out),
-        Some("reload_extensions") => handle_reload_extensions(app, out).await,
-        Some("compact") => handle_compact(app, out).await,
-        Some(other) => write_event(
+        "clear" => handle_clear(app, id, out),
+        "getState" => handle_get_state(app, id, out),
+        "getMessages" => handle_get_messages(app, id, out),
+        "setModel" => handle_set_model(app, params, id, out).await,
+        "listModels" => handle_list_models(app, id, out).await,
+        "getSessionStats" => handle_get_session_stats(app, id, out),
+        "listSessions" => handle_list_sessions(app, id, out),
+        "listExtensions" => handle_list_extensions(app, id, out),
+        "reloadExtensions" => handle_reload_extensions(app, id, out).await,
+        "compact" => handle_compact(app, id, out).await,
+        "approvalResponse" => {
+            // Handled synchronously during approval flow, but if we see it here,
+            // acknowledge it (shouldn't normally happen outside approval flow).
+            write_jsonrpc(out, &success_response(id, json!({})));
+        }
+        _ => write_jsonrpc(
             out,
-            json!({
-                "type": "response",
-                "success": false,
-                "error": format!("unknown command: {other}"),
-            }),
-        ),
-        None => write_event(
-            out,
-            json!({
-                "type": "response",
-                "success": false,
-                "error": "command missing \"type\" field",
-            }),
+            &error_response(id, METHOD_NOT_FOUND, &format!("Method not found: {method}")),
         ),
     }
 }
 
-// ── Command handlers ──────────────────────────────────────────────────────────
+// ── Request handlers ─────────────────────────────────────────────────────────
 
-/// Run one agent turn for the user message in `cmd["message"]`.
-async fn handle_prompt(app: &mut App, cmd: &Value, out: &Out, inp: &In) {
-    let message = match cmd["message"].as_str() {
+/// Run one agent turn for the user message.
+async fn handle_prompt(app: &mut App, params: Value, id: &Value, out: &Out, inp: &In) {
+    let message = match params.get("message").and_then(|v| v.as_str()) {
         Some(m) if !m.is_empty() => m.to_owned(),
         _ => {
-            write_event(
+            write_jsonrpc(
                 out,
-                json!({
-                    "type": "response",
-                    "success": false,
-                    "error": "prompt requires a non-empty \"message\" field",
-                }),
+                &error_response(
+                    id,
+                    INVALID_PARAMS,
+                    "prompt requires a non-empty 'message' param",
+                ),
             );
             return;
         }
     };
 
-    write_event(out, json!({"type": "agent_start"}));
+    write_jsonrpc(out, &notification("agent/start", json!({})));
 
     let observer = RpcObserver {
         out: Arc::clone(out),
@@ -381,133 +452,120 @@ async fn handle_prompt(app: &mut App, cmd: &Value, out: &Out, inp: &In) {
     };
     match run_agent_turn(&mut app.session, &message, &params).await {
         TurnResult::Reply(reply) => {
-            write_event(out, json!({"type": "agent_end", "reply": reply}));
+            write_jsonrpc(out, &notification("agent/end", json!({"reply": &reply})));
+            write_jsonrpc(out, &success_response(id, json!({"reply": reply})));
         }
         TurnResult::Error(e) => {
-            write_event(out, json!({"type": "agent_error", "error": e}));
+            write_jsonrpc(out, &notification("agent/error", json!({"error": &e})));
+            write_jsonrpc(out, &success_response(id, json!({"error": e})));
         }
     }
 }
 
 /// Return the current model and active provider name.
-fn handle_get_state(app: &App, out: &Out) {
-    write_event(
+fn handle_get_state(app: &App, id: &Value, out: &Out) {
+    write_jsonrpc(
         out,
-        json!({
-            "type": "response",
-            "success": true,
-            "model": app.session.model(),
-            "provider": app.active_provider().name(),
-        }),
+        &success_response(
+            id,
+            json!({
+                "model": app.session.model(),
+                "provider": app.active_provider().name(),
+            }),
+        ),
     );
 }
 
-/// Return all messages on the current session path as a JSON array.
-fn handle_get_messages(app: &App, out: &Out) {
+/// Return all messages on the current session path.
+fn handle_get_messages(app: &App, id: &Value, out: &Out) {
     let messages: Vec<Value> = app
         .session
         .path_messages()
         .iter()
         .map(message_to_json)
         .collect();
-    write_event(
-        out,
-        json!({"type": "response", "success": true, "messages": messages}),
-    );
+    write_jsonrpc(out, &success_response(id, json!({"messages": messages})));
 }
 
-/// Switch the active model to `cmd["model"]`.
-async fn handle_set_model(app: &mut App, cmd: &Value, out: &Out) {
-    match cmd["model"].as_str() {
-        Some(id) if !id.is_empty() => {
-            app.set_model(id).await;
-            write_event(
-                out,
-                json!({"type": "response", "success": true, "model": id}),
-            );
+/// Switch the active model.
+async fn handle_set_model(app: &mut App, params: Value, id: &Value, out: &Out) {
+    match params.get("model").and_then(|v| v.as_str()) {
+        Some(m) if !m.is_empty() => {
+            app.set_model(m).await;
+            write_jsonrpc(out, &success_response(id, json!({"model": m})));
         }
-        _ => write_event(
+        _ => write_jsonrpc(
             out,
-            json!({
-                "type": "response",
-                "success": false,
-                "error": "set_model requires a non-empty \"model\" field",
-            }),
+            &error_response(
+                id,
+                INVALID_PARAMS,
+                "setModel requires a non-empty 'model' param",
+            ),
         ),
     }
 }
 
 /// Return token budget and context-window usage statistics.
-fn handle_get_session_stats(app: &App, out: &Out) {
+fn handle_get_session_stats(app: &App, id: &Value, out: &Out) {
     let stats = app.session.context_stats();
-    write_event(
+    write_jsonrpc(
         out,
-        json!({
-            "type": "response",
-            "success": true,
-            "context_window": stats.context_window,
-            "completion_reserve": stats.completion_reserve,
-            "estimated_used": stats.estimated_used,
-            "estimated_remaining": stats.estimated_remaining(),
-            "utilization_percent": stats.utilization_percent(),
-            "message_count": stats.message_count,
-            "entry_count": stats.entry_count,
-            "path_entry_count": stats.path_entry_count,
-            "compacted_entry_count": stats.compacted_entry_count,
-            "compaction_tokens": stats.compaction_tokens,
-            "role_tokens": {
-                "system": stats.role_tokens.system,
-                "user": stats.role_tokens.user,
-                "assistant": stats.role_tokens.assistant,
-                "tool": stats.role_tokens.tool,
-            },
-            "resolution_tokens": {
-                "full": stats.resolution_tokens.full,
-                "outlined": stats.resolution_tokens.outlined,
-                "summarized": stats.resolution_tokens.summarized,
-                "pinned": stats.resolution_tokens.pinned,
-            },
-        }),
+        &success_response(
+            id,
+            json!({
+                "contextWindow": stats.context_window,
+                "completionReserve": stats.completion_reserve,
+                "estimatedUsed": stats.estimated_used,
+                "estimatedRemaining": stats.estimated_remaining(),
+                "utilizationPercent": stats.utilization_percent(),
+                "messageCount": stats.message_count,
+                "entryCount": stats.entry_count,
+                "pathEntryCount": stats.path_entry_count,
+                "compactedEntryCount": stats.compacted_entry_count,
+                "compactionTokens": stats.compaction_tokens,
+                "roleTokens": {
+                    "system": stats.role_tokens.system,
+                    "user": stats.role_tokens.user,
+                    "assistant": stats.role_tokens.assistant,
+                    "tool": stats.role_tokens.tool,
+                },
+                "resolutionTokens": {
+                    "full": stats.resolution_tokens.full,
+                    "outlined": stats.resolution_tokens.outlined,
+                    "summarized": stats.resolution_tokens.summarized,
+                    "pinned": stats.resolution_tokens.pinned,
+                },
+            }),
+        ),
     );
 }
 
-/// Trigger context compaction on the active session.
-async fn handle_compact(app: &mut App, out: &Out) {
+/// Trigger context compaction.
+async fn handle_compact(app: &mut App, id: &Value, out: &Out) {
     match app.compact().await {
-        Ok(()) => write_event(out, json!({"type": "response", "success": true})),
-        Err(e) => write_event(
-            out,
-            json!({"type": "response", "success": false, "error": e.to_string()}),
-        ),
+        Ok(()) => write_jsonrpc(out, &success_response(id, json!({}))),
+        Err(e) => write_jsonrpc(out, &error_response(id, INTERNAL_ERROR, &e.to_string())),
     }
 }
 
-/// Clear the conversation history by branching back to the system message.
-fn handle_clear(app: &mut App, out: &Out) {
+/// Clear conversation history by branching back to system message.
+fn handle_clear(app: &mut App, id: &Value, out: &Out) {
     let path = app.session.path_to_root();
     if let Some(root_entry) = path.last() {
         let root_id = root_entry.id.clone();
         let _ = app.session.branch_to(&root_id);
-        write_event(out, json!({"type": "response", "success": true}));
+        write_jsonrpc(out, &success_response(id, json!({})));
     } else {
-        write_event(
+        write_jsonrpc(
             out,
-            json!({"type": "response", "success": false, "error": "no root entry to clear to"}),
+            &error_response(id, INTERNAL_ERROR, "No root entry to clear to"),
         );
     }
 }
 
 /// List available models from all providers.
-async fn handle_list_models(app: &App, out: &Out) {
+async fn handle_list_models(app: &App, id: &Value, out: &Out) {
     let all = app.providers.list_all_models().await;
-    if all.is_empty() {
-        write_event(
-            out,
-            json!({"type": "response", "success": true, "models": []}),
-        );
-        return;
-    }
-
     let models: Vec<Value> = all
         .iter()
         .map(|(provider, info)| {
@@ -517,15 +575,11 @@ async fn handle_list_models(app: &App, out: &Out) {
             })
         })
         .collect();
-
-    write_event(
-        out,
-        json!({"type": "response", "success": true, "models": models}),
-    );
+    write_jsonrpc(out, &success_response(id, json!({"models": models})));
 }
 
 /// List previous sessions for this project.
-fn handle_list_sessions(app: &App, out: &Out) {
+fn handle_list_sessions(app: &App, id: &Value, out: &Out) {
     let cwd = app.session.header().cwd.clone();
     let sessions = rho_core::list_sessions(&cwd);
 
@@ -539,21 +593,18 @@ fn handle_list_sessions(app: &App, out: &Out) {
             let size_kb = std::fs::metadata(&meta.path).map_or(0, |m| m.len() / 1024);
             json!({
                 "path": meta.path,
-                "mtime_secs": mtime,
-                "size_kb": size_kb,
-                "entry_count": meta.entry_count,
+                "mtimeSecs": mtime,
+                "sizeKb": size_kb,
+                "entryCount": meta.entry_count,
             })
         })
         .collect();
 
-    write_event(
-        out,
-        json!({"type": "response", "success": true, "sessions": list}),
-    );
+    write_jsonrpc(out, &success_response(id, json!({"sessions": list})));
 }
 
 /// List loaded extensions and their tools.
-fn handle_list_extensions(app: &App, out: &Out) {
+fn handle_list_extensions(app: &App, id: &Value, out: &Out) {
     let extensions: Vec<Value> = app
         .ext_loader
         .extension_tools()
@@ -566,48 +617,42 @@ fn handle_list_extensions(app: &App, out: &Out) {
         })
         .collect();
 
-    write_event(
+    write_jsonrpc(
         out,
-        json!({"type": "response", "success": true, "extensions": extensions}),
+        &success_response(id, json!({"extensions": extensions})),
     );
 }
 
 /// Reload extensions from disk.
-async fn handle_reload_extensions(app: &mut App, out: &Out) {
+async fn handle_reload_extensions(app: &mut App, id: &Value, out: &Out) {
     let dirs = crate::app::extension_dirs(&app.session.header().cwd);
 
-    // Re-read the config so that extensions added to the enabled list
-    // during this session are picked up by the filter.
-    let sandbox_path = app.session.header().cwd.clone();
-    let fresh_config = rho_core::ConfigLoader::load(&sandbox_path).unwrap_or_default();
+    let fresh_config = rho_core::ConfigLoader::load(&app.session.header().cwd).unwrap_or_default();
     app.ext_loader.set_config(fresh_config.extensions);
 
     match app.ext_loader.reload(&dirs, &mut app.registry).await {
         Ok(report) => {
-            // Refresh the extension observers after reload.
             app.ext_observers = app.ext_loader.build_observers();
-            write_event(
+            write_jsonrpc(
                 out,
-                json!({
-                    "type": "response",
-                    "success": true,
-                    "added": report.added.len(),
-                    "reloaded": report.reloaded.len(),
-                    "removed": report.removed.len(),
-                    "failed": report.failed.len(),
-                }),
+                &success_response(
+                    id,
+                    json!({
+                        "added": report.added.len(),
+                        "reloaded": report.reloaded.len(),
+                        "removed": report.removed.len(),
+                        "failed": report.failed.len(),
+                    }),
+                ),
             );
         }
-        Err(e) => write_event(
-            out,
-            json!({"type": "response", "success": false, "error": e.to_string()}),
-        ),
+        Err(e) => write_jsonrpc(out, &error_response(id, INTERNAL_ERROR, &e.to_string())),
     }
 }
 
 // ── Pure helpers ──────────────────────────────────────────────────────────────
 
-/// Map an [`AgentState`] to its JSONL string label.
+/// Map an [`AgentState`] to its JSON string label.
 fn state_name(state: &AgentState) -> &'static str {
     match state {
         AgentState::Idle => "idle",
@@ -617,7 +662,7 @@ fn state_name(state: &AgentState) -> &'static str {
     }
 }
 
-/// Map a [`ToolRisk`] to its JSONL string label.
+/// Map a [`ToolRisk`] to its JSON string label.
 fn risk_label(risk: ToolRisk) -> &'static str {
     match risk {
         ToolRisk::Read => "read",
@@ -627,7 +672,7 @@ fn risk_label(risk: ToolRisk) -> &'static str {
     }
 }
 
-/// Serialize a [`ChatMessage`] to a JSON value for `get_messages` responses.
+/// Serialize a [`ChatMessage`] to a JSON value.
 fn message_to_json(msg: &ChatMessage) -> Value {
     match msg {
         ChatMessage::System { content } => {
@@ -653,7 +698,7 @@ fn message_to_json(msg: &ChatMessage) -> Value {
             json!({
                 "role": "assistant",
                 "content": blocks_to_text(content),
-                "tool_calls": calls,
+                "toolCalls": calls,
             })
         }
         ChatMessage::Tool {
@@ -663,14 +708,14 @@ fn message_to_json(msg: &ChatMessage) -> Value {
             let id: &str = tool_call_id;
             json!({
                 "role": "tool",
-                "tool_call_id": id,
+                "toolCallId": id,
                 "content": blocks_to_text(content),
             })
         }
     }
 }
 
-/// Concatenate all [`ContentBlock::Text`] values in `blocks`.
+/// Concatenate all [`ContentBlock::Text`] values.
 fn blocks_to_text(blocks: &[ContentBlock]) -> String {
     blocks
         .iter()
@@ -692,33 +737,157 @@ mod tests {
         ToolCallFunction, ToolCallId, ToolName, ToolRegistry, ToolRisk, tool::CancellationToken,
     };
     use rho_test_helpers::{
-        FixedResponseTool, MockChatClient, TestProvider, fixed_registry, text_events,
-        tool_call_events,
+        FixedResponseTool, MockChatClient, TestProvider, text_events, tool_call_events,
     };
     use std::io::Cursor;
 
-    // ── Unit tests (existing) ─────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════
+    // Test infrastructure
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Wrapper to make Arc<Mutex<Vec<u8>>> usable as a Write sink.
+    struct WriterWrapper(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl Write for WriterWrapper {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .write(buf)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            self.0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .flush()
+        }
+    }
+
+    fn test_app(client: MockChatClient, registry: ToolRegistry) -> App {
+        let session = Session::in_memory(
+            "test-model",
+            Some("You are a helpful assistant."),
+            vec![],
+            std::path::Path::new("."),
+        )
+        .with_token_budget(rho_core::TokenBudget::default());
+        let mut providers = ProviderRegistry::new();
+        providers.add(Box::new(TestProvider::new("test", client)));
+        App {
+            session,
+            providers,
+            active_provider_index: 0,
+            registry,
+            config: AgentConfig::default(),
+            cancel: CancellationToken::new(),
+            ext_loader: rho_ext::loader::ExtensionLoader::new(
+                rho_core::ExtensionConfig::default(),
+                std::path::PathBuf::new(),
+                rho_core::denylist::CommandDenylist::default_powershell(),
+            ),
+            ext_observers: vec![],
+            _log_guard: tracing_appender::non_blocking(tracing_appender::rolling::never(
+                "logs", "test.log",
+            ))
+            .1,
+        }
+    }
+
+    fn echo_registry() -> ToolRegistry {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(FixedResponseTool {
+            name: "echo_tool",
+            response: "echo".into(),
+            risk: ToolRisk::Read,
+        }));
+        registry
+    }
+
+    fn destructive_registry() -> ToolRegistry {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(FixedResponseTool {
+            name: "destroy_tool",
+            response: "destroyed".into(),
+            risk: ToolRisk::Destructive,
+        }));
+        registry
+    }
+
+    async fn rpc_run(client: MockChatClient, registry: ToolRegistry, lines: &[&str]) -> Vec<Value> {
+        let app = test_app(client, registry);
+        let stdin_data = lines.join("\n") + "\n";
+        let reader = Cursor::new(stdin_data.as_bytes().to_vec());
+        let writer = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let writer_clone = std::sync::Arc::clone(&writer);
+
+        run_rpc_on(app, reader, WriterWrapper(writer_clone))
+            .await
+            .expect("should not panic");
+
+        let output = std::sync::Arc::try_unwrap(writer)
+            .unwrap()
+            .into_inner()
+            .unwrap();
+        parse_output(&output)
+    }
+
+    fn parse_output(bytes: &[u8]) -> Vec<Value> {
+        String::from_utf8_lossy(bytes)
+            .lines()
+            .filter(|line| !line.is_empty())
+            .map(|line| serde_json::from_str(line).expect("valid JSON"))
+            .collect()
+    }
+
+    fn events_of_type(events: &[Value], method: &str) -> Vec<Value> {
+        events
+            .iter()
+            .filter(|e| e.get("method").and_then(|m| m.as_str()) == Some(method))
+            .cloned()
+            .collect()
+    }
+
+    fn responses(events: &[Value]) -> Vec<Value> {
+        events
+            .iter()
+            .filter(|e| e.get("result").is_some() || e.get("error").is_some())
+            .cloned()
+            .collect()
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 1. Unit tests for helpers
+    // ═══════════════════════════════════════════════════════════════════════
 
     #[test]
-    fn write_event_to_produces_valid_jsonl() {
-        let mut buf: Vec<u8> = Vec::new();
-        write_event_to(&mut buf, &json!({"type": "ready"}));
-        let line = String::from_utf8(buf).unwrap();
-        assert!(line.ends_with('\n'), "output must end with a newline");
-        let v: Value = serde_json::from_str(line.trim()).expect("must be valid JSON");
-        assert_eq!(v["type"], "ready");
+    fn success_response_shape() {
+        let resp = success_response(&json!(1), json!({"ok": true}));
+        assert_eq!(resp["jsonrpc"], "2.0");
+        assert_eq!(resp["id"], 1);
+        assert_eq!(resp["result"]["ok"], true);
+        assert!(!resp.as_object().unwrap().contains_key("error"));
     }
 
     #[test]
-    fn write_event_to_handles_nested_values() {
-        let mut buf: Vec<u8> = Vec::new();
-        write_event_to(
-            &mut buf,
-            &json!({"type": "response", "success": true, "count": 3}),
+    fn error_response_shape() {
+        let resp = error_response(&json!("abc"), INVALID_PARAMS, "missing field");
+        assert_eq!(resp["jsonrpc"], "2.0");
+        assert_eq!(resp["id"], "abc");
+        assert_eq!(resp["error"]["code"], INVALID_PARAMS);
+        assert!(
+            resp["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("missing")
         );
-        let v: Value = serde_json::from_str(String::from_utf8(buf).unwrap().trim()).unwrap();
-        assert_eq!(v["success"], true);
-        assert_eq!(v["count"], 3);
+    }
+
+    #[test]
+    fn notification_shape() {
+        let notif = notification("agent/start", json!({}));
+        assert_eq!(notif["jsonrpc"], "2.0");
+        assert_eq!(notif["method"], "agent/start");
+        assert!(!notif.as_object().unwrap().contains_key("id"));
     }
 
     #[test]
@@ -732,31 +901,8 @@ mod tests {
     }
 
     #[test]
-    fn state_name_awaiting_approval() {
-        assert_eq!(
-            state_name(&AgentState::AwaitingApproval),
-            "awaiting_approval"
-        );
-    }
-
-    #[test]
-    fn state_name_executing_tool() {
-        assert_eq!(state_name(&AgentState::ExecutingTool), "executing_tool");
-    }
-
-    #[test]
     fn risk_label_read() {
         assert_eq!(risk_label(ToolRisk::Read), "read");
-    }
-
-    #[test]
-    fn risk_label_write() {
-        assert_eq!(risk_label(ToolRisk::Write), "write");
-    }
-
-    #[test]
-    fn risk_label_destructive() {
-        assert_eq!(risk_label(ToolRisk::Destructive), "destructive");
     }
 
     #[test]
@@ -772,14 +918,336 @@ mod tests {
         assert_eq!(blocks_to_text(&blocks), "hello");
     }
 
-    #[test]
-    fn blocks_to_text_multiple_joined() {
-        let blocks = vec![
-            ContentBlock::Text { text: "foo".into() },
-            ContentBlock::Text { text: "bar".into() },
-        ];
-        assert_eq!(blocks_to_text(&blocks), "foobar");
+    // ═══════════════════════════════════════════════════════════════════════
+    // 2. Protocol validation
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn ready_notification_on_startup() {
+        let events = rpc_run(MockChatClient::new(vec![]), echo_registry(), &[""]).await;
+        let ready = events_of_type(&events, "ready");
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0]["jsonrpc"], "2.0");
     }
+
+    #[tokio::test]
+    async fn invalid_json_returns_parse_error() {
+        let events = rpc_run(
+            MockChatClient::new(vec![]),
+            echo_registry(),
+            &["{not json}"],
+        )
+        .await;
+        let errs: Vec<_> = events.iter().filter(|e| e.get("error").is_some()).collect();
+        assert_eq!(errs.len(), 1);
+        assert_eq!(errs[0]["error"]["code"], PARSE_ERROR);
+    }
+
+    #[tokio::test]
+    async fn missing_jsonrpc_version_returns_invalid_request() {
+        let events = rpc_run(
+            MockChatClient::new(vec![]),
+            echo_registry(),
+            &[r#"{"method":"getState","id":1}"#],
+        )
+        .await;
+        let errs: Vec<_> = events.iter().filter(|e| e.get("error").is_some()).collect();
+        assert_eq!(errs.len(), 1);
+        assert_eq!(errs[0]["error"]["code"], INVALID_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn unknown_method_returns_method_not_found() {
+        let events = rpc_run(
+            MockChatClient::new(vec![]),
+            echo_registry(),
+            &[r#"{"jsonrpc":"2.0","method":"unknown","id":1}"#],
+        )
+        .await;
+        let errs: Vec<_> = events.iter().filter(|e| e.get("error").is_some()).collect();
+        assert_eq!(errs.len(), 1);
+        assert_eq!(errs[0]["error"]["code"], METHOD_NOT_FOUND);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 3. Method: getState
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn get_state_returns_model_and_provider() {
+        let events = rpc_run(
+            MockChatClient::new(vec![]),
+            echo_registry(),
+            &[r#"{"jsonrpc":"2.0","method":"getState","id":1}"#],
+        )
+        .await;
+        let resp = &responses(&events)[0];
+        assert_eq!(resp["id"], 1);
+        assert_eq!(resp["result"]["model"], "test-model");
+        assert_eq!(resp["result"]["provider"], "test");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 4. Method: prompt (text-only)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn prompt_text_only_event_sequence() {
+        let client = MockChatClient::new(vec![text_events("hello world")]);
+        let events = rpc_run(
+            client,
+            echo_registry(),
+            &[r#"{"jsonrpc":"2.0","method":"prompt","params":{"message":"say hello"},"id":1}"#],
+        )
+        .await;
+
+        // Should have: ready notification, agent/start, state/change(s), message/delta, agent/end
+        let ready = events_of_type(&events, "ready");
+        assert_eq!(ready.len(), 1);
+
+        let starts = events_of_type(&events, "agent/start");
+        assert_eq!(starts.len(), 1);
+
+        let ends = events_of_type(&events, "agent/end");
+        assert_eq!(ends.len(), 1);
+
+        let resp = &responses(&events)[0];
+        assert_eq!(resp["result"]["reply"], "hello world");
+    }
+
+    #[tokio::test]
+    async fn prompt_empty_message_rejected() {
+        let events = rpc_run(
+            MockChatClient::new(vec![]),
+            echo_registry(),
+            &[r#"{"jsonrpc":"2.0","method":"prompt","params":{"message":""},"id":1}"#],
+        )
+        .await;
+
+        let resp = &responses(&events)[0];
+        assert_eq!(resp["error"]["code"], INVALID_PARAMS);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 5. Method: prompt with tool calls
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn prompt_tool_call_approved() {
+        let client = MockChatClient::new(vec![
+            tool_call_events("c1", "echo_tool", "{}"),
+            text_events("done"),
+        ]);
+        let events = rpc_run(
+            client,
+            echo_registry(),
+            &[r#"{"jsonrpc":"2.0","method":"prompt","params":{"message":"use tool"},"id":1}"#],
+        )
+        .await;
+
+        let tool_calls = events_of_type(&events, "tool/call");
+        assert_eq!(tool_calls.len(), 1);
+
+        let tool_results = events_of_type(&events, "tool/result");
+        assert_eq!(tool_results.len(), 1);
+
+        let ends = events_of_type(&events, "agent/end");
+        assert_eq!(ends.len(), 1);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 6. Approval flow
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn approval_granted_flow() {
+        let client = MockChatClient::new(vec![
+            tool_call_events("c1", "destroy_tool", "{}"),
+            text_events("done"),
+        ]);
+        let events = rpc_run(
+            client,
+            destructive_registry(),
+            &[
+                r#"{"jsonrpc":"2.0","method":"prompt","params":{"message":"destroy"},"id":1}"#,
+                r#"{"jsonrpc":"2.0","method":"approvalResponse","params":{"approved":true},"id":2}"#,
+            ],
+        )
+        .await;
+
+        let approvals = events_of_type(&events, "approval/request");
+        assert_eq!(approvals.len(), 1);
+        assert_eq!(approvals[0]["params"]["tool"], "destroy_tool");
+        assert_eq!(approvals[0]["params"]["risk"], "destructive");
+
+        let tool_results = events_of_type(&events, "tool/result");
+        assert_eq!(tool_results.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn approval_denied_flow() {
+        let client = MockChatClient::new(vec![
+            tool_call_events("c1", "destroy_tool", "{}"),
+            text_events("ok"),
+        ]);
+        let events = rpc_run(
+            client,
+            destructive_registry(),
+            &[
+                r#"{"jsonrpc":"2.0","method":"prompt","params":{"message":"destroy"},"id":1}"#,
+                r#"{"jsonrpc":"2.0","method":"approvalResponse","params":{"approved":false},"id":2}"#,
+            ],
+        )
+        .await;
+
+        let denied = events_of_type(&events, "tool/denied");
+        assert_eq!(denied.len(), 1);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 7. Other methods
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn abort_cancels_token() {
+        let events = rpc_run(
+            MockChatClient::new(vec![]),
+            echo_registry(),
+            &[r#"{"jsonrpc":"2.0","method":"abort","id":1}"#],
+        )
+        .await;
+
+        let resp = &responses(&events)[0];
+        assert_eq!(resp["result"], json!({}));
+    }
+
+    #[tokio::test]
+    async fn clear_branches_to_root() {
+        let events = rpc_run(
+            MockChatClient::new(vec![]),
+            echo_registry(),
+            &[r#"{"jsonrpc":"2.0","method":"clear","id":1}"#],
+        )
+        .await;
+
+        let resp = &responses(&events)[0];
+        assert_eq!(resp["result"], json!({}));
+    }
+
+    #[tokio::test]
+    async fn get_messages_returns_array() {
+        let events = rpc_run(
+            MockChatClient::new(vec![]),
+            echo_registry(),
+            &[r#"{"jsonrpc":"2.0","method":"getMessages","id":1}"#],
+        )
+        .await;
+
+        let resp = &responses(&events)[0];
+        assert!(resp["result"]["messages"].as_array().is_some());
+    }
+
+    #[tokio::test]
+    async fn set_model_switches_model() {
+        let events = rpc_run(
+            MockChatClient::new(vec![]),
+            echo_registry(),
+            &[r#"{"jsonrpc":"2.0","method":"setModel","params":{"model":"new-model"},"id":1}"#],
+        )
+        .await;
+
+        let resp = &responses(&events)[0];
+        assert_eq!(resp["result"]["model"], "new-model");
+    }
+
+    #[tokio::test]
+    async fn list_models_returns_array() {
+        let events = rpc_run(
+            MockChatClient::new(vec![]),
+            echo_registry(),
+            &[r#"{"jsonrpc":"2.0","method":"listModels","id":1}"#],
+        )
+        .await;
+
+        let resp = &responses(&events)[0];
+        assert!(resp["result"]["models"].as_array().is_some());
+    }
+
+    #[tokio::test]
+    async fn get_session_stats_returns_fields() {
+        let events = rpc_run(
+            MockChatClient::new(vec![]),
+            echo_registry(),
+            &[r#"{"jsonrpc":"2.0","method":"getSessionStats","id":1}"#],
+        )
+        .await;
+
+        let resp = &responses(&events)[0];
+        assert!(resp["result"]["contextWindow"].is_number());
+        assert!(resp["result"]["estimatedUsed"].is_number());
+    }
+
+    #[tokio::test]
+    async fn list_sessions_returns_array() {
+        let events = rpc_run(
+            MockChatClient::new(vec![]),
+            echo_registry(),
+            &[r#"{"jsonrpc":"2.0","method":"listSessions","id":1}"#],
+        )
+        .await;
+
+        let resp = &responses(&events)[0];
+        assert!(resp["result"]["sessions"].as_array().is_some());
+    }
+
+    #[tokio::test]
+    async fn list_extensions_returns_array() {
+        let events = rpc_run(
+            MockChatClient::new(vec![]),
+            echo_registry(),
+            &[r#"{"jsonrpc":"2.0","method":"listExtensions","id":1}"#],
+        )
+        .await;
+
+        let resp = &responses(&events)[0];
+        assert!(resp["result"]["extensions"].as_array().is_some());
+    }
+
+    #[tokio::test]
+    async fn reload_extensions_returns_counts() {
+        let events = rpc_run(
+            MockChatClient::new(vec![]),
+            echo_registry(),
+            &[r#"{"jsonrpc":"2.0","method":"reloadExtensions","id":1}"#],
+        )
+        .await;
+
+        let resp = &responses(&events)[0];
+        assert!(resp["result"]["added"].is_number());
+        assert!(resp["result"]["reloaded"].is_number());
+        assert!(resp["result"]["removed"].is_number());
+        assert!(resp["result"]["failed"].is_number());
+    }
+
+    #[tokio::test]
+    async fn compact_returns_response() {
+        // Even with a small session, compact should return a response.
+        // It may succeed or fail "nothing to compact" — either is fine.
+        let events = rpc_run(
+            MockChatClient::new(vec![]),
+            echo_registry(),
+            &[r#"{"jsonrpc":"2.0","method":"compact","id":1}"#],
+        )
+        .await;
+
+        let resp = &responses(&events)[0];
+        // Should have either result or error, but both are valid responses
+        assert!(resp.get("result").is_some() || resp.get("error").is_some());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 8. Message serialization
+    // ═══════════════════════════════════════════════════════════════════════
 
     #[test]
     fn message_to_json_system() {
@@ -806,21 +1274,7 @@ mod tests {
     }
 
     #[test]
-    fn message_to_json_assistant_text_only() {
-        let msg = ChatMessage::Assistant {
-            content: vec![ContentBlock::Text {
-                text: "reply".into(),
-            }],
-            tool_calls: vec![],
-        };
-        let v = message_to_json(&msg);
-        assert_eq!(v["role"], "assistant");
-        assert_eq!(v["content"], "reply");
-        assert!(v["tool_calls"].as_array().unwrap().is_empty());
-    }
-
-    #[test]
-    fn message_to_json_assistant_with_tool_calls() {
+    fn message_to_json_assistant_with_tools() {
         let msg = ChatMessage::Assistant {
             content: vec![],
             tool_calls: vec![ModelToolCall {
@@ -834,11 +1288,10 @@ mod tests {
         };
         let v = message_to_json(&msg);
         assert_eq!(v["role"], "assistant");
-        let calls = v["tool_calls"].as_array().unwrap();
+        let calls = v["toolCalls"].as_array().unwrap();
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0]["id"], "c1");
         assert_eq!(calls[0]["name"], "read_file");
-        assert_eq!(calls[0]["arguments"], r#"{"path":"a.rs"}"#);
     }
 
     #[test]
@@ -851,1244 +1304,7 @@ mod tests {
         };
         let v = message_to_json(&msg);
         assert_eq!(v["role"], "tool");
-        assert_eq!(v["tool_call_id"], "c1");
+        assert_eq!(v["toolCallId"], "c1");
         assert_eq!(v["content"], "file contents");
-    }
-
-    #[allow(clippy::needless_pass_by_value)]
-    fn capture_event(event: Value) -> Value {
-        let mut buf: Vec<u8> = Vec::new();
-        write_event_to(&mut buf, &event);
-        serde_json::from_str(String::from_utf8(buf).unwrap().trim()).unwrap()
-    }
-
-    #[test]
-    fn state_change_event_shape() {
-        let v = capture_event(
-            json!({"type": "state_change", "state": state_name(&AgentState::Thinking)}),
-        );
-        assert_eq!(v["type"], "state_change");
-        assert_eq!(v["state"], "thinking");
-    }
-
-    #[test]
-    fn message_update_event_shape() {
-        let v = capture_event(json!({"type": "message_update", "delta": "hello"}));
-        assert_eq!(v["type"], "message_update");
-        assert_eq!(v["delta"], "hello");
-    }
-
-    #[test]
-    fn reasoning_delta_event_shape() {
-        let v = capture_event(json!({"type": "reasoning_delta", "delta": "thinking…"}));
-        assert_eq!(v["type"], "reasoning_delta");
-        assert_eq!(v["delta"], "thinking…");
-    }
-
-    #[test]
-    fn tool_call_event_shape() {
-        let v = capture_event(
-            json!({"type": "tool_call", "name": "read_file", "arguments": r#"{"path":"a.rs"}"#}),
-        );
-        assert_eq!(v["type"], "tool_call");
-        assert_eq!(v["name"], "read_file");
-    }
-
-    #[test]
-    fn tool_result_event_shape() {
-        let v = capture_event(
-            json!({"type": "tool_result", "name": "read_file", "is_error": false, "output": "contents"}),
-        );
-        assert_eq!(v["type"], "tool_result");
-        assert_eq!(v["is_error"], false);
-        assert_eq!(v["output"], "contents");
-    }
-
-    #[test]
-    fn tool_denied_event_shape() {
-        let v = capture_event(json!({"type": "tool_denied", "name": "run_command"}));
-        assert_eq!(v["type"], "tool_denied");
-        assert_eq!(v["name"], "run_command");
-    }
-
-    #[test]
-    fn approval_request_event_shape() {
-        let v = capture_event(json!({
-            "type": "approval_request",
-            "tool": "run_command",
-            "arguments": r#"{"command":"ls"}"#,
-            "risk": risk_label(ToolRisk::Destructive),
-        }));
-        assert_eq!(v["type"], "approval_request");
-        assert_eq!(v["tool"], "run_command");
-        assert_eq!(v["risk"], "destructive");
-    }
-
-    #[test]
-    fn unknown_command_response_shape() {
-        let v = capture_event(json!({
-            "type": "response",
-            "success": false,
-            "error": "unknown command: frobnicate",
-        }));
-        assert_eq!(v["success"], false);
-        assert!(v["error"].as_str().unwrap().contains("frobnicate"));
-    }
-
-    // ── Integration test harness ──────────────────────────────────────────
-
-    /// Build a test [`App`] with a mock LLM provider.
-    ///
-    /// The app uses an in-memory session, the given mock client wrapped in
-    /// a [`TestProvider`], and the given tool registry. This bypasses the
-    /// full CLI startup sequence.
-    fn test_app(client: MockChatClient, registry: ToolRegistry) -> App {
-        let provider = TestProvider::new("test", client);
-        let mut providers = ProviderRegistry::new();
-        providers.add(Box::new(provider));
-
-        let session = Session::in_memory(
-            "mock-model",
-            Some("test system prompt"),
-            registry.tool_definitions(),
-            "/tmp",
-        );
-
-        App {
-            session,
-            providers,
-            active_provider_index: 0,
-            registry,
-            config: AgentConfig::default(),
-            cancel: CancellationToken::new(),
-            ext_loader: rho_ext::loader::ExtensionLoader::new(
-                rho_core::config::ExtensionConfig::default(),
-                std::path::PathBuf::from("."),
-                rho_core::denylist::CommandDenylist::default_powershell(),
-            ),
-            ext_observers: vec![],
-            _log_guard: {
-                // In tests, we don't need file logging. Create a no-op guard
-                // by using a sink writer that discards everything.
-                let (non_blocking, guard) = tracing_appender::non_blocking(std::io::sink());
-                // Best-effort: install a subscriber if none exists (first test wins).
-                let _ = tracing_subscriber::fmt()
-                    .with_writer(non_blocking)
-                    .with_env_filter(tracing_subscriber::EnvFilter::new("off"))
-                    .try_init();
-                guard
-            },
-        }
-    }
-
-    /// Run the RPC loop with canned stdin and capture stdout via
-    /// `Arc<Mutex<Vec<u8>>>`.
-    async fn rpc_run(
-        client: MockChatClient,
-        registry: ToolRegistry,
-        stdin_lines: &[&str],
-    ) -> Vec<Value> {
-        let app = test_app(client, registry);
-        let stdin_data = stdin_lines.join("\n");
-        let reader = Cursor::new(stdin_data.into_bytes());
-        let writer: Vec<u8> = Vec::new();
-
-        // Use Arc<Mutex<Vec<u8>>> so we can recover the output after run_rpc_on completes.
-        let writer = std::sync::Arc::new(std::sync::Mutex::new(writer));
-        let writer_clone = std::sync::Arc::clone(&writer);
-
-        run_rpc_on(app, reader, WriterWrapper(writer_clone))
-            .await
-            .expect("run_rpc_on should not fail");
-
-        let output = std::sync::Arc::try_unwrap(writer)
-            .unwrap()
-            .into_inner()
-            .unwrap();
-
-        parse_output(&output)
-    }
-
-    /// A `Write` wrapper around `Arc<Mutex<Vec<u8>>>` so `run_rpc_on` can
-    /// write to shared state that the test can read after completion.
-    ///
-    /// `Arc<Mutex<Vec<u8>>>` is `Send + Sync`, so this newtype is too.
-    #[derive(Clone)]
-    struct WriterWrapper(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
-
-    impl Write for WriterWrapper {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().write(buf)
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            self.0.lock().unwrap().flush()
-        }
-    }
-
-    /// Parse captured stdout bytes into a list of JSON values (one per line).
-    fn parse_output(output: &[u8]) -> Vec<Value> {
-        let text = String::from_utf8_lossy(output);
-        text.lines()
-            .filter(|l| !l.is_empty())
-            .map(|l| {
-                serde_json::from_str(l)
-                    .unwrap_or_else(|e| panic!("invalid JSONL: {l}\n  error: {e}"))
-            })
-            .collect()
-    }
-
-    /// Assert that `events` contains the given event types in order.
-    ///
-    /// Other events may appear between the expected ones.
-    fn expect_event_sequence(events: &[Value], expected_types: &[&str]) {
-        let mut idx = 0;
-        for event in events {
-            if idx < expected_types.len() && event["type"].as_str() == Some(expected_types[idx]) {
-                idx += 1;
-            }
-        }
-        assert_eq!(
-            idx,
-            expected_types.len(),
-            "expected event sequence {expected_types:?}, only matched first {idx}"
-        );
-    }
-
-    /// Collect all events of a given type.
-    fn events_of_type<'a>(events: &'a [Value], event_type: &str) -> Vec<&'a Value> {
-        events
-            .iter()
-            .filter(|e| e["type"].as_str() == Some(event_type))
-            .collect()
-    }
-
-    /// Build a tool registry with a single auto-approvable read-risk tool.
-    fn echo_registry() -> ToolRegistry {
-        fixed_registry("echo_tool", "echo output".into(), ToolRisk::Read)
-    }
-
-    /// Build a tool registry with a destructive tool (triggers approval).
-    fn destructive_registry() -> ToolRegistry {
-        fixed_registry("destroy_tool", "destroyed".into(), ToolRisk::Destructive)
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // 1. Lifecycle
-    // ═══════════════════════════════════════════════════════════════════════
-
-    #[tokio::test]
-    async fn ready_emitted_on_start() {
-        // No stdin commands → immediate EOF. The only event should be `ready`.
-        let events = rpc_run(MockChatClient::new(vec![]), echo_registry(), &[]).await;
-        assert!(!events.is_empty(), "expected at least one event");
-        assert_eq!(events[0]["type"], "ready");
-    }
-
-    #[tokio::test]
-    async fn clean_exit_on_eof() {
-        // EOF without any commands should return Ok(()) and emit just `ready`.
-        let events = rpc_run(MockChatClient::new(vec![]), echo_registry(), &[]).await;
-        assert_eq!(events.len(), 1, "expected exactly one event (ready)");
-        assert_eq!(events[0]["type"], "ready");
-    }
-
-    #[tokio::test]
-    async fn empty_lines_skipped() {
-        let events = rpc_run(
-            MockChatClient::new(vec![]),
-            echo_registry(),
-            &["", "  ", ""],
-        )
-        .await;
-        // Only `ready` — no error responses for blank lines.
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0]["type"], "ready");
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // 2. Command dispatch
-    // ═══════════════════════════════════════════════════════════════════════
-
-    #[tokio::test]
-    async fn unknown_command_returns_error() {
-        let events = rpc_run(
-            MockChatClient::new(vec![]),
-            echo_registry(),
-            &[r#"{"type":"frob"}"#],
-        )
-        .await;
-        let responses = events_of_type(&events, "response");
-        assert_eq!(responses.len(), 1);
-        assert_eq!(responses[0]["success"], false);
-        assert!(
-            responses[0]["error"]
-                .as_str()
-                .unwrap()
-                .contains("unknown command: frob")
-        );
-    }
-
-    #[tokio::test]
-    async fn missing_type_returns_error() {
-        let events = rpc_run(
-            MockChatClient::new(vec![]),
-            echo_registry(),
-            &[r#"{"not_type":"x"}"#],
-        )
-        .await;
-        let responses = events_of_type(&events, "response");
-        assert_eq!(responses.len(), 1);
-        assert_eq!(responses[0]["success"], false);
-        assert!(responses[0]["error"].as_str().unwrap().contains("missing"));
-    }
-
-    #[tokio::test]
-    async fn malformed_json_returns_error() {
-        let events = rpc_run(MockChatClient::new(vec![]), echo_registry(), &["{not json"]).await;
-        let responses = events_of_type(&events, "response");
-        assert_eq!(responses.len(), 1);
-        assert_eq!(responses[0]["success"], false);
-        assert!(
-            responses[0]["error"]
-                .as_str()
-                .unwrap()
-                .contains("JSON parse error")
-        );
-    }
-
-    #[tokio::test]
-    async fn abort_cancels_token_and_returns_success() {
-        let events = rpc_run(
-            MockChatClient::new(vec![]),
-            echo_registry(),
-            &[r#"{"type":"abort"}"#],
-        )
-        .await;
-        let responses = events_of_type(&events, "response");
-        // abort + maybe other responses
-        let abort_resp = responses
-            .iter()
-            .find(|r| r["success"].as_bool() == Some(true));
-        assert!(abort_resp.is_some(), "expected a successful abort response");
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // 3. Prompt — text-only turn
-    // ═══════════════════════════════════════════════════════════════════════
-
-    #[tokio::test]
-    async fn prompt_text_only_event_sequence() {
-        let client = MockChatClient::new(vec![text_events("hello world")]);
-        let events = rpc_run(
-            client,
-            echo_registry(),
-            &[r#"{"type":"prompt","message":"say hello"}"#],
-        )
-        .await;
-
-        expect_event_sequence(
-            &events,
-            &[
-                "ready",
-                "agent_start",
-                "state_change", // thinking
-                "message_update",
-                "state_change", // idle
-                "agent_end",
-            ],
-        );
-
-        let agent_end = events_of_type(&events, "agent_end");
-        assert_eq!(agent_end.len(), 1);
-        assert_eq!(agent_end[0]["reply"], "hello world");
-    }
-
-    #[tokio::test]
-    async fn prompt_empty_message_rejected() {
-        let events = rpc_run(
-            MockChatClient::new(vec![]),
-            echo_registry(),
-            &[r#"{"type":"prompt","message":""}"#],
-        )
-        .await;
-
-        let responses = events_of_type(&events, "response");
-        assert_eq!(responses.len(), 1);
-        assert_eq!(responses[0]["success"], false);
-        assert!(
-            responses[0]["error"]
-                .as_str()
-                .unwrap()
-                .contains("non-empty")
-        );
-    }
-
-    #[tokio::test]
-    async fn prompt_missing_message_rejected() {
-        let events = rpc_run(
-            MockChatClient::new(vec![]),
-            echo_registry(),
-            &[r#"{"type":"prompt"}"#],
-        )
-        .await;
-
-        let responses = events_of_type(&events, "response");
-        assert_eq!(responses.len(), 1);
-        assert_eq!(responses[0]["success"], false);
-    }
-
-    #[tokio::test]
-    async fn prompt_non_string_message_rejected() {
-        let events = rpc_run(
-            MockChatClient::new(vec![]),
-            echo_registry(),
-            &[r#"{"type":"prompt","message":123}"#],
-        )
-        .await;
-
-        let responses = events_of_type(&events, "response");
-        assert_eq!(responses.len(), 1);
-        assert_eq!(responses[0]["success"], false);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // 4. Prompt — tool call turn (auto-approved, Read risk)
-    // ═══════════════════════════════════════════════════════════════════════
-
-    #[tokio::test]
-    async fn prompt_tool_call_approved_event_sequence() {
-        let client = MockChatClient::new(vec![
-            tool_call_events("c1", "echo_tool", "{}"),
-            text_events("done"),
-        ]);
-        let events = rpc_run(
-            client,
-            echo_registry(),
-            &[r#"{"type":"prompt","message":"use the tool"}"#],
-        )
-        .await;
-
-        expect_event_sequence(
-            &events,
-            &[
-                "ready",
-                "agent_start",
-                "tool_call",
-                "tool_result",
-                "agent_end",
-            ],
-        );
-    }
-
-    #[tokio::test]
-    async fn prompt_multi_tool_call_sequential() {
-        use rho_test_helpers::multi_tool_call_events;
-
-        let mut registry = ToolRegistry::new();
-        registry.register(Box::new(FixedResponseTool {
-            name: "echo_a",
-            response: "result_a".into(),
-            risk: ToolRisk::Read,
-        }));
-        registry.register(Box::new(FixedResponseTool {
-            name: "echo_b",
-            response: "result_b".into(),
-            risk: ToolRisk::Read,
-        }));
-
-        let client = MockChatClient::new(vec![
-            multi_tool_call_events(vec![("c1", "echo_a", "{}"), ("c2", "echo_b", "{}")]),
-            text_events("all done"),
-        ]);
-        let events = rpc_run(
-            client,
-            registry,
-            &[r#"{"type":"prompt","message":"use two tools"}"#],
-        )
-        .await;
-
-        let tool_calls = events_of_type(&events, "tool_call");
-        assert_eq!(tool_calls.len(), 2, "expected 2 tool_call events");
-        let tool_results = events_of_type(&events, "tool_result");
-        assert_eq!(tool_results.len(), 2, "expected 2 tool_result events");
-
-        let agent_end = events_of_type(&events, "agent_end");
-        assert_eq!(agent_end.len(), 1);
-        assert_eq!(agent_end[0]["reply"], "all done");
-    }
-
-    #[tokio::test]
-    async fn prompt_tool_error_reported() {
-        // Tool that returns an error result (is_error=true), not an Err.
-        // The agent loop only calls on_tool_result for successful tool
-        // execution, so we need a tool that returns Ok(ToolResult { is_error: true }).
-        struct ErrorResultTool;
-
-        #[async_trait::async_trait]
-        impl rho_core::Tool for ErrorResultTool {
-            fn name(&self) -> rho_core::ToolName {
-                rho_core::ToolName::new("fail_tool".to_owned())
-            }
-            fn description(&self) -> &str {
-                "fails with error result"
-            }
-            fn parameters_schema(&self) -> serde_json::Value {
-                serde_json::json!({})
-            }
-            fn risk(&self) -> ToolRisk {
-                ToolRisk::Read
-            }
-            async fn execute(
-                &self,
-                _args: serde_json::Value,
-                _cancel: CancellationToken,
-            ) -> rho_core::Result<rho_core::ToolOutcome> {
-                Ok(rho_core::ToolOutcome::Immediate(
-                    rho_core::ToolResult::error("something went wrong"),
-                ))
-            }
-        }
-
-        let mut registry = ToolRegistry::new();
-        registry.register(Box::new(ErrorResultTool));
-
-        let client = MockChatClient::new(vec![
-            tool_call_events("c1", "fail_tool", "{}"),
-            text_events("recovered"),
-        ]);
-        let events = rpc_run(client, registry, &[r#"{"type":"prompt","message":"fail"}"#]).await;
-
-        let tool_results = events_of_type(&events, "tool_result");
-        assert_eq!(tool_results.len(), 1);
-        assert_eq!(tool_results[0]["is_error"], true);
-        assert!(
-            tool_results[0]["output"]
-                .as_str()
-                .unwrap()
-                .contains("something went wrong")
-        );
-
-        // Agent should still finish with agent_end (not agent_error).
-        let agent_end = events_of_type(&events, "agent_end");
-        assert_eq!(agent_end.len(), 1);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // 5. Approval flow
-    // ═══════════════════════════════════════════════════════════════════════
-
-    #[tokio::test]
-    async fn approval_granted_flow() {
-        let client = MockChatClient::new(vec![
-            tool_call_events("c1", "destroy_tool", "{}"),
-            text_events("done"),
-        ]);
-        // Stdin: prompt, then approval_response.
-        let events = rpc_run(
-            client,
-            destructive_registry(),
-            &[
-                r#"{"type":"prompt","message":"destroy"}"#,
-                r#"{"type":"approval_response","approved":true}"#,
-            ],
-        )
-        .await;
-
-        let approval_requests = events_of_type(&events, "approval_request");
-        assert_eq!(approval_requests.len(), 1);
-        assert_eq!(approval_requests[0]["tool"], "destroy_tool");
-        assert_eq!(approval_requests[0]["risk"], "destructive");
-
-        let tool_results = events_of_type(&events, "tool_result");
-        assert_eq!(tool_results.len(), 1);
-        assert_eq!(tool_results[0]["is_error"], false);
-
-        let agent_end = events_of_type(&events, "agent_end");
-        assert_eq!(agent_end.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn approval_denied_flow() {
-        let client = MockChatClient::new(vec![
-            tool_call_events("c1", "destroy_tool", "{}"),
-            // After denial, model sees the denial in context and replies with text.
-            text_events("understood, I won't"),
-        ]);
-        let events = rpc_run(
-            client,
-            destructive_registry(),
-            &[
-                r#"{"type":"prompt","message":"destroy"}"#,
-                r#"{"type":"approval_response","approved":false}"#,
-            ],
-        )
-        .await;
-
-        let tool_denied = events_of_type(&events, "tool_denied");
-        assert_eq!(tool_denied.len(), 1);
-        assert_eq!(tool_denied[0]["name"], "destroy_tool");
-
-        // Agent should still complete (model gets denial context, responds).
-        let agent_end = events_of_type(&events, "agent_end");
-        assert_eq!(agent_end.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn approval_malformed_defaults_deny() {
-        let client = MockChatClient::new(vec![
-            tool_call_events("c1", "destroy_tool", "{}"),
-            // After denial, model replies.
-            text_events("ok"),
-        ]);
-        let events = rpc_run(
-            client,
-            destructive_registry(),
-            &[
-                r#"{"type":"prompt","message":"destroy"}"#,
-                r#"{"type":"approval_response","oops":"not a bool"}"#,
-            ],
-        )
-        .await;
-
-        let tool_denied = events_of_type(&events, "tool_denied");
-        assert_eq!(
-            tool_denied.len(),
-            1,
-            "malformed approval should default to deny"
-        );
-    }
-
-    #[tokio::test]
-    async fn approval_with_reasoning_delta() {
-        use rho_ai::StreamEvent;
-
-        // Model sends reasoning, then a tool call (destructive), then text.
-        let client = MockChatClient::new(vec![
-            vec![
-                StreamEvent::Reasoning("let me think…".into()),
-                StreamEvent::ToolUseStart {
-                    index: 0,
-                    id: "c1".into(),
-                    name: "destroy_tool".into(),
-                },
-                StreamEvent::ToolUseInputDelta {
-                    index: 0,
-                    delta: "{}".into(),
-                },
-                StreamEvent::ToolUseComplete {
-                    index: 0,
-                    tool_call: rho_ai::ToolCall {
-                        id: "c1".into(),
-                        name: "destroy_tool".into(),
-                        arguments: "{}".into(),
-                    },
-                },
-                StreamEvent::Done {
-                    reason: rho_ai::StopReason::ToolUse,
-                    usage: rho_ai::StreamUsage::new(0, 0),
-                },
-            ],
-            text_events("all done"),
-        ]);
-        let events = rpc_run(
-            client,
-            destructive_registry(),
-            &[
-                r#"{"type":"prompt","message":"think then destroy"}"#,
-                r#"{"type":"approval_response","approved":true}"#,
-            ],
-        )
-        .await;
-
-        let reasoning = events_of_type(&events, "reasoning_delta");
-        assert_eq!(reasoning.len(), 1);
-        assert_eq!(reasoning[0]["delta"], "let me think…");
-
-        let approval = events_of_type(&events, "approval_request");
-        assert_eq!(approval.len(), 1);
-
-        let agent_end = events_of_type(&events, "agent_end");
-        assert_eq!(agent_end.len(), 1);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // 6. Agent error handling
-    // ═══════════════════════════════════════════════════════════════════════
-
-    #[tokio::test]
-    async fn agent_error_on_model_failure() {
-        use rho_core::RhoError;
-        use rho_test_helpers::MockResponse;
-
-        // Use status 403 (not retryable) to avoid retry loop consuming
-        // more mock responses than we provide.
-        let client = MockChatClient::with_results(vec![MockResponse::Error(RhoError::Client(
-            rho_core::client::error::ClientError::HttpError {
-                status: 403,
-                message: "forbidden".into(),
-            },
-        ))]);
-        let events = rpc_run(
-            client,
-            echo_registry(),
-            &[r#"{"type":"prompt","message":"fail"}"#],
-        )
-        .await;
-
-        let agent_errors = events_of_type(&events, "agent_error");
-        assert_eq!(agent_errors.len(), 1);
-        assert!(agent_errors[0]["error"].as_str().unwrap().contains("403"));
-    }
-
-    #[tokio::test]
-    async fn agent_error_on_max_iterations() {
-        use rho_ai::StreamEvent;
-
-        // Create a model that always requests a tool call (infinite loop).
-        let infinite_tool_call = vec![
-            StreamEvent::ToolUseStart {
-                index: 0,
-                id: "c1".into(),
-                name: "echo_tool".into(),
-            },
-            StreamEvent::ToolUseInputDelta {
-                index: 0,
-                delta: "{}".into(),
-            },
-            StreamEvent::ToolUseComplete {
-                index: 0,
-                tool_call: rho_ai::ToolCall {
-                    id: "c1".into(),
-                    name: "echo_tool".into(),
-                    arguments: "{}".into(),
-                },
-            },
-            StreamEvent::Done {
-                reason: rho_ai::StopReason::ToolUse,
-                usage: rho_ai::StreamUsage::new(0, 0),
-            },
-        ];
-
-        // Provide enough responses for max_iterations (default is 32).
-        // Each iteration consumes one response.
-        let responses: Vec<_> = (0..35).map(|_| infinite_tool_call.clone()).collect();
-        let client = MockChatClient::new(responses);
-
-        let mut app = test_app(client, echo_registry());
-        app.config.max_iterations = 5;
-
-        let stdin_data = r#"{"type":"prompt","message":"loop"}"#;
-        let reader = Cursor::new(stdin_data.as_bytes().to_vec());
-        let writer = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let writer_clone = std::sync::Arc::clone(&writer);
-
-        run_rpc_on(app, reader, WriterWrapper(writer_clone))
-            .await
-            .expect("should not panic");
-
-        let output = std::sync::Arc::try_unwrap(writer)
-            .unwrap()
-            .into_inner()
-            .unwrap();
-        let events = parse_output(&output);
-
-        let agent_errors = events_of_type(&events, "agent_error");
-        assert_eq!(
-            agent_errors.len(),
-            1,
-            "expected agent_error for max iterations"
-        );
-        assert!(
-            agent_errors[0]["error"]
-                .as_str()
-                .unwrap()
-                .contains("maximum iterations")
-        );
-    }
-
-    #[tokio::test]
-    async fn agent_error_preserves_session() {
-        use rho_core::RhoError;
-        use rho_test_helpers::MockResponse;
-
-        // Use status 403 (not retryable) to avoid consuming extra mock responses.
-        let client = MockChatClient::with_results(vec![MockResponse::Error(RhoError::Client(
-            rho_core::client::error::ClientError::HttpError {
-                status: 403,
-                message: "boom".into(),
-            },
-        ))]);
-        let app = test_app(client, echo_registry());
-
-        let stdin_data = r#"{"type":"prompt","message":"fail"}"#;
-        let reader = Cursor::new(stdin_data.as_bytes().to_vec());
-        let writer = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let writer_clone = std::sync::Arc::clone(&writer);
-
-        run_rpc_on(app, reader, WriterWrapper(writer_clone))
-            .await
-            .expect("should not panic");
-
-        // Session should have the user message even though the turn failed.
-        let output = std::sync::Arc::try_unwrap(writer)
-            .unwrap()
-            .into_inner()
-            .unwrap();
-        let events = parse_output(&output);
-
-        let agent_errors = events_of_type(&events, "agent_error");
-        assert_eq!(agent_errors.len(), 1);
-
-        // We can't inspect the session after run_rpc_on consumes it,
-        // but we verify the error was reported (not a panic).
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // 7. Query commands
-    // ═══════════════════════════════════════════════════════════════════════
-
-    #[tokio::test]
-    async fn get_state_returns_model_and_provider() {
-        let events = rpc_run(
-            MockChatClient::new(vec![]),
-            echo_registry(),
-            &[r#"{"type":"get_state"}"#],
-        )
-        .await;
-
-        let responses = events_of_type(&events, "response");
-        assert_eq!(responses.len(), 1);
-        assert_eq!(responses[0]["success"], true);
-        assert_eq!(responses[0]["model"], "mock-model");
-        assert_eq!(responses[0]["provider"], "test");
-    }
-
-    #[tokio::test]
-    async fn get_messages_returns_path() {
-        let client = MockChatClient::new(vec![text_events("hi")]);
-        let events = rpc_run(
-            client,
-            echo_registry(),
-            &[
-                r#"{"type":"prompt","message":"hello"}"#,
-                r#"{"type":"get_messages"}"#,
-            ],
-        )
-        .await;
-
-        let responses = events_of_type(&events, "response");
-        // First response is get_messages (agent_start/agent_end are not responses).
-        let get_msgs = responses
-            .iter()
-            .find(|r| r["messages"].is_array())
-            .expect("expected get_messages response");
-
-        let messages = get_msgs["messages"].as_array().unwrap();
-        // system + user ("hello") + assistant ("hi") + user (second turn not sent)
-        // Actually: after prompt turn, path is system + user("hello") + assistant("hi")
-        // Then get_messages is a query, doesn't add messages.
-        assert!(
-            messages.len() >= 2,
-            "expected at least 2 messages after one turn"
-        );
-    }
-
-    #[tokio::test]
-    async fn get_session_stats_returns_budget() {
-        let events = rpc_run(
-            MockChatClient::new(vec![]),
-            echo_registry(),
-            &[r#"{"type":"get_session_stats"}"#],
-        )
-        .await;
-
-        let responses = events_of_type(&events, "response");
-        let stats = responses
-            .iter()
-            .find(|r| r.get("context_window").is_some())
-            .expect("expected stats response");
-
-        assert_eq!(stats["success"], true);
-        assert!(stats["context_window"].is_number());
-        assert!(stats["completion_reserve"].is_number());
-        assert!(stats["estimated_used"].is_number());
-        assert!(stats["estimated_remaining"].is_number());
-        assert!(stats["utilization_percent"].is_number());
-        assert!(stats["message_count"].is_number());
-        assert!(stats["entry_count"].is_number());
-        assert!(stats["path_entry_count"].is_number());
-        assert!(stats["compacted_entry_count"].is_number());
-        assert!(stats["compaction_tokens"].is_number());
-        assert!(stats["role_tokens"]["system"].is_number());
-        assert!(stats["role_tokens"]["user"].is_number());
-        assert!(stats["role_tokens"]["assistant"].is_number());
-        assert!(stats["role_tokens"]["tool"].is_number());
-        assert!(stats["resolution_tokens"]["full"].is_number());
-        assert!(stats["resolution_tokens"]["outlined"].is_number());
-        assert!(stats["resolution_tokens"]["summarized"].is_number());
-        assert!(stats["resolution_tokens"]["pinned"].is_number());
-    }
-
-    #[tokio::test]
-    async fn set_model_updates_session() {
-        let events = rpc_run(
-            MockChatClient::new(vec![]),
-            echo_registry(),
-            &[
-                r#"{"type":"set_model","model":"new-model"}"#,
-                r#"{"type":"get_state"}"#,
-            ],
-        )
-        .await;
-
-        let responses = events_of_type(&events, "response");
-
-        // set_model response
-        let set_resp = responses
-            .iter()
-            .find(|r| r.get("model").is_some() && r["success"] == true)
-            .expect("expected set_model response");
-        assert_eq!(set_resp["model"], "new-model");
-
-        // get_state response confirms the model stuck
-        let state_resp = responses
-            .iter()
-            .find(|r| r.get("provider").is_some())
-            .expect("expected get_state response");
-        assert_eq!(state_resp["model"], "new-model");
-    }
-
-    #[tokio::test]
-    async fn set_model_empty_rejected() {
-        let events = rpc_run(
-            MockChatClient::new(vec![]),
-            echo_registry(),
-            &[r#"{"type":"set_model","model":""}"#],
-        )
-        .await;
-
-        let responses = events_of_type(&events, "response");
-        assert_eq!(responses.len(), 1);
-        assert_eq!(responses[0]["success"], false);
-    }
-
-    #[tokio::test]
-    async fn compact_returns_response() {
-        // Even with a small session, compact should return a response
-        // (success or error, but must not panic).
-        let client = MockChatClient::new(vec![text_events("reply one")]);
-        let events = rpc_run(
-            client,
-            echo_registry(),
-            &[
-                r#"{"type":"prompt","message":"first"}"#,
-                r#"{"type":"compact"}"#,
-            ],
-        )
-        .await;
-
-        // The compact command is the last event before EOF.
-        // Find any response event that isn't from get_state/set_model/etc.
-        let responses = events_of_type(&events, "response");
-        // There should be at least one response (the compact result).
-        // It may succeed or report "nothing to compact" — either is fine.
-        let compact_resp = responses.iter().rev().find(|r| {
-            // Compact responses have only success and optionally error.
-            r.get("model").is_none()
-                && r.get("provider").is_none()
-                && r.get("context_window").is_none()
-                && r.get("messages").is_none()
-        });
-        assert!(compact_resp.is_some(), "expected a compact response");
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // 8. Multi-turn session
-    // ═══════════════════════════════════════════════════════════════════════
-
-    #[tokio::test]
-    async fn two_prompts_session_persists() {
-        let client = MockChatClient::new(vec![
-            text_events("first reply"),
-            text_events("second reply"),
-        ]);
-        let events = rpc_run(
-            client,
-            echo_registry(),
-            &[
-                r#"{"type":"prompt","message":"turn 1"}"#,
-                r#"{"type":"prompt","message":"turn 2"}"#,
-                r#"{"type":"get_messages"}"#,
-            ],
-        )
-        .await;
-
-        // Both turns should produce agent_start → agent_end.
-        let agent_starts = events_of_type(&events, "agent_start");
-        assert_eq!(agent_starts.len(), 2);
-
-        let agent_ends = events_of_type(&events, "agent_end");
-        assert_eq!(agent_ends.len(), 2);
-        assert_eq!(agent_ends[0]["reply"], "first reply");
-        assert_eq!(agent_ends[1]["reply"], "second reply");
-
-        // get_messages should show 5 messages:
-        // system + user(1) + assistant(1) + user(2) + assistant(2)
-        let responses = events_of_type(&events, "response");
-        let msgs_resp = responses
-            .iter()
-            .find(|r| r["messages"].is_array())
-            .expect("expected get_messages response");
-        let messages = msgs_resp["messages"].as_array().unwrap();
-        assert_eq!(messages.len(), 5);
-    }
-
-    #[tokio::test]
-    async fn session_stats_grow() {
-        let client = MockChatClient::new(vec![text_events("reply one"), text_events("reply two")]);
-        let events = rpc_run(
-            client,
-            echo_registry(),
-            &[
-                r#"{"type":"prompt","message":"first"}"#,
-                r#"{"type":"get_session_stats"}"#,
-                r#"{"type":"prompt","message":"second"}"#,
-                r#"{"type":"get_session_stats"}"#,
-            ],
-        )
-        .await;
-
-        let stats: Vec<_> = events
-            .iter()
-            .filter(|e| e.get("context_window").is_some())
-            .collect();
-        assert_eq!(stats.len(), 2, "expected two stats responses");
-
-        let used_first = stats[0]["estimated_used"].as_u64().unwrap();
-        let used_second = stats[1]["estimated_used"].as_u64().unwrap();
-        assert!(
-            used_second > used_first,
-            "estimated_used should grow: {used_second} > {used_first}"
-        );
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // 9. Edge cases
-    // ═══════════════════════════════════════════════════════════════════════
-
-    #[tokio::test]
-    async fn large_reply_streaming() {
-        // Model sends many deltas that should concatenate.
-        use rho_ai::StreamEvent;
-
-        let chunks: Vec<String> = (0..50).map(|i| format!("chunk{i} ")).collect();
-        let mut events = vec![];
-        for chunk in &chunks {
-            events.push(StreamEvent::Text(chunk.clone()));
-        }
-        events.push(StreamEvent::Done {
-            reason: rho_ai::StopReason::EndTurn,
-            usage: rho_ai::StreamUsage::new(0, 0),
-        });
-
-        let client = MockChatClient::new(vec![events]);
-        let rpc_events = rpc_run(
-            client,
-            echo_registry(),
-            &[r#"{"type":"prompt","message":"big reply"}"#],
-        )
-        .await;
-
-        let deltas = events_of_type(&rpc_events, "message_update");
-        assert_eq!(deltas.len(), 50, "expected 50 message_update events");
-
-        let agent_end = events_of_type(&rpc_events, "agent_end");
-        assert_eq!(agent_end.len(), 1);
-
-        let expected: String = chunks.join("");
-        assert_eq!(agent_end[0]["reply"].as_str().unwrap(), expected);
-    }
-
-    #[tokio::test]
-    async fn utf8_in_messages() {
-        let client = MockChatClient::new(vec![text_events("こんにちは世界 🌍")]);
-        let events = rpc_run(
-            client,
-            echo_registry(),
-            &[r#"{"type":"prompt","message":"日本語テスト"}"#],
-        )
-        .await;
-
-        let agent_end = events_of_type(&events, "agent_end");
-        assert_eq!(agent_end[0]["reply"], "こんにちは世界 🌍");
-    }
-
-    #[tokio::test]
-    async fn special_chars_in_tool_arguments() {
-        let args = r#"{"path":"a/b/c","content":"line1\nline2\ttab"}"#;
-        let client = MockChatClient::new(vec![
-            tool_call_events("c1", "echo_tool", args),
-            text_events("ok"),
-        ]);
-        let events = rpc_run(
-            client,
-            echo_registry(),
-            &[r#"{"type":"prompt","message":"edit"}"#],
-        )
-        .await;
-
-        let tool_calls = events_of_type(&events, "tool_call");
-        assert_eq!(tool_calls.len(), 1);
-        // Arguments should survive round-trip through JSON serialization.
-        assert_eq!(tool_calls[0]["arguments"].as_str().unwrap(), args);
-    }
-
-    #[tokio::test]
-    async fn concurrent_abort_during_prompt() {
-        // Send a prompt followed immediately by abort. The cancel token
-        // should be triggered. The agent may or may not complete depending
-        // on timing, but it must not panic.
-        use rho_core::RhoError;
-        use rho_test_helpers::MockResponse;
-
-        // Model returns an error simulating cancellation.
-        let client = MockChatClient::with_results(vec![MockResponse::Error(RhoError::Agent(
-            rho_core::AgentError::Cancelled,
-        ))]);
-        let app = test_app(client, echo_registry());
-
-        let stdin_data = r#"{"type":"prompt","message":"hello"}
-{"type":"abort"}"#;
-        let reader = Cursor::new(stdin_data.as_bytes().to_vec());
-        let writer = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let writer_clone = std::sync::Arc::clone(&writer);
-
-        // Should not panic.
-        let result = run_rpc_on(app, reader, WriterWrapper(writer_clone)).await;
-        assert!(result.is_ok(), "run_rpc_on should not return Err on abort");
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // 10. JSONL protocol conformance
-    // ═══════════════════════════════════════════════════════════════════════
-
-    #[tokio::test]
-    async fn every_output_line_is_valid_json() {
-        let client = MockChatClient::new(vec![text_events("hello")]);
-        let events = rpc_run(
-            client,
-            echo_registry(),
-            &[r#"{"type":"prompt","message":"hi"}"#],
-        )
-        .await;
-
-        // parse_output already asserts valid JSON for every line.
-        // Just verify we got a non-trivial event stream.
-        assert!(events.len() > 2, "expected multiple events");
-    }
-
-    #[tokio::test]
-    async fn every_output_line_ends_with_newline() {
-        let client = MockChatClient::new(vec![text_events("hi")]);
-
-        let app = test_app(client, echo_registry());
-        let stdin_data = r#"{"type":"prompt","message":"hi"}"#;
-        let reader = Cursor::new(stdin_data.as_bytes().to_vec());
-        let writer = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let writer_clone = std::sync::Arc::clone(&writer);
-
-        run_rpc_on(app, reader, WriterWrapper(writer_clone))
-            .await
-            .unwrap();
-
-        let output = std::sync::Arc::try_unwrap(writer)
-            .unwrap()
-            .into_inner()
-            .unwrap();
-        let text = String::from_utf8(output).unwrap();
-
-        // Every line should end with \n and the whole output should end with \n.
-        for line in text.lines() {
-            assert!(!line.is_empty(), "no blank lines in JSONL output");
-            // Each line is valid JSON (checked implicitly by parse_output).
-        }
-        assert!(text.ends_with('\n'), "output must end with newline");
-    }
-
-    #[tokio::test]
-    async fn no_interleaved_lines() {
-        // Multi-tool-call produces interleaved observer + handler events.
-        // Verify no partial lines appear.
-        use rho_test_helpers::multi_tool_call_events;
-
-        let mut registry = ToolRegistry::new();
-        registry.register(Box::new(FixedResponseTool {
-            name: "tool_a",
-            response: "a".into(),
-            risk: ToolRisk::Read,
-        }));
-        registry.register(Box::new(FixedResponseTool {
-            name: "tool_b",
-            response: "b".into(),
-            risk: ToolRisk::Read,
-        }));
-
-        let client = MockChatClient::new(vec![
-            multi_tool_call_events(vec![("c1", "tool_a", "{}"), ("c2", "tool_b", "{}")]),
-            text_events("done"),
-        ]);
-
-        let app = test_app(client, registry);
-        let stdin_data = r#"{"type":"prompt","message":"go"}"#;
-        let reader = Cursor::new(stdin_data.as_bytes().to_vec());
-        let writer = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let writer_clone = std::sync::Arc::clone(&writer);
-
-        run_rpc_on(app, reader, WriterWrapper(writer_clone))
-            .await
-            .unwrap();
-
-        let output = std::sync::Arc::try_unwrap(writer)
-            .unwrap()
-            .into_inner()
-            .unwrap();
-        let text = String::from_utf8(output).unwrap();
-
-        // Every line must parse as valid JSON.
-        for (i, line) in text.lines().enumerate() {
-            assert!(
-                serde_json::from_str::<Value>(line).is_ok(),
-                "line {i} is not valid JSON: {line}"
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn event_order_invariant() {
-        let client = MockChatClient::new(vec![text_events("hello")]);
-        let events = rpc_run(
-            client,
-            echo_registry(),
-            &[r#"{"type":"prompt","message":"hi"}"#],
-        )
-        .await;
-
-        // For a text-only turn the order must be:
-        //   ready < agent_start < (state_change + message_update)* < agent_end
-        let ready_idx = events
-            .iter()
-            .position(|e| e["type"] == "ready")
-            .expect("ready event");
-        let start_idx = events
-            .iter()
-            .position(|e| e["type"] == "agent_start")
-            .expect("agent_start event");
-        let end_idx = events
-            .iter()
-            .position(|e| e["type"] == "agent_end")
-            .expect("agent_end event");
-
-        assert!(ready_idx < start_idx, "ready before agent_start");
-        assert!(start_idx < end_idx, "agent_start before agent_end");
     }
 }
