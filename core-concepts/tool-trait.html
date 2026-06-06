@@ -242,7 +242,7 @@ let result = registry.execute(&amp;call, cancel).await?;
 <span class="boring">}</span></code></pre></pre>
 <p>Duplicate tool names panic at registration (fast-fail, programming error). Execution returns <code>RhoError::ToolNotFound</code> if the model requests an unregistered tool.</p>
 <h2 id="built-in-tools"><a class="header" href="#built-in-tools">Built-in tools</a></h2>
-<p>rho ships with 12 built-in tools, all registered in <code>rho-tools::register_all()</code>:</p>
+<p>rho ships with 13 built-in tools, all registered in <code>rho-tools::register_all()</code>:</p>
 <div class="table-wrapper"><table><thead><tr><th>Tool</th><th>Risk</th><th>Description</th></tr></thead><tbody>
 <tr><td><code>read_file</code></td><td>Read</td><td>Read file contents, wrapped in <code>&lt;context&gt;</code> framing</td></tr>
 <tr><td><code>write_file</code></td><td>Write</td><td>Create or overwrite files within the sandbox</td></tr>
@@ -254,8 +254,9 @@ let result = registry.execute(&amp;call, cancel).await?;
 <tr><td><code>cargo_test</code></td><td>Read</td><td>Structured test pass/fail results</td></tr>
 <tr><td><code>cargo_fix</code></td><td>Write</td><td>Apply machine-applicable compiler/clippy suggestions</td></tr>
 <tr><td><code>rustc_explain</code></td><td>Read</td><td>Look up detailed explanations for error codes</td></tr>
-<tr><td><code>rustdoc_lookup</code></td><td>Read</td><td>Look up Rust standard library documentation</td></tr>
+<tr><td><code>rustdoc_lookup</code></td><td>Read</td><td>Look up Rust standard library documentation (local rustdoc)</td></tr>
 <tr><td><code>crates_io_lookup</code></td><td>Read</td><td>Search and inspect crate metadata on crates.io</td></tr>
+<tr><td><code>session_summary</code></td><td>Read</td><td>Compressed numbered history of user requests and outcomes</td></tr>
 </tbody></table>
 </div>
 <h2 id="extension-tools"><a class="header" href="#extension-tools">Extension tools</a></h2>

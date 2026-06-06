@@ -186,7 +186,7 @@
 <ol>
 <li><strong>Tree structure</strong> — branching, not deletion. <code>/clear</code> and compaction create new branches; the old tree is preserved.</li>
 <li><strong>Typed entries</strong> — user messages, assistant messages, tool calls, tool results, compaction summaries, and extension entries are all first-class nodes.</li>
-<li><strong>Resolution levels</strong> — each entry carries a resolution (<code>Full</code>, <code>Compacted</code>, or <code>Attached</code>) that tells the context builder how to render it.</li>
+<li><strong>Resolution levels</strong> — each entry carries a resolution (<code>Full</code>, <code>Outlined</code>, <code>Summarized</code>, <code>Pinned</code>, <code>Compacted</code>, or <code>Attached</code>) that tells the context builder how to render it.</li>
 <li><strong>Persistence</strong> — sessions auto-flush to JSONL files, surviving process restarts and crashes.</li>
 </ol>
 <h2 id="tree-structure"><a class="header" href="#tree-structure">Tree structure</a></h2>
@@ -248,32 +248,43 @@
   (3 previous session(s) for this project — use rho -c to resume the latest)
 </code></pre>
 <h2 id="context-stats"><a class="header" href="#context-stats">Context stats</a></h2>
-<p>The <code>ContextStats</code> struct provides a snapshot of context window usage, available through <code>Session::context_stats()</code>:</p>
+<p>The <code>ContextStats</code> struct provides a rich snapshot of context window usage, available through <code>Session::context_stats()</code>:</p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>pub struct ContextStats {
+    // Basic stats
     pub context_window: usize,
     pub completion_reserve: usize,
     pub estimated_used: usize,
     pub message_count: usize,
     pub entry_count: usize,
     pub path_entry_count: usize,
+
+    // Token distribution
+    pub role_tokens: RoleTokenDistribution,           // system, user, assistant, tool
+    pub resolution_tokens: ResolutionTokenDistribution, // full, outlined, summarized, pinned
+    pub phase_tokens: PhaseTokenDistribution,        // exploration, execution, verification, conclusion, unclassified
+
+    // Compaction tracking
+    pub compaction_tokens: usize,
+    pub compacted_entry_count: usize,
 }
 <span class="boring">}</span></code></pre></pre>
 <p>Key methods:</p>
 <ul>
 <li><code>utilization_percent()</code> — context utilization as 0–100% (based on prompt budget)</li>
 <li><code>estimated_remaining()</code> — remaining tokens in the prompt budget (saturates at 0)</li>
+<li><code>prompt_budget()</code> — context window minus completion reserve</li>
 </ul>
 <p>The REPL prints a compact one-line status bar after every turn:</p>
 <pre><code class="language-text">[████████████░░░░░░░░] 12.3k/32k tokens (50%) │ 12.3k remaining │ 10 messages
 </code></pre>
-<p>Color-coded green (&lt;60%), yellow (60–80%), red (&gt;80%). The <code>/status</code> REPL command (aliased as <code>/context</code>) shows a detailed multi-line breakdown including system prompt overhead, tool schema overhead, and conversation token breakdown.</p>
+<p>Color-coded green (&lt;60%), yellow (60–80%), red (&gt;80%). The <code>/status</code> REPL command (aliased as <code>/context</code>) shows a detailed multi-line breakdown including token distribution by role, resolution level, compaction stats, system prompt overhead, tool schema overhead, and conversation token breakdown.</p>
 <h2 id="entry-types"><a class="header" href="#entry-types">Entry types</a></h2>
 <p>Each entry in the tree has a <code>payload</code> that describes what it represents:</p>
 <div class="table-wrapper"><table><thead><tr><th>Payload</th><th>Description</th></tr></thead><tbody>
 <tr><td><code>Message</code></td><td>A chat message (system, user, assistant, or tool result)</td></tr>
-<tr><td><code>Compaction</code></td><td>A summary replacing older entries</td></tr>
+<tr><td><code>Compaction</code></td><td>A phase-aware summary replacing older entries</td></tr>
 <tr><td><code>BranchSummary</code></td><td>A summary created when branching</td></tr>
 <tr><td><code>CustomMessage</code></td><td>Extension message (sent to model as synthetic user message)</td></tr>
 <tr><td><code>Custom</code></td><td>Extension state (never sent to model)</td></tr>
@@ -288,14 +299,18 @@
 <p>Every entry carries a <code>resolution</code> field:</p>
 <ul>
 <li><strong><code>Full</code></strong> — complete, verbatim content. Used for recent entries that fit within the context window.</li>
+<li><strong><code>Outlined</code></strong> — structural summary: tool name, key arguments, truncated output. Consumes ~10-20% of original tokens.</li>
+<li><strong><code>Summarized</code></strong> — prose summary: a one-line description of what the entry represents. Consumes ~5-10% of original tokens.</li>
+<li><strong><code>Pinned</code></strong> — protected from eviction and downgrade. Rendered at its native resolution.</li>
 <li><strong><code>Compacted</code></strong> — replaced by a <code>Compaction</code> summary. The original content is still in the tree but the context builder renders the summary instead.</li>
-<li><strong><code>Attached</code></strong> — lightweight reference (e.g., a tool call whose result has been compacted). Rendered as a brief mention rather than full content.</li>
+<li><strong><code>Attached</code></strong> — lightweight reference. Rendered as a brief mention rather than full content.</li>
 </ul>
+<p>Entries are downgraded through <code>Full → Outlined → Summarized</code> by the selective eviction planner before turn-level eviction is needed. Pinned entries are protected from all downgrade and eviction.</p>
 <p>The context builder (<a href="./context-management.html">Context Management</a>) uses resolution levels to decide what to send to the model — full detail where it matters, summaries where it doesn't.</p>
 <h2 id="bounded-tool-results"><a class="header" href="#bounded-tool-results">Bounded tool results</a></h2>
 <p>Tool results can be very large (entire file contents, command output). Sessions enforce a bounded output size:</p>
 <ul>
-<li>Tool output exceeding 50% of the prompt budget is truncated.</li>
+<li>Tool output exceeding a fraction of the prompt budget is truncated.</li>
 <li>The full output is preserved in <code>ToolResultDetails::FullOutput</code> for later retrieval.</li>
 <li>Truncation splits on the last newline boundary to avoid breaking UTF-8 sequences.</li>
 </ul>
@@ -308,7 +323,7 @@
 <li><strong>Constructors</strong>: <code>Session::new()</code> (persisted), <code>Session::in_memory()</code> (no disk I/O), <code>Session::open(path)</code> (resume from JSONL)</li>
 <li><strong>Appenders</strong>: <code>append_user_message()</code>, <code>append_assistant_message()</code>, <code>append_tool_result()</code>, <code>append_tool_call()</code></li>
 <li><strong>Navigation</strong>: <code>path_to_root()</code>, <code>children()</code>, <code>leaf()</code>, <code>branch_to()</code>, <code>branch_with_summary()</code></li>
-<li><strong>Context</strong>: <code>path_messages()</code> (messages along the current branch), <code>send_current(client)</code> (send to model with context fitting), <code>context_stats()</code> (usage snapshot)</li>
+<li><strong>Context</strong>: <code>path_messages()</code> (messages along the current branch), <code>send_current()</code> (send to model with context fitting), <code>context_stats()</code> (usage snapshot), <code>prepare_context()</code> (selective downgrade)</li>
 <li><strong>Compaction</strong>: <code>compact_older_than()</code> (compact entries older than a threshold)</li>
 <li><strong>Discovery</strong>: <code>find_latest_session(cwd)</code>, <code>list_sessions(cwd)</code> (header-only session scanning)</li>
 <li><strong>Extensions</strong>: <code>write_custom_state()</code>, <code>read_custom_state()</code>, <code>write_custom_message()</code>, <code>read_custom_message()</code></li>

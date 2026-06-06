@@ -180,7 +180,7 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="context-management"><a class="header" href="#context-management">Context Management</a></h1>
-<p>The context manager is responsible for fitting the conversation within the model's context window. It decides which messages to keep, which to evict, and how to render compacted entries.</p>
+<p>The context manager is responsible for fitting the conversation within the model's context window. It decides which messages to keep, which to evict, and how to render compacted entries — using graduated resolution, phase-aware summaries, and selective eviction to maximize useful context.</p>
 <h2 id="the-problem"><a class="header" href="#the-problem">The problem</a></h2>
 <p>Language models have finite context windows. A long coding session — especially one involving tool calls with large outputs — can easily exceed the window. When that happens, something has to give. The naive approach (drop the oldest message) silently discards the user's original request, causing the <em>amnesia bug</em> where the model forgets what it was asked to do.</p>
 <h2 id="token-budget"><a class="header" href="#token-budget">Token budget</a></h2>
@@ -203,15 +203,49 @@
 <li><strong>Pins</strong> the system message, the first user turn, and the last turn — these are never evicted.</li>
 </ol>
 <p>The pinning of the first user turn is the fix for the amnesia bug: no matter how long the conversation, the model always sees what the user originally asked.</p>
-<h2 id="adaptive-resolution"><a class="header" href="#adaptive-resolution">Adaptive resolution</a></h2>
-<p>When the session has compacted entries (see <a href="./sessions.html">Sessions</a>), the context manager uses the resolution level to decide how to render each entry:</p>
+<h2 id="graduated-resolution"><a class="header" href="#graduated-resolution">Graduated resolution</a></h2>
+<p>Entries can exist at multiple fidelity levels, not just binary Full/Compacted. The context manager renders each entry according to its resolution:</p>
 <div class="table-wrapper"><table><thead><tr><th>Resolution</th><th>Rendering</th></tr></thead><tbody>
 <tr><td><code>Full</code></td><td>Verbatim message content</td></tr>
-<tr><td><code>Compacted</code></td><td>Compaction summary (a synthetic user message)</td></tr>
+<tr><td><code>Outlined</code></td><td>Structural summary: tool name, key arguments, truncated output (~10-20% of original)</td></tr>
+<tr><td><code>Summarized</code></td><td>Prose summary: one-line description of what the entry represents (~5-10% of original)</td></tr>
+<tr><td><code>Pinned</code></td><td>Protected from eviction; rendered at its native resolution</td></tr>
+<tr><td><code>Compacted</code></td><td>Replaced by a compaction summary (a synthetic user message)</td></tr>
 <tr><td><code>Attached</code></td><td>Brief mention (e.g., "Tool call X was executed")</td></tr>
 </tbody></table>
 </div>
-<p>This is the <em>adaptive mesh refinement</em> metaphor: full fidelity where the model needs it, coarsened where it doesn't.</p>
+<p>This is the <em>adaptive mesh refinement</em> metaphor: full fidelity where the model needs it, coarsened where it doesn't. The system can downgrade entries through <code>Full → Outlined → Summarized</code> before resorting to eviction.</p>
+<h3 id="selective-turn-internal-eviction"><a class="header" href="#selective-turn-internal-eviction">Selective turn-internal eviction</a></h3>
+<p>Instead of evicting entire turns when the context window fills up, the eviction planner (<code>plan_downgrades</code>) analyzes the entry path and produces a plan that downgrades individual entries <em>within</em> turns. The <code>prepare_context()</code> method applies this plan before building messages, reducing the need for turn-level eviction.</p>
+<p>Invariants: the system message, first user turn, last turn, and pinned entries are never downgraded. Tool-pair integrity (assistant + tool result) is maintained.</p>
+<h2 id="phase-detection"><a class="header" href="#phase-detection">Phase detection</a></h2>
+<p>The agent loop tracks which phase of work is currently active:</p>
+<ul>
+<li><strong>Exploration</strong> — reading files, listing directories, gathering context</li>
+<li><strong>Execution</strong> — writing files, editing code</li>
+<li><strong>Verification</strong> — running <code>cargo check</code>, <code>cargo test</code>, <code>cargo clippy</code></li>
+<li><strong>Conclusion</strong> — final text reply from the model</li>
+</ul>
+<p>Phase transitions follow a state machine: Exploration → Execution → Verification → Conclusion, with back-transitions allowed (e.g., Verification → Execution when a test fails).</p>
+<h2 id="compaction"><a class="header" href="#compaction">Compaction</a></h2>
+<p>When older entries are compacted (see <a href="./sessions.html">Sessions</a>), the compaction system produces structured summaries.</p>
+<h3 id="phase-aware-compaction"><a class="header" href="#phase-aware-compaction">Phase-aware compaction</a></h3>
+<p>Compaction summaries are grouped by phase, producing a narrative that tells the model <em>what happened</em> in each phase:</p>
+<pre><code class="language-text">**Exploration:** Read main.rs, lib.rs (2 reads).
+**Execution:** Edited src/parser.rs (3 edits).
+**Verification:** cargo_check, cargo_test. Found: 1 error, 0 warnings.
+</code></pre>
+<h3 id="llm-compaction-optional"><a class="header" href="#llm-compaction-optional">LLM compaction (optional)</a></h3>
+<p>When <code>compaction_mode = "llm"</code> is configured, the compaction system calls the LLM to generate a narrative summary in the <code>notes</code> field of <code>CompactionSummary</code>. This runs a two-stage process:</p>
+<ol>
+<li><strong>Mechanical compaction</strong> — structured fields (tool calls, findings, phases) are always computed deterministically.</li>
+<li><strong>LLM narrative</strong> — the model writes a concise paragraph summarizing what was accomplished, stored in <code>notes</code>.</li>
+</ol>
+<p>On LLM failure, the system falls back to mechanical-only compaction — no error propagation to the agent loop.</p>
+<h3 id="auto-compact"><a class="header" href="#auto-compact">Auto-compact</a></h3>
+<p>When context utilization crosses the <code>auto_compact_threshold</code> (configurable), the agent loop proactively compacts older entries before eviction is needed. This prevents the abrupt context loss that occurs when turn-level eviction kicks in.</p>
+<h2 id="context-pressure-nudge-removed"><a class="header" href="#context-pressure-nudge-removed">Context-pressure nudge (removed)</a></h2>
+<p>The context-pressure nudge — a synthetic user message injected to warn the model about high utilization — has been removed. It wasted context tokens and was redundant given graduated resolution, selective eviction, auto-compaction, and LLM compaction. The config fields (<code>context_pressure_threshold</code>, <code>context_pressure_interval</code>) remain for backwards compatibility but default to 0 (disabled).</p>
 <h2 id="tool-schema-overhead"><a class="header" href="#tool-schema-overhead">Tool schema overhead</a></h2>
 <p>Tool schemas (the JSON descriptions sent to the model so it knows what tools are available) consume tokens. The context manager subtracts an estimate of this overhead from the available budget before fitting messages, preventing the combined total from exceeding the window.</p>
 <h2 id="token-estimation"><a class="header" href="#token-estimation">Token estimation</a></h2>
@@ -219,8 +253,41 @@
 <ul>
 <li><strong>Per-model calibration</strong>: an exponential moving average (α=0.3) that learns the real tokens-per-character ratio from model responses.</li>
 <li><strong>Bootstrap ratios</strong>: built-in starting ratios for common model families (Gemma, Qwen, Claude, GPT-4, Llama).</li>
-<li><strong>Substring matching</strong>: falls back to character-level estimation for non-ASCII text.
-The estimator converges to within 10% accuracy by the third model call in most cases.</li>
+<li><strong>Substring matching</strong>: falls back to character-level estimation for non-ASCII text.</li>
+</ul>
+<p>The estimator converges to within 10% accuracy by the third model call in most cases.</p>
+<h2 id="enhanced-context-stats"><a class="header" href="#enhanced-context-stats">Enhanced context stats</a></h2>
+<p><code>ContextStats</code> provides rich token distribution diagnostics:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub struct ContextStats {
+    // Basic stats
+    pub context_window: usize,
+    pub completion_reserve: usize,
+    pub estimated_used: usize,
+    pub message_count: usize,
+    pub entry_count: usize,
+    pub path_entry_count: usize,
+
+    // Token distribution by message role
+    pub role_tokens: RoleTokenDistribution,      // system, user, assistant, tool
+
+    // Token distribution by resolution level
+    pub resolution_tokens: ResolutionTokenDistribution,  // full, outlined, summarized, pinned
+
+    // Token distribution by session phase
+    pub phase_tokens: PhaseTokenDistribution,    // exploration, execution, verification, conclusion, unclassified
+
+    // Compaction tracking
+    pub compaction_tokens: usize,
+    pub compacted_entry_count: usize,
+}
+<span class="boring">}</span></code></pre></pre>
+<p>Key methods:</p>
+<ul>
+<li><code>utilization_percent()</code> — context utilization as 0–100% (based on prompt budget)</li>
+<li><code>estimated_remaining()</code> — remaining tokens in the prompt budget (saturates at 0)</li>
+<li><code>prompt_budget()</code> — context window minus completion reserve</li>
 </ul>
 <h2 id="context-status-bar"><a class="header" href="#context-status-bar">Context status bar</a></h2>
 <p>The REPL displays a compact one-line status bar after every turn showing estimated token usage:</p>
@@ -235,6 +302,9 @@ The estimator converges to within 10% accuracy by the third model call in most c
 <li>Conversation tokens</li>
 <li>Estimated used/remaining/percentage</li>
 <li>Message count, path entry count, total entries</li>
+<li><strong>Token distribution by role</strong> (system, user, assistant, tool)</li>
+<li><strong>Token distribution by resolution</strong> (full, outlined, summarized, pinned)</li>
+<li><strong>Compaction tokens and compacted entry count</strong></li>
 </ul>
 
                     </main>

@@ -206,7 +206,9 @@
 <li>Observe agent activity in real time (reasoning, tool calls, errors) via the <code>AgentObserver</code> trait</li>
 <li>Extend rho with TypeScript extensions that add tools, hooks, and commands — hot-reloadable at runtime</li>
 <li>Compact old conversation turns to stay within context limits</li>
-<li>Monitor context window usage with a live status bar and <code>/status</code> REPL command</li>
+<li>Monitor context window usage with a live status bar, <code>/status</code> REPL command, and enhanced token distribution stats</li>
+<li>Graduated resolution (Outlined/Summarized) with selective per-entry eviction before turn-level eviction</li>
+<li>Phase-aware and LLM-assisted compaction for high-fidelity context summaries</li>
 <li>Run headless via JSONL-over-stdio RPC mode for integration with editors, bots, and custom UIs</li>
 </ul>
 <p>This book documents the architecture, security model, configuration, and development of rho.</p>
@@ -337,12 +339,10 @@ rho --ephemeral       # in-memory mode, no session file
 │       ├── model.rs          # Model resolution + interactive picker
 │       ├── ext_observer.rs   # `CompositeObserver` — fans out to REPL/RPC + extension observers
 │       ├── gate.rs           # Approval gate module root
-│       ├── gate/
-│       │   └── interactive.rs  # `ReplApprovalGate` — y/N from stdin
+│       │   └── interactive.rs # `ReplApprovalGate` — y/N from stdin
 │       ├── rpc.rs            # RPC mode: `run_rpc`, `run_rpc_on`, observer, approval gate
 │       ├── repl.rs           # `run_repl()` — REPL loop with `/reload`, `/extensions`
 │       ├── presenter.rs      # Presenter module root
-│       ├── presenter/
 │       │   ├── repl.rs       # `ReplPresenter` — all REPL terminal output
 │       │   └── rpc.rs        # `RpcPresenter` — startup output for RPC mode
 ├── rho-ai/                 # Unified LLM provider abstraction
@@ -355,26 +355,26 @@ rho --ephemeral       # in-memory mode, no session file
 │       ├── types.rs         # `LlmMessage`, `LlmRequest`, `StreamEvent`, `AccumulatedResponse`
 │       └── error.rs         # `ProviderError`
 ├── rho-ext/                # TypeScript extension runtime (V8/deno-core)
-│   ├── src/
-│   │   ├── lib.rs          # Re-exports: `ExtensionLoader`, `DenoTool`, `DenoObserver`, etc.
-│   │   ├── runtime.rs      # `ExtensionRuntime` — V8 isolate on dedicated OS thread
-│   │   ├── loader.rs       # `ExtensionLoader` — discovery, filtering, spawning, hot reload
-│   │   ├── deno_tool.rs    # `DenoTool` — `Tool` trait wrapper
-│   │   ├── deno_observer.rs# `DenoObserver` — `AgentObserver` wrapper
-│   │   ├── manifest.rs     # `LoadedExtension` — manifest parsing and validation
-│   │   ├── discover.rs     # Extension discovery (single-file and multi-file)
-│   │   ├── transpile.rs    # TS → JS transpilation
-│   │   ├── module_loader.rs# `RhoModuleLoader` — ESM module resolution
-│   │   ├── host.rs         # `rho.*` host ops (log, readFile, writeFile, runCommand, getModel, getCwd)
-│   │   ├── host_shim.js    # ESM shim for extension module loading
-│   │   ├── error.rs        # `ExtensionError`
-│   │   └── spike.rs        # Original spike validation code
+│   └── src/
+│       ├── lib.rs          # Re-exports: `ExtensionLoader`, `DenoTool`, `DenoObserver`, etc.
+│       ├── runtime.rs      # `ExtensionRuntime` — V8 isolate on dedicated OS thread
+│       ├── async_dispatcher.rs # Async bridge between V8 isolate and tokio
+│       ├── loader.rs       # `ExtensionLoader` — discovery, filtering, spawning, hot reload
+│       ├── deno_tool.rs    # `DenoTool` — `Tool` trait wrapper
+│       ├── deno_observer.rs# `DenoObserver` — `AgentObserver` wrapper
+│       ├── manifest.rs     # `LoadedExtension` — manifest parsing and validation
+│       ├── discover.rs     # Extension discovery (single-file and multi-file)
+│       ├── transpile.rs    # TS → JS transpilation
+│       ├── module_loader.rs# `RhoModuleLoader` — ESM module resolution
+│       ├── host.rs         # `rho.*` host ops (log, readFile, writeFile, runCommand, getModel, getCwd)
+│       ├── ops.rs          # Helper macros for host op boilerplate
+│       └── error.rs        # `ExtensionError`
 │   └── types/
 │       └── rho.d.ts        # TypeScript type definitions for extension authors
 ├── rho-core/                # Agent kernel
 │   └── src/
 │       ├── lib.rs           # Module declarations, convenience re-exports
-│       ├── agent.rs         # Agent loop state machine, `run_loop`
+│       ├── agent.rs         # Agent loop state machine, `run_loop`, phase tracking, auto-compact
 │       ├── approval.rs      # `ApprovalPolicy`, `ApprovalGate` traits
 │       ├── client/
 │       │   ├── mod.rs        # `RhoAiClient`, `ProviderRegistry`, `provider_factory`
@@ -386,6 +386,7 @@ rho --ephemeral       # in-memory mode, no session file
 │       ├── diagnostic.rs    # Structured compiler diagnostic types
 │       ├── error.rs         # `RhoError` and `Result`
 │       ├── message.rs       # `ChatMessage`, `ContentBlock`, `ModelToolCall`
+│       ├── model_match.rs   # Model name matching / fuzzy matching
 │       ├── newtypes.rs      # `FilePath`, `ToolName`, `ToolCallId`, `EntryId`, `DiagnosticCode`
 │       ├── prompts.rs       # `base_prompt()`, `compact_prompt()` (embedded from `prompts/`)
 │       ├── redact.rs        # `Redactor` — secret pattern matching
@@ -399,38 +400,53 @@ rho --ephemeral       # in-memory mode, no session file
 │       │   ├── accessors.rs    # Header, leaf, entry, flush, path, getters/setters
 │       │   ├── append.rs       # Append ops, close, extension typed methods, append_entry core
 │       │   ├── builder.rs      # `new`, `in_memory`, `with_*` builder methods
-│       │   ├── compaction.rs   # `CompactionStrategy`, `MechanicalCompactionStrategy`
-│       │   ├── context.rs      # `path_messages`, `send_current`, `compact_older_than`, `context_stats`
-│       │   ├── context_stats.rs # `ContextStats` struct
-│       │   ├── entry.rs        # `Entry`, `EntryPayload`, `EntryResolution`
+│       │   ├── compaction.rs   # `CompactionStrategy`, `MechanicalCompactionStrategy`, `LlmCompactionStrategy`
+│       │   ├── context.rs      # `path_messages`, `send_current`, `compact_older_than`, `context_stats`, `prepare_context`
+│       │   ├── context_stats.rs # `ContextStats`, `RoleTokenDistribution`, `ResolutionTokenDistribution`, `PhaseTokenDistribution`
+│       │   ├── entry.rs        # `Entry`, `EntryPayload`, `EntryResolution`, `CompactionPhase`
 │       │   ├── error.rs        # `SessionError`
 │       │   ├── estimator.rs    # `TokenEstimator`, `HeuristicEstimator`
+│       │   ├── eviction.rs     # Selective downgrade planner (`plan_downgrades`)
 │       │   ├── extensions.rs   # `ExtensionEntry`, `ExtensionMessageEntry` traits
 │       │   ├── header.rs       # `SessionHeader`
+│       │   ├── outliner.rs     # Tool-specific structural summary formatters
 │       │   ├── persist.rs      # JSONL persistence, `SessionMetadata`
+│       │   ├── phase.rs        # `SessionPhase` enum, `classify_tool_phase()`, `transition_phase()`
 │       │   ├── tree.rs         # `path_to_root`, `branch_to`, `branch_with_summary`
 │       │   └── truncation.rs   # Bounded truncation, char boundary, footer
-│       └── shell.rs         # `ShellExecutor` trait, `ShellOutput`
+│       ├── shell.rs         # `ShellExecutor` trait, `ShellOutput`
+│       ├── stream.rs        # `StreamChunk`, `StreamEvent`, streaming response types
+│       └── tool.rs          # `Tool` trait, `ToolRegistry`, `ToolRisk`, `ToolOutcome`
 ├── rho-highlight/           # Tree-sitter syntax analysis
 │   └── src/
 │       ├── lib.rs           # Re-exports
 │       ├── lang.rs          # `Language` enum
 │       ├── parse.rs         # Tree-sitter parsing
 │       ├── highlight.rs     # Token classification and highlighting
-│       └── query.rs         # `node_at()` — AST node lookup by position
+│       ├── query.rs         # `node_at()` — AST node lookup by position
+│       └── error.rs         # `HighlightError`
 ├── rho-tools/               # Built-in tool implementations
 │   └── src/
 │       ├── lib.rs           # `register_all()`
 │       ├── files.rs         # `ReadFile`, `WriteFile`, `ListDir`, `EditFile`
 │       ├── hashline.rs      # Hashline content-addressed editing
 │       ├── shell.rs         # `RunCommand`, `PowerShellExecutor`, `CommandDenylist`
-│       └── rust.rs          # `CargoCheck`, `CargoClippy`, `CargoTest`, `CargoFix`, `RustcExplain`
+│       ├── crates_io.rs     # `CratesIoLookup`
+│       ├── session_summary.rs # `SessionSummary` — compressed session history tool
+│       └── rust/
+│           ├── mod.rs       # Rust tools module
+│           ├── tools.rs     # `CargoCheck`, `CargoClippy`, `CargoTest`, `CargoFix`, `RustcExplain`
+│           ├── rustdoc.rs   # `RustdocLookup` — local rustdoc HTML parsing
+│           ├── parse.rs     # NDJSON output parsing
+│           ├── convert.rs   # Diagnostic conversion
+│           ├── format.rs     # Diagnostic formatting
+│           └── types.rs     # Shared Rust tool types
 ├── rho-test-helpers/        # Shared test infrastructure (dev-only)
-│   └── src/lib.rs           # `MockChatClient`, `TestProvider`, response builders, helpers
+│   └── src/lib.rs           # `MockChatClient`, `MockLlmService`, `TestProvider`, response builders, helpers
 ├── rho-bench/               # Benchmark harness for multi-model evaluation
 │   └── src/
 │       ├── main.rs          # CLI: --models, --tasks, --repeats, --output
-│       ├── harness.rs       # Task execution via run_loop, CountingClient
+│       ├── harness.rs       # Task execution via run_loop, CountingService
 │       ├── comparison.rs    # Terminal table and per-task breakdown display
 │       └── persistence.rs   # JSON result files (latest.json + timestamped)
 ├── rho-eval/                # Behavioural benchmarks (dev-only)
@@ -438,9 +454,9 @@ rho --ephemeral       # in-memory mode, no session file
 │       ├── lib.rs
 │       ├── task.rs          # EvalTask trait, TaskOutcome, TaskMetrics
 │       ├── report.rs        # EvalRun, EvalReport — results + regression gating
-│       └── tasks.rs         # 5 built-in task definitions
+│       └── tasks.rs         # Built-in task definitions
 └── xtask/                   # Dev task runner
-    └── src/main.rs          # `cargo xtask ci`, `cargo xtask test`, `cargo xtask changelog`
+    └── src/main.rs          # `cargo xtask ci`, `cargo xtask test`, `cargo xtask changelog`, `cargo xtask release`
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="crate-responsibilities"><a class="header" href="#crate-responsibilities">Crate Responsibilities</a></h1>
 <h2 id="rho-binary"><a class="header" href="#rho-binary"><code>rho</code> (binary)</a></h2>
@@ -452,8 +468,8 @@ rho --ephemeral       # in-memory mode, no session file
 <p>Constructs a <code>Session</code>, connects to the model via a <code>Provider</code>, and drives the agent loop. Handles provider consent checks, model resolution, startup budget diagnostics, shell-specific prompt extensions, session discovery (<code>rho -c</code>), extension loading and hot reload (<code>/reload</code>, <code>/extensions</code>), and live observer output (reasoning deltas, tool activity).</p>
 <p>The RPC implementation is generic over I/O (<code>run_rpc_on&lt;R, W&gt;</code>) so the in-process integration tests can inject canned stdin and capture stdout without touching real file descriptors. See <a href="architecture/../rpc-mode.html">RPC Mode</a> for the full protocol reference.</p>
 <h2 id="rho-core"><a class="header" href="#rho-core"><code>rho-core</code></a></h2>
-<p>The kernel: agent loop state machine (with <code>AgentObserver</code> for live output), session management (tree persistence, compaction, branching, session discovery), context window management (sliding window, token estimation, <code>ContextStats</code>), tool registry and traits, approval gates, secret redaction, file sandbox, provider abstraction (<code>Provider</code> trait, <code>ProviderRegistry</code>), LLM client (<code>RhoAiClient</code>), configuration loading, and all shared types.</p>
-<p>Key types: <code>Session</code>, <code>AgentConfig</code>, <code>AgentObserver</code>, <code>NopObserver</code>, <code>ContextStats</code>, <code>SessionMetadata</code>, <code>ToolRegistry</code>, <code>Tool</code>, <code>Provider</code>, <code>ProviderRegistry</code>, <code>ContextManager</code>, <code>TokenBudget</code>, <code>SandboxRoot</code>, <code>Redactor</code>, <code>RhoConfig</code>.</p>
+<p>The kernel: agent loop state machine (with <code>AgentObserver</code> for live output, phase tracking, auto-compaction), session management (tree persistence, graduated resolution, phase-aware compaction, LLM compaction, selective eviction, branching, session discovery), context window management (sliding window, token estimation, enhanced <code>ContextStats</code> with role/resolution/phase token distributions), tool registry and traits, approval gates, secret redaction, file sandbox, provider abstraction (<code>Provider</code> trait, <code>ProviderRegistry</code>), LLM client (<code>RhoAiClient</code>), configuration loading, and all shared types.</p>
+<p>Key types: <code>Session</code>, <code>AgentConfig</code>, <code>AgentObserver</code>, <code>NopObserver</code>, <code>ContextStats</code>, <code>RoleTokenDistribution</code>, <code>ResolutionTokenDistribution</code>, <code>PhaseTokenDistribution</code>, <code>SessionMetadata</code>, <code>ToolRegistry</code>, <code>Tool</code>, <code>Provider</code>, <code>ProviderRegistry</code>, <code>ContextManager</code>, <code>TokenBudget</code>, <code>SandboxRoot</code>, <code>Redactor</code>, <code>RhoConfig</code>, <code>SessionPhase</code>, <code>CompactionPhase</code>, <code>CompactionStrategy</code>, <code>LlmCompactionStrategy</code>, <code>MechanicalCompactionStrategy</code>.</p>
 <h2 id="rho-highlight"><a class="header" href="#rho-highlight"><code>rho-highlight</code></a></h2>
 <p>Tree-sitter-based syntax analysis. Provides <code>parse()</code>, <code>highlight()</code>, and <code>node_at()</code> for Rust source code. Used by <code>EditFile</code> for node-splitting validation and by the TUI (Phase 4) for syntax highlighting.</p>
 <p>Key types: <code>Language</code>, <code>Highlight</code>, <code>NodeInfo</code>.</p>
@@ -553,7 +569,7 @@ xtask ────────────────────────�
 <li><a href="./core-concepts/project-context-files.html">Project Context Files</a> — loading and trusting project-level instructions</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="agent-loop"><a class="header" href="#agent-loop">Agent Loop</a></h1>
-<p>The agent loop is the state machine at the heart of rho. It drives the conversation forward by sending messages to the model, executing tool calls, and feeding results back.</p>
+<p>The agent loop is the state machine at the heart of rho. It drives the conversation forward by sending messages to the model, executing tool calls, and feeding results back — tracking session phase and managing context pressure throughout.</p>
 <h2 id="state-machine"><a class="header" href="#state-machine">State machine</a></h2>
 <pre><code class="language-text">  ┌──────────────────────────────────────────────┐
   │                                              │
@@ -575,7 +591,7 @@ Idle (done)
 </span>pub async fn run_loop(
     session: &amp;mut Session,
     message: &amp;str,
-    client: &amp;dyn ChatClient,
+    client: &amp;dyn LlmService,
     registry: &amp;ToolRegistry,
     config: &amp;AgentConfig,
     cancel: CancellationToken,
@@ -583,18 +599,34 @@ Idle (done)
     observer: &amp;dyn AgentObserver,
 ) -&gt; Result&lt;String&gt;
 <span class="boring">}</span></code></pre></pre>
-<p><code>run_loop</code> takes a <code>Session</code> (not a <code>Conversation</code> — the session type was introduced in Phase 2.5). It:</p>
+<p><code>run_loop</code> takes a <code>Session</code> and an <code>LlmService</code> (from <code>rho-ai</code>). It:</p>
 <ol>
 <li>Appends <code>message</code> as a user turn via <code>session.append_user_message()</code>.</li>
-<li>Enters the Thinking state and sends the session to the model via <code>session.send_current(client)</code>.</li>
+<li>Enters the Thinking state and sends the session to the model via <code>session.send_current()</code>.</li>
 <li>Processes the model's response:
 <ul>
-<li><strong>Text reply</strong> → return it (Idle).</li>
-<li><strong>Tool calls</strong> → for each call, check approval, execute, append the result, then loop back to Thinking.</li>
+<li><strong>Text reply</strong> → record phase as Conclusion, return it (Idle).</li>
+<li><strong>Tool calls</strong> → for each call, check approval, execute, record phase transition, append the result, then loop back to Thinking.</li>
 </ul>
 </li>
 </ol>
 <p>All tool calls in a single model response are executed <strong>sequentially</strong>. Each result is appended before the session is re-sent to the model. Parallel execution is a future optimisation.</p>
+<h2 id="phase-tracking"><a class="header" href="#phase-tracking">Phase tracking</a></h2>
+<p>The loop tracks the current <code>SessionPhase</code> (Exploration, Execution, Verification, Conclusion) and transitions on each tool execution:</p>
+<ul>
+<li>Reading files / listing directories → Exploration</li>
+<li>Editing files / writing files → Execution</li>
+<li>Running <code>cargo check</code> / <code>cargo test</code> / <code>cargo clippy</code> → Verification</li>
+<li>Final text reply → Conclusion</li>
+</ul>
+<p>Phase detection uses <code>classify_tool_phase()</code> with <code>has_had_edits</code> context for ambiguous tools. See <a href="core-concepts/./context-management.html">Context Management</a> for details.</p>
+<h2 id="auto-compact"><a class="header" href="#auto-compact">Auto-compact</a></h2>
+<p>When context utilization crosses the <code>auto_compact_threshold</code>, the loop proactively compacts older entries using the configured compaction strategy:</p>
+<ul>
+<li><strong>Mechanical</strong> (default) — deterministic, structured summaries with phase-aware narratives</li>
+<li><strong>LLM</strong> (opt-in via <code>compaction_mode = "llm"</code>) — adds narrative <code>notes</code> generated by the model</li>
+</ul>
+<p>On LLM failure, falls back to mechanical compaction. See <a href="core-concepts/./context-management.html">Context Management</a> for details.</p>
 <h2 id="agentobserver"><a class="header" href="#agentobserver">AgentObserver</a></h2>
 <p>The <code>AgentObserver</code> trait receives live events from the agent loop so that a REPL, TUI, or test harness can render progress as it happens.</p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
@@ -629,7 +661,9 @@ Idle (done)
 <h2 id="cancellation"><a class="header" href="#cancellation">Cancellation</a></h2>
 <p>A <code>CancellationToken</code> is checked at the top of each loop iteration and between tool calls in a batch. When cancelled, <code>run_loop</code> returns <code>RhoError::Cancelled</code> immediately — no pending tool execution is aborted mid-flight, but no new ones are started.</p>
 <h2 id="iteration-guard"><a class="header" href="#iteration-guard">Iteration guard</a></h2>
-<p>The loop terminates after <code>config.max_iterations</code> tool-call rounds (default: 32). This prevents infinite loops from misbehaving models. Returns <code>RhoError::MaxIterationsExceeded</code>.</p>
+<p>The loop terminates after <code>config.max_iterations</code> tool-call rounds (default: 32). This prevents infinite loops from misbehaving models. Returns <code>AgentError::MaxIterationsExceeded</code>.</p>
+<h2 id="stuck-loop-detection"><a class="header" href="#stuck-loop-detection">Stuck-loop detection</a></h2>
+<p>If the model produces the same output <code>stuck_loop_threshold</code> times consecutively (default: 3), a nudge is injected prompting the model to try a different approach.</p>
 <h2 id="session-persistence-1"><a class="header" href="#session-persistence-1">Session persistence</a></h2>
 <p>Since <code>run_loop</code> operates on a <code>Session</code>, all appends (user messages, tool results) are automatically flushed to the JSONL session file if persistence is enabled. If the process crashes mid-loop, the session file contains everything up to the last successful append — at most one entry is lost.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="tool-trait"><a class="header" href="#tool-trait">Tool Trait</a></h1>
@@ -695,7 +729,7 @@ let result = registry.execute(&amp;call, cancel).await?;
 <span class="boring">}</span></code></pre></pre>
 <p>Duplicate tool names panic at registration (fast-fail, programming error). Execution returns <code>RhoError::ToolNotFound</code> if the model requests an unregistered tool.</p>
 <h2 id="built-in-tools"><a class="header" href="#built-in-tools">Built-in tools</a></h2>
-<p>rho ships with 12 built-in tools, all registered in <code>rho-tools::register_all()</code>:</p>
+<p>rho ships with 13 built-in tools, all registered in <code>rho-tools::register_all()</code>:</p>
 <div class="table-wrapper"><table><thead><tr><th>Tool</th><th>Risk</th><th>Description</th></tr></thead><tbody>
 <tr><td><code>read_file</code></td><td>Read</td><td>Read file contents, wrapped in <code>&lt;context&gt;</code> framing</td></tr>
 <tr><td><code>write_file</code></td><td>Write</td><td>Create or overwrite files within the sandbox</td></tr>
@@ -707,8 +741,9 @@ let result = registry.execute(&amp;call, cancel).await?;
 <tr><td><code>cargo_test</code></td><td>Read</td><td>Structured test pass/fail results</td></tr>
 <tr><td><code>cargo_fix</code></td><td>Write</td><td>Apply machine-applicable compiler/clippy suggestions</td></tr>
 <tr><td><code>rustc_explain</code></td><td>Read</td><td>Look up detailed explanations for error codes</td></tr>
-<tr><td><code>rustdoc_lookup</code></td><td>Read</td><td>Look up Rust standard library documentation</td></tr>
+<tr><td><code>rustdoc_lookup</code></td><td>Read</td><td>Look up Rust standard library documentation (local rustdoc)</td></tr>
 <tr><td><code>crates_io_lookup</code></td><td>Read</td><td>Search and inspect crate metadata on crates.io</td></tr>
+<tr><td><code>session_summary</code></td><td>Read</td><td>Compressed numbered history of user requests and outcomes</td></tr>
 </tbody></table>
 </div>
 <h2 id="extension-tools"><a class="header" href="#extension-tools">Extension tools</a></h2>
@@ -829,7 +864,7 @@ pub trait ApprovalGate: Send + Sync {
 <span class="boring">}</span></code></pre></pre>
 <p>The TUI (Phase 4) will implement this with an in-terminal prompt that shows rich previews (syntax-highlighted diffs, command inspection) rather than the plain-text REPL format.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="context-management"><a class="header" href="#context-management">Context Management</a></h1>
-<p>The context manager is responsible for fitting the conversation within the model's context window. It decides which messages to keep, which to evict, and how to render compacted entries.</p>
+<p>The context manager is responsible for fitting the conversation within the model's context window. It decides which messages to keep, which to evict, and how to render compacted entries — using graduated resolution, phase-aware summaries, and selective eviction to maximize useful context.</p>
 <h2 id="the-problem"><a class="header" href="#the-problem">The problem</a></h2>
 <p>Language models have finite context windows. A long coding session — especially one involving tool calls with large outputs — can easily exceed the window. When that happens, something has to give. The naive approach (drop the oldest message) silently discards the user's original request, causing the <em>amnesia bug</em> where the model forgets what it was asked to do.</p>
 <h2 id="token-budget"><a class="header" href="#token-budget">Token budget</a></h2>
@@ -852,15 +887,49 @@ pub trait ApprovalGate: Send + Sync {
 <li><strong>Pins</strong> the system message, the first user turn, and the last turn — these are never evicted.</li>
 </ol>
 <p>The pinning of the first user turn is the fix for the amnesia bug: no matter how long the conversation, the model always sees what the user originally asked.</p>
-<h2 id="adaptive-resolution"><a class="header" href="#adaptive-resolution">Adaptive resolution</a></h2>
-<p>When the session has compacted entries (see <a href="core-concepts/./sessions.html">Sessions</a>), the context manager uses the resolution level to decide how to render each entry:</p>
+<h2 id="graduated-resolution"><a class="header" href="#graduated-resolution">Graduated resolution</a></h2>
+<p>Entries can exist at multiple fidelity levels, not just binary Full/Compacted. The context manager renders each entry according to its resolution:</p>
 <div class="table-wrapper"><table><thead><tr><th>Resolution</th><th>Rendering</th></tr></thead><tbody>
 <tr><td><code>Full</code></td><td>Verbatim message content</td></tr>
-<tr><td><code>Compacted</code></td><td>Compaction summary (a synthetic user message)</td></tr>
+<tr><td><code>Outlined</code></td><td>Structural summary: tool name, key arguments, truncated output (~10-20% of original)</td></tr>
+<tr><td><code>Summarized</code></td><td>Prose summary: one-line description of what the entry represents (~5-10% of original)</td></tr>
+<tr><td><code>Pinned</code></td><td>Protected from eviction; rendered at its native resolution</td></tr>
+<tr><td><code>Compacted</code></td><td>Replaced by a compaction summary (a synthetic user message)</td></tr>
 <tr><td><code>Attached</code></td><td>Brief mention (e.g., "Tool call X was executed")</td></tr>
 </tbody></table>
 </div>
-<p>This is the <em>adaptive mesh refinement</em> metaphor: full fidelity where the model needs it, coarsened where it doesn't.</p>
+<p>This is the <em>adaptive mesh refinement</em> metaphor: full fidelity where the model needs it, coarsened where it doesn't. The system can downgrade entries through <code>Full → Outlined → Summarized</code> before resorting to eviction.</p>
+<h3 id="selective-turn-internal-eviction"><a class="header" href="#selective-turn-internal-eviction">Selective turn-internal eviction</a></h3>
+<p>Instead of evicting entire turns when the context window fills up, the eviction planner (<code>plan_downgrades</code>) analyzes the entry path and produces a plan that downgrades individual entries <em>within</em> turns. The <code>prepare_context()</code> method applies this plan before building messages, reducing the need for turn-level eviction.</p>
+<p>Invariants: the system message, first user turn, last turn, and pinned entries are never downgraded. Tool-pair integrity (assistant + tool result) is maintained.</p>
+<h2 id="phase-detection"><a class="header" href="#phase-detection">Phase detection</a></h2>
+<p>The agent loop tracks which phase of work is currently active:</p>
+<ul>
+<li><strong>Exploration</strong> — reading files, listing directories, gathering context</li>
+<li><strong>Execution</strong> — writing files, editing code</li>
+<li><strong>Verification</strong> — running <code>cargo check</code>, <code>cargo test</code>, <code>cargo clippy</code></li>
+<li><strong>Conclusion</strong> — final text reply from the model</li>
+</ul>
+<p>Phase transitions follow a state machine: Exploration → Execution → Verification → Conclusion, with back-transitions allowed (e.g., Verification → Execution when a test fails).</p>
+<h2 id="compaction"><a class="header" href="#compaction">Compaction</a></h2>
+<p>When older entries are compacted (see <a href="core-concepts/./sessions.html">Sessions</a>), the compaction system produces structured summaries.</p>
+<h3 id="phase-aware-compaction"><a class="header" href="#phase-aware-compaction">Phase-aware compaction</a></h3>
+<p>Compaction summaries are grouped by phase, producing a narrative that tells the model <em>what happened</em> in each phase:</p>
+<pre><code class="language-text">**Exploration:** Read main.rs, lib.rs (2 reads).
+**Execution:** Edited src/parser.rs (3 edits).
+**Verification:** cargo_check, cargo_test. Found: 1 error, 0 warnings.
+</code></pre>
+<h3 id="llm-compaction-optional"><a class="header" href="#llm-compaction-optional">LLM compaction (optional)</a></h3>
+<p>When <code>compaction_mode = "llm"</code> is configured, the compaction system calls the LLM to generate a narrative summary in the <code>notes</code> field of <code>CompactionSummary</code>. This runs a two-stage process:</p>
+<ol>
+<li><strong>Mechanical compaction</strong> — structured fields (tool calls, findings, phases) are always computed deterministically.</li>
+<li><strong>LLM narrative</strong> — the model writes a concise paragraph summarizing what was accomplished, stored in <code>notes</code>.</li>
+</ol>
+<p>On LLM failure, the system falls back to mechanical-only compaction — no error propagation to the agent loop.</p>
+<h3 id="auto-compact-1"><a class="header" href="#auto-compact-1">Auto-compact</a></h3>
+<p>When context utilization crosses the <code>auto_compact_threshold</code> (configurable), the agent loop proactively compacts older entries before eviction is needed. This prevents the abrupt context loss that occurs when turn-level eviction kicks in.</p>
+<h2 id="context-pressure-nudge-removed"><a class="header" href="#context-pressure-nudge-removed">Context-pressure nudge (removed)</a></h2>
+<p>The context-pressure nudge — a synthetic user message injected to warn the model about high utilization — has been removed. It wasted context tokens and was redundant given graduated resolution, selective eviction, auto-compaction, and LLM compaction. The config fields (<code>context_pressure_threshold</code>, <code>context_pressure_interval</code>) remain for backwards compatibility but default to 0 (disabled).</p>
 <h2 id="tool-schema-overhead"><a class="header" href="#tool-schema-overhead">Tool schema overhead</a></h2>
 <p>Tool schemas (the JSON descriptions sent to the model so it knows what tools are available) consume tokens. The context manager subtracts an estimate of this overhead from the available budget before fitting messages, preventing the combined total from exceeding the window.</p>
 <h2 id="token-estimation"><a class="header" href="#token-estimation">Token estimation</a></h2>
@@ -868,8 +937,41 @@ pub trait ApprovalGate: Send + Sync {
 <ul>
 <li><strong>Per-model calibration</strong>: an exponential moving average (α=0.3) that learns the real tokens-per-character ratio from model responses.</li>
 <li><strong>Bootstrap ratios</strong>: built-in starting ratios for common model families (Gemma, Qwen, Claude, GPT-4, Llama).</li>
-<li><strong>Substring matching</strong>: falls back to character-level estimation for non-ASCII text.
-The estimator converges to within 10% accuracy by the third model call in most cases.</li>
+<li><strong>Substring matching</strong>: falls back to character-level estimation for non-ASCII text.</li>
+</ul>
+<p>The estimator converges to within 10% accuracy by the third model call in most cases.</p>
+<h2 id="enhanced-context-stats"><a class="header" href="#enhanced-context-stats">Enhanced context stats</a></h2>
+<p><code>ContextStats</code> provides rich token distribution diagnostics:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub struct ContextStats {
+    // Basic stats
+    pub context_window: usize,
+    pub completion_reserve: usize,
+    pub estimated_used: usize,
+    pub message_count: usize,
+    pub entry_count: usize,
+    pub path_entry_count: usize,
+
+    // Token distribution by message role
+    pub role_tokens: RoleTokenDistribution,      // system, user, assistant, tool
+
+    // Token distribution by resolution level
+    pub resolution_tokens: ResolutionTokenDistribution,  // full, outlined, summarized, pinned
+
+    // Token distribution by session phase
+    pub phase_tokens: PhaseTokenDistribution,    // exploration, execution, verification, conclusion, unclassified
+
+    // Compaction tracking
+    pub compaction_tokens: usize,
+    pub compacted_entry_count: usize,
+}
+<span class="boring">}</span></code></pre></pre>
+<p>Key methods:</p>
+<ul>
+<li><code>utilization_percent()</code> — context utilization as 0–100% (based on prompt budget)</li>
+<li><code>estimated_remaining()</code> — remaining tokens in the prompt budget (saturates at 0)</li>
+<li><code>prompt_budget()</code> — context window minus completion reserve</li>
 </ul>
 <h2 id="context-status-bar"><a class="header" href="#context-status-bar">Context status bar</a></h2>
 <p>The REPL displays a compact one-line status bar after every turn showing estimated token usage:</p>
@@ -884,6 +986,9 @@ The estimator converges to within 10% accuracy by the third model call in most c
 <li>Conversation tokens</li>
 <li>Estimated used/remaining/percentage</li>
 <li>Message count, path entry count, total entries</li>
+<li><strong>Token distribution by role</strong> (system, user, assistant, tool)</li>
+<li><strong>Token distribution by resolution</strong> (full, outlined, summarized, pinned)</li>
+<li><strong>Compaction tokens and compacted entry count</strong></li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="sessions"><a class="header" href="#sessions">Sessions</a></h1>
 <p>A <strong>session</strong> is rho's unit of persistent conversation state. It replaces the older flat <code>Conversation</code> type with a tree-structured model where every turn, tool call, and compaction is an entry in an append-only log.</p>
@@ -892,7 +997,7 @@ The estimator converges to within 10% accuracy by the third model call in most c
 <ol>
 <li><strong>Tree structure</strong> — branching, not deletion. <code>/clear</code> and compaction create new branches; the old tree is preserved.</li>
 <li><strong>Typed entries</strong> — user messages, assistant messages, tool calls, tool results, compaction summaries, and extension entries are all first-class nodes.</li>
-<li><strong>Resolution levels</strong> — each entry carries a resolution (<code>Full</code>, <code>Compacted</code>, or <code>Attached</code>) that tells the context builder how to render it.</li>
+<li><strong>Resolution levels</strong> — each entry carries a resolution (<code>Full</code>, <code>Outlined</code>, <code>Summarized</code>, <code>Pinned</code>, <code>Compacted</code>, or <code>Attached</code>) that tells the context builder how to render it.</li>
 <li><strong>Persistence</strong> — sessions auto-flush to JSONL files, surviving process restarts and crashes.</li>
 </ol>
 <h2 id="tree-structure"><a class="header" href="#tree-structure">Tree structure</a></h2>
@@ -954,32 +1059,43 @@ The estimator converges to within 10% accuracy by the third model call in most c
   (3 previous session(s) for this project — use rho -c to resume the latest)
 </code></pre>
 <h2 id="context-stats"><a class="header" href="#context-stats">Context stats</a></h2>
-<p>The <code>ContextStats</code> struct provides a snapshot of context window usage, available through <code>Session::context_stats()</code>:</p>
+<p>The <code>ContextStats</code> struct provides a rich snapshot of context window usage, available through <code>Session::context_stats()</code>:</p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>pub struct ContextStats {
+    // Basic stats
     pub context_window: usize,
     pub completion_reserve: usize,
     pub estimated_used: usize,
     pub message_count: usize,
     pub entry_count: usize,
     pub path_entry_count: usize,
+
+    // Token distribution
+    pub role_tokens: RoleTokenDistribution,           // system, user, assistant, tool
+    pub resolution_tokens: ResolutionTokenDistribution, // full, outlined, summarized, pinned
+    pub phase_tokens: PhaseTokenDistribution,        // exploration, execution, verification, conclusion, unclassified
+
+    // Compaction tracking
+    pub compaction_tokens: usize,
+    pub compacted_entry_count: usize,
 }
 <span class="boring">}</span></code></pre></pre>
 <p>Key methods:</p>
 <ul>
 <li><code>utilization_percent()</code> — context utilization as 0–100% (based on prompt budget)</li>
 <li><code>estimated_remaining()</code> — remaining tokens in the prompt budget (saturates at 0)</li>
+<li><code>prompt_budget()</code> — context window minus completion reserve</li>
 </ul>
 <p>The REPL prints a compact one-line status bar after every turn:</p>
 <pre><code class="language-text">[████████████░░░░░░░░] 12.3k/32k tokens (50%) │ 12.3k remaining │ 10 messages
 </code></pre>
-<p>Color-coded green (&lt;60%), yellow (60–80%), red (&gt;80%). The <code>/status</code> REPL command (aliased as <code>/context</code>) shows a detailed multi-line breakdown including system prompt overhead, tool schema overhead, and conversation token breakdown.</p>
+<p>Color-coded green (&lt;60%), yellow (60–80%), red (&gt;80%). The <code>/status</code> REPL command (aliased as <code>/context</code>) shows a detailed multi-line breakdown including token distribution by role, resolution level, compaction stats, system prompt overhead, tool schema overhead, and conversation token breakdown.</p>
 <h2 id="entry-types"><a class="header" href="#entry-types">Entry types</a></h2>
 <p>Each entry in the tree has a <code>payload</code> that describes what it represents:</p>
 <div class="table-wrapper"><table><thead><tr><th>Payload</th><th>Description</th></tr></thead><tbody>
 <tr><td><code>Message</code></td><td>A chat message (system, user, assistant, or tool result)</td></tr>
-<tr><td><code>Compaction</code></td><td>A summary replacing older entries</td></tr>
+<tr><td><code>Compaction</code></td><td>A phase-aware summary replacing older entries</td></tr>
 <tr><td><code>BranchSummary</code></td><td>A summary created when branching</td></tr>
 <tr><td><code>CustomMessage</code></td><td>Extension message (sent to model as synthetic user message)</td></tr>
 <tr><td><code>Custom</code></td><td>Extension state (never sent to model)</td></tr>
@@ -994,14 +1110,18 @@ The estimator converges to within 10% accuracy by the third model call in most c
 <p>Every entry carries a <code>resolution</code> field:</p>
 <ul>
 <li><strong><code>Full</code></strong> — complete, verbatim content. Used for recent entries that fit within the context window.</li>
+<li><strong><code>Outlined</code></strong> — structural summary: tool name, key arguments, truncated output. Consumes ~10-20% of original tokens.</li>
+<li><strong><code>Summarized</code></strong> — prose summary: a one-line description of what the entry represents. Consumes ~5-10% of original tokens.</li>
+<li><strong><code>Pinned</code></strong> — protected from eviction and downgrade. Rendered at its native resolution.</li>
 <li><strong><code>Compacted</code></strong> — replaced by a <code>Compaction</code> summary. The original content is still in the tree but the context builder renders the summary instead.</li>
-<li><strong><code>Attached</code></strong> — lightweight reference (e.g., a tool call whose result has been compacted). Rendered as a brief mention rather than full content.</li>
+<li><strong><code>Attached</code></strong> — lightweight reference. Rendered as a brief mention rather than full content.</li>
 </ul>
+<p>Entries are downgraded through <code>Full → Outlined → Summarized</code> by the selective eviction planner before turn-level eviction is needed. Pinned entries are protected from all downgrade and eviction.</p>
 <p>The context builder (<a href="core-concepts/./context-management.html">Context Management</a>) uses resolution levels to decide what to send to the model — full detail where it matters, summaries where it doesn't.</p>
 <h2 id="bounded-tool-results"><a class="header" href="#bounded-tool-results">Bounded tool results</a></h2>
 <p>Tool results can be very large (entire file contents, command output). Sessions enforce a bounded output size:</p>
 <ul>
-<li>Tool output exceeding 50% of the prompt budget is truncated.</li>
+<li>Tool output exceeding a fraction of the prompt budget is truncated.</li>
 <li>The full output is preserved in <code>ToolResultDetails::FullOutput</code> for later retrieval.</li>
 <li>Truncation splits on the last newline boundary to avoid breaking UTF-8 sequences.</li>
 </ul>
@@ -1014,7 +1134,7 @@ The estimator converges to within 10% accuracy by the third model call in most c
 <li><strong>Constructors</strong>: <code>Session::new()</code> (persisted), <code>Session::in_memory()</code> (no disk I/O), <code>Session::open(path)</code> (resume from JSONL)</li>
 <li><strong>Appenders</strong>: <code>append_user_message()</code>, <code>append_assistant_message()</code>, <code>append_tool_result()</code>, <code>append_tool_call()</code></li>
 <li><strong>Navigation</strong>: <code>path_to_root()</code>, <code>children()</code>, <code>leaf()</code>, <code>branch_to()</code>, <code>branch_with_summary()</code></li>
-<li><strong>Context</strong>: <code>path_messages()</code> (messages along the current branch), <code>send_current(client)</code> (send to model with context fitting), <code>context_stats()</code> (usage snapshot)</li>
+<li><strong>Context</strong>: <code>path_messages()</code> (messages along the current branch), <code>send_current()</code> (send to model with context fitting), <code>context_stats()</code> (usage snapshot), <code>prepare_context()</code> (selective downgrade)</li>
 <li><strong>Compaction</strong>: <code>compact_older_than()</code> (compact entries older than a threshold)</li>
 <li><strong>Discovery</strong>: <code>find_latest_session(cwd)</code>, <code>list_sessions(cwd)</code> (header-only session scanning)</li>
 <li><strong>Extensions</strong>: <code>write_custom_state()</code>, <code>read_custom_state()</code>, <code>write_custom_message()</code>, <code>read_custom_message()</code></li>
@@ -1257,6 +1377,17 @@ stuck_loop_threshold = 3
 
 # Show full chain-of-thought reasoning in output (default: false)
 show_reasoning = false
+
+# Context utilization threshold for auto-compaction (default: 0 = disabled)
+# When utilization &gt;= this %, older entries are proactively compacted.
+auto_compact_threshold = 0
+
+# Compaction strategy: "mechanical" (default) or "llm" (opt-in)
+# When "llm", the model generates narrative notes for compacted entries.
+compaction_mode = "mechanical"
+
+# Context-pressure threshold (deprecated, no-op, default: 0 = disabled)
+# context_pressure_threshold = 0
 
 [provider]
 # Provider name — shown in consent prompt and /models output.
@@ -2109,7 +2240,7 @@ impl EvalTask for MyNewTask {
 <tr><td><code>clap-cargo</code></td><td>Manual <code>cargo_metadata</code> integration avoided; <code>--version</code> from <code>clap</code> derive</td></tr>
 </tbody></table>
 </div><div style="break-before: page; page-break-before: always;"></div><h1 id="roadmap"><a class="header" href="#roadmap">Roadmap</a></h1>
-<p>rho is developed in phases, each building on the last. The current version is <strong>0.51.0</strong>.</p>
+<p>rho is developed in phases, each building on the last. The current version is <strong>0.64.0</strong>.</p>
 <h2 id="phase-summary"><a class="header" href="#phase-summary">Phase summary</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Phase</th><th>Status</th><th>Summary</th></tr></thead><tbody>
 <tr><td>1a: The Agent Loop</td><td>✅ Complete</td><td>Agent loop, tool registry, <code>ChatClient</code> trait, conversation management</td></tr>
@@ -2129,51 +2260,22 @@ impl EvalTask for MyNewTask {
 <tr><td>6: LSP</td><td>Deferred</td><td>rust-analyzer integration</td></tr>
 </tbody></table>
 </div>
-<h2 id="completed-phases"><a class="header" href="#completed-phases">Completed phases</a></h2>
-<h3 id="phase-1a--the-agent-loop"><a class="header" href="#phase-1a--the-agent-loop">Phase 1a — The Agent Loop</a></h3>
-<p>The foundation: <code>Tool</code> trait, <code>ToolRegistry</code>, <code>ChatClient</code> trait, <code>Conversation</code>, and the <code>run_loop</code> state machine. The agent can send messages to a model, receive tool calls, execute them, and feed results back.</p>
-<h3 id="phase-1b--security-surface"><a class="header" href="#phase-1b--security-surface">Phase 1b — Security Surface</a></h3>
-<p>Defense-in-depth: file sandbox, approval gate (per-tool, risk-based), secret redaction, untrusted-data framing with <code>&lt;context&gt;</code> tags, and project context file trust with SHA-256 hash verification.</p>
-<h3 id="phase-2--shell-file-tools--cross-platform"><a class="header" href="#phase-2--shell-file-tools--cross-platform">Phase 2 — Shell, File Tools &amp; Cross-Platform</a></h3>
-<p>PowerShell-native execution on all platforms, <code>ReadFile</code>/<code>WriteFile</code>/<code>ListDir</code>/<code>EditFile</code> tools, two-tier TOML config, command denylist, compact prompt for small-context models, and full cross-platform support (Windows/macOS/Linux).</p>
-<h3 id="phase-25--adaptive-resolution-context"><a class="header" href="#phase-25--adaptive-resolution-context">Phase 2.5 — Adaptive-Resolution Context</a></h3>
-<p>Session tree (replacing flat <code>Conversation</code>), resolution levels (<code>Full</code>/<code>Compacted</code>/<code>Attached</code>), calibrated token estimation with exponential moving average, tool-result bounding to prevent single-output context overflow, and JSONL persistence with auto-flush.</p>
-<h3 id="phase-3--rust-tooling-and-tree-sitter"><a class="header" href="#phase-3--rust-tooling-and-tree-sitter">Phase 3 — Rust Tooling and Tree-Sitter</a></h3>
-<p><code>rho-highlight</code> crate with tree-sitter parsing, <code>node_at()</code> position lookup, and token classification. Structured compiler diagnostics (<code>CargoCheck</code>, <code>CargoClippy</code>, <code>CargoTest</code>, <code>CargoFix</code>, <code>CargoExplain</code>). <code>EditFile</code> node-splitting validation. <code>rho-eval</code> benchmark suite with 5 validated end-to-end scenarios. <code>rho-bench</code> harness for multi-model comparison with token usage, wall time, and JSON result persistence.</p>
-<h3 id="phase-35--rust-standard-library-reference"><a class="header" href="#phase-35--rust-standard-library-reference">Phase 3.5 — Rust Standard Library Reference</a></h3>
-<p>A <code>RustdocLookup</code> tool that reads locally installed rustdoc HTML via <code>rustup doc --path</code>. Zero network dependency. Supports type, method, trait, and function lookups.</p>
-<h3 id="phase-36--cratesio-research"><a class="header" href="#phase-36--cratesio-research">Phase 3.6 — crates.io Research</a></h3>
-<p>A <code>CratesIoLookup</code> tool for crate metadata, search, version history, and dependency tree inspection. Dedicated Rust HTTP client (not a shell escape).</p>
-<h3 id="phase-38--hashline-editing"><a class="header" href="#phase-38--hashline-editing">Phase 3.8 — Hashline Editing</a></h3>
-<p>Content-addressed line references (<code>LINE#HASH:</code>) for reliable file editing. ReadFile returns content in hashline format. EditFile supports hashline-anchor operations (replace, append, prepend, delete). Fuzzy anchor matching for resilience when the file has changed since the last read.</p>
-<h3 id="phase-39--streaming--live-output"><a class="header" href="#phase-39--streaming--live-output">Phase 3.9 — Streaming &amp; Live Output</a></h3>
-<p>SSE streaming for the Chat Completions API. <code>AgentObserver</code> trait with 7 event methods for real-time progress rendering. <code>NopObserver</code> for tests/benchmarks. <code>ReplObserver</code> streams reasoning deltas and tool activity to stdout in the REPL.</p>
-<h3 id="phase-310--multi-provider--model-picker"><a class="header" href="#phase-310--multi-provider--model-picker">Phase 3.10 — Multi-Provider &amp; Model Picker</a></h3>
-<p><code>Provider</code> trait for unified provider abstraction. <code>ProviderRegistry</code> manages multiple providers and routes model requests. Interactive model picker with curated models from Anthropic, OpenAI, and z.ai when auto-detection fails. <code>/models</code> and <code>/model</code> REPL commands for browsing and switching models at runtime.</p>
-<h3 id="phase-311--session-discovery--context-visibility"><a class="header" href="#phase-311--session-discovery--context-visibility">Phase 3.11 — Session Discovery &amp; Context Visibility</a></h3>
-<p>Session discovery functions (<code>find_latest_session</code>, <code>list_sessions</code>) for lightweight header-only session scanning. <code>rho -c</code> / <code>--continue</code> flag to auto-resume the most recent session. <code>/sessions</code> REPL command listing recent sessions with timestamps, sizes, and entry counts. <code>ContextStats</code> struct for context window usage snapshots. Live status bar after every REPL turn with color-coded utilization. <code>/status</code> REPL command for detailed context breakdown.</p>
+<h2 id="context-management-enhancement-062064"><a class="header" href="#context-management-enhancement-062064">Context Management Enhancement (0.62–0.64)</a></h2>
+<p>A series of incremental improvements to context management, addressing structural issues that caused context exhaustion and amnesia:</p>
+<div class="table-wrapper"><table><thead><tr><th>Phase</th><th>Summary</th><th>Version</th></tr></thead><tbody>
+<tr><td>Graduated Resolution</td><td>Added <code>Outlined</code> and <code>Summarized</code> intermediate fidelity levels</td><td>0.62</td></tr>
+<tr><td>Mechanical Outlining</td><td>12 tool-specific structural summary formatters</td><td>0.62</td></tr>
+<tr><td>Selective Turn-Internal Eviction</td><td>Per-entry downgrade planner (Full → Outlined → Summarized)</td><td>0.63</td></tr>
+<tr><td>Phase Detection</td><td><code>SessionPhase</code> state machine tracking exploration/execution/verification</td><td>0.63</td></tr>
+<tr><td>Phase-Aware Compaction</td><td>Narrative summaries grouped by session phase</td><td>0.64</td></tr>
+<tr><td>LLM Compaction</td><td>Model-generated narrative notes (opt-in, graceful fallback)</td><td>0.64</td></tr>
+<tr><td>Enhanced ContextStats</td><td>Token distribution by role, resolution, and phase</td><td>0.64</td></tr>
+<tr><td>Context-Pressure Nudge Removed</td><td>Replaced by structural mechanisms</td><td>0.64</td></tr>
+</tbody></table>
+</div>
 <h2 id="upcoming-phases"><a class="header" href="#upcoming-phases">Upcoming phases</a></h2>
-<h3 id="phase-312--rpc-mode"><a class="header" href="#phase-312--rpc-mode">Phase 3.12 — RPC Mode</a></h3>
-<p>Headless JSONL over stdin/stdout for process integration. <code>--mode rpc</code> starts rho as a subprocess that reads newline-delimited JSON commands from stdin and writes JSON events to stdout. Supports the full agent loop: prompts, tool calls, approval round-trips, model switching, context compaction, and session queries.</p>
-<p>The implementation is generic over I/O (<code>run_rpc_on&lt;R, W&gt;</code>) so integration tests can inject canned stdin and capture stdout. 43 end-to-end tests cover the complete protocol. See <a href="development/../rpc-mode.html">RPC Mode</a> for the protocol reference.</p>
-<h3 id="phase-5--typescript-extensions"><a class="header" href="#phase-5--typescript-extensions">Phase 5 — TypeScript Extensions</a></h3>
-<p><code>rho-ext</code> crate providing a TypeScript extension runtime powered by V8/deno-core. Each extension runs in its own V8 isolate on a dedicated OS thread and can register tools, hooks, and commands via <code>export default { ... }</code>.</p>
-<p>Key components:</p>
-<ul>
-<li><strong><code>ExtensionRuntime</code></strong> — V8 isolate lifecycle, async tool/hook/command calls</li>
-<li><strong><code>ExtensionLoader</code></strong> — discovery, config-driven filtering, hot reload (mtime-based)</li>
-<li><strong><code>DenoTool</code></strong> — <code>Tool</code> trait bridge for extension functions</li>
-<li><strong><code>DenoObserver</code></strong> — <code>AgentObserver</code> bridge for extension hooks (onLoad, onToolCall, onToolResult, onBeforeModel)</li>
-<li><strong><code>CompositeObserver</code></strong> — fans out agent-loop events to REPL/RPC + extension observers</li>
-<li><strong><code>InterceptResult</code></strong> — tool-call interception (Block/Allow) wired into <code>classify_call()</code></li>
-<li><strong>Host functions</strong> — <code>rho.readFile()</code>, <code>rho.writeFile()</code>, <code>rho.runCommand()</code>, <code>rho.getModel()</code>, <code>rho.getCwd()</code>, <code>rho.log()</code></li>
-<li><strong>Config</strong> — <code>[extensions]</code> section with enabled/disabled allowlists, default and per-extension permissions</li>
-<li><strong>Type definitions</strong> — <code>rho-ext/types/rho.d.ts</code> for extension author IntelliSense</li>
-<li><strong>REPL commands</strong> — <code>/reload</code> for hot reload, <code>/extensions</code> to list loaded extensions</li>
-</ul>
-<p>135 <code>rho-ext</code> tests + 7 integration tests in the binary. See <a href="development/../extensions.html">Extensions</a> for the full documentation.</p>
 <h3 id="phase-4--terminal-ui"><a class="header" href="#phase-4--terminal-ui">Phase 4 — Terminal UI</a></h3>
-<p>Rich TUI replacing the bare REPL. Streaming output, approval prompts with rich previews, diagnostic panels, syntax highlighting. Built on <code>ratatui</code>/<code>crossterm</code>. See <a href="development/../../../1.%20Planning/Phase%204/Phase%204%20Readiness%20Assessment.html">Phase 4 readiness assessment</a>.</p>
+<p>Rich TUI replacing the bare REPL. Streaming output, approval prompts with rich previews, diagnostic panels, syntax highlighting. Built on <code>ratatui</code>/<code>crossterm</code>.</p>
 <h3 id="phase-6--lsp"><a class="header" href="#phase-6--lsp">Phase 6 — LSP</a></h3>
 <p><code>rust-analyzer</code> integration for real-time diagnostics, go-to-definition, and refactoring support. Deferred until after the TUI is stable.</p>
 

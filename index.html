@@ -208,7 +208,9 @@
 <li>Observe agent activity in real time (reasoning, tool calls, errors) via the <code>AgentObserver</code> trait</li>
 <li>Extend rho with TypeScript extensions that add tools, hooks, and commands — hot-reloadable at runtime</li>
 <li>Compact old conversation turns to stay within context limits</li>
-<li>Monitor context window usage with a live status bar and <code>/status</code> REPL command</li>
+<li>Monitor context window usage with a live status bar, <code>/status</code> REPL command, and enhanced token distribution stats</li>
+<li>Graduated resolution (Outlined/Summarized) with selective per-entry eviction before turn-level eviction</li>
+<li>Phase-aware and LLM-assisted compaction for high-fidelity context summaries</li>
 <li>Run headless via JSONL-over-stdio RPC mode for integration with editors, bots, and custom UIs</li>
 </ul>
 <p>This book documents the architecture, security model, configuration, and development of rho.</p>
