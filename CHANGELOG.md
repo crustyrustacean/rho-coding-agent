@@ -1,3 +1,12 @@
+## [0.67.0] - 2026-06-06
+
+### 🐛 Bug Fixes
+
+- Add missing backtick in doc comment, add .gitattributes for LF
+
+### ⚙️ Miscellaneous Tasks
+
+- *(release)* Prepare 0.66.0
 ## [0.66.0] - 2026-06-06
 
 ### 🛠️ Fixes

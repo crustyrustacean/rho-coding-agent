@@ -1,17 +1,11 @@
-//! Model resolution and interactive selection.
+//! Model resolution.
 //!
 //! Resolves which model to use based on CLI flags, config, and auto-detection
-//! against configured providers. Falls back to an interactive picker when
-//! no model can be determined automatically.
-//!
-//! In REPL mode all output is delegated to [`crate::presenter::ReplPresenter`].
-//! In headless (RPC) mode the interactive picker is replaced by an error;
-//! see [`crate::presenter::RpcPresenter`] for the no-op stubs used there.
+//! against configured providers. All output goes to stderr via [`RpcPresenter`].
 
-use crate::presenter::{ReplPresenter as P, RpcPresenter};
+use crate::presenter::RpcPresenter as P;
 use anyhow::Result;
 use rho_core::{ProviderRegistry, RhoConfig};
-use std::io::{self, BufRead};
 
 /// The minimum fuzzy similarity score to include a suggestion.
 const FUZZY_THRESHOLD: f64 = 0.5;
@@ -32,18 +26,10 @@ const MAX_SUGGESTIONS: usize = 5;
 /// supported or all providers are unreachable), the user-specified model
 /// is accepted verbatim with a warning — this avoids blocking valid
 /// workflows on providers that simply don't advertise their models.
-///
-/// # Interactive
-///
-/// If no model is specified and none can be auto-detected this function
-/// normally prompts the user interactively via stdin. When `headless` is
-/// `true` (RPC mode) the interactive picker is skipped and an error is
-/// returned instead — the caller must pass `--model` explicitly.
 pub(crate) async fn resolve_model(
     config: &RhoConfig,
     cli_model: Option<&String>,
     registry: &ProviderRegistry,
-    headless: bool,
 ) -> Result<String> {
     let all_models = registry.list_all_models().await;
 
@@ -62,7 +48,7 @@ pub(crate) async fn resolve_model(
     }
     // 3. Auto-detect across all providers.
     if available.is_empty() {
-        return no_models_fallback(config, registry, headless);
+        return no_models_fallback(config, registry);
     }
     let (provider_name, model_id) = &available[0];
     P::model_auto_detected(model_id, provider_name);
@@ -108,17 +94,9 @@ fn validate_and_resolve(model: &str, source: &str, available: &[(&str, String)])
 ///    getting-started guide.
 ///
 /// 2. **Configured but unreachable** — one or more providers are configured
-///    but none could list models. Offers an interactive model picker with
-///    popular models, falling back to manual entry.
-///
-/// # Interactive
-///
-/// Prompts the user via stdin to select or enter a model ID.
-fn no_models_fallback(
-    config: &RhoConfig,
-    registry: &ProviderRegistry,
-    headless: bool,
-) -> Result<String> {
+///    but none could list models. Returns an error directing the user to
+///    specify a model explicitly.
+fn no_models_fallback(config: &RhoConfig, registry: &ProviderRegistry) -> Result<String> {
     let is_zero_config =
         config.provider.is_empty() && registry.external_provider_names().is_empty();
 
@@ -150,68 +128,8 @@ fn no_models_fallback(
         ));
     }
 
-    pick_model_interactively(registry, headless)
-}
-
-/// Interactive model picker for when no models could be auto-detected.
-///
-/// Shows a numbered menu of popular models, plus an option to type a
-/// model ID manually. Reads the user's choice from stdin and returns
-/// the selected model ID.
-fn pick_model_interactively(registry: &ProviderRegistry, headless: bool) -> Result<String> {
-    let names: Vec<&str> = registry.providers().iter().map(|p| p.name()).collect();
-
-    // In headless (RPC) mode the interactive picker is not available.
-    // Route through the no-op RpcPresenter stubs before returning an error
-    // so that step 6 can replace this path with JSONL-based selection.
-    if headless {
-        RpcPresenter::picker_header(&names);
-        RpcPresenter::picker_manual_prompt();
-        return Err(anyhow::anyhow!(
-            "no model could be auto-detected in RPC mode; \
-             specify one with --model <id>"
-        ));
-    }
-
-    P::picker_header(&names);
-
-    let mut line = String::new();
-    let ok = io::stdin().lock().read_line(&mut line).is_ok();
-    if !ok {
-        return Err(anyhow::anyhow!("could not read model choice from stdin"));
-    }
-
-    let choice = line.trim();
-
-    if choice == "0" {
-        P::picker_manual_prompt();
-        let mut manual = String::new();
-        if io::stdin().lock().read_line(&mut manual).is_ok() {
-            let model_id = manual.trim().to_owned();
-            if !model_id.is_empty() {
-                P::model_entered(&model_id);
-                return Ok(model_id);
-            }
-        }
-        return Err(anyhow::anyhow!("no model ID entered"));
-    }
-
-    // Numeric selection from the list (uses the same PICKER_MODELS table
-    // as the presenter).
-    let picker_models = P::picker_models();
-    if let Ok(idx) = choice.parse::<usize>()
-        && idx >= 1
-        && idx <= picker_models.len()
-    {
-        let (display_name, _family, model_id) = picker_models[idx - 1];
-        P::model_picked(model_id, display_name);
-        return Ok(model_id.to_owned());
-    }
-
-    if !choice.is_empty() {
-        P::model_entered(choice);
-        return Ok(choice.to_owned());
-    }
-
-    Err(anyhow::anyhow!("no model selected"))
+    Err(anyhow::anyhow!(
+        "no model could be auto-detected; \
+         specify one with --model <id>"
+    ))
 }

@@ -1,4 +1,4 @@
-//! The `rho` binary crate — startup, REPL, and approval gate.
+//! The `rho` binary crate — startup and RPC protocol.
 //!
 //! This library crate exists to share module structure between `main.rs` and
 //! integration tests. The binary entry point (`main.rs`) is thin: parse CLI,
@@ -7,8 +7,6 @@
 pub mod app;
 pub mod cli;
 pub(crate) mod ext_observer;
-pub(crate) mod gate;
 pub(crate) mod model;
 pub(crate) mod presenter;
-pub(crate) mod repl;
 pub(crate) mod rpc;

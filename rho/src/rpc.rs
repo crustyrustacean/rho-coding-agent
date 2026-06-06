@@ -15,10 +15,15 @@
 //! |---------------------|-----------------------|------------------------------------|
 //! | `prompt`            | `message`             | Send a user message to the agent   |
 //! | `abort`             | —                     | Cancel the current operation       |
+//! | `clear`             | —                     | Clear conversation history         |
 //! | `get_state`         | —                     | Return current model / provider    |
 //! | `get_messages`      | —                     | Return all messages on active path |
 //! | `set_model`         | `model`               | Switch the active model            |
+//! | `list_models`       | —                     | List available models from providers |
 //! | `get_session_stats` | —                     | Return token budget / usage info   |
+//! | `list_sessions`     | —                     | List previous sessions for project |
+//! | `list_extensions`   | —                     | List loaded extensions and tools   |
+//! | `reload_extensions` | —                     | Reload extensions from disk        |
 //! | `compact`           | —                     | Trigger context compaction         |
 //!
 //! ## Events (rho → stdout)
@@ -50,13 +55,13 @@
 //! Sending `approved: false` (or any non-boolean / missing field) denies the
 //! tool call and lets the agent continue.
 
-use crate::app::App;
+use crate::app::{App, TurnResult, run_agent_turn};
 use crate::ext_observer::CompositeObserver;
 use anyhow::Result;
 use async_trait::async_trait;
 use rho_core::{
-    AgentObserver, AgentState, ApprovalGate, ChatMessage, ContentBlock,
-    MechanicalCompactionStrategy, ModelToolCall, ToolResult, ToolRisk,
+    AgentObserver, AgentState, ApprovalGate, ChatMessage, ContentBlock, ModelToolCall, ToolResult,
+    ToolRisk,
 };
 use serde_json::{Value, json};
 use std::io::{self, BufRead, Write};
@@ -293,10 +298,15 @@ async fn dispatch_command(app: &mut App, cmd: Value, out: &Out, inp: &In) {
             app.cancel.cancel();
             write_event(out, json!({"type": "response", "success": true}));
         }
+        Some("clear") => handle_clear(app, out),
         Some("get_state") => handle_get_state(app, out),
         Some("get_messages") => handle_get_messages(app, out),
         Some("set_model") => handle_set_model(app, &cmd, out).await,
+        Some("list_models") => handle_list_models(app, out).await,
         Some("get_session_stats") => handle_get_session_stats(app, out),
+        Some("list_sessions") => handle_list_sessions(app, out),
+        Some("list_extensions") => handle_list_extensions(app, out),
+        Some("reload_extensions") => handle_reload_extensions(app, out).await,
         Some("compact") => handle_compact(app, out).await,
         Some(other) => write_event(
             out,
@@ -369,10 +379,13 @@ async fn handle_prompt(app: &mut App, cmd: &Value, out: &Out, inp: &In) {
         observer: &composite,
         compaction_client,
     };
-
-    match rho_core::run_loop(&mut app.session, &message, &params).await {
-        Ok(reply) => write_event(out, json!({"type": "agent_end", "reply": reply})),
-        Err(e) => write_event(out, json!({"type": "agent_error", "error": e.to_string()})),
+    match run_agent_turn(&mut app.session, &message, &params).await {
+        TurnResult::Reply(reply) => {
+            write_event(out, json!({"type": "agent_end", "reply": reply}));
+        }
+        TurnResult::Error(e) => {
+            write_event(out, json!({"type": "agent_error", "error": e}));
+        }
     }
 }
 
@@ -407,8 +420,7 @@ fn handle_get_messages(app: &App, out: &Out) {
 async fn handle_set_model(app: &mut App, cmd: &Value, out: &Out) {
     match cmd["model"].as_str() {
         Some(id) if !id.is_empty() => {
-            app.session.set_model(id);
-            app.ext_loader.set_model_all(id).await;
+            app.set_model(id).await;
             write_event(
                 out,
                 json!({"type": "response", "success": true, "model": id}),
@@ -461,10 +473,131 @@ fn handle_get_session_stats(app: &App, out: &Out) {
 
 /// Trigger context compaction on the active session.
 async fn handle_compact(app: &mut App, out: &Out) {
-    let strategy = MechanicalCompactionStrategy::new();
-    let threshold = app.session.message_budget() / 4;
-    match app.session.compact_older_than(threshold, &strategy).await {
-        Ok(_) => write_event(out, json!({"type": "response", "success": true})),
+    match app.compact().await {
+        Ok(()) => write_event(out, json!({"type": "response", "success": true})),
+        Err(e) => write_event(
+            out,
+            json!({"type": "response", "success": false, "error": e.to_string()}),
+        ),
+    }
+}
+
+/// Clear the conversation history by branching back to the system message.
+fn handle_clear(app: &mut App, out: &Out) {
+    let path = app.session.path_to_root();
+    if let Some(root_entry) = path.last() {
+        let root_id = root_entry.id.clone();
+        let _ = app.session.branch_to(&root_id);
+        write_event(out, json!({"type": "response", "success": true}));
+    } else {
+        write_event(
+            out,
+            json!({"type": "response", "success": false, "error": "no root entry to clear to"}),
+        );
+    }
+}
+
+/// List available models from all providers.
+async fn handle_list_models(app: &App, out: &Out) {
+    let all = app.providers.list_all_models().await;
+    if all.is_empty() {
+        write_event(
+            out,
+            json!({"type": "response", "success": true, "models": []}),
+        );
+        return;
+    }
+
+    let models: Vec<Value> = all
+        .iter()
+        .map(|(provider, info)| {
+            json!({
+                "id": info.id,
+                "provider": provider,
+            })
+        })
+        .collect();
+
+    write_event(
+        out,
+        json!({"type": "response", "success": true, "models": models}),
+    );
+}
+
+/// List previous sessions for this project.
+fn handle_list_sessions(app: &App, out: &Out) {
+    let cwd = app.session.header().cwd.clone();
+    let sessions = rho_core::list_sessions(&cwd);
+
+    let list: Vec<Value> = sessions
+        .iter()
+        .map(|meta| {
+            let mtime = meta
+                .mtime
+                .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs());
+            let size_kb = std::fs::metadata(&meta.path).map_or(0, |m| m.len() / 1024);
+            json!({
+                "path": meta.path,
+                "mtime_secs": mtime,
+                "size_kb": size_kb,
+                "entry_count": meta.entry_count,
+            })
+        })
+        .collect();
+
+    write_event(
+        out,
+        json!({"type": "response", "success": true, "sessions": list}),
+    );
+}
+
+/// List loaded extensions and their tools.
+fn handle_list_extensions(app: &App, out: &Out) {
+    let extensions: Vec<Value> = app
+        .ext_loader
+        .extension_tools()
+        .into_iter()
+        .map(|(name, tools)| {
+            json!({
+                "name": name,
+                "tools": tools,
+            })
+        })
+        .collect();
+
+    write_event(
+        out,
+        json!({"type": "response", "success": true, "extensions": extensions}),
+    );
+}
+
+/// Reload extensions from disk.
+async fn handle_reload_extensions(app: &mut App, out: &Out) {
+    let dirs = crate::app::extension_dirs(&app.session.header().cwd);
+
+    // Re-read the config so that extensions added to the enabled list
+    // during this session are picked up by the filter.
+    let sandbox_path = app.session.header().cwd.clone();
+    let fresh_config = rho_core::ConfigLoader::load(&sandbox_path).unwrap_or_default();
+    app.ext_loader.set_config(fresh_config.extensions);
+
+    match app.ext_loader.reload(&dirs, &mut app.registry).await {
+        Ok(report) => {
+            // Refresh the extension observers after reload.
+            app.ext_observers = app.ext_loader.build_observers();
+            write_event(
+                out,
+                json!({
+                    "type": "response",
+                    "success": true,
+                    "added": report.added.len(),
+                    "reloaded": report.reloaded.len(),
+                    "removed": report.removed.len(),
+                    "failed": report.failed.len(),
+                }),
+            );
+        }
         Err(e) => write_event(
             out,
             json!({"type": "response", "success": false, "error": e.to_string()}),
@@ -554,7 +687,6 @@ fn blocks_to_text(blocks: &[ContentBlock]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::Mode;
     use rho_core::{
         AgentConfig, ChatMessage, ContentBlock, ModelToolCall, ProviderRegistry, Session,
         ToolCallFunction, ToolCallId, ToolName, ToolRegistry, ToolRisk, tool::CancellationToken,
@@ -823,7 +955,6 @@ mod tests {
         );
 
         App {
-            mode: Mode::Rpc,
             session,
             providers,
             active_provider_index: 0,

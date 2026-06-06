@@ -1,11 +1,8 @@
-//! Presentation layer implementations.
+//! Presentation layer.
 //!
-//! Each mode (REPL, RPC, future TUI) provides its own presenter that
-//! handles all formatted output. Business logic calls presenter methods
-//! instead of raw `println!`/`eprintln!`.
+//! All formatted output goes through [`RpcPresenter`], which writes
+//! diagnostics to stderr (separate from the JSONL stdout channel).
 
-pub(crate) mod repl;
 pub(crate) mod rpc;
 
-pub(crate) use repl::ReplPresenter;
 pub(crate) use rpc::RpcPresenter;

@@ -1,32 +1,15 @@
-#![allow(dead_code)] // Staged API — startup/model-resolution methods are wired up in step 6.
+//! Presentation layer.
+//!
+//! All formatted output goes to stderr, which is separate from the JSONL
+//! stdout channel used by the RPC protocol. This keeps diagnostics visible
+//! to humans without interfering with machine-readable events.
 
-//! RPC-mode presentation layer.
-//!
-//! [`RpcPresenter`] is the RPC-mode counterpart to [`super::ReplPresenter`].
-//!
-//! ## Design notes
-//!
-//! * **Startup / diagnostic output** (`eprintln!`) is identical to the REPL
-//!   presenter. Stderr is separate from the JSONL stdout channel, so
-//!   human-readable diagnostic messages do not interfere with the protocol.
-//!
-//! * **REPL-only output** (user prompt, assistant reply, slash-command
-//!   responses) is silenced — these concepts don't exist in RPC mode; the
-//!   protocol carries them as typed events instead.
-//!
-//! * **Interactive stdin-reading methods** (`provider_consent_prompt`,
-//!   `picker_header`, `picker_manual_prompt`) are stubs that always take the
-//!   safe/headless path. Full headless handling (auto-approve, emit JSONL
-//!   prompts, etc.) lands in step 6.
-
-use std::io::{self, Write};
 use std::path::Path;
 
-/// RPC-mode presenter.
+/// Presentation layer for headless (RPC) mode.
 ///
-/// Groups formatted output by concern, mirroring [`super::ReplPresenter`].
-/// Methods that write to stderr are equivalent to their REPL counterparts.
-/// Methods that would write to stdout or block on stdin are no-ops or stubs.
+/// All output goes to stderr so it doesn't interfere with JSONL stdout.
+/// Interactive stdin-reading methods are stubs or errors.
 pub(crate) struct RpcPresenter;
 
 // ── Startup ───────────────────────────────────────────────────────────────────
@@ -104,6 +87,18 @@ impl RpcPresenter {
              consider --compact or increasing token_budget in .rho/config.toml"
         );
     }
+
+    /// Extensions loaded successfully.
+    pub fn extensions_loaded(count: usize) {
+        if count > 0 {
+            eprintln!("extensions: {count} loaded");
+        }
+    }
+
+    /// Extension load error.
+    pub fn extension_load_error(msg: &str) {
+        eprintln!("warning: extension load error: {msg}");
+    }
 }
 
 // ── Model resolution ──────────────────────────────────────────────────────────
@@ -142,16 +137,6 @@ impl RpcPresenter {
     pub fn model_continuing(model: &str, source: &str) {
         eprintln!("continuing with model from {source}: {model}");
     }
-
-    /// Model selected from picker.
-    pub fn model_picked(model: &str, detail: &str) {
-        eprintln!("  using model: {model} ({detail})");
-    }
-
-    /// Model ID entered or typed directly.
-    pub fn model_entered(model: &str) {
-        eprintln!("  using model: {model}");
-    }
 }
 
 // ── Provider consent ──────────────────────────────────────────────────────────
@@ -169,46 +154,6 @@ impl RpcPresenter {
     /// User declined consent.
     pub fn provider_consent_aborted() {
         eprintln!("  Aborting. Use --accept-external-provider to skip this prompt.");
-    }
-}
-
-// ── Model picker ──────────────────────────────────────────────────────────────
-
-impl RpcPresenter {
-    /// Popular models offered by the interactive picker.
-    ///
-    /// Must stay in sync with [`super::repl::ReplPresenter::PICKER_MODELS`].
-    const PICKER_MODELS: &'static [(&'static str, &'static str, &'static str)] = &[
-        ("Claude Sonnet 4", "Anthropic", "anthropic/claude-sonnet-4"),
-        ("GPT-4o", "OpenAI", "openai/gpt-4o"),
-        ("GLM-5", "z.ai", "z-ai/glm-5"),
-    ];
-
-    /// Access the picker models table.
-    pub fn picker_models() -> &'static [(&'static str, &'static str, &'static str)] {
-        Self::PICKER_MODELS
-    }
-
-    /// Headless stub: the interactive picker is not available in RPC mode.
-    ///
-    /// Full headless model selection (auto-pick first available, or JSONL
-    /// prompt) arrives in step 6.
-    pub fn picker_header(_provider_names: &[&str]) {
-        // No-op in RPC mode.
-    }
-
-    /// Headless stub: manual model entry prompt is suppressed in RPC mode.
-    pub fn picker_manual_prompt() {
-        // No-op in RPC mode.
-    }
-}
-
-// ── Startup flush helper ──────────────────────────────────────────────────────
-
-impl RpcPresenter {
-    /// Flush stderr. Called after groups of startup messages.
-    pub fn flush() {
-        let _ = io::stderr().flush();
     }
 }
 
@@ -233,28 +178,8 @@ mod tests {
     }
 
     #[test]
-    fn picker_header_is_noop() {
-        // Must not block on stdin or write to stdout.
-        RpcPresenter::picker_header(&["openrouter"]);
-    }
-
-    #[test]
-    fn picker_manual_prompt_is_noop() {
-        // Must not block on stdin or write to stdout.
-        RpcPresenter::picker_manual_prompt();
-    }
-
-    #[test]
-    fn picker_models_returns_nonempty_list() {
-        assert!(!RpcPresenter::picker_models().is_empty());
-    }
-
-    #[test]
-    fn picker_models_matches_repl_presenter() {
-        let repl = super::super::repl::ReplPresenter::picker_models();
-        let rpc = RpcPresenter::picker_models();
-        // Length and first entry must match; keeps the two lists in sync.
-        assert_eq!(rpc.len(), repl.len());
-        assert_eq!(rpc[0], repl[0]);
+    fn extension_methods_do_not_panic() {
+        RpcPresenter::extensions_loaded(3);
+        RpcPresenter::extension_load_error("bad extension");
     }
 }

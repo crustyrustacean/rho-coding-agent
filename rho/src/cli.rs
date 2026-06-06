@@ -1,30 +1,13 @@
 //! CLI argument parsing for `rho`.
 
-use clap::{Parser, ValueEnum};
+use clap::Parser;
 use std::path::PathBuf;
 
-/// The execution mode for the `rho` agent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum Mode {
-    /// Interactive REPL (default): reads prompts from stdin, renders output
-    /// to the terminal using the presenter layer.
-    Repl,
-    /// Headless RPC: reads JSONL commands from stdin, writes JSONL events
-    /// to stdout. Suitable for embedding rho in other applications.
-    Rpc,
-}
-
-/// rho — a local coding agent.
+/// rho — a local coding agent (headless RPC mode).
 #[derive(Debug, Parser)]
 #[command(version, about)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct Cli {
-    /// Execution mode.
-    ///
-    /// `repl` (default) — interactive terminal session.
-    /// `rpc` — headless JSONL over stdin/stdout for process integration.
-    #[arg(long, default_value = "repl")]
-    pub mode: Mode,
     /// Model identifier.
     ///
     /// If omitted (and not set in config), rho queries the server's
@@ -128,34 +111,21 @@ mod tests {
     }
 
     #[test]
-    fn mode_defaults_to_repl() {
+    fn default_parse() {
         let cli = parse(&[]).expect("default parse");
-        assert_eq!(cli.mode, Mode::Repl);
+        assert!(cli.model.is_none());
+        assert!(!cli.ephemeral);
     }
 
     #[test]
-    fn mode_repl_explicit() {
-        let cli = parse(&["--mode", "repl"]).expect("--mode repl");
-        assert_eq!(cli.mode, Mode::Repl);
-    }
-
-    #[test]
-    fn mode_rpc_explicit() {
-        let cli = parse(&["--mode", "rpc"]).expect("--mode rpc");
-        assert_eq!(cli.mode, Mode::Rpc);
-    }
-
-    #[test]
-    fn mode_unknown_value_is_rejected() {
-        let err = parse(&["--mode", "tui"]).expect_err("unknown mode should fail");
-        assert_eq!(err.kind(), clap::error::ErrorKind::InvalidValue);
-    }
-
-    #[test]
-    fn mode_does_not_conflict_with_session_flags() {
-        // --mode rpc should coexist with --ephemeral without conflict.
-        let cli = parse(&["--mode", "rpc", "--ephemeral"]).expect("rpc + ephemeral");
-        assert_eq!(cli.mode, Mode::Rpc);
+    fn ephemeral_flag() {
+        let cli = parse(&["--ephemeral"]).expect("--ephemeral");
         assert!(cli.ephemeral);
+    }
+
+    #[test]
+    fn model_flag() {
+        let cli = parse(&["--model", "gpt-4o"]).expect("--model");
+        assert_eq!(cli.model.as_deref(), Some("gpt-4o"));
     }
 }
