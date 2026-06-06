@@ -268,13 +268,14 @@ const PROJECT_MARKERS: &[&str] = &[
 /// Auto-detect the project root by walking up from the current directory.
 ///
 /// Searches for well-known project markers (Cargo.toml, .git, package.json, etc.).
-/// Returns the first directory (from CWD upward) that contains any marker.
-/// If no marker is found, returns the current directory.
+/// Returns the first directory (from CWD upward) that contains any marker,
+/// plus a boolean indicating whether a marker was found. If no marker is
+/// found, returns the current directory with `false`.
 ///
 /// # Errors
 ///
 /// Returns an error if the current directory cannot be determined.
-pub fn find_project_root() -> Result<SandboxRoot> {
+pub fn find_project_root() -> Result<(SandboxRoot, bool)> {
     let cwd = std::env::current_dir().map_err(|e| SandboxError::RootCanonicalizationFailed {
         root: "current directory".to_string(),
         source: e,
@@ -283,13 +284,13 @@ pub fn find_project_root() -> Result<SandboxRoot> {
 
     loop {
         if PROJECT_MARKERS.iter().any(|m| dir.join(m).exists()) {
-            return SandboxRoot::new(dir);
+            return Ok((SandboxRoot::new(dir)?, true));
         }
 
         match dir.parent() {
             Some(parent) if parent != dir => dir = parent,
             // Reached filesystem root without finding a marker.
-            _ => return SandboxRoot::new(&cwd),
+            _ => return Ok((SandboxRoot::new(&cwd)?, false)),
         }
     }
 }

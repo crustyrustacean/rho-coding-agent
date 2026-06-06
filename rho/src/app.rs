@@ -270,13 +270,19 @@ impl App {
 
 /// Resolve the sandbox root from CLI `--root` or auto-detection.
 fn resolve_sandbox(cli: &Cli) -> Result<SandboxRoot> {
-    match cli.root {
-        Some(ref p) => SandboxRoot::new(p).map_err(|e| {
-            anyhow::anyhow!("cannot establish sandbox root at `{}`: {e}", p.display())
-        }),
-        None => {
-            find_project_root().map_err(|e| anyhow::anyhow!("cannot auto-detect project root: {e}"))
+    if let Some(ref p) = cli.root {
+        SandboxRoot::new(p)
+            .map_err(|e| anyhow::anyhow!("cannot establish sandbox root at `{}`: {e}", p.display()))
+    } else {
+        let (root, found_marker) = find_project_root()
+            .map_err(|e| anyhow::anyhow!("cannot auto-detect project root: {e}"))?;
+        if !found_marker {
+            P::config_warning(&format!(
+                "no project marker found in {} or any parent directory -- using current directory as sandbox root",
+                root.path().display()
+            ));
         }
+        Ok(root)
     }
 }
 
