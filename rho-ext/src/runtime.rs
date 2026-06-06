@@ -39,6 +39,7 @@ use std::time::Duration;
 
 use deno_core::v8::{self, Global, HandleScope, Local, Object, PinnedRef};
 use deno_core::{JsRuntime, ModuleLoader, RuntimeOptions};
+use rho_core::denylist::CommandDenylist;
 use tokio::sync::oneshot;
 use url::Url;
 
@@ -154,12 +155,14 @@ impl ExtensionRuntime {
         entry_path: &Path,
         root_dir: &Path,
         project_root: &Path,
+        denylist: &CommandDenylist,
     ) -> Result<Self, ExtensionError> {
         Self::spawn_from_file_with_perms(
             entry_path,
             root_dir,
             project_root,
             &ExtensionPermissions::default(),
+            denylist,
             "",
         )
     }
@@ -187,6 +190,7 @@ impl ExtensionRuntime {
     ///
     /// - `root_dir` — the extension's own directory (for V8 module loader sandboxing).
     /// - `project_root` — the project sandbox root (becomes the extension's `cwd`).
+    /// - `denylist` — command denylist applied to `rho.runCommand()` calls.
     ///
     /// # Errors
     ///
@@ -196,6 +200,7 @@ impl ExtensionRuntime {
         root_dir: &Path,
         project_root: &Path,
         permissions: &ExtensionPermissions,
+        denylist: &CommandDenylist,
         model: &str,
     ) -> Result<Self, ExtensionError> {
         let source = std::fs::read_to_string(entry_path).map_err(|e| {
@@ -227,10 +232,15 @@ impl ExtensionRuntime {
             .map(|paths| paths.iter().map(|p| project_root.join(p)).collect())
             .unwrap_or_default();
 
-        let host_state = HostState::new(project_root.to_path_buf(), &root_dir_buf, extra_allowed)
-            .with_commands(allow_commands)
-            .with_network(allow_network)
-            .with_model(model);
+        let host_state = HostState::new(
+            project_root.to_path_buf(),
+            &root_dir_buf,
+            extra_allowed,
+            denylist.clone(),
+        )
+        .with_commands(allow_commands)
+        .with_network(allow_network)
+        .with_model(model);
 
         Self::spawn_inner(specifier, js, Some(root_dir_buf), Some(host_state))
     }
@@ -801,8 +811,13 @@ mod tests {
     fn spawn_from_dir(dir: &tempfile::TempDir, main_content: &str) -> ExtensionRuntime {
         let main_path = dir.path().join("main.ts");
         std::fs::write(&main_path, main_content).unwrap();
-        ExtensionRuntime::spawn_from_file(&main_path, dir.path(), dir.path())
-            .expect("spawn_from_file should succeed")
+        ExtensionRuntime::spawn_from_file(
+            &main_path,
+            dir.path(),
+            dir.path(),
+            &CommandDenylist::default_powershell(),
+        )
+        .expect("spawn_from_file should succeed")
     }
 
     // =========================================================================
@@ -1289,7 +1304,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let bad_path = dir.path().join("no_such_file.ts");
 
-        let result = ExtensionRuntime::spawn_from_file(&bad_path, dir.path(), dir.path());
+        let result = ExtensionRuntime::spawn_from_file(
+            &bad_path,
+            dir.path(),
+            dir.path(),
+            &CommandDenylist::default_powershell(),
+        );
         assert!(result.is_err(), "should fail for nonexistent file");
         match result {
             Err(ExtensionError::ModuleLoad(msg)) => {
@@ -1310,7 +1330,12 @@ mod tests {
         // No default export
         std::fs::write(&main_path, r"export function foo() { return 1; }").unwrap();
 
-        let result = ExtensionRuntime::spawn_from_file(&main_path, dir.path(), dir.path());
+        let result = ExtensionRuntime::spawn_from_file(
+            &main_path,
+            dir.path(),
+            dir.path(),
+            &CommandDenylist::default_powershell(),
+        );
         assert!(result.is_err(), "should fail for missing default export");
         match result {
             Err(ExtensionError::Manifest(_)) => {}
@@ -1339,7 +1364,12 @@ mod tests {
         )
         .unwrap();
 
-        let result = ExtensionRuntime::spawn_from_file(&main_path, dir.path(), dir.path());
+        let result = ExtensionRuntime::spawn_from_file(
+            &main_path,
+            dir.path(),
+            dir.path(),
+            &CommandDenylist::default_powershell(),
+        );
         assert!(result.is_err(), "should fail for tool without execute");
         match result {
             Err(ExtensionError::ToolMissingExecute(name)) => {
@@ -1375,7 +1405,12 @@ mod tests {
         )
         .unwrap();
 
-        let result = ExtensionRuntime::spawn_from_file(&main_path, dir.path(), dir.path());
+        let result = ExtensionRuntime::spawn_from_file(
+            &main_path,
+            dir.path(),
+            dir.path(),
+            &CommandDenylist::default_powershell(),
+        );
         assert!(result.is_err(), "should fail for command without handler");
         match result {
             Err(ExtensionError::CommandMissingHandler(name)) => {
@@ -1488,6 +1523,7 @@ mod tests {
             dir.path(),
             dir.path(),
             &perms,
+            &CommandDenylist::default_powershell(),
             "claude-sonnet-4-20250514",
         )
         .expect("spawn should succeed");
@@ -1525,6 +1561,7 @@ mod tests {
             dir.path(),
             dir.path(),
             &perms,
+            &CommandDenylist::default_powershell(),
             "gpt-4o",
         )
         .expect("spawn should succeed");
@@ -1581,6 +1618,7 @@ mod tests {
             dir.path(),
             dir.path(),
             &perms,
+            &CommandDenylist::default_powershell(),
             "test-model",
         )
         .expect("spawn should succeed");
@@ -1640,6 +1678,7 @@ mod tests {
             dir.path(),
             dir.path(),
             &perms,
+            &CommandDenylist::default_powershell(),
             "test-model",
         )
         .expect("spawn should succeed");
@@ -1705,6 +1744,7 @@ mod tests {
             dir.path(),
             dir.path(),
             &perms,
+            &CommandDenylist::default_powershell(),
             "test-model",
         )
         .expect("spawn should succeed");

@@ -374,8 +374,10 @@ interface RhoGlobal {
    * is thrown.
    *
    * The command is executed as a subprocess. Its stdout, stderr, and exit
-   * code are captured and returned. Commands run in the extension's root
-   * directory.
+   * code are captured and returned. Commands run in the project root
+   * directory. A denylist is applied before execution — commands like
+   * `curl`, `wget`, `Remove-Item`, and flag combinations like
+   * `-Recurse -Force` are refused.
    *
    * **Warning:** This is a powerful permission. Only enable `commands = true`
    * for extensions you trust. Consider using `tools` with `risk: "destructive"`
@@ -385,7 +387,7 @@ interface RhoGlobal {
    * @param args - Command arguments. Defaults to an empty array.
    * @returns An object with the command's captured output.
    * @throws {Error} If the extension lacks the `commands` permission,
-   *   or if the command binary cannot be found.
+   *   the command is on the denylist, or if execution fails.
    *
    * @example
    * ```typescript

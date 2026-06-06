@@ -99,13 +99,17 @@ globalThis.rho = {
    * Run a shell command and return its output.
    *
    * Requires the `commands = true` permission in the extension config.
+   * The command runs in the project root directory.
+   * A denylist is applied before execution -- commands like `curl`, `wget`,
+   * `Remove-Item`, and flag combinations like `-Recurse -Force` are refused.
    * If the extension does not have this permission, an error is thrown.
    *
    * @param {string} cmd - The command to execute (e.g. "git", "npm").
    * @param {string[]} [args=[]] - Command arguments.
    * @returns {{ stdout: string, stderr: string, exitCode: number }}
    *   The command's stdout, stderr, and exit code.
-   * @throws {Error} If the extension lacks command permission or execution fails.
+   * @throws {Error} If the extension lacks permission, the command is denied,
+   *   or execution fails.
    */
   runCommand(cmd, args = []) {
     const argsJson = Array.isArray(args) ? JSON.stringify(args) : "";

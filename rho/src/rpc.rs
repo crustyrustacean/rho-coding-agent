@@ -833,6 +833,7 @@ mod tests {
             ext_loader: rho_ext::loader::ExtensionLoader::new(
                 rho_core::config::ExtensionConfig::default(),
                 std::path::PathBuf::from("."),
+                rho_core::denylist::CommandDenylist::default_powershell(),
             ),
             ext_observers: vec![],
             _log_guard: {

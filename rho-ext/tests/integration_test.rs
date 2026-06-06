@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use rho_core::AgentObserver;
 use rho_core::config::ExtensionPermissions;
+use rho_core::denylist::CommandDenylist;
 use rho_core::newtypes::ToolName;
 use rho_core::tool::{CancellationToken, ToolOutcome, ToolRegistry, ToolResult};
 use rho_ext::ExtensionRuntime;
@@ -130,9 +131,13 @@ async fn full_pipeline_discover_load_execute() {
     let mut runtimes: Vec<Arc<Mutex<ExtensionRuntime>>> = Vec::new();
 
     for ext in &discovered {
-        let runtime =
-            ExtensionRuntime::spawn_from_file(&ext.entry_path, &ext.root_dir, &ext.root_dir)
-                .expect("spawn should succeed");
+        let runtime = ExtensionRuntime::spawn_from_file(
+            &ext.entry_path,
+            &ext.root_dir,
+            &ext.root_dir,
+            &CommandDenylist::default_powershell(),
+        )
+        .expect("spawn should succeed");
 
         // Verify manifest metadata
         let manifest = runtime.manifest().clone();
@@ -265,9 +270,13 @@ export default {
     )
     .unwrap();
 
-    let runtime =
-        ExtensionRuntime::spawn_from_file(&dir.path().join("no_force.ts"), dir.path(), dir.path())
-            .expect("spawn should succeed");
+    let runtime = ExtensionRuntime::spawn_from_file(
+        &dir.path().join("no_force.ts"),
+        dir.path(),
+        dir.path(),
+        &CommandDenylist::default_powershell(),
+    )
+    .expect("spawn should succeed");
 
     assert!(runtime.manifest().hooks.on_tool_call.is_some());
 
@@ -365,9 +374,13 @@ export default {
     let ext = &discovered[0];
     assert_eq!(ext.name, "search");
 
-    let mut runtime =
-        ExtensionRuntime::spawn_from_file(&ext.entry_path, &ext.root_dir, &ext.root_dir)
-            .expect("spawn should succeed");
+    let mut runtime = ExtensionRuntime::spawn_from_file(
+        &ext.entry_path,
+        &ext.root_dir,
+        &ext.root_dir,
+        &CommandDenylist::default_powershell(),
+    )
+    .expect("spawn should succeed");
 
     let result = runtime.call_tool("search", "").await.unwrap();
     assert_eq!(
@@ -394,9 +407,13 @@ async fn two_extensions_coexist_in_shared_registry() {
     let mut runtimes: Vec<Arc<Mutex<ExtensionRuntime>>> = Vec::new();
 
     for ext in &discovered {
-        let runtime =
-            ExtensionRuntime::spawn_from_file(&ext.entry_path, &ext.root_dir, &ext.root_dir)
-                .expect("spawn should succeed");
+        let runtime = ExtensionRuntime::spawn_from_file(
+            &ext.entry_path,
+            &ext.root_dir,
+            &ext.root_dir,
+            &CommandDenylist::default_powershell(),
+        )
+        .expect("spawn should succeed");
 
         let runtime = Arc::new(Mutex::new(runtime));
 
@@ -501,9 +518,13 @@ export default {
     )
     .unwrap();
 
-    let mut runtime =
-        ExtensionRuntime::spawn_from_file(&dir.path().join("file_io.ts"), dir.path(), dir.path())
-            .expect("spawn should succeed");
+    let mut runtime = ExtensionRuntime::spawn_from_file(
+        &dir.path().join("file_io.ts"),
+        dir.path(),
+        dir.path(),
+        &CommandDenylist::default_powershell(),
+    )
+    .expect("spawn should succeed");
 
     // Test readFile
     let result = runtime.call_tool("read_config", "").await.unwrap();
@@ -560,6 +581,7 @@ export default {
         dir.path(),
         dir.path(),
         &perms,
+        &CommandDenylist::default_powershell(),
         "test-model",
     )
     .expect("spawn should succeed");
@@ -606,9 +628,13 @@ export default {
     .unwrap();
 
     // No commands permission (default)
-    let mut runtime =
-        ExtensionRuntime::spawn_from_file(&dir.path().join("runner.ts"), dir.path(), dir.path())
-            .expect("spawn should succeed");
+    let mut runtime = ExtensionRuntime::spawn_from_file(
+        &dir.path().join("runner.ts"),
+        dir.path(),
+        dir.path(),
+        &CommandDenylist::default_powershell(),
+    )
+    .expect("spawn should succeed");
 
     let result = runtime.call_tool("git_version", "").await.unwrap();
     assert!(
@@ -667,6 +693,7 @@ export default {
         dir.path(),
         dir.path(),
         &perms,
+        &CommandDenylist::default_powershell(),
         "test-model",
     )
     .expect("spawn should succeed");

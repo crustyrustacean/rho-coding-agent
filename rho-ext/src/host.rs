@@ -27,6 +27,7 @@ use url::Url;
 
 // Import Phase 3 boilerplate-reduction macros.
 use crate::{err, json, require_field, require_perm};
+use rho_core::denylist::CommandDenylist;
 
 /// Maximum file size that `readFile` will return (1 MiB).
 const MAX_READ_BYTES: u64 = 1024 * 1024;
@@ -61,10 +62,14 @@ pub struct HostState {
     /// permission in the extension config.
     pub allow_commands: bool,
     /// Whether the extension is allowed to make HTTP requests via `rho.fetchUrl`.
-    ///
     /// Defaults to `false`. Must be explicitly enabled via the `network = true`
     /// permission in the extension config.
     pub allow_network: bool,
+    /// Command denylist applied to `rho.runCommand()` calls.
+    ///
+    /// Same denylist as the built-in `RunCommand` tool — blocks destructive
+    /// commands, network egress tools, and dangerous flag combinations.
+    pub denylist: CommandDenylist,
     /// The name of the currently active model.
     ///
     /// Shared via `Arc<Mutex<String>>` so that the agent loop can update it
@@ -84,7 +89,12 @@ impl HostState {
     /// extensions can access their own data files. Additional paths in
     /// `extra_allowed` are resolved relative to `project_root` and added;
     /// non-existent paths are silently skipped.
-    pub fn new(project_root: PathBuf, ext_root_dir: &Path, extra_allowed: Vec<PathBuf>) -> Self {
+    pub fn new(
+        project_root: PathBuf,
+        ext_root_dir: &Path,
+        extra_allowed: Vec<PathBuf>,
+        denylist: CommandDenylist,
+    ) -> Self {
         let mut allowed = Vec::new();
 
         // Always include the project root (canonicalise if possible).
@@ -121,6 +131,7 @@ impl HostState {
             allowed_paths: allowed,
             allow_commands: false,
             allow_network: false,
+            denylist,
             model: Arc::new(Mutex::new(String::new())),
         }
     }
@@ -418,18 +429,42 @@ pub fn op_rho_run_command(
 ) -> String {
     require_perm!(state, allow_commands, "command execution");
 
-    // Parse args
+    // Build full command string for denylist checking.
+    let full_command = if args_json.is_empty() {
+        cmd.to_owned()
+    } else {
+        let args: Vec<String> = match serde_json::from_str(args_json) {
+            Ok(a) => a,
+            Err(e) => return err!("invalid args JSON: {e}"),
+        };
+        let mut parts = vec![cmd.to_owned()];
+        parts.extend(args);
+        parts.join(" ")
+    };
+
+    // Denylist check — refuse dangerous commands before execution.
+    // Extract cwd for use as the command's working directory.
+    let cwd = {
+        let state_ref = state.borrow::<HostState>();
+        if let Some(reason) = state_ref.denylist.check(&full_command) {
+            return err!("command denied: {reason}");
+        }
+        state_ref.cwd.clone()
+    };
+
+    // Re-parse args (already validated above)
     let args: Vec<String> = if args_json.is_empty() {
         vec![]
     } else {
-        match serde_json::from_str(args_json) {
-            Ok(a) => a,
-            Err(e) => return err!("invalid args JSON: {e}"),
-        }
+        serde_json::from_str(args_json).unwrap()
     };
 
-    // Execute command
-    match std::process::Command::new(cmd).args(&args).output() {
+    // Execute command in the project root directory.
+    match std::process::Command::new(cmd)
+        .args(&args)
+        .current_dir(&cwd)
+        .output()
+    {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -695,9 +730,12 @@ mod tests {
         });
 
         // Inject HostState (project root = ext dir = cwd)
-        rt.op_state()
-            .borrow_mut()
-            .put(HostState::new(PathBuf::from(cwd), Path::new(cwd), vec![]));
+        rt.op_state().borrow_mut().put(HostState::new(
+            PathBuf::from(cwd),
+            Path::new(cwd),
+            vec![],
+            CommandDenylist::default_powershell(),
+        ));
 
         rt
     }
@@ -946,6 +984,7 @@ mod tests {
             dir1.path().to_path_buf(),
             dir1.path(),
             vec![dir2.path().to_path_buf()],
+            CommandDenylist::default_powershell(),
         ));
 
         let code = format!(
@@ -1061,9 +1100,15 @@ mod tests {
             ..Default::default()
         });
 
-        rt.op_state()
-            .borrow_mut()
-            .put(HostState::new(PathBuf::from(cwd), Path::new(cwd), vec![]).with_commands(true));
+        rt.op_state().borrow_mut().put(
+            HostState::new(
+                PathBuf::from(cwd),
+                Path::new(cwd),
+                vec![],
+                CommandDenylist::default_powershell(),
+            )
+            .with_commands(true),
+        );
 
         rt
     }
@@ -1159,6 +1204,48 @@ mod tests {
         );
     }
 
+    #[test]
+    fn run_command_blocked_by_denylist() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut rt = runtime_with_commands(dir.path().to_str().unwrap());
+
+        // curl is on the default PowerShell denylist
+        let result = eval_or_error(
+            &mut rt,
+            r#"rho.runCommand("curl", ["https://example.com"])"#,
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("command denied"),
+            "expected denylist error, got: {err}"
+        );
+        assert!(
+            err.contains("curl"),
+            "error should mention the denied command: {err}"
+        );
+    }
+
+    #[test]
+    fn run_command_blocked_by_denylist_flag_combo() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut rt = runtime_with_commands(dir.path().to_str().unwrap());
+
+        // -Recurse + -Force is a denied flag combination
+        let result = eval_or_error(
+            &mut rt,
+            r#"rho.runCommand("Get-ChildItem", ["-Recurse", "-Force", "-Path", "foo"])"#,
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("command denied"),
+            "expected denylist error, got: {err}"
+        );
+        assert!(
+            err.contains("flag combination"),
+            "error should mention flag combination: {err}"
+        );
+    }
+
     // ── getModel tests ──────────────────────────────────────────────────────
 
     #[test]
@@ -1169,8 +1256,13 @@ mod tests {
         });
 
         rt.op_state().borrow_mut().put(
-            HostState::new(PathBuf::from("/tmp"), Path::new("/tmp"), vec![])
-                .with_model("claude-sonnet-4-20250514"),
+            HostState::new(
+                PathBuf::from("/tmp"),
+                Path::new("/tmp"),
+                vec![],
+                CommandDenylist::default_powershell(),
+            )
+            .with_model("claude-sonnet-4-20250514"),
         );
 
         let result = eval(&mut rt, r"rho.getModel()");
@@ -1202,8 +1294,13 @@ mod tests {
         });
 
         // Build HostState with the shared model handle
-        let host_state =
-            HostState::new(PathBuf::from("/tmp"), Path::new("/tmp"), vec![]).with_model("gpt-4o");
+        let host_state = HostState::new(
+            PathBuf::from("/tmp"),
+            Path::new("/tmp"),
+            vec![],
+            CommandDenylist::default_powershell(),
+        )
+        .with_model("gpt-4o");
         // We need to replace the model Arc with our shared one
         {
             let op_state = rt.op_state();
@@ -1213,6 +1310,7 @@ mod tests {
                 allowed_paths: host_state.allowed_paths.clone(),
                 allow_commands: false,
                 allow_network: false,
+                denylist: host_state.denylist.clone(),
                 model: model_clone,
             });
         }
@@ -1741,6 +1839,7 @@ mod tests {
             dir.path().to_path_buf(),
             dir.path(),
             vec![],
+            CommandDenylist::default_powershell(),
         ));
 
         // Use rho.fetchUrl (synchronous, throws immediately) rather than

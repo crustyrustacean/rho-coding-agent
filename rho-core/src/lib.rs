@@ -71,6 +71,7 @@ pub mod config;
 pub mod context;
 pub mod context_files;
 pub mod conversation;
+pub mod denylist;
 pub mod diagnostic;
 pub mod error;
 pub mod message;
