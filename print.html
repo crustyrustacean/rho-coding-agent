@@ -1242,11 +1242,7 @@ root.validate("../../etc/passwd")?;  // Err — escapes sandbox
 </ol>
 <p>This allows <code>WriteFile</code> to create new files within the project while still preventing escapes like <code>new_dir/../../../etc/passwd</code>.</p>
 <h2 id="opt-out"><a class="header" href="#opt-out">Opt-out</a></h2>
-<p>The sandbox can be disabled in config (not recommended):</p>
-<pre><code class="language-toml">[sandbox]
-enabled = false
-</code></pre>
-<p>When disabled, all file tools still resolve paths but skip the containment check. This is intended only for environments where the user explicitly wants to operate outside the project directory.</p>
+<p>The sandbox is always enabled and cannot be disabled.</p>
 <h2 id="toctou-note"><a class="header" href="#toctou-note">TOCTOU note</a></h2>
 <p>There is a theoretical time-of-check-time-of-use race between <code>validate_for_write</code> and the subsequent <code>create_dir_all</code> + <code>write</code>. This is accepted because:</p>
 <ul>
@@ -1417,10 +1413,6 @@ denied_commands = ["Remove-Item", "Invoke-WebRequest"]
 
 # Additional denied flag combinations (all flags must be present to deny)
 denied_flag_combos = [["-Quiet", "-Force"]]
-
-[sandbox]
-# File sandbox toggle (default: true)
-enabled = true
 
 [context]
 # Override the default context file scan list
