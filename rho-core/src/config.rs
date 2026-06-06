@@ -52,8 +52,6 @@ pub struct RhoConfig {
     pub approval: ApprovalConfig,
     /// Shell command safety settings.
     pub shell: ShellConfig,
-    /// File sandbox settings.
-    pub sandbox: SandboxConfig,
     /// Project context file settings.
     pub context: ContextConfig,
     /// Secret redaction settings.
@@ -350,25 +348,6 @@ pub struct ShellConfig {
     pub denied_flag_combos: Vec<Vec<String>>,
 }
 
-// ── SandboxConfig ─────────────────────────────────────────────────────────────
-
-/// File sandbox settings.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct SandboxConfig {
-    /// Whether the file sandbox is enabled. Defaults to `true`.
-    /// Disabling is **not recommended** — it removes path traversal protection.
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-}
-
-impl Default for SandboxConfig {
-    fn default() -> Self {
-        Self {
-            enabled: default_true(),
-        }
-    }
-}
-
 /// Default value for boolean flags that default to `true`.
 fn default_true() -> bool {
     true
@@ -585,9 +564,6 @@ struct WireConfig {
     /// Shell settings.
     #[serde(default)]
     shell: Option<ShellConfig>,
-    /// Sandbox settings.
-    #[serde(default)]
-    sandbox: Option<SandboxConfig>,
     /// Context file settings.
     #[serde(default)]
     context: Option<ContextConfig>,
@@ -818,7 +794,6 @@ impl ConfigLoader {
                     .or(user.shell.as_ref().map(|s| s.denied_flag_combos.clone()))
                     .unwrap_or_default(),
             },
-            sandbox: project.sandbox.or(user.sandbox).unwrap_or_default(),
             context: project.context.or(user.context).unwrap_or_default(),
             redaction: {
                 let ur = user.redaction.unwrap_or_default();
@@ -969,7 +944,6 @@ mod tests {
                 assert!(config.provider.is_empty());
                 assert!(config.approval.per_tool.is_empty());
                 assert!(config.shell.denied_commands.is_empty());
-                assert!(config.sandbox.enabled);
                 assert!(config.context.scan_list.is_none());
                 assert!(config.redaction.enabled);
                 assert!(config.redaction.custom_patterns.is_empty());
@@ -1008,9 +982,6 @@ write_file = "deny"
 
 [shell]
 denied_commands = ["Remove-Item", "Invoke-WebRequest"]
-
-[sandbox]
-enabled = true
 
 [context]
 scan_list = ["AGENTS.md", "CLAUDE.md"]
@@ -1051,7 +1022,6 @@ extensions = ["Always use PowerShell 7."]
                     config.shell.denied_commands,
                     vec!["Remove-Item", "Invoke-WebRequest"]
                 );
-                assert!(config.sandbox.enabled);
                 assert_eq!(
                     config.context.scan_list,
                     Some(vec!["AGENTS.md".to_owned(), "CLAUDE.md".to_owned()])
@@ -1197,32 +1167,6 @@ future_unknown_field = "surprise"
             ..Default::default()
         };
         assert!(config.resolve_api_key().is_none());
-    }
-
-    // ── Sandbox default ────────────────────────────────────────────────────
-
-    #[test]
-    fn sandbox_enabled_by_default() {
-        let config = RhoConfig::default();
-        assert!(config.sandbox.enabled);
-    }
-
-    #[test]
-    fn sandbox_can_be_disabled() {
-        let dir = TempDir::new().unwrap();
-        let rho_dir = dir.path().join(".rho");
-        std::fs::create_dir_all(&rho_dir).unwrap();
-        std::fs::write(
-            rho_dir.join("config.toml"),
-            r"
-[sandbox]
-enabled = false
-",
-        )
-        .unwrap();
-
-        let config = ConfigLoader::load(dir.path()).unwrap();
-        assert!(!config.sandbox.enabled);
     }
 
     // ── Approval actions ───────────────────────────────────────────────────
@@ -1478,7 +1422,6 @@ endpoint = "http://localhost:8080/v1/chat/completions"
                 );
                 // Everything else is default.
                 assert!(config.agent.model.is_none());
-                assert!(config.sandbox.enabled);
             },
         );
     }

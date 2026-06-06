@@ -103,7 +103,7 @@ pub use client::{
 pub use config::{
     AgentLoopConfig, ApprovalAction, ApprovalConfig, ConfigLoadError, ConfigLoader, ContextConfig,
     ExtensionConfig, ExtensionPermissions, ProviderConfig, ProviderSettings, RedactionConfig,
-    RhoConfig, SandboxConfig, ShellConfig, SystemPromptConfig,
+    RhoConfig, ShellConfig, SystemPromptConfig,
 };
 pub use context::{ContextManager, SlidingWindowContextManager, TokenBudget};
 pub use context_files::{

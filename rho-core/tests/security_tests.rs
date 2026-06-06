@@ -441,23 +441,6 @@ fn config_approval_falls_back_to_default() {
 
 // ── Config sandbox opt-out ────────────────────────────────────────────────────
 
-#[test]
-fn config_sandbox_enabled_by_default() {
-    let config = RhoConfig::default();
-    assert!(config.sandbox.enabled);
-}
-
-#[test]
-fn config_sandbox_can_be_disabled() {
-    use rho_core::SandboxConfig;
-
-    let config = RhoConfig {
-        sandbox: SandboxConfig { enabled: false },
-        ..Default::default()
-    };
-    assert!(!config.sandbox.enabled);
-}
-
 // ── Config redaction toggle ───────────────────────────────────────────────────
 
 #[test]

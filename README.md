@@ -146,9 +146,6 @@ edit_file = "ask"
 [shell]
 denied_commands = ["Stop-Process"]
 
-[sandbox]
-enabled = true
-
 [redaction]
 enabled = true
 ```

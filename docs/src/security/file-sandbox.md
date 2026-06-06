@@ -32,14 +32,7 @@ This allows `WriteFile` to create new files within the project while still preve
 
 ## Opt-out
 
-The sandbox can be disabled in config (not recommended):
-
-```toml
-[sandbox]
-enabled = false
-```
-
-When disabled, all file tools still resolve paths but skip the containment check. This is intended only for environments where the user explicitly wants to operate outside the project directory.
+The sandbox is always enabled and cannot be disabled.
 
 ## TOCTOU note
 
