@@ -63,6 +63,7 @@ async fn denied_tool_gets_denial_message_fed_back() {
         cancel: CancellationToken::new(),
         gate: &AutoDenyGate,
         observer: &NopObserver,
+        compaction_client: None,
     };
     let result = run_loop(&mut session, "do the destructive thing", &params)
         .await
@@ -115,6 +116,7 @@ async fn approved_tool_executes() {
         cancel: CancellationToken::new(),
         gate: &AutoApproveGate,
         observer: &NopObserver,
+        compaction_client: None,
     };
     let result = run_loop(&mut session, "do it", &params).await.unwrap();
 

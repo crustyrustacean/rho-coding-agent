@@ -137,6 +137,15 @@ pub struct AgentLoopConfig {
     /// Set to 0 to disable. Should be >= `context_pressure_threshold`.
     #[serde(default = "default_auto_compact_threshold")]
     pub auto_compact_threshold: u8,
+    /// Compaction strategy: `"mechanical"` (default, no LLM calls) or
+    /// `"llm"` (uses the configured model to generate narrative summaries).
+    ///
+    /// When set to `"llm"`, compaction calls the model to produce a concise
+    /// narrative of the compacted session segment, stored in the `notes` field
+    /// of `CompactionSummary`. If the LLM call fails, falls back to
+    /// mechanical compaction (no error propagation).
+    #[serde(default = "default_compaction_mode")]
+    pub compaction_mode: String,
 }
 
 impl Default for AgentLoopConfig {
@@ -153,6 +162,7 @@ impl Default for AgentLoopConfig {
             context_pressure_threshold: default_context_pressure_threshold(),
             context_pressure_interval: default_context_pressure_interval(),
             auto_compact_threshold: default_auto_compact_threshold(),
+            compaction_mode: default_compaction_mode(),
         }
     }
 }
@@ -203,6 +213,11 @@ fn default_context_pressure_interval() -> u32 {
 /// Default value for `auto_compact_threshold`.
 fn default_auto_compact_threshold() -> u8 {
     0
+}
+
+/// Default value for `compaction_mode`.
+fn default_compaction_mode() -> String {
+    "mechanical".to_owned()
 }
 
 // ── ProviderConfig ────────────────────────────────────────────────────────────
@@ -646,6 +661,9 @@ struct WireAgentLoopConfig {
     /// Auto-compact threshold percentage.
     #[serde(default)]
     auto_compact_threshold: Option<u8>,
+    /// Compaction mode ("mechanical" or "llm").
+    #[serde(default)]
+    compaction_mode: Option<String>,
 }
 
 // ── ConfigLoader ──────────────────────────────────────────────────────────────
@@ -750,6 +768,11 @@ impl ConfigLoader {
                     .auto_compact_threshold
                     .or(user_agent.auto_compact_threshold)
                     .unwrap_or(default_auto_compact_threshold()),
+                compaction_mode: project_agent
+                    .compaction_mode
+                    .clone()
+                    .or(user_agent.compaction_mode.clone())
+                    .unwrap_or(default_compaction_mode()),
             },
             provider: {
                 // New `[[providers]]` format takes precedence over legacy `[provider]`.

@@ -259,6 +259,7 @@ async fn run_single_task(
         cancel,
         gate: &gate,
         observer: &NopObserver,
+        compaction_client: None,
     };
     let result = run_loop(&mut session, task.user_prompt(), &params).await;
     let elapsed = start.elapsed();

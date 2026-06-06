@@ -777,6 +777,7 @@ pub async fn single_text_turn(
         cancel: CancellationToken::new(),
         gate: &AutoApproveGate,
         observer: &NopObserver,
+        compaction_client: None,
     };
     run_loop(session, user_text, &params).await.unwrap()
 }
@@ -809,6 +810,7 @@ pub async fn single_tool_turn(
         cancel: CancellationToken::new(),
         gate: &AutoApproveGate,
         observer: &NopObserver,
+        compaction_client: None,
     };
     let _ = run_loop(session, user_text, &params).await.unwrap();
 }

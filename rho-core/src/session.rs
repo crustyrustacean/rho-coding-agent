@@ -97,7 +97,7 @@ pub mod phase;
 pub mod tree;
 pub mod truncation;
 
-pub use compaction::{CompactionStrategy, MechanicalCompactionStrategy};
+pub use compaction::{CompactionStrategy, LlmCompactionStrategy, MechanicalCompactionStrategy};
 pub use context_stats::ContextStats;
 pub use entry::{CompactionPhase, CompactionSummary, Entry, EntryPayload, EntryResolution};
 pub use estimator::{HeuristicEstimator, TokenEstimator};

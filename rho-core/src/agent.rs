@@ -263,6 +263,10 @@ pub struct AgentConfig {
     /// Compaction runs proactively *before* eviction is needed.
     /// Set to 0 to disable. Should be >= `context_pressure_threshold`.
     pub auto_compact_threshold: u8,
+    /// Compaction mode: `"mechanical"` (default) or `"llm"`.
+    /// When `"llm"`, the agent uses the LLM to generate narrative summaries
+    /// during compaction.
+    pub compaction_mode: String,
 }
 
 impl std::fmt::Debug for AgentConfig {
@@ -280,6 +284,7 @@ impl std::fmt::Debug for AgentConfig {
             )
             .field("context_pressure_interval", &self.context_pressure_interval)
             .field("auto_compact_threshold", &self.auto_compact_threshold)
+            .field("compaction_mode", &self.compaction_mode)
             .finish()
     }
 }
@@ -296,6 +301,7 @@ impl Default for AgentConfig {
             context_pressure_threshold: 75,
             context_pressure_interval: 5,
             auto_compact_threshold: 0,
+            compaction_mode: "mechanical".to_owned(),
         }
     }
 }
@@ -317,6 +323,7 @@ impl AgentConfig {
             context_pressure_threshold: config.agent.context_pressure_threshold,
             context_pressure_interval: config.agent.context_pressure_interval,
             auto_compact_threshold: config.agent.auto_compact_threshold,
+            compaction_mode: config.agent.compaction_mode.clone(),
         }
     }
 }
@@ -338,6 +345,7 @@ impl AgentConfig {
 ///     cancel: cancel_token,
 ///     gate: &approval_gate,
 ///     observer: &observer,
+///     compaction_client: None,
 /// };
 /// let reply = run_loop(&mut session, "hello", &params).await?;
 /// ```
@@ -354,6 +362,12 @@ pub struct LoopParams<'a> {
     pub gate: &'a dyn ApprovalGate,
     /// UI callbacks for state changes and streaming deltas.
     pub observer: &'a dyn AgentObserver,
+    /// Optional LLM client for LLM-powered compaction.
+    ///
+    /// When set and `config.compaction_mode == "llm"`, compaction uses this
+    /// client to generate narrative summaries. The caller should provide an
+    /// `Arc` wrapping the same provider used for the main loop.
+    pub compaction_client: Option<std::sync::Arc<dyn rho_ai::LlmService>>,
 }
 
 // ── Internal state machine ────────────────────────────────────────────────────
@@ -407,6 +421,30 @@ struct LoopContext<'a> {
 }
 
 impl LoopContext<'_> {
+    /// Create the appropriate compaction strategy based on config.
+    ///
+    /// Returns `MechanicalCompactionStrategy` when `compaction_mode == "mechanical"`
+    /// (default), or `LlmCompactionStrategy` when `compaction_mode == "llm"` and a
+    /// compaction client is available. Falls back to mechanical if the LLM client
+    /// is missing.
+    fn make_compaction_strategy(&self) -> Box<dyn crate::session::CompactionStrategy> {
+        if self.params.config.compaction_mode == "llm" {
+            if let Some(ref client) = self.params.compaction_client {
+                return Box::new(
+                    crate::session::LlmCompactionStrategy::new(
+                        client.clone(),
+                        self.session.model.clone(),
+                    )
+                    .with_max_tokens(512),
+                );
+            }
+            warn!(
+                "compaction_mode is 'llm' but no compaction_client provided, falling back to mechanical"
+            );
+        }
+        Box::new(crate::session::MechanicalCompactionStrategy::new())
+    }
+
     /// Check context utilization and return a nudge message if it exceeds
     /// the configured threshold.
     ///
@@ -625,12 +663,12 @@ impl LoopContext<'_> {
         if let Some(threshold) = self.auto_compact_threshold() {
             let stats = self.session.context_stats();
             if stats.utilization_percent() >= threshold {
-                let strategy = crate::session::MechanicalCompactionStrategy::new();
+                let strategy = self.make_compaction_strategy();
                 let budget = self.session.message_budget();
                 let compact_threshold = budget / 4;
                 match self
                     .session
-                    .compact_older_than(compact_threshold, &strategy)
+                    .compact_older_than(compact_threshold, strategy.as_ref())
                     .await
                 {
                     Ok(_) => {
@@ -679,13 +717,13 @@ impl LoopContext<'_> {
         }
 
         // Attempt compaction to free context space, then retry.
-        let strategy = crate::session::MechanicalCompactionStrategy::new();
+        let strategy = self.make_compaction_strategy();
         let budget = self.session.message_budget();
         let compact_threshold = budget / 4;
 
         match self
             .session
-            .compact_older_than(compact_threshold, &strategy)
+            .compact_older_than(compact_threshold, strategy.as_ref())
             .await
         {
             Ok(_) => {

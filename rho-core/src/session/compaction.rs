@@ -32,6 +32,7 @@ use crate::session::entry::{CompactionPhase, CompactionSummary, Entry, EntryPayl
 use crate::session::phase::SessionPhase;
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
+use tracing::{debug, warn};
 
 // ── CompactionStrategy trait ──────────────────────────────────────────────────
 
@@ -302,6 +303,210 @@ fn summarise_result(text: &str) -> String {
             end -= 1;
         }
         format!("{}…", &trimmed[..end])
+    }
+}
+
+// ── LlmCompactionStrategy ─────────────────────────────────────────────────
+
+/// Maximum length for the LLM-generated compaction notes, in characters.
+/// Truncated at a UTF-8-safe boundary if exceeded.
+const MAX_NOTES_CHARS: usize = 2000;
+
+/// Maximum length for the mechanical summary fed to the LLM, in characters.
+/// Truncated if exceeded to keep the compaction request small.
+const MAX_MECHANICAL_FEED_CHARS: usize = 4000;
+
+/// A compaction strategy that uses an LLM to generate narrative summaries.
+///
+/// This strategy runs [`MechanicalCompactionStrategy`] first to produce the
+/// structured fields (`original_request`, `tool_calls`, `key_findings`, `phases`,
+/// etc.), then calls the LLM to produce a natural-language narrative that
+/// populates the `notes` field of [`CompactionSummary`].
+///
+/// The two-stage approach means:
+/// - Structured fields are always deterministic (from mechanical compaction).
+/// - The `notes` field adds LLM-generated context (what the agent was trying to do,
+///   what decisions were made, what state was left in).
+///
+/// If the LLM call fails, the strategy falls back to mechanical-only compaction
+/// (returns the summary with `notes = None` and logs a warning). This ensures
+/// compaction never blocks the agent loop.
+pub struct LlmCompactionStrategy {
+    /// The LLM service to call for summarisation.
+    client: std::sync::Arc<dyn rho_ai::LlmService>,
+    /// The model identifier to use for the compaction request.
+    model: String,
+    /// Maximum tokens for the LLM's completion response.
+    max_tokens: usize,
+    /// The underlying mechanical strategy (always runs first).
+    mechanical: MechanicalCompactionStrategy,
+}
+
+impl LlmCompactionStrategy {
+    /// Create a new LLM compaction strategy.
+    ///
+    /// # Arguments
+    ///
+    /// * `client` — The LLM service to call for summarisation.
+    /// * `model` — The model identifier (e.g. `"gpt-4o"`, `"qwen3-8b"`).
+    pub fn new(client: std::sync::Arc<dyn rho_ai::LlmService>, model: impl Into<String>) -> Self {
+        Self {
+            client,
+            model: model.into(),
+            max_tokens: 512,
+            mechanical: MechanicalCompactionStrategy::new(),
+        }
+    }
+
+    /// Set the maximum tokens for the LLM's completion response.
+    #[must_use]
+    pub fn with_max_tokens(mut self, max_tokens: usize) -> Self {
+        self.max_tokens = max_tokens;
+        self
+    }
+
+    /// Build the compaction prompt from a mechanical summary.
+    ///
+    /// Renders the structured summary into a concise prompt that asks the LLM
+    /// to produce a narrative summary of what happened during the compacted
+    /// session segment.
+    fn build_prompt(summary: &CompactionSummary) -> String {
+        use std::fmt::Write;
+
+        let mut prompt = String::new();
+
+        prompt.push_str(
+            "You are a session summariser. Given the following structured summary of a \
+             coding session segment, write a concise narrative (2–4 sentences) describing \
+             what the user asked for, what the agent did, and the current state. Focus on \
+             information that would help the agent resume work if context is lost. Do NOT \
+             repeat tool names or argument details — the structured summary already has those. \
+             Output ONLY the narrative, no preamble.\n\n",
+        );
+
+        if let Some(ref req) = summary.original_request {
+            let _ = writeln!(prompt, "Original request: {req}");
+        }
+
+        // Render the phase-structured or flat summary
+        if summary.phases.is_empty() {
+            if !summary.tool_calls.is_empty() {
+                prompt.push_str("Tool activity:\n");
+                for (name, calls) in &summary.tool_calls {
+                    let _ = writeln!(prompt, "  {name}: {} calls", calls.len());
+                }
+            }
+        } else {
+            prompt.push_str("Activity by phase:\n");
+            for segment in &summary.phases {
+                let _ = write!(
+                    prompt,
+                    "  {}: {} tool calls",
+                    segment.phase,
+                    segment.tool_calls.values().map(Vec::len).sum::<usize>()
+                );
+                if !segment.key_findings.is_empty() {
+                    prompt.push_str(", key findings available");
+                }
+                if !segment.user_messages.is_empty() {
+                    prompt.push_str(", user context available");
+                }
+                prompt.push('\n');
+            }
+        }
+
+        let _ = write!(
+            prompt,
+            "Entries compacted: {}\nTokens compacted: {}\n",
+            summary.entry_count, summary.tokens_compacted
+        );
+
+        // Truncate if too long
+        if prompt.len() > MAX_MECHANICAL_FEED_CHARS {
+            let mut end = MAX_MECHANICAL_FEED_CHARS;
+            while !prompt.is_char_boundary(end) {
+                end -= 1;
+            }
+            prompt.truncate(end);
+            prompt.push_str("\n[truncated]");
+        }
+
+        prompt
+    }
+
+    /// Call the LLM and extract the text response.
+    async fn call_llm(&self, prompt: &str) -> std::result::Result<String, String> {
+        use futures::StreamExt;
+        use rho_ai::StreamEvent;
+        use rho_ai::types::{LlmMessage, LlmRequest};
+
+        let request = LlmRequest::new(
+            self.model.clone(),
+            vec![LlmMessage::User(prompt.to_owned())],
+        )
+        .with_max_tokens(self.max_tokens);
+
+        let stream = self
+            .client
+            .chat_stream(request)
+            .await
+            .map_err(|e| format!("LLM call failed: {e}"))?;
+
+        let events: Vec<StreamEvent> = stream
+            .collect::<Vec<std::result::Result<StreamEvent, _>>>()
+            .await
+            .into_iter()
+            .collect::<std::result::Result<Vec<StreamEvent>, _>>()
+            .map_err(|e| format!("LLM stream error: {e}"))?;
+        let response = StreamEvent::accumulate(&events);
+
+        if !response.tool_calls.is_empty() {
+            return Err("LLM returned tool calls instead of text".to_owned());
+        }
+
+        Ok(response.text)
+    }
+
+    /// Truncate notes to the maximum length at a UTF-8-safe boundary.
+    fn truncate_notes(text: &str) -> String {
+        if text.len() <= MAX_NOTES_CHARS {
+            return text.to_owned();
+        }
+        let mut end = MAX_NOTES_CHARS;
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}…", &text[..end])
+    }
+}
+
+#[async_trait::async_trait]
+impl CompactionStrategy for LlmCompactionStrategy {
+    async fn compact(&self, entries: &[&Entry]) -> Result<CompactionSummary> {
+        // Stage 1: Run mechanical compaction for structured fields.
+        let mut summary = self.mechanical.compact(entries).await?;
+
+        if entries.is_empty() {
+            return Ok(summary);
+        }
+
+        // Stage 2: Call the LLM for narrative notes.
+        let prompt = Self::build_prompt(&summary);
+        match self.call_llm(&prompt).await {
+            Ok(notes) if !notes.trim().is_empty() => {
+                let trimmed = Self::truncate_notes(notes.trim());
+                debug!(notes_len = trimmed.len(), "LLM compaction notes generated");
+                summary.notes = Some(trimmed);
+            }
+            Ok(_) => {
+                debug!("LLM returned empty notes, using mechanical-only summary");
+            }
+            Err(e) => {
+                warn!(error = %e, "LLM compaction failed, using mechanical-only summary");
+            }
+        }
+
+        Ok(summary)
     }
 }
 
@@ -936,5 +1141,390 @@ mod tests {
         });
         let tokens = estimate_entry_tokens(&entry);
         assert!(tokens > 0, "should estimate tokens for a custom entry");
+    }
+
+    // ── LlmCompactionStrategy tests ─────────────────────────────────────
+
+    /// A mock LLM service that returns a canned text response.
+    struct MockLlmService {
+        response_text: String,
+    }
+
+    impl MockLlmService {
+        fn new(text: impl Into<String>) -> Self {
+            Self {
+                response_text: text.into(),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl rho_ai::LlmService for MockLlmService {
+        async fn chat_stream(
+            &self,
+            _request: rho_ai::types::LlmRequest,
+        ) -> std::result::Result<rho_ai::EventStream, rho_ai::ProviderError> {
+            use futures::stream;
+            use rho_ai::types::{StopReason, StreamEvent, StreamUsage};
+
+            let events: Vec<StreamEvent> = vec![
+                StreamEvent::Text(self.response_text.clone()),
+                StreamEvent::Done {
+                    reason: StopReason::EndTurn,
+                    usage: StreamUsage::default(),
+                },
+            ];
+            Ok(Box::pin(stream::iter(events.into_iter().map(Ok))))
+        }
+    }
+
+    /// A mock LLM service that returns an error.
+    struct FailingLlmService {
+        error_message: String,
+    }
+
+    impl FailingLlmService {
+        fn new(msg: impl Into<String>) -> Self {
+            Self {
+                error_message: msg.into(),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl rho_ai::LlmService for FailingLlmService {
+        async fn chat_stream(
+            &self,
+            _request: rho_ai::types::LlmRequest,
+        ) -> std::result::Result<rho_ai::EventStream, rho_ai::ProviderError> {
+            Err(rho_ai::ProviderError::Sse {
+                message: self.error_message.clone(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn llm_compaction_populates_notes() {
+        let client = std::sync::Arc::new(MockLlmService::new(
+            "The user asked to fix a bug in main.rs. The agent read the file, \
+             found the issue in the parse function, and applied a fix.",
+        ));
+        let strategy = LlmCompactionStrategy::new(client, "test-model");
+
+        let entries = [
+            full_entry(EntryPayload::Message(ChatMessage::user_text(
+                "fix the bug in main.rs",
+            ))),
+            full_entry(EntryPayload::Message(ChatMessage::Assistant {
+                content: vec![],
+                tool_calls: vec![ModelToolCall {
+                    id: ToolCallId::from("call_1"),
+                    call_type: "function".to_owned(),
+                    function: ToolCallFunction {
+                        name: ToolName::from("read_file"),
+                        arguments: r#"{"path":"src/main.rs"}"#.to_owned(),
+                    },
+                }],
+            })),
+            full_entry(EntryPayload::Message(ChatMessage::tool_result(
+                ToolCallId::from("call_1"),
+                "file contents here",
+            ))),
+        ];
+        let refs: Vec<&Entry> = entries.iter().collect();
+
+        let summary = strategy.compact(&refs).await.unwrap();
+
+        // Mechanical fields should still be populated
+        assert_eq!(
+            summary.original_request,
+            Some("fix the bug in main.rs".to_owned())
+        );
+        assert_eq!(summary.entry_count, 3);
+
+        // Notes should be populated from the LLM
+        assert!(summary.notes.is_some(), "notes should be populated by LLM");
+        let notes = summary.notes.unwrap();
+        assert!(
+            notes.contains("fix a bug"),
+            "notes should contain the LLM's narrative: {notes}"
+        );
+    }
+
+    #[tokio::test]
+    async fn llm_compaction_includes_structured_fields_from_mechanical() {
+        let client = std::sync::Arc::new(MockLlmService::new("Agent did some work."));
+        let strategy = LlmCompactionStrategy::new(client, "test-model");
+
+        let entries = [
+            full_entry(EntryPayload::Message(ChatMessage::user_text("do it"))),
+            full_entry(EntryPayload::Message(ChatMessage::Assistant {
+                content: vec![],
+                tool_calls: vec![ModelToolCall {
+                    id: ToolCallId::from("call_1"),
+                    call_type: "function".to_owned(),
+                    function: ToolCallFunction {
+                        name: ToolName::from("read_file"),
+                        arguments: r#"{"path":"a.rs"}"#.to_owned(),
+                    },
+                }],
+            })),
+            full_entry(EntryPayload::Message(ChatMessage::Assistant {
+                content: vec![],
+                tool_calls: vec![ModelToolCall {
+                    id: ToolCallId::from("call_2"),
+                    call_type: "function".to_owned(),
+                    function: ToolCallFunction {
+                        name: ToolName::from("run_command"),
+                        arguments: r#"{"command":"cargo test"}"#.to_owned(),
+                    },
+                }],
+            })),
+        ];
+        let refs: Vec<&Entry> = entries.iter().collect();
+
+        let summary = strategy.compact(&refs).await.unwrap();
+
+        // Structured fields from mechanical compaction
+        assert_eq!(summary.tool_calls.len(), 2);
+        assert!(
+            summary
+                .tool_calls
+                .contains_key(&ToolName::from("read_file"))
+        );
+        assert!(
+            summary
+                .tool_calls
+                .contains_key(&ToolName::from("run_command"))
+        );
+        assert_eq!(summary.entry_count, 3);
+        assert!(summary.tokens_compacted > 0);
+    }
+
+    #[tokio::test]
+    async fn llm_compaction_falls_back_on_llm_error() {
+        let client = std::sync::Arc::new(FailingLlmService::new("model overloaded"));
+        let strategy = LlmCompactionStrategy::new(client, "test-model");
+
+        let entries = [
+            full_entry(EntryPayload::Message(ChatMessage::user_text("hello"))),
+            full_entry(EntryPayload::Message(ChatMessage::assistant_text("world"))),
+        ];
+        let refs: Vec<&Entry> = entries.iter().collect();
+
+        // Should NOT error — falls back to mechanical-only
+        let summary = strategy.compact(&refs).await.unwrap();
+
+        // Mechanical fields should still be populated
+        assert_eq!(summary.original_request, Some("hello".to_owned()));
+        assert_eq!(summary.entry_count, 2);
+        // Notes should be None (LLM failed)
+        assert_eq!(summary.notes, None, "notes should be None when LLM fails");
+    }
+
+    #[tokio::test]
+    async fn llm_compaction_falls_back_on_empty_response() {
+        let client = std::sync::Arc::new(MockLlmService::new("   "));
+        let strategy = LlmCompactionStrategy::new(client, "test-model");
+
+        let entries = [
+            full_entry(EntryPayload::Message(ChatMessage::user_text("hello"))),
+            full_entry(EntryPayload::Message(ChatMessage::assistant_text("world"))),
+        ];
+        let refs: Vec<&Entry> = entries.iter().collect();
+
+        let summary = strategy.compact(&refs).await.unwrap();
+        assert_eq!(
+            summary.notes, None,
+            "notes should be None for empty LLM response"
+        );
+    }
+
+    #[tokio::test]
+    async fn llm_compaction_empty_entries_returns_empty() {
+        let client = std::sync::Arc::new(MockLlmService::new("won't be called"));
+        let strategy = LlmCompactionStrategy::new(client, "test-model");
+
+        let entries: Vec<&Entry> = vec![];
+        let summary = strategy.compact(&entries).await.unwrap();
+
+        assert_eq!(summary.entry_count, 0);
+        assert_eq!(summary.notes, None);
+    }
+
+    #[tokio::test]
+    async fn llm_compaction_truncates_long_notes() {
+        let long_response = "x".repeat(5000);
+        let client = std::sync::Arc::new(MockLlmService::new(long_response));
+        let strategy = LlmCompactionStrategy::new(client, "test-model");
+
+        let entries = [
+            full_entry(EntryPayload::Message(ChatMessage::user_text("hello"))),
+            full_entry(EntryPayload::Message(ChatMessage::assistant_text("world"))),
+        ];
+        let refs: Vec<&Entry> = entries.iter().collect();
+
+        let summary = strategy.compact(&refs).await.unwrap();
+
+        assert!(summary.notes.is_some());
+        let notes = summary.notes.unwrap();
+        // 2000 bytes of ASCII + 3 bytes for '…' = 2003
+        assert!(
+            notes.len() <= MAX_NOTES_CHARS + 4,
+            "notes should be truncated to ~{MAX_NOTES_CHARS} chars, got {}",
+            notes.len()
+        );
+    }
+
+    // ── build_prompt tests ────────────────────────────────────────────────
+
+    #[test]
+    fn build_prompt_includes_original_request() {
+        let summary = CompactionSummary {
+            original_request: Some("fix the parser bug".to_owned()),
+            tool_calls: BTreeMap::new(),
+            key_findings: BTreeMap::new(),
+            phases: Vec::new(),
+            tokens_compacted: 500,
+            entry_count: 10,
+            time_span: Duration::from_secs(30),
+            notes: None,
+        };
+        let prompt = LlmCompactionStrategy::build_prompt(&summary);
+        assert!(
+            prompt.contains("fix the parser bug"),
+            "prompt should include original request"
+        );
+    }
+
+    #[test]
+    fn build_prompt_includes_phase_info() {
+        let mut phases = Vec::new();
+        let mut phase = CompactionPhase {
+            phase: "exploration".to_owned(),
+            ..Default::default()
+        };
+        phase
+            .tool_calls
+            .insert(ToolName::from("read_file"), vec!["main.rs".to_owned()]);
+        phases.push(phase);
+
+        let summary = CompactionSummary {
+            original_request: None,
+            tool_calls: BTreeMap::new(),
+            key_findings: BTreeMap::new(),
+            phases,
+            tokens_compacted: 300,
+            entry_count: 5,
+            time_span: Duration::from_secs(10),
+            notes: None,
+        };
+        let prompt = LlmCompactionStrategy::build_prompt(&summary);
+        assert!(
+            prompt.contains("exploration"),
+            "prompt should include phase name"
+        );
+        assert!(
+            prompt.contains("1 tool calls"),
+            "prompt should include tool call count"
+        );
+    }
+
+    #[test]
+    fn build_prompt_includes_entry_and_token_counts() {
+        let summary = CompactionSummary {
+            original_request: None,
+            tool_calls: BTreeMap::new(),
+            key_findings: BTreeMap::new(),
+            phases: Vec::new(),
+            tokens_compacted: 1024,
+            entry_count: 15,
+            time_span: Duration::from_mins(1),
+            notes: None,
+        };
+        let prompt = LlmCompactionStrategy::build_prompt(&summary);
+        assert!(
+            prompt.contains("Entries compacted: 15"),
+            "prompt should include entry count"
+        );
+        assert!(
+            prompt.contains("Tokens compacted: 1024"),
+            "prompt should include token count"
+        );
+    }
+
+    #[test]
+    fn build_prompt_truncates_long_input() {
+        let summary = CompactionSummary {
+            original_request: Some("x".repeat(5000)),
+            tool_calls: BTreeMap::new(),
+            key_findings: BTreeMap::new(),
+            phases: Vec::new(),
+            tokens_compacted: 100,
+            entry_count: 1,
+            time_span: Duration::ZERO,
+            notes: None,
+        };
+        let prompt = LlmCompactionStrategy::build_prompt(&summary);
+        assert!(
+            prompt.len() <= MAX_MECHANICAL_FEED_CHARS + 20,
+            "prompt should be truncated to ~{MAX_MECHANICAL_FEED_CHARS} chars, got {}",
+            prompt.len()
+        );
+        assert!(
+            prompt.contains("[truncated]"),
+            "truncated prompt should be marked"
+        );
+    }
+
+    // ── truncate_notes tests ──────────────────────────────────────────────
+
+    #[test]
+    fn truncate_notes_short_text_unchanged() {
+        let text = "short notes";
+        assert_eq!(LlmCompactionStrategy::truncate_notes(text), text);
+    }
+
+    #[test]
+    fn truncate_notes_long_text_truncated() {
+        let text = "x".repeat(MAX_NOTES_CHARS + 100);
+        let truncated = LlmCompactionStrategy::truncate_notes(&text);
+        let expected_max = MAX_NOTES_CHARS + 4; // room for multi-byte ellipsis
+        assert!(
+            truncated.len() <= expected_max,
+            "should truncate to ~{MAX_NOTES_CHARS} chars, got {}",
+            truncated.len()
+        );
+        assert!(
+            truncated.ends_with('…'),
+            "truncated text should end with ellipsis"
+        );
+    }
+
+    #[test]
+    fn truncate_notes_at_boundary_unchanged() {
+        let text = "x".repeat(MAX_NOTES_CHARS);
+        let truncated = LlmCompactionStrategy::truncate_notes(&text);
+        assert_eq!(truncated.len(), MAX_NOTES_CHARS);
+        assert!(
+            !truncated.ends_with('…'),
+            "exact boundary should not add ellipsis"
+        );
+    }
+
+    // ── with_max_tokens tests ────────────────────────────────────────────
+
+    #[test]
+    fn with_max_tokens_overrides_default() {
+        let client = std::sync::Arc::new(MockLlmService::new("notes"));
+        let strategy = LlmCompactionStrategy::new(client, "test-model").with_max_tokens(1024);
+        assert_eq!(strategy.max_tokens, 1024);
+    }
+
+    #[test]
+    fn default_max_tokens() {
+        let client = std::sync::Arc::new(MockLlmService::new("notes"));
+        let strategy = LlmCompactionStrategy::new(client, "test-model");
+        assert_eq!(strategy.max_tokens, 512);
     }
 }

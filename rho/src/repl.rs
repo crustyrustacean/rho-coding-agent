@@ -212,6 +212,13 @@ pub async fn run_repl(app: &mut App) -> Result<()> {
                 }
 
                 let client = app.active_provider().clone_boxed_service();
+                let compaction_client = if app.config.compaction_mode == "llm" {
+                    Some(std::sync::Arc::from(
+                        app.active_provider().clone_boxed_service(),
+                    ))
+                } else {
+                    None
+                };
                 let composite = build_composite(&repl_observer, &app.ext_observers);
                 let params = rho_core::LoopParams {
                     client: client.as_ref(),
@@ -220,6 +227,7 @@ pub async fn run_repl(app: &mut App) -> Result<()> {
                     cancel: app.cancel.clone(),
                     gate: &gate,
                     observer: &composite,
+                    compaction_client,
                 };
                 match rho_core::run_loop(&mut app.session, pasted.trim(), &params).await {
                     Ok(reply) => P::assistant_reply(&reply),
@@ -233,6 +241,13 @@ pub async fn run_repl(app: &mut App) -> Result<()> {
         }
 
         let client = app.active_provider().clone_boxed_service();
+        let compaction_client = if app.config.compaction_mode == "llm" {
+            Some(std::sync::Arc::from(
+                app.active_provider().clone_boxed_service(),
+            ))
+        } else {
+            None
+        };
         let composite = build_composite(&repl_observer, &app.ext_observers);
         let params = rho_core::LoopParams {
             client: client.as_ref(),
@@ -241,6 +256,7 @@ pub async fn run_repl(app: &mut App) -> Result<()> {
             cancel: app.cancel.clone(),
             gate: &gate,
             observer: &composite,
+            compaction_client,
         };
         match rho_core::run_loop(&mut app.session, input, &params).await {
             Ok(reply) => P::assistant_reply(&reply),

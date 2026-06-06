@@ -303,6 +303,7 @@ async fn branching_old_branch_unreachable_from_leaf() {
         cancel: CancellationToken::new(),
         gate: &AutoApproveGate,
         observer: &NopObserver,
+        compaction_client: None,
     };
     let _ = run_loop(&mut session, "hello", &params).await.unwrap();
 
@@ -491,6 +492,7 @@ async fn amnesia_reproducer_secret_survives() {
         cancel: CancellationToken::new(),
         gate: &AutoApproveGate,
         observer: &NopObserver,
+        compaction_client: None,
     };
     let result = run_loop(
         &mut session,
@@ -753,6 +755,7 @@ async fn compact_and_resume_model_response_appended_after_compaction() {
         cancel: CancellationToken::new(),
         gate: &AutoApproveGate,
         observer: &NopObserver,
+        compaction_client: None,
     };
     let result = run_loop(&mut session, "what is the answer?", &params)
         .await
@@ -892,6 +895,7 @@ async fn multi_tool_call_compaction_preserves_integrity() {
         cancel: CancellationToken::new(),
         gate: &AutoApproveGate,
         observer: &NopObserver,
+        compaction_client: None,
     };
     let _ = run_loop(&mut session, "read files A and B", &params)
         .await
@@ -907,6 +911,7 @@ async fn multi_tool_call_compaction_preserves_integrity() {
             cancel: CancellationToken::new(),
             gate: &AutoApproveGate,
             observer: &NopObserver,
+            compaction_client: None,
         };
         let _ = run_loop(&mut session, &format!("msg {i} filler text"), &params)
             .await
@@ -953,6 +958,7 @@ async fn estimator_converges_within_20_percent_by_third_round_trip() {
             cancel: CancellationToken::new(),
             gate: &AutoApproveGate,
             observer: &NopObserver,
+            compaction_client: None,
         };
         let _ = run_loop(
             &mut session,
@@ -1134,6 +1140,7 @@ async fn tool_call_turn_integrity_after_branch() {
         cancel: CancellationToken::new(),
         gate: &AutoApproveGate,
         observer: &NopObserver,
+        compaction_client: None,
     };
     let _ = run_loop(&mut session, "do it", &params).await.unwrap();
 
@@ -1159,6 +1166,7 @@ async fn tool_call_turn_integrity_after_branch() {
             cancel: CancellationToken::new(),
             gate: &AutoApproveGate,
             observer: &NopObserver,
+            compaction_client: None,
         };
         let _ = run_loop(&mut session, &format!("msg {i}"), &params)
             .await

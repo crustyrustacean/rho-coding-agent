@@ -41,6 +41,7 @@ async fn assistant_tool_call_message_persisted_before_tool_result() {
         cancel: CancellationToken::new(),
         gate: &AutoApproveGate,
         observer: &NopObserver,
+        compaction_client: None,
     };
     let result = run_loop(&mut session, "do something", &params)
         .await
@@ -93,6 +94,7 @@ async fn multiple_tool_calls_executed_sequentially() {
         cancel: CancellationToken::new(),
         gate: &AutoApproveGate,
         observer: &NopObserver,
+        compaction_client: None,
     };
     let result = run_loop(&mut session, "do two things", &params)
         .await
@@ -163,6 +165,7 @@ async fn multi_tool_call_persistence_invariant() {
         cancel: CancellationToken::new(),
         gate: &AutoApproveGate,
         observer: &NopObserver,
+        compaction_client: None,
     };
     let _ = run_loop(&mut session, "do two things", &params)
         .await
@@ -209,6 +212,7 @@ async fn mixed_approval_with_multi_tool_call() {
         cancel: CancellationToken::new(),
         gate: &AutoDenyGate, // deny all approval requests,
         observer: &NopObserver,
+        compaction_client: None,
     };
     let result = run_loop(&mut session, "read then write", &params)
         .await
@@ -295,6 +299,7 @@ async fn all_tool_calls_denied_still_feeds_results_and_resends() {
         cancel: CancellationToken::new(),
         gate: &AutoDenyGate,
         observer: &NopObserver,
+        compaction_client: None,
     };
     let result = run_loop(&mut session, "write two files", &params)
         .await
@@ -358,6 +363,7 @@ async fn cancellation_between_tool_calls_in_batch() {
         cancel,
         gate: &AutoApproveGate,
         observer: &NopObserver,
+        compaction_client: None,
     };
     let err = run_loop(&mut session, "do two things", &params)
         .await
@@ -400,6 +406,7 @@ async fn empty_tool_calls_vec_returns_error() {
         cancel: CancellationToken::new(),
         gate: &AutoApproveGate,
         observer: &NopObserver,
+        compaction_client: None,
     };
     let err = run_loop(&mut session, "hello", &params).await.unwrap_err();
 
@@ -440,6 +447,7 @@ async fn iteration_count_includes_multi_tool_call_events() {
         cancel: CancellationToken::new(),
         gate: &AutoApproveGate,
         observer: &NopObserver,
+        compaction_client: None,
     };
     let err = run_loop(&mut session, "loop forever", &params)
         .await
@@ -478,6 +486,7 @@ async fn loop_terminates_after_max_iterations() {
         cancel: CancellationToken::new(),
         gate: &AutoApproveGate,
         observer: &NopObserver,
+        compaction_client: None,
     };
     let err = run_loop(&mut session, "loop forever", &params)
         .await
@@ -521,6 +530,7 @@ async fn stuck_loop_injects_nudge_after_threshold() {
         cancel: CancellationToken::new(),
         gate: &AutoApproveGate,
         observer: &NopObserver,
+        compaction_client: None,
     };
     let reply = run_loop(&mut session, "do something", &params)
         .await
@@ -567,6 +577,7 @@ async fn stuck_loop_disabled_when_threshold_is_zero() {
         cancel: CancellationToken::new(),
         gate: &AutoApproveGate,
         observer: &NopObserver,
+        compaction_client: None,
     };
     let err = run_loop(&mut session, "loop", &params).await.unwrap_err();
 
@@ -602,6 +613,7 @@ async fn non_retryable_error_propagates_immediately() {
         cancel: CancellationToken::new(),
         gate: &AutoApproveGate,
         observer: &NopObserver,
+        compaction_client: None,
     };
     let err = run_loop(&mut session, "hello", &params).await.unwrap_err();
 
@@ -691,6 +703,7 @@ async fn retry_budget_exhausted_on_transient_errors() {
         cancel: CancellationToken::new(),
         gate: &AutoApproveGate,
         observer: &NopObserver,
+        compaction_client: None,
     };
     let err = run_loop(&mut session, "hello", &params).await.unwrap_err();
 
@@ -732,6 +745,7 @@ async fn retry_succeeds_after_transient_error() {
         cancel: CancellationToken::new(),
         gate: &AutoApproveGate,
         observer: &NopObserver,
+        compaction_client: None,
     };
     let result = run_loop(&mut session, "hello", &params).await.unwrap();
 
@@ -845,6 +859,7 @@ async fn cancellation_checked_at_top_of_loop() {
         cancel,
         gate: &AutoApproveGate,
         observer: &NopObserver,
+        compaction_client: None,
     };
     let err = run_loop(&mut session, "do it", &params).await.unwrap_err();
 
@@ -890,6 +905,7 @@ async fn cancellation_propagates_into_running_tool() {
         cancel,
         gate: &AutoApproveGate,
         observer: &NopObserver,
+        compaction_client: None,
     };
     let err = run_loop(&mut session, "do it", &params).await.unwrap_err();
 
@@ -1067,6 +1083,7 @@ async fn tool_execution_error_still_appends_tool_result() {
         cancel: CancellationToken::new(),
         gate: &AutoApproveGate,
         observer: &NopObserver,
+        compaction_client: None,
     };
     let result = run_loop(&mut session, "trigger the failing tool", &params).await;
 
@@ -1117,6 +1134,7 @@ async fn length_truncated_empty_content_returns_explanation() {
         cancel: CancellationToken::new(),
         gate: &AutoApproveGate,
         observer: &NopObserver,
+        compaction_client: None,
     };
     let result = run_loop(&mut session, "design streaming support", &params)
         .await
@@ -1159,6 +1177,7 @@ async fn length_truncated_with_partial_content_shows_it() {
         cancel: CancellationToken::new(),
         gate: &AutoApproveGate,
         observer: &NopObserver,
+        compaction_client: None,
     };
     let result = run_loop(&mut session, "explain something", &params)
         .await
@@ -1205,6 +1224,7 @@ async fn length_truncated_empty_everything_shows_no_output() {
         cancel: CancellationToken::new(),
         gate: &AutoApproveGate,
         observer: &NopObserver,
+        compaction_client: None,
     };
     let result = run_loop(&mut session, "hello", &params).await.unwrap();
 
@@ -1234,6 +1254,7 @@ async fn length_truncated_message_persisted_in_session() {
         cancel: CancellationToken::new(),
         gate: &AutoApproveGate,
         observer: &NopObserver,
+        compaction_client: None,
     };
     let _ = run_loop(&mut session, "test", &params).await;
 
@@ -1289,6 +1310,7 @@ async fn length_truncated_compacts_and_retries() {
         cancel: CancellationToken::new(),
         gate: &AutoApproveGate,
         observer: &NopObserver,
+        compaction_client: None,
     };
     let result = run_loop(&mut session, "short follow-up", &params)
         .await

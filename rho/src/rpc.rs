@@ -353,6 +353,13 @@ async fn handle_prompt(app: &mut App, cmd: &Value, out: &Out, inp: &In) {
         input: Arc::clone(inp),
     };
     let client = app.active_provider().clone_boxed_service();
+    let compaction_client = if app.config.compaction_mode == "llm" {
+        Some(std::sync::Arc::from(
+            app.active_provider().clone_boxed_service(),
+        ))
+    } else {
+        None
+    };
     let params = rho_core::LoopParams {
         client: client.as_ref(),
         registry: &app.registry,
@@ -360,6 +367,7 @@ async fn handle_prompt(app: &mut App, cmd: &Value, out: &Out, inp: &In) {
         cancel: app.cancel.clone(),
         gate: &gate,
         observer: &composite,
+        compaction_client,
     };
 
     match rho_core::run_loop(&mut app.session, &message, &params).await {
