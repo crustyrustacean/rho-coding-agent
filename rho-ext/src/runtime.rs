@@ -150,8 +150,18 @@ impl ExtensionRuntime {
     /// - Transpilation fails
     /// - Manifest extraction fails
     /// - Any tool is missing its `execute` function or command its `handler`
-    pub fn spawn_from_file(entry_path: &Path, root_dir: &Path) -> Result<Self, ExtensionError> {
-        Self::spawn_from_file_with_perms(entry_path, root_dir, &ExtensionPermissions::default(), "")
+    pub fn spawn_from_file(
+        entry_path: &Path,
+        root_dir: &Path,
+        project_root: &Path,
+    ) -> Result<Self, ExtensionError> {
+        Self::spawn_from_file_with_perms(
+            entry_path,
+            root_dir,
+            project_root,
+            &ExtensionPermissions::default(),
+            "",
+        )
     }
 
     /// Spawn a new extension runtime from a TypeScript file on disk, with
@@ -168,10 +178,15 @@ impl ExtensionRuntime {
     /// | Config field | `HostState` field |
     /// |---|---|
     /// | `commands` | `allow_commands` |
-    /// | `allow_paths` | `allowed_paths` (extra, beyond extension root) |
+    /// | `allow_paths` | `allowed_paths` (extra, resolved relative to `project_root`) |
     ///
     /// The `model` parameter sets the initial model name returned by
     /// `rho.getModel()`. It can be updated later via [`ExtensionRuntime::set_model`].
+    ///
+    /// # Parameters
+    ///
+    /// - `root_dir` — the extension's own directory (for V8 module loader sandboxing).
+    /// - `project_root` — the project sandbox root (becomes the extension's `cwd`).
     ///
     /// # Errors
     ///
@@ -179,6 +194,7 @@ impl ExtensionRuntime {
     pub fn spawn_from_file_with_perms(
         entry_path: &Path,
         root_dir: &Path,
+        project_root: &Path,
         permissions: &ExtensionPermissions,
         model: &str,
     ) -> Result<Self, ExtensionError> {
@@ -200,16 +216,18 @@ impl ExtensionRuntime {
 
         let root_dir_buf = root_dir.to_path_buf();
 
-        // Build HostState from permissions
+        // Build HostState from permissions.
+        // cwd = project root (so relative paths resolve to project files).
+        // ext_root_dir = extension's own directory (so it remains accessible).
         let allow_commands = permissions.commands.unwrap_or(false);
         let allow_network = permissions.network.unwrap_or(false);
         let extra_allowed: Vec<std::path::PathBuf> = permissions
             .allow_paths
             .as_ref()
-            .map(|paths| paths.iter().map(|p| root_dir.join(p)).collect())
+            .map(|paths| paths.iter().map(|p| project_root.join(p)).collect())
             .unwrap_or_default();
 
-        let host_state = HostState::new(root_dir_buf.clone(), extra_allowed)
+        let host_state = HostState::new(project_root.to_path_buf(), &root_dir_buf, extra_allowed)
             .with_commands(allow_commands)
             .with_network(allow_network)
             .with_model(model);
@@ -783,7 +801,7 @@ mod tests {
     fn spawn_from_dir(dir: &tempfile::TempDir, main_content: &str) -> ExtensionRuntime {
         let main_path = dir.path().join("main.ts");
         std::fs::write(&main_path, main_content).unwrap();
-        ExtensionRuntime::spawn_from_file(&main_path, dir.path())
+        ExtensionRuntime::spawn_from_file(&main_path, dir.path(), dir.path())
             .expect("spawn_from_file should succeed")
     }
 
@@ -1271,7 +1289,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let bad_path = dir.path().join("no_such_file.ts");
 
-        let result = ExtensionRuntime::spawn_from_file(&bad_path, dir.path());
+        let result = ExtensionRuntime::spawn_from_file(&bad_path, dir.path(), dir.path());
         assert!(result.is_err(), "should fail for nonexistent file");
         match result {
             Err(ExtensionError::ModuleLoad(msg)) => {
@@ -1292,7 +1310,7 @@ mod tests {
         // No default export
         std::fs::write(&main_path, r"export function foo() { return 1; }").unwrap();
 
-        let result = ExtensionRuntime::spawn_from_file(&main_path, dir.path());
+        let result = ExtensionRuntime::spawn_from_file(&main_path, dir.path(), dir.path());
         assert!(result.is_err(), "should fail for missing default export");
         match result {
             Err(ExtensionError::Manifest(_)) => {}
@@ -1321,7 +1339,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = ExtensionRuntime::spawn_from_file(&main_path, dir.path());
+        let result = ExtensionRuntime::spawn_from_file(&main_path, dir.path(), dir.path());
         assert!(result.is_err(), "should fail for tool without execute");
         match result {
             Err(ExtensionError::ToolMissingExecute(name)) => {
@@ -1357,7 +1375,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = ExtensionRuntime::spawn_from_file(&main_path, dir.path());
+        let result = ExtensionRuntime::spawn_from_file(&main_path, dir.path(), dir.path());
         assert!(result.is_err(), "should fail for command without handler");
         match result {
             Err(ExtensionError::CommandMissingHandler(name)) => {
@@ -1468,6 +1486,7 @@ mod tests {
         let mut rt = ExtensionRuntime::spawn_from_file_with_perms(
             &main_path,
             dir.path(),
+            dir.path(),
             &perms,
             "claude-sonnet-4-20250514",
         )
@@ -1501,9 +1520,14 @@ mod tests {
         .unwrap();
 
         let perms = rho_core::config::ExtensionPermissions::default();
-        let mut rt =
-            ExtensionRuntime::spawn_from_file_with_perms(&main_path, dir.path(), &perms, "gpt-4o")
-                .expect("spawn should succeed");
+        let mut rt = ExtensionRuntime::spawn_from_file_with_perms(
+            &main_path,
+            dir.path(),
+            dir.path(),
+            &perms,
+            "gpt-4o",
+        )
+        .expect("spawn should succeed");
 
         // Initial model
         let model = rt.call_tool("getModel", "").await.unwrap();
@@ -1554,6 +1578,7 @@ mod tests {
         let perms = rho_core::config::ExtensionPermissions::default();
         let mut rt = ExtensionRuntime::spawn_from_file_with_perms(
             &main_path,
+            dir.path(),
             dir.path(),
             &perms,
             "test-model",
@@ -1612,6 +1637,7 @@ mod tests {
         };
         let mut rt = ExtensionRuntime::spawn_from_file_with_perms(
             &main_path,
+            dir.path(),
             dir.path(),
             &perms,
             "test-model",
@@ -1676,6 +1702,7 @@ mod tests {
         };
         let mut rt = ExtensionRuntime::spawn_from_file_with_perms(
             &main_path,
+            dir.path(),
             dir.path(),
             &perms,
             "test-model",

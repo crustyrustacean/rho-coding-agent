@@ -7,7 +7,7 @@
 //! # Lifecycle
 //!
 //! ```text
-//! ExtensionLoader::new(config)
+//! ExtensionLoader::new(config, std::path::PathBuf::from("."))
 //!   ├─ load_all(dirs)           → discover + filter + spawn
 //! │   ├─ discover(dirs)
 //! │   ├─ deduplicate()
@@ -94,15 +94,24 @@ impl ReloadReport {
 pub struct ExtensionLoader {
     /// Extension configuration (enabled/disabled, permissions).
     config: ExtensionConfig,
+    /// The project sandbox root.
+    ///
+    /// Passed to `ExtensionRuntime::spawn_from_file_with_perms` so that
+    /// extensions have the project root as their `cwd` for file access.
+    project_root: PathBuf,
     /// Currently loaded extensions, keyed by name.
     loaded: HashMap<String, LoadedState>,
 }
 
 impl ExtensionLoader {
     /// Create a new, empty extension loader.
-    pub fn new(config: ExtensionConfig) -> Self {
+    ///
+    /// The `project_root` is stored so that all spawned extensions
+    /// have the project root as their working directory for file access.
+    pub fn new(config: ExtensionConfig, project_root: PathBuf) -> Self {
         Self {
             config,
+            project_root,
             loaded: HashMap::new(),
         }
     }
@@ -386,6 +395,7 @@ impl ExtensionLoader {
         let rt = ExtensionRuntime::spawn_from_file_with_perms(
             &disc.entry_path,
             &disc.root_dir,
+            &self.project_root,
             &perms,
             "",
         )?;
@@ -418,6 +428,7 @@ impl ExtensionLoader {
             match ExtensionRuntime::spawn_from_file_with_perms(
                 &disc.entry_path,
                 &disc.root_dir,
+                &self.project_root,
                 &perms,
                 "", // model name — will be set when wired into rho
             ) {
@@ -512,7 +523,7 @@ mod tests {
     #[test]
     fn load_all_discovers_and_loads_extensions() {
         let dir = make_ext_dir("hello", EXT_SOURCE);
-        let mut loader = ExtensionLoader::new(permissive_config());
+        let mut loader = ExtensionLoader::new(permissive_config(), std::path::PathBuf::from("."));
         loader.load_all(&[dir.path().to_path_buf()]).unwrap();
 
         assert_eq!(loader.len(), 1);
@@ -522,7 +533,7 @@ mod tests {
     #[test]
     fn load_all_registers_tools() {
         let dir = make_ext_dir("hello", EXT_SOURCE);
-        let mut loader = ExtensionLoader::new(permissive_config());
+        let mut loader = ExtensionLoader::new(permissive_config(), std::path::PathBuf::from("."));
         loader.load_all(&[dir.path().to_path_buf()]).unwrap();
 
         let mut registry = ToolRegistry::new();
@@ -538,7 +549,7 @@ mod tests {
             disabled: vec!["hello".into()],
             ..Default::default()
         };
-        let mut loader = ExtensionLoader::new(config);
+        let mut loader = ExtensionLoader::new(config, std::path::PathBuf::from("."));
         loader.load_all(&[dir.path().to_path_buf()]).unwrap();
 
         assert!(loader.is_empty());
@@ -547,7 +558,7 @@ mod tests {
     #[test]
     fn load_all_empty_dirs() {
         let dir = tempfile::tempdir().unwrap();
-        let mut loader = ExtensionLoader::new(permissive_config());
+        let mut loader = ExtensionLoader::new(permissive_config(), std::path::PathBuf::from("."));
         loader.load_all(&[dir.path().to_path_buf()]).unwrap();
         assert!(loader.is_empty());
     }
@@ -559,7 +570,7 @@ mod tests {
     #[tokio::test]
     async fn tool_execution_works_after_load() {
         let dir = make_ext_dir("hello", EXT_SOURCE);
-        let mut loader = ExtensionLoader::new(permissive_config());
+        let mut loader = ExtensionLoader::new(permissive_config(), std::path::PathBuf::from("."));
         loader.load_all(&[dir.path().to_path_buf()]).unwrap();
 
         let rt = loader.get_runtime("hello").unwrap();
@@ -575,7 +586,7 @@ mod tests {
     #[tokio::test]
     async fn reload_detects_new_extension() {
         let dir = tempfile::tempdir().unwrap();
-        let mut loader = ExtensionLoader::new(permissive_config());
+        let mut loader = ExtensionLoader::new(permissive_config(), std::path::PathBuf::from("."));
         loader.load_all(&[dir.path().to_path_buf()]).unwrap();
         assert!(loader.is_empty());
 
@@ -598,7 +609,7 @@ mod tests {
     #[tokio::test]
     async fn reload_detects_removed_extension() {
         let dir = make_ext_dir("hello", EXT_SOURCE);
-        let mut loader = ExtensionLoader::new(permissive_config());
+        let mut loader = ExtensionLoader::new(permissive_config(), std::path::PathBuf::from("."));
         loader.load_all(&[dir.path().to_path_buf()]).unwrap();
 
         let mut registry = ToolRegistry::new();
@@ -621,7 +632,7 @@ mod tests {
     #[tokio::test]
     async fn reload_detects_changed_extension() {
         let dir = make_ext_dir("hello", EXT_SOURCE);
-        let mut loader = ExtensionLoader::new(permissive_config());
+        let mut loader = ExtensionLoader::new(permissive_config(), std::path::PathBuf::from("."));
         loader.load_all(&[dir.path().to_path_buf()]).unwrap();
 
         let mut registry = ToolRegistry::new();
@@ -657,7 +668,7 @@ mod tests {
     #[tokio::test]
     async fn reload_no_changes_is_noop() {
         let dir = make_ext_dir("hello", EXT_SOURCE);
-        let mut loader = ExtensionLoader::new(permissive_config());
+        let mut loader = ExtensionLoader::new(permissive_config(), std::path::PathBuf::from("."));
         loader.load_all(&[dir.path().to_path_buf()]).unwrap();
 
         let mut registry = ToolRegistry::new();
@@ -692,7 +703,7 @@ mod tests {
             };
         "#,
         );
-        let mut loader = ExtensionLoader::new(permissive_config());
+        let mut loader = ExtensionLoader::new(permissive_config(), std::path::PathBuf::from("."));
         // We need a single scan dir for both extensions
         let combined = tempfile::tempdir().unwrap();
         let e1 = combined.path().join("ext1");
@@ -750,7 +761,7 @@ mod tests {
         "#,
         );
 
-        let mut loader = ExtensionLoader::new(permissive_config());
+        let mut loader = ExtensionLoader::new(permissive_config(), std::path::PathBuf::from("."));
         loader.load_all(&[dir.path().to_path_buf()]).unwrap();
         loader.fire_on_load().await;
 
@@ -767,7 +778,7 @@ mod tests {
     #[tokio::test]
     async fn shutdown_all_cleans_up() {
         let dir = make_ext_dir("hello", EXT_SOURCE);
-        let mut loader = ExtensionLoader::new(permissive_config());
+        let mut loader = ExtensionLoader::new(permissive_config(), std::path::PathBuf::from("."));
         loader.load_all(&[dir.path().to_path_buf()]).unwrap();
         assert_eq!(loader.len(), 1);
 

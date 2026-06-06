@@ -264,7 +264,8 @@ interface ExtensionManifest {
  *
  * Currently implemented:
  * - `log` — Structured logging
- * - `getCwd` — Extension's working directory
+ * - `getCwd` — Project root directory (sandbox root)
+ * - `getProjectRoot` — Same as `getCwd` (alias for clarity)
  * - `getModel` — Currently active model name
  * - `readFile` — Read a file within the extension sandbox
  * - `writeFile` — Write a file within the extension sandbox
@@ -295,30 +296,45 @@ interface RhoGlobal {
   /**
    * Get the extension's working directory.
    *
-   * When loaded from disk (`spawn_from_file`), this returns the extension's
-   * root directory. When loaded inline (`spawn`), it falls back to the
-   * current working directory of the rho process.
+   * This is the project root directory — the sandbox root that all
+   * relative file paths resolve from. It is always the same value as
+   * `getProjectRoot()`.
    *
    * @returns An absolute path string.
    *
    * @example
    * ```typescript
-   * const cwd = rho.getCwd(); // "/home/user/.rho/extensions/my-tool"
+   * const cwd = rho.getCwd(); // "/home/user/my-project"
    * ```
    */
   getCwd(): string;
+
+  /**
+   * Get the project root directory (sandbox root).
+   *
+   * This is the same directory that all relative file paths resolve from.
+   * Use this to construct absolute paths when needed, e.g.
+   * `rho.getProjectRoot() + "/.rho/extensions/my-ext/data.json"`.
+   *
+   * @returns An absolute path string.
+   *
+   * @example
+   * ```typescript
+   * const root = rho.getProjectRoot(); // "/home/user/my-project"
+   * ```
+   */
+  getProjectRoot(): string;
 
   // ── File I/O ────────────────────────────────────────────────────────────
 
   /**
    * Read a file's contents within the extension sandbox.
    *
-   * The path is resolved relative to the extension's root directory.
-   * Files must be within the sandbox (the extension root or any
-   * explicitly allowed paths configured in `.rho/config.toml`).
+   * The path is resolved relative to the project root (sandbox root).
+   * Files must be within the sandbox.
    * Maximum file size is 1 MiB.
    *
-   * @param path - File path (relative to extension root or absolute).
+   * @param path - File path (relative to project root or absolute).
    * @returns The file contents as a string (UTF-8).
    * @throws {Error} If the file is outside the sandbox, doesn't exist, or is too large.
    *
@@ -333,11 +349,11 @@ interface RhoGlobal {
   /**
    * Write content to a file within the extension sandbox.
    *
-   * The path is resolved relative to the extension's root directory.
+   * The path is resolved relative to the project root (sandbox root).
    * Parent directories are created automatically. The parent directory
    * must be within the sandbox.
    *
-   * @param path - File path (relative to extension root or absolute).
+   * @param path - File path (relative to project root or absolute).
    * @param content - Content to write (UTF-8 string).
    * @throws {Error} If the path is outside the sandbox or the write fails.
    *

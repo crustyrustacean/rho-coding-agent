@@ -832,6 +832,7 @@ mod tests {
             cancel: CancellationToken::new(),
             ext_loader: rho_ext::loader::ExtensionLoader::new(
                 rho_core::config::ExtensionConfig::default(),
+                std::path::PathBuf::from("."),
             ),
             ext_observers: vec![],
             _log_guard: {

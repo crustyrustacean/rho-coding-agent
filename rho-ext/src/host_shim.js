@@ -41,6 +41,18 @@ globalThis.rho = {
   },
 
   /**
+   * Get the project root directory (the sandbox root).
+   *
+   * This is the same directory that all relative file paths resolve from.
+   * Use this to construct absolute paths when needed.
+   *
+   * @returns {string} The project root path.
+   */
+  getProjectRoot() {
+    return ops.op_rho_get_project_root();
+  },
+
+  /**
    * Get the name of the currently active model.
    *
    * Returns the model identifier (e.g. `"claude-sonnet-4-20250514"`,
@@ -56,11 +68,10 @@ globalThis.rho = {
   /**
    * Read a file's contents within the extension sandbox.
    *
-   * The path is resolved relative to the extension's root directory.
-   * Files must be within the sandbox (the extension root or any
-   * explicitly allowed paths). Maximum file size is 1 MiB.
+   * The path is resolved relative to the project root (sandbox root).
+   * Files must be within the sandbox. Maximum file size is 1 MiB.
    *
-   * @param {string} path - File path (relative to extension root or absolute).
+   * @param {string} path - File path (relative to project root or absolute).
    * @returns {string} The file contents as a string.
    * @throws {Error} If the file is outside the sandbox, doesn't exist, or is too large.
    */
@@ -71,11 +82,11 @@ globalThis.rho = {
   /**
    * Write content to a file within the extension sandbox.
    *
-   * The path is resolved relative to the extension's root directory.
+   * The path is resolved relative to the project root (sandbox root).
    * Parent directories are created automatically. The parent directory
    * must be within the sandbox.
    *
-   * @param {string} path - File path.
+   * @param {string} path - File path (relative to project root or absolute).
    * @param {string} content - Content to write.
    * @throws {Error} If the path is outside the sandbox or the write fails.
    */

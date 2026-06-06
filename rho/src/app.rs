@@ -114,7 +114,8 @@ impl App {
         let session_path_holder = register_all(&mut tool_registry, sandbox.clone(), &config);
 
         // ── 7b. Extensions ───────────────────────────────────────────────
-        let mut ext_loader = ExtensionLoader::new(config.extensions.clone());
+        let mut ext_loader =
+            ExtensionLoader::new(config.extensions.clone(), sandbox.path().to_path_buf());
         let ext_dirs = extension_dirs(sandbox.path());
         if !ext_dirs.is_empty() {
             if let Err(e) = ext_loader.load_all(&ext_dirs) {

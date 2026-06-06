@@ -10,7 +10,8 @@
 //! | JS call | Rust op | Behaviour |
 //! |---|---|---|
 //! | `rho.log(level, msg)` | `op_rho_log` | Emit a structured log via `tracing` |
-//! | `rho.getCwd()` | `op_rho_get_cwd` | Return the extension's working directory |
+//! | `rho.getCwd()` | `op_rho_get_cwd` | Return the extension's working directory (project root) |
+//! | `rho.getProjectRoot()` | `op_rho_get_project_root` | Return the project root path |
 //! | `rho.readFile(path)` | `op_rho_read_file` | Read a file within sandbox |
 //! | `rho.writeFile(path, content)` | `op_rho_write_file` | Write a file within sandbox |
 //! | `rho.runCommand(cmd, args)` | `op_rho_run_command` | Run a shell command (if permitted) |
@@ -38,8 +39,16 @@ const MAX_READ_BYTES: u64 = 1024 * 1024;
 /// initialised. Individual ops borrow it via `state.borrow::<HostState>()`.
 #[derive(Debug)]
 pub struct HostState {
-    /// The working directory rho was started in (or the extension's root dir).
+    /// The project root directory (sandbox root).
+    ///
+    /// This is used as the working directory for relative path resolution
+    /// in `rho.readFile`, `rho.writeFile`, etc. All relative paths are
+    /// joined to this directory before sandbox validation.
     pub cwd: PathBuf,
+    /// The project root path, stored explicitly for `rho.getProjectRoot()`.
+    ///
+    /// Always equals `cwd` but named separately for clarity in the host API.
+    pub project_root: PathBuf,
     /// Canonicalised directory roots the extension may read/write within.
     ///
     /// Defaults to just `[cwd]` if empty. Paths are canonicalised at
@@ -69,31 +78,46 @@ pub struct HostState {
 impl HostState {
     /// Create a new `HostState`.
     ///
-    /// The `cwd` itself is always added to the allowed set. Additional
-    /// paths in `extra_allowed` are canonicalised; non-existent paths
-    /// are silently skipped.
-    pub fn new(cwd: PathBuf, extra_allowed: Vec<PathBuf>) -> Self {
+    /// The `project_root` becomes `cwd` (the working directory for relative
+    /// path resolution) and is added to `allowed_paths`. The `ext_root_dir`
+    /// (the extension's own directory) is also added to `allowed_paths` so
+    /// extensions can access their own data files. Additional paths in
+    /// `extra_allowed` are resolved relative to `project_root` and added;
+    /// non-existent paths are silently skipped.
+    pub fn new(project_root: PathBuf, ext_root_dir: &Path, extra_allowed: Vec<PathBuf>) -> Self {
         let mut allowed = Vec::new();
 
-        // Always include cwd (canonicalise if possible, use as-is if not)
-        if let Ok(canonical) = cwd.canonicalize() {
+        // Always include the project root (canonicalise if possible).
+        if let Ok(canonical) = project_root.canonicalize() {
             allowed.push(canonical);
         } else {
-            allowed.push(cwd.clone());
+            allowed.push(project_root.clone());
         }
 
-        // Add extra allowed paths
+        // Add the extension's own directory so extensions can access
+        // their own data files (via absolute paths or rho.getProjectRoot()).
+        let ext_root = ext_root_dir.to_path_buf();
+        if let Ok(canonical) = ext_root_dir.canonicalize() {
+            if !allowed.contains(&canonical) {
+                allowed.push(canonical);
+            }
+        } else if !allowed.contains(&ext_root) {
+            allowed.push(ext_root);
+        }
+
+        // Add extra allowed paths (resolved relative to project root).
         for p in extra_allowed {
-            if let Ok(canonical) = p.canonicalize()
+            let resolved = project_root.join(p);
+            if let Ok(canonical) = resolved.canonicalize()
                 && !allowed.contains(&canonical)
             {
                 allowed.push(canonical);
             }
-            // Non-existent paths are silently skipped
         }
 
         Self {
-            cwd,
+            cwd: project_root.clone(),
+            project_root,
             allowed_paths: allowed,
             allow_commands: false,
             allow_network: false,
@@ -241,6 +265,9 @@ pub fn op_rho_log(#[string] level: &str, #[string] message: &str) {
 }
 
 /// `rho.getCwd()` — return the extension's working directory as a string.
+///
+/// This returns the project root (sandbox root). All relative file paths
+/// passed to `rho.readFile` and `rho.writeFile` are resolved from this directory.
 #[op2]
 #[string]
 pub fn op_rho_get_cwd(state: &mut OpState) -> String {
@@ -251,6 +278,25 @@ pub fn op_rho_get_cwd(state: &mut OpState) -> String {
 
     cwd.to_str()
         .map_or_else(|| ".".to_string(), std::string::ToString::to_string)
+}
+
+/// `rho.getProjectRoot()` — return the project root path.
+///
+/// Returns the same path as `rho.getCwd()` but with a more explicit name.
+/// Useful for extensions that need to construct absolute paths to project
+/// files (e.g. `rho.getProjectRoot() + "/.rho/extensions/my-ext/data.json"`).
+#[op2]
+#[string]
+pub fn op_rho_get_project_root(state: &mut OpState) -> String {
+    state.try_borrow::<HostState>().map_or_else(
+        || {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .to_string_lossy()
+                .to_string()
+        },
+        |s| s.project_root.to_string_lossy().to_string(),
+    )
 }
 
 /// `rho.getModel()` — return the name of the currently active model.
@@ -620,6 +666,7 @@ deno_core::extension!(
     ops = [
         op_rho_log,
         op_rho_get_cwd,
+        op_rho_get_project_root,
         op_rho_get_model,
         op_rho_read_file,
         op_rho_write_file,
@@ -640,16 +687,17 @@ mod tests {
     use deno_core::JsRuntime;
 
     /// Helper: create a `JsRuntime` with the `rho_host` extension + `HostState`.
+    /// In test context, cwd and ext_root_dir are the same directory.
     fn runtime_with_state(cwd: &str) -> JsRuntime {
         let rt = JsRuntime::new(deno_core::RuntimeOptions {
             extensions: vec![super::rho_host::init()],
             ..Default::default()
         });
 
-        // Inject HostState
+        // Inject HostState (project root = ext dir = cwd)
         rt.op_state()
             .borrow_mut()
-            .put(HostState::new(PathBuf::from(cwd), vec![]));
+            .put(HostState::new(PathBuf::from(cwd), Path::new(cwd), vec![]));
 
         rt
     }
@@ -896,6 +944,7 @@ mod tests {
         });
         rt.op_state().borrow_mut().put(HostState::new(
             dir1.path().to_path_buf(),
+            dir1.path(),
             vec![dir2.path().to_path_buf()],
         ));
 
@@ -1014,7 +1063,7 @@ mod tests {
 
         rt.op_state()
             .borrow_mut()
-            .put(HostState::new(PathBuf::from(cwd), vec![]).with_commands(true));
+            .put(HostState::new(PathBuf::from(cwd), Path::new(cwd), vec![]).with_commands(true));
 
         rt
     }
@@ -1120,7 +1169,8 @@ mod tests {
         });
 
         rt.op_state().borrow_mut().put(
-            HostState::new(PathBuf::from("/tmp"), vec![]).with_model("claude-sonnet-4-20250514"),
+            HostState::new(PathBuf::from("/tmp"), Path::new("/tmp"), vec![])
+                .with_model("claude-sonnet-4-20250514"),
         );
 
         let result = eval(&mut rt, r"rho.getModel()");
@@ -1152,12 +1202,14 @@ mod tests {
         });
 
         // Build HostState with the shared model handle
-        let host_state = HostState::new(PathBuf::from("/tmp"), vec![]).with_model("gpt-4o");
+        let host_state =
+            HostState::new(PathBuf::from("/tmp"), Path::new("/tmp"), vec![]).with_model("gpt-4o");
         // We need to replace the model Arc with our shared one
         {
             let op_state = rt.op_state();
             op_state.borrow_mut().put(HostState {
                 cwd: PathBuf::from("/tmp"),
+                project_root: PathBuf::from("/tmp"),
                 allowed_paths: host_state.allowed_paths.clone(),
                 allow_commands: false,
                 allow_network: false,
@@ -1685,9 +1737,11 @@ mod tests {
             ..Default::default()
         });
         // Default HostState: no network permission
-        rt.op_state()
-            .borrow_mut()
-            .put(HostState::new(dir.path().to_path_buf(), vec![]));
+        rt.op_state().borrow_mut().put(HostState::new(
+            dir.path().to_path_buf(),
+            dir.path(),
+            vec![],
+        ));
 
         // Use rho.fetchUrl (synchronous, throws immediately) rather than
         // fetch (async, errors are unhandled promise rejections).

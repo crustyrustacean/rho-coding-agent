@@ -266,7 +266,7 @@ You can author TypeScript extensions that add custom tools to your tool registry
 
 **How to create an extension:**
 
-1. Write a `.ts` file to `~/.rho/extensions/<name>.ts` using `write_file`.
+1. Write a `.ts` file to `<project>/.rho/extensions/<name>.ts` using `write_file`.
 2. The file must export a default object:
 
 ```typescript
