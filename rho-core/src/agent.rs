@@ -252,11 +252,13 @@ pub struct AgentConfig {
     /// Whether to display full chain-of-thought reasoning in the output.
     /// When `false`, shows a one-line summary instead.
     pub show_reasoning: bool,
-    /// Context utilization threshold (0–100) at which the agent loop injects
-    /// a nudge reminding the agent to conserve context. Set to 0 to disable.
+    /// Context utilization threshold (0–100) at which a warning is
+    /// logged about context pressure. **Deprecated:** no longer injects
+    /// a nudge — structural mechanisms handle context management.
+    /// Set to 0 to disable (default).
     pub context_pressure_threshold: u8,
-    /// Minimum number of iterations between context-pressure nudges.
-    /// Prevents the nudge from being injected on every tool execution.
+    /// Minimum number of iterations between context-pressure warnings.
+    /// **Deprecated:** no-op.
     pub context_pressure_interval: u32,
     /// Context utilization percentage (0–100) at which the agent loop
     /// automatically compacts older entries to free context space.
@@ -298,7 +300,7 @@ impl Default for AgentConfig {
             approval_policy: Box::new(DefaultApprovalPolicy),
             stuck_loop_threshold: 3,
             show_reasoning: false,
-            context_pressure_threshold: 75,
+            context_pressure_threshold: 0,
             context_pressure_interval: 5,
             auto_compact_threshold: 0,
             compaction_mode: "mechanical".to_owned(),
@@ -445,42 +447,31 @@ impl LoopContext<'_> {
         Box::new(crate::session::MechanicalCompactionStrategy::new())
     }
 
-    /// Check context utilization and return a nudge message if it exceeds
+    /// Check context utilization and log a warning if it exceeds
     /// the configured threshold.
     ///
-    /// `current_iteration` is the current loop iteration count, used for
-    /// rate-limiting. Returns `None` if the check is disabled, below
-    /// threshold, or rate-limited.
+    /// **Deprecated:** The nudge message is no longer injected. This method
+    /// only logs a warning when utilization exceeds the threshold, since
+    /// auto-compact and graduated resolution handle context management
+    /// structurally.
     fn check_context_pressure(
         session: &Session,
         threshold: u8,
-        current_iteration: u32,
+        _current_iteration: u32,
     ) -> Option<String> {
         if threshold == 0 {
-            return None;
-        }
-        let interval = std::cmp::max(1, LoopContext::pressure_interval_from_threshold(threshold));
-        if !current_iteration.is_multiple_of(interval) {
             return None;
         }
         let stats = session.context_stats();
         if stats.utilization_percent() >= threshold {
             let pct = stats.utilization_percent();
-            Some(format!(
-                "Context at {pct}%. Consider: (1) writing your progress to \
-                 `.rho/checkpoint.md`, (2) running /compact to summarize earlier \
-                 conversation, (3) avoiding re-reading large files."
-            ))
-        } else {
-            None
+            info!(
+                utilization = %pct,
+                "context utilization above threshold (auto-compact should handle this)"
+            );
         }
-    }
-
-    /// Derive the rate-limiting interval from the threshold.
-    /// Higher thresholds (less frequent checks) get longer intervals.
-    fn pressure_interval_from_threshold(_threshold: u8) -> u32 {
-        // Fixed interval for now; could be made configurable later.
-        5
+        // Always return None — the nudge is disabled.
+        None
     }
 
     /// Execute one state transition and return the next state.
@@ -648,15 +639,14 @@ impl LoopContext<'_> {
         }
         info!(phase = %self.phase, tool = %call.function.name, "phase updated");
 
-        // Context-pressure check: inject a nudge if utilization is high.
-        if let Some(nudge) = Self::check_context_pressure(
+        // Context-pressure check: log a warning if utilization is above
+        // threshold. The nudge is no longer injected — auto-compact and
+        // graduated resolution handle context management structurally.
+        let _ = Self::check_context_pressure(
             self.session,
             self.params.config.context_pressure_threshold,
             self.iterations,
-        ) {
-            info!(utilization = %self.session.context_stats().utilization_percent(), "context pressure nudge injected");
-            self.session.append_user_message(&nudge);
-        }
+        );
 
         // Auto-compact: proactively compact older entries when utilization
         // crosses the auto-compact threshold.
@@ -1641,18 +1631,15 @@ mod tests {
         assert!(calls.is_empty());
     }
 
-    // ── context-pressure injection tests ──────────────────────────────────
+    // ── context-pressure (deprecated — no nudge injected) ───────────────────
 
     #[test]
-    fn context_pressure_nudge_is_injected_when_utilization_exceeds_threshold() {
-        // With a tiny token budget and enough content, context
-        // utilization should exceed the threshold and inject a nudge.
+    fn context_pressure_check_always_returns_none() {
+        // Even with high utilization, the deprecated context-pressure check
+        // no longer injects a nudge. It only logs.
         let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
-            .with_token_budget(crate::context::TokenBudget::with_reserve(100, 5)); // prompt_budget = 95
+            .with_token_budget(crate::context::TokenBudget::with_reserve(100, 5));
 
-        // Add enough content to push utilization above the 75% threshold.
-        // We need ~71+ estimated tokens (75% of 95). At ~4 chars/token,
-        // that's ~284 chars. The system prompt also consumes tokens.
         let msg = "x".repeat(500);
         session.append_user_message(&msg);
         let call_id = ToolCallId::from("call_1");
@@ -1666,90 +1653,25 @@ mod tests {
             stats.utilization_percent()
         );
 
-        // Build a LoopContext and simulate a tool execution step.
-        // The pressure check should inject a nudge message.
-        let nudge = LoopContext::check_context_pressure(&session, 75, 0);
-        assert!(
-            nudge.is_some(),
-            "should inject nudge when utilization exceeds threshold"
-        );
-    }
-
-    #[test]
-    fn context_pressure_nudge_is_not_injected_when_below_threshold() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
-            .with_token_budget(crate::context::TokenBudget::new(128_000));
-
-        session.append_user_message("short message");
-        let call_id = ToolCallId::from("call_1");
-        let result = ToolResult::success("small output");
-        let _ = session.append_tool_result(call_id, &result);
-
         let nudge = LoopContext::check_context_pressure(&session, 75, 0);
         assert!(
             nudge.is_none(),
-            "should not inject nudge when utilization is below threshold"
+            "nudge should no longer be injected (replaced by auto-compact)"
         );
     }
 
     #[test]
-    fn context_pressure_nudge_is_rate_limited() {
-        // Even if utilization is high, the nudge should only fire every
-        // N iterations (derived from the interval).
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
-            .with_token_budget(crate::context::TokenBudget::with_reserve(100, 5));
-
-        let msg = "x".repeat(500);
-        session.append_user_message(&msg);
-        let call_id = ToolCallId::from("call_1");
-        let result = ToolResult::success("x".repeat(300));
-        let _ = session.append_tool_result(call_id, &result);
-
-        // First call (iteration 0): should inject (0 % 5 == 0)
-        let nudge0 = LoopContext::check_context_pressure(&session, 75, 0);
-        assert!(nudge0.is_some(), "first call should inject");
-
-        // Second call (iteration 1): should NOT inject (1 % 5 != 0)
-        let nudge1 = LoopContext::check_context_pressure(&session, 75, 1);
-        assert!(
-            nudge1.is_none(),
-            "second call within rate interval should not inject"
-        );
-
-        // Sixth call (iteration 5): should inject again (5 % 5 == 0)
-        let nudge5 = LoopContext::check_context_pressure(&session, 75, 5);
-        assert!(nudge5.is_some(), "call after rate interval should inject");
-    }
-
-    #[test]
-    fn context_pressure_threshold_zero_disables_check() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
-            .with_token_budget(crate::context::TokenBudget::with_reserve(100, 5));
-
-        session.append_user_message(&"x".repeat(500));
-
-        // With threshold 0, check is disabled
+    fn context_pressure_threshold_zero_returns_none_immediately() {
+        let session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let nudge = LoopContext::check_context_pressure(&session, 0, 0);
-        assert!(nudge.is_none(), "threshold 0 should disable pressure check");
+        assert!(nudge.is_none());
     }
 
     #[test]
-    fn context_pressure_nudge_content_mentions_utilization() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
-            .with_token_budget(crate::context::TokenBudget::with_reserve(100, 5));
-
-        let msg = "x".repeat(500);
-        session.append_user_message(&msg);
-        let call_id = ToolCallId::from("call_1");
-        let result = ToolResult::success("x".repeat(300));
-        let _ = session.append_tool_result(call_id, &result);
-
-        let nudge = LoopContext::check_context_pressure(&session, 75, 0).unwrap();
-        let pct = session.context_stats().utilization_percent();
-        assert!(
-            nudge.contains(&pct.to_string()),
-            "nudge should mention utilization percentage"
-        );
-        assert!(nudge.contains("Context"), "nudge should mention Context");
+    fn context_pressure_low_utilization_returns_none() {
+        let session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
+            .with_token_budget(crate::context::TokenBudget::new(128_000));
+        let nudge = LoopContext::check_context_pressure(&session, 75, 0);
+        assert!(nudge.is_none());
     }
 }
