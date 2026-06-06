@@ -8,7 +8,7 @@ The original `Conversation` type stored messages in a `Vec<ChatMessage>`. When t
 
 1. **Tree structure** — branching, not deletion. `/clear` and compaction create new branches; the old tree is preserved.
 2. **Typed entries** — user messages, assistant messages, tool calls, tool results, compaction summaries, and extension entries are all first-class nodes.
-3. **Resolution levels** — each entry carries a resolution (`Full`, `Compacted`, or `Attached`) that tells the context builder how to render it.
+3. **Resolution levels** — each entry carries a resolution (`Full`, `Outlined`, `Summarized`, `Pinned`, `Compacted`, or `Attached`) that tells the context builder how to render it.
 4. **Persistence** — sessions auto-flush to JSONL files, surviving process restarts and crashes.
 
 ## Tree structure
@@ -107,22 +107,33 @@ session: /home/user/.rho/sessions/abcdef12/1777859536_4b021d5d.jsonl
 
 ## Context stats
 
-The `ContextStats` struct provides a snapshot of context window usage, available through `Session::context_stats()`:
+The `ContextStats` struct provides a rich snapshot of context window usage, available through `Session::context_stats()`:
 
 ```rust
 pub struct ContextStats {
+    // Basic stats
     pub context_window: usize,
     pub completion_reserve: usize,
     pub estimated_used: usize,
     pub message_count: usize,
     pub entry_count: usize,
     pub path_entry_count: usize,
+
+    // Token distribution
+    pub role_tokens: RoleTokenDistribution,           // system, user, assistant, tool
+    pub resolution_tokens: ResolutionTokenDistribution, // full, outlined, summarized, pinned
+    pub phase_tokens: PhaseTokenDistribution,        // exploration, execution, verification, conclusion, unclassified
+
+    // Compaction tracking
+    pub compaction_tokens: usize,
+    pub compacted_entry_count: usize,
 }
 ```
 
 Key methods:
 - `utilization_percent()` — context utilization as 0–100% (based on prompt budget)
 - `estimated_remaining()` — remaining tokens in the prompt budget (saturates at 0)
+- `prompt_budget()` — context window minus completion reserve
 
 The REPL prints a compact one-line status bar after every turn:
 
@@ -130,7 +141,7 @@ The REPL prints a compact one-line status bar after every turn:
 [████████████░░░░░░░░] 12.3k/32k tokens (50%) │ 12.3k remaining │ 10 messages
 ```
 
-Color-coded green (<60%), yellow (60–80%), red (>80%). The `/status` REPL command (aliased as `/context`) shows a detailed multi-line breakdown including system prompt overhead, tool schema overhead, and conversation token breakdown.
+Color-coded green (<60%), yellow (60–80%), red (>80%). The `/status` REPL command (aliased as `/context`) shows a detailed multi-line breakdown including token distribution by role, resolution level, compaction stats, system prompt overhead, tool schema overhead, and conversation token breakdown.
 
 ## Entry types
 
@@ -139,7 +150,7 @@ Each entry in the tree has a `payload` that describes what it represents:
 | Payload | Description |
 |---|---|
 | `Message` | A chat message (system, user, assistant, or tool result) |
-| `Compaction` | A summary replacing older entries |
+| `Compaction` | A phase-aware summary replacing older entries |
 | `BranchSummary` | A summary created when branching |
 | `CustomMessage` | Extension message (sent to model as synthetic user message) |
 | `Custom` | Extension state (never sent to model) |
@@ -154,8 +165,13 @@ Each entry in the tree has a `payload` that describes what it represents:
 Every entry carries a `resolution` field:
 
 - **`Full`** — complete, verbatim content. Used for recent entries that fit within the context window.
+- **`Outlined`** — structural summary: tool name, key arguments, truncated output. Consumes ~10-20% of original tokens.
+- **`Summarized`** — prose summary: a one-line description of what the entry represents. Consumes ~5-10% of original tokens.
+- **`Pinned`** — protected from eviction and downgrade. Rendered at its native resolution.
 - **`Compacted`** — replaced by a `Compaction` summary. The original content is still in the tree but the context builder renders the summary instead.
-- **`Attached`** — lightweight reference (e.g., a tool call whose result has been compacted). Rendered as a brief mention rather than full content.
+- **`Attached`** — lightweight reference. Rendered as a brief mention rather than full content.
+
+Entries are downgraded through `Full → Outlined → Summarized` by the selective eviction planner before turn-level eviction is needed. Pinned entries are protected from all downgrade and eviction.
 
 The context builder ([Context Management](./context-management.md)) uses resolution levels to decide what to send to the model — full detail where it matters, summaries where it doesn't.
 
@@ -163,7 +179,7 @@ The context builder ([Context Management](./context-management.md)) uses resolut
 
 Tool results can be very large (entire file contents, command output). Sessions enforce a bounded output size:
 
-- Tool output exceeding 50% of the prompt budget is truncated.
+- Tool output exceeding a fraction of the prompt budget is truncated.
 - The full output is preserved in `ToolResultDetails::FullOutput` for later retrieval.
 - Truncation splits on the last newline boundary to avoid breaking UTF-8 sequences.
 
@@ -180,7 +196,7 @@ The `Session` type in `rho-core` exposes:
 - **Constructors**: `Session::new()` (persisted), `Session::in_memory()` (no disk I/O), `Session::open(path)` (resume from JSONL)
 - **Appenders**: `append_user_message()`, `append_assistant_message()`, `append_tool_result()`, `append_tool_call()`
 - **Navigation**: `path_to_root()`, `children()`, `leaf()`, `branch_to()`, `branch_with_summary()`
-- **Context**: `path_messages()` (messages along the current branch), `send_current(client)` (send to model with context fitting), `context_stats()` (usage snapshot)
+- **Context**: `path_messages()` (messages along the current branch), `send_current()` (send to model with context fitting), `context_stats()` (usage snapshot), `prepare_context()` (selective downgrade)
 - **Compaction**: `compact_older_than()` (compact entries older than a threshold)
 - **Discovery**: `find_latest_session(cwd)`, `list_sessions(cwd)` (header-only session scanning)
 - **Extensions**: `write_custom_state()`, `read_custom_state()`, `write_custom_message()`, `read_custom_message()`

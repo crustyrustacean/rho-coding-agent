@@ -16,12 +16,10 @@ rho-coding-agent/
 │       ├── model.rs          # Model resolution + interactive picker
 │       ├── ext_observer.rs   # `CompositeObserver` — fans out to REPL/RPC + extension observers
 │       ├── gate.rs           # Approval gate module root
-│       ├── gate/
-│       │   └── interactive.rs  # `ReplApprovalGate` — y/N from stdin
+│       │   └── interactive.rs # `ReplApprovalGate` — y/N from stdin
 │       ├── rpc.rs            # RPC mode: `run_rpc`, `run_rpc_on`, observer, approval gate
 │       ├── repl.rs           # `run_repl()` — REPL loop with `/reload`, `/extensions`
 │       ├── presenter.rs      # Presenter module root
-│       ├── presenter/
 │       │   ├── repl.rs       # `ReplPresenter` — all REPL terminal output
 │       │   └── rpc.rs        # `RpcPresenter` — startup output for RPC mode
 ├── rho-ai/                 # Unified LLM provider abstraction
@@ -34,26 +32,26 @@ rho-coding-agent/
 │       ├── types.rs         # `LlmMessage`, `LlmRequest`, `StreamEvent`, `AccumulatedResponse`
 │       └── error.rs         # `ProviderError`
 ├── rho-ext/                # TypeScript extension runtime (V8/deno-core)
-│   ├── src/
-│   │   ├── lib.rs          # Re-exports: `ExtensionLoader`, `DenoTool`, `DenoObserver`, etc.
-│   │   ├── runtime.rs      # `ExtensionRuntime` — V8 isolate on dedicated OS thread
-│   │   ├── loader.rs       # `ExtensionLoader` — discovery, filtering, spawning, hot reload
-│   │   ├── deno_tool.rs    # `DenoTool` — `Tool` trait wrapper
-│   │   ├── deno_observer.rs# `DenoObserver` — `AgentObserver` wrapper
-│   │   ├── manifest.rs     # `LoadedExtension` — manifest parsing and validation
-│   │   ├── discover.rs     # Extension discovery (single-file and multi-file)
-│   │   ├── transpile.rs    # TS → JS transpilation
-│   │   ├── module_loader.rs# `RhoModuleLoader` — ESM module resolution
-│   │   ├── host.rs         # `rho.*` host ops (log, readFile, writeFile, runCommand, getModel, getCwd)
-│   │   ├── host_shim.js    # ESM shim for extension module loading
-│   │   ├── error.rs        # `ExtensionError`
-│   │   └── spike.rs        # Original spike validation code
+│   └── src/
+│       ├── lib.rs          # Re-exports: `ExtensionLoader`, `DenoTool`, `DenoObserver`, etc.
+│       ├── runtime.rs      # `ExtensionRuntime` — V8 isolate on dedicated OS thread
+│       ├── async_dispatcher.rs # Async bridge between V8 isolate and tokio
+│       ├── loader.rs       # `ExtensionLoader` — discovery, filtering, spawning, hot reload
+│       ├── deno_tool.rs    # `DenoTool` — `Tool` trait wrapper
+│       ├── deno_observer.rs# `DenoObserver` — `AgentObserver` wrapper
+│       ├── manifest.rs     # `LoadedExtension` — manifest parsing and validation
+│       ├── discover.rs     # Extension discovery (single-file and multi-file)
+│       ├── transpile.rs    # TS → JS transpilation
+│       ├── module_loader.rs# `RhoModuleLoader` — ESM module resolution
+│       ├── host.rs         # `rho.*` host ops (log, readFile, writeFile, runCommand, getModel, getCwd)
+│       ├── ops.rs          # Helper macros for host op boilerplate
+│       └── error.rs        # `ExtensionError`
 │   └── types/
 │       └── rho.d.ts        # TypeScript type definitions for extension authors
 ├── rho-core/                # Agent kernel
 │   └── src/
 │       ├── lib.rs           # Module declarations, convenience re-exports
-│       ├── agent.rs         # Agent loop state machine, `run_loop`
+│       ├── agent.rs         # Agent loop state machine, `run_loop`, phase tracking, auto-compact
 │       ├── approval.rs      # `ApprovalPolicy`, `ApprovalGate` traits
 │       ├── client/
 │       │   ├── mod.rs        # `RhoAiClient`, `ProviderRegistry`, `provider_factory`
@@ -65,6 +63,7 @@ rho-coding-agent/
 │       ├── diagnostic.rs    # Structured compiler diagnostic types
 │       ├── error.rs         # `RhoError` and `Result`
 │       ├── message.rs       # `ChatMessage`, `ContentBlock`, `ModelToolCall`
+│       ├── model_match.rs   # Model name matching / fuzzy matching
 │       ├── newtypes.rs      # `FilePath`, `ToolName`, `ToolCallId`, `EntryId`, `DiagnosticCode`
 │       ├── prompts.rs       # `base_prompt()`, `compact_prompt()` (embedded from `prompts/`)
 │       ├── redact.rs        # `Redactor` — secret pattern matching
@@ -78,38 +77,53 @@ rho-coding-agent/
 │       │   ├── accessors.rs    # Header, leaf, entry, flush, path, getters/setters
 │       │   ├── append.rs       # Append ops, close, extension typed methods, append_entry core
 │       │   ├── builder.rs      # `new`, `in_memory`, `with_*` builder methods
-│       │   ├── compaction.rs   # `CompactionStrategy`, `MechanicalCompactionStrategy`
-│       │   ├── context.rs      # `path_messages`, `send_current`, `compact_older_than`, `context_stats`
-│       │   ├── context_stats.rs # `ContextStats` struct
-│       │   ├── entry.rs        # `Entry`, `EntryPayload`, `EntryResolution`
+│       │   ├── compaction.rs   # `CompactionStrategy`, `MechanicalCompactionStrategy`, `LlmCompactionStrategy`
+│       │   ├── context.rs      # `path_messages`, `send_current`, `compact_older_than`, `context_stats`, `prepare_context`
+│       │   ├── context_stats.rs # `ContextStats`, `RoleTokenDistribution`, `ResolutionTokenDistribution`, `PhaseTokenDistribution`
+│       │   ├── entry.rs        # `Entry`, `EntryPayload`, `EntryResolution`, `CompactionPhase`
 │       │   ├── error.rs        # `SessionError`
 │       │   ├── estimator.rs    # `TokenEstimator`, `HeuristicEstimator`
+│       │   ├── eviction.rs     # Selective downgrade planner (`plan_downgrades`)
 │       │   ├── extensions.rs   # `ExtensionEntry`, `ExtensionMessageEntry` traits
 │       │   ├── header.rs       # `SessionHeader`
+│       │   ├── outliner.rs     # Tool-specific structural summary formatters
 │       │   ├── persist.rs      # JSONL persistence, `SessionMetadata`
+│       │   ├── phase.rs        # `SessionPhase` enum, `classify_tool_phase()`, `transition_phase()`
 │       │   ├── tree.rs         # `path_to_root`, `branch_to`, `branch_with_summary`
 │       │   └── truncation.rs   # Bounded truncation, char boundary, footer
-│       └── shell.rs         # `ShellExecutor` trait, `ShellOutput`
+│       ├── shell.rs         # `ShellExecutor` trait, `ShellOutput`
+│       ├── stream.rs        # `StreamChunk`, `StreamEvent`, streaming response types
+│       └── tool.rs          # `Tool` trait, `ToolRegistry`, `ToolRisk`, `ToolOutcome`
 ├── rho-highlight/           # Tree-sitter syntax analysis
 │   └── src/
 │       ├── lib.rs           # Re-exports
 │       ├── lang.rs          # `Language` enum
 │       ├── parse.rs         # Tree-sitter parsing
 │       ├── highlight.rs     # Token classification and highlighting
-│       └── query.rs         # `node_at()` — AST node lookup by position
+│       ├── query.rs         # `node_at()` — AST node lookup by position
+│       └── error.rs         # `HighlightError`
 ├── rho-tools/               # Built-in tool implementations
 │   └── src/
 │       ├── lib.rs           # `register_all()`
 │       ├── files.rs         # `ReadFile`, `WriteFile`, `ListDir`, `EditFile`
 │       ├── hashline.rs      # Hashline content-addressed editing
 │       ├── shell.rs         # `RunCommand`, `PowerShellExecutor`, `CommandDenylist`
-│       └── rust.rs          # `CargoCheck`, `CargoClippy`, `CargoTest`, `CargoFix`, `RustcExplain`
+│       ├── crates_io.rs     # `CratesIoLookup`
+│       ├── session_summary.rs # `SessionSummary` — compressed session history tool
+│       └── rust/
+│           ├── mod.rs       # Rust tools module
+│           ├── tools.rs     # `CargoCheck`, `CargoClippy`, `CargoTest`, `CargoFix`, `RustcExplain`
+│           ├── rustdoc.rs   # `RustdocLookup` — local rustdoc HTML parsing
+│           ├── parse.rs     # NDJSON output parsing
+│           ├── convert.rs   # Diagnostic conversion
+│           ├── format.rs     # Diagnostic formatting
+│           └── types.rs     # Shared Rust tool types
 ├── rho-test-helpers/        # Shared test infrastructure (dev-only)
-│   └── src/lib.rs           # `MockChatClient`, `TestProvider`, response builders, helpers
+│   └── src/lib.rs           # `MockChatClient`, `MockLlmService`, `TestProvider`, response builders, helpers
 ├── rho-bench/               # Benchmark harness for multi-model evaluation
 │   └── src/
 │       ├── main.rs          # CLI: --models, --tasks, --repeats, --output
-│       ├── harness.rs       # Task execution via run_loop, CountingClient
+│       ├── harness.rs       # Task execution via run_loop, CountingService
 │       ├── comparison.rs    # Terminal table and per-task breakdown display
 │       └── persistence.rs   # JSON result files (latest.json + timestamped)
 ├── rho-eval/                # Behavioural benchmarks (dev-only)
@@ -117,7 +131,7 @@ rho-coding-agent/
 │       ├── lib.rs
 │       ├── task.rs          # EvalTask trait, TaskOutcome, TaskMetrics
 │       ├── report.rs        # EvalRun, EvalReport — results + regression gating
-│       └── tasks.rs         # 5 built-in task definitions
+│       └── tasks.rs         # Built-in task definitions
 └── xtask/                   # Dev task runner
-    └── src/main.rs          # `cargo xtask ci`, `cargo xtask test`, `cargo xtask changelog`
+    └── src/main.rs          # `cargo xtask ci`, `cargo xtask test`, `cargo xtask changelog`, `cargo xtask release`
 ```

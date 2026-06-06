@@ -13,9 +13,9 @@ The RPC implementation is generic over I/O (`run_rpc_on<R, W>`) so the in-proces
 
 ## `rho-core`
 
-The kernel: agent loop state machine (with `AgentObserver` for live output), session management (tree persistence, compaction, branching, session discovery), context window management (sliding window, token estimation, `ContextStats`), tool registry and traits, approval gates, secret redaction, file sandbox, provider abstraction (`Provider` trait, `ProviderRegistry`), LLM client (`RhoAiClient`), configuration loading, and all shared types.
+The kernel: agent loop state machine (with `AgentObserver` for live output, phase tracking, auto-compaction), session management (tree persistence, graduated resolution, phase-aware compaction, LLM compaction, selective eviction, branching, session discovery), context window management (sliding window, token estimation, enhanced `ContextStats` with role/resolution/phase token distributions), tool registry and traits, approval gates, secret redaction, file sandbox, provider abstraction (`Provider` trait, `ProviderRegistry`), LLM client (`RhoAiClient`), configuration loading, and all shared types.
 
-Key types: `Session`, `AgentConfig`, `AgentObserver`, `NopObserver`, `ContextStats`, `SessionMetadata`, `ToolRegistry`, `Tool`, `Provider`, `ProviderRegistry`, `ContextManager`, `TokenBudget`, `SandboxRoot`, `Redactor`, `RhoConfig`.
+Key types: `Session`, `AgentConfig`, `AgentObserver`, `NopObserver`, `ContextStats`, `RoleTokenDistribution`, `ResolutionTokenDistribution`, `PhaseTokenDistribution`, `SessionMetadata`, `ToolRegistry`, `Tool`, `Provider`, `ProviderRegistry`, `ContextManager`, `TokenBudget`, `SandboxRoot`, `Redactor`, `RhoConfig`, `SessionPhase`, `CompactionPhase`, `CompactionStrategy`, `LlmCompactionStrategy`, `MechanicalCompactionStrategy`.
 
 
 ## `rho-highlight`

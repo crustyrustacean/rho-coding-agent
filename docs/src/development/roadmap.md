@@ -1,6 +1,6 @@
 # Roadmap
 
-rho is developed in phases, each building on the last. The current version is **0.51.0**.
+rho is developed in phases, each building on the last. The current version is **0.64.0**.
 
 ## Phase summary
 
@@ -22,81 +22,26 @@ rho is developed in phases, each building on the last. The current version is **
 | 5: TypeScript Extensions | ✅ Complete | `rho-ext` crate, V8/deno-core runtime, `ExtensionLoader`, `DenoTool`, `DenoObserver`, hot reload, config integration, type definitions |
 | 6: LSP | Deferred | rust-analyzer integration |
 
-## Completed phases
+## Context Management Enhancement (0.62–0.64)
 
-### Phase 1a — The Agent Loop
+A series of incremental improvements to context management, addressing structural issues that caused context exhaustion and amnesia:
 
-The foundation: `Tool` trait, `ToolRegistry`, `ChatClient` trait, `Conversation`, and the `run_loop` state machine. The agent can send messages to a model, receive tool calls, execute them, and feed results back.
-
-### Phase 1b — Security Surface
-
-Defense-in-depth: file sandbox, approval gate (per-tool, risk-based), secret redaction, untrusted-data framing with `<context>` tags, and project context file trust with SHA-256 hash verification.
-
-### Phase 2 — Shell, File Tools & Cross-Platform
-
-PowerShell-native execution on all platforms, `ReadFile`/`WriteFile`/`ListDir`/`EditFile` tools, two-tier TOML config, command denylist, compact prompt for small-context models, and full cross-platform support (Windows/macOS/Linux).
-
-### Phase 2.5 — Adaptive-Resolution Context
-
-Session tree (replacing flat `Conversation`), resolution levels (`Full`/`Compacted`/`Attached`), calibrated token estimation with exponential moving average, tool-result bounding to prevent single-output context overflow, and JSONL persistence with auto-flush.
-
-### Phase 3 — Rust Tooling and Tree-Sitter
-
-`rho-highlight` crate with tree-sitter parsing, `node_at()` position lookup, and token classification. Structured compiler diagnostics (`CargoCheck`, `CargoClippy`, `CargoTest`, `CargoFix`, `CargoExplain`). `EditFile` node-splitting validation. `rho-eval` benchmark suite with 5 validated end-to-end scenarios. `rho-bench` harness for multi-model comparison with token usage, wall time, and JSON result persistence.
-
-### Phase 3.5 — Rust Standard Library Reference
-
-A `RustdocLookup` tool that reads locally installed rustdoc HTML via `rustup doc --path`. Zero network dependency. Supports type, method, trait, and function lookups.
-
-### Phase 3.6 — crates.io Research
-
-A `CratesIoLookup` tool for crate metadata, search, version history, and dependency tree inspection. Dedicated Rust HTTP client (not a shell escape).
-
-### Phase 3.8 — Hashline Editing
-
-Content-addressed line references (`LINE#HASH:`) for reliable file editing. ReadFile returns content in hashline format. EditFile supports hashline-anchor operations (replace, append, prepend, delete). Fuzzy anchor matching for resilience when the file has changed since the last read.
-
-### Phase 3.9 — Streaming & Live Output
-
-SSE streaming for the Chat Completions API. `AgentObserver` trait with 7 event methods for real-time progress rendering. `NopObserver` for tests/benchmarks. `ReplObserver` streams reasoning deltas and tool activity to stdout in the REPL.
-
-### Phase 3.10 — Multi-Provider & Model Picker
-
-`Provider` trait for unified provider abstraction. `ProviderRegistry` manages multiple providers and routes model requests. Interactive model picker with curated models from Anthropic, OpenAI, and z.ai when auto-detection fails. `/models` and `/model` REPL commands for browsing and switching models at runtime.
-
-### Phase 3.11 — Session Discovery & Context Visibility
-
-Session discovery functions (`find_latest_session`, `list_sessions`) for lightweight header-only session scanning. `rho -c` / `--continue` flag to auto-resume the most recent session. `/sessions` REPL command listing recent sessions with timestamps, sizes, and entry counts. `ContextStats` struct for context window usage snapshots. Live status bar after every REPL turn with color-coded utilization. `/status` REPL command for detailed context breakdown.
+| Phase | Summary | Version |
+|---|---|---|
+| Graduated Resolution | Added `Outlined` and `Summarized` intermediate fidelity levels | 0.62 |
+| Mechanical Outlining | 12 tool-specific structural summary formatters | 0.62 |
+| Selective Turn-Internal Eviction | Per-entry downgrade planner (Full → Outlined → Summarized) | 0.63 |
+| Phase Detection | `SessionPhase` state machine tracking exploration/execution/verification | 0.63 |
+| Phase-Aware Compaction | Narrative summaries grouped by session phase | 0.64 |
+| LLM Compaction | Model-generated narrative notes (opt-in, graceful fallback) | 0.64 |
+| Enhanced ContextStats | Token distribution by role, resolution, and phase | 0.64 |
+| Context-Pressure Nudge Removed | Replaced by structural mechanisms | 0.64 |
 
 ## Upcoming phases
 
-### Phase 3.12 — RPC Mode
-
-Headless JSONL over stdin/stdout for process integration. `--mode rpc` starts rho as a subprocess that reads newline-delimited JSON commands from stdin and writes JSON events to stdout. Supports the full agent loop: prompts, tool calls, approval round-trips, model switching, context compaction, and session queries.
-
-The implementation is generic over I/O (`run_rpc_on<R, W>`) so integration tests can inject canned stdin and capture stdout. 43 end-to-end tests cover the complete protocol. See [RPC Mode](../rpc-mode.md) for the protocol reference.
-
-### Phase 5 — TypeScript Extensions
-
-`rho-ext` crate providing a TypeScript extension runtime powered by V8/deno-core. Each extension runs in its own V8 isolate on a dedicated OS thread and can register tools, hooks, and commands via `export default { ... }`.
-
-Key components:
-- **`ExtensionRuntime`** — V8 isolate lifecycle, async tool/hook/command calls
-- **`ExtensionLoader`** — discovery, config-driven filtering, hot reload (mtime-based)
-- **`DenoTool`** — `Tool` trait bridge for extension functions
-- **`DenoObserver`** — `AgentObserver` bridge for extension hooks (onLoad, onToolCall, onToolResult, onBeforeModel)
-- **`CompositeObserver`** — fans out agent-loop events to REPL/RPC + extension observers
-- **`InterceptResult`** — tool-call interception (Block/Allow) wired into `classify_call()`
-- **Host functions** — `rho.readFile()`, `rho.writeFile()`, `rho.runCommand()`, `rho.getModel()`, `rho.getCwd()`, `rho.log()`
-- **Config** — `[extensions]` section with enabled/disabled allowlists, default and per-extension permissions
-- **Type definitions** — `rho-ext/types/rho.d.ts` for extension author IntelliSense
-- **REPL commands** — `/reload` for hot reload, `/extensions` to list loaded extensions
-
-135 `rho-ext` tests + 7 integration tests in the binary. See [Extensions](../extensions.md) for the full documentation.
-
 ### Phase 4 — Terminal UI
 
-Rich TUI replacing the bare REPL. Streaming output, approval prompts with rich previews, diagnostic panels, syntax highlighting. Built on `ratatui`/`crossterm`. See [Phase 4 readiness assessment](../../../1.%20Planning/Phase%204/Phase%204%20Readiness%20Assessment.md).
+Rich TUI replacing the bare REPL. Streaming output, approval prompts with rich previews, diagnostic panels, syntax highlighting. Built on `ratatui`/`crossterm`.
 
 ### Phase 6 — LSP
 

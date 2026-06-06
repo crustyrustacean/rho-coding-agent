@@ -33,7 +33,9 @@ rho runs on Windows, macOS, and Linux. PowerShell 7+ (`pwsh`) is the primary she
 - Observe agent activity in real time (reasoning, tool calls, errors) via the `AgentObserver` trait
 - Extend rho with TypeScript extensions that add tools, hooks, and commands — hot-reloadable at runtime
 - Compact old conversation turns to stay within context limits
-- Monitor context window usage with a live status bar and `/status` REPL command
+- Monitor context window usage with a live status bar, `/status` REPL command, and enhanced token distribution stats
+- Graduated resolution (Outlined/Summarized) with selective per-entry eviction before turn-level eviction
+- Phase-aware and LLM-assisted compaction for high-fidelity context summaries
 - Run headless via JSONL-over-stdio RPC mode for integration with editors, bots, and custom UIs
 
 This book documents the architecture, security model, configuration, and development of rho.

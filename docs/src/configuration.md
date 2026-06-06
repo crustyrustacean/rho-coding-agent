@@ -42,6 +42,17 @@ stuck_loop_threshold = 3
 # Show full chain-of-thought reasoning in output (default: false)
 show_reasoning = false
 
+# Context utilization threshold for auto-compaction (default: 0 = disabled)
+# When utilization >= this %, older entries are proactively compacted.
+auto_compact_threshold = 0
+
+# Compaction strategy: "mechanical" (default) or "llm" (opt-in)
+# When "llm", the model generates narrative notes for compacted entries.
+compaction_mode = "mechanical"
+
+# Context-pressure threshold (deprecated, no-op, default: 0 = disabled)
+# context_pressure_threshold = 0
+
 [provider]
 # Provider name — shown in consent prompt and /models output.
 # If not set, rho uses the 'type' field, then the endpoint hostname.
