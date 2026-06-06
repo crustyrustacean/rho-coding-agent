@@ -1,3 +1,55 @@
+## [0.66.0] - 2026-06-06
+
+### 🛠️ Fixes
+
+- Set extension sandbox cwd to project root instead of extension directory — user-level and project-level extensions can now read/write project files via relative paths
+- Fix system prompt instructing model to write extensions to `~/.rho/extensions/` (outside sandbox) — changed to `<project>/.rho/extensions/`
+- Add command denylist and cwd enforcement to extension `rho.runCommand()` — parity with built-in `RunCommand` tool
+- Clarify network access in system prompt — no direct internet, but extensions may provide it when enabled via `network = true`
+- Warn to stderr when no project marker is found and CWD becomes the sandbox root
+
+### 🗑️ Removals
+
+- Remove dead `SandboxConfig` struct and `sandbox.enabled` config field — the sandbox is always enabled and cannot be disabled
+
+## [0.58.0] - 2026-05-31
+
+### 🚀 Features
+
+- Enhanced context management: phase-aware compaction summaries, selective turn-internal eviction, tool-specific structural outlines, session phase detection, model-aware token estimation, auto-compaction
+- Add `session_summary` tool for context recovery
+- Add priority pinning for eviction protection
+- Structured JSON output for `CargoTest` via `--format json`
+- Configurable `completion_reserve` in `config.toml`
+- Add progress checkpointing instructions to system prompt
+- System prompt teaches agents they can author TypeScript extensions
+
+### 🛠️ Fixes
+
+- Fix UTF-8 char boundary panics in compaction and REPL truncation
+- Fix bare `/model` command (now lists models instead of erroring)
+- Fix Windows test failures in rho-ext
+- Fix extension config reload from disk on `/reload`
+- Fix JSON handling in web-probe extension
+- Fix loaded extensions not injected into system prompt
+- Remove context-pressure nudge, superseded by structural mechanisms
+- Relax hashline perf test threshold for CI runners
+
+### 🏗️ Refactors
+
+- Split `session.rs` into 9 submodules (builder, accessors, extensions, context, tree, truncation, append, header/stats)
+- Reduce tool-result amplification with stricter truncation
+- Fix all 69 rustdoc warnings across workspace
+
+## [0.54.0] - 2026-05-29
+
+### 🛠️ Fixes
+
+- Fix `console.time`/`console.timeEnd` bug in extension host shim
+- Add `network` risk level for `rho.fetchUrl()` tool
+- Accept JSON Schema parameter definitions in extension tool manifests
+- Collapse `HostState` fields for simpler initialization
+
 ## [0.53.0] - 2026-05-29
 
 ### 🚀 Features
