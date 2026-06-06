@@ -722,7 +722,7 @@ mod tests {
     use deno_core::JsRuntime;
 
     /// Helper: create a `JsRuntime` with the `rho_host` extension + `HostState`.
-    /// In test context, cwd and ext_root_dir are the same directory.
+    /// In test context, cwd and `ext_root_dir` are the same directory.
     fn runtime_with_state(cwd: &str) -> JsRuntime {
         let rt = JsRuntime::new(deno_core::RuntimeOptions {
             extensions: vec![super::rho_host::init()],
