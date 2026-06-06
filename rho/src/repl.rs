@@ -425,6 +425,16 @@ fn show_context_stats(app: &App) {
         msg_budget,
         app.session.model(),
         app.session.save_path(),
+        stats.role_tokens.system,
+        stats.role_tokens.user,
+        stats.role_tokens.assistant,
+        stats.role_tokens.tool,
+        stats.resolution_tokens.full,
+        stats.resolution_tokens.outlined,
+        stats.resolution_tokens.summarized,
+        stats.resolution_tokens.pinned,
+        stats.compaction_tokens,
+        stats.compacted_entry_count,
     );
 }
 

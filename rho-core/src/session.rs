@@ -659,6 +659,11 @@ mod tests {
             message_count: 10,
             entry_count: 15,
             path_entry_count: 12,
+            role_tokens: Default::default(),
+            resolution_tokens: Default::default(),
+            phase_tokens: Default::default(),
+            compaction_tokens: 0,
+            compacted_entry_count: 0,
         };
         // prompt_budget = 32_768 - 8192 = 24_576
         // utilization = 12_288 / 24_576 = 50%
@@ -676,6 +681,11 @@ mod tests {
             message_count: 0,
             entry_count: 0,
             path_entry_count: 0,
+            role_tokens: Default::default(),
+            resolution_tokens: Default::default(),
+            phase_tokens: Default::default(),
+            compaction_tokens: 0,
+            compacted_entry_count: 0,
         };
         assert_eq!(stats.utilization_percent(), 100); // zero budget = full
         assert_eq!(stats.estimated_remaining(), 0);
@@ -690,6 +700,11 @@ mod tests {
             message_count: 5,
             entry_count: 5,
             path_entry_count: 5,
+            role_tokens: Default::default(),
+            resolution_tokens: Default::default(),
+            phase_tokens: Default::default(),
+            compaction_tokens: 0,
+            compacted_entry_count: 0,
         };
         assert_eq!(stats.utilization_percent(), 100); // capped at 100
         assert_eq!(stats.estimated_remaining(), 0); // saturates at 0

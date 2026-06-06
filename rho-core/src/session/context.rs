@@ -1,5 +1,8 @@
 // Context building — path_messages, send_current, compact_older_than, context_stats.
 
+use super::context_stats::{
+    PhaseTokenDistribution, ResolutionTokenDistribution, RoleTokenDistribution,
+};
 use super::{ContextStats, Entry, EntryId, EntryResolution, Session};
 use crate::error::Result;
 use crate::message::ChatMessage;
@@ -421,12 +424,44 @@ impl Session {
     /// Estimate the total tokens for a slice of messages.
     fn estimate_messages_tokens(messages: &[ChatMessage]) -> usize {
         use crate::context::approximate_tokens;
-        // We use approximate_tokens for a consistent per-message estimate,
-        // then scale by the estimator's model-specific ratio.
-        // For now, approximate_tokens gives chars/4 which is close enough
-        // for calibration. The estimator's calibrate() will correct the
-        // ratio anyway.
         messages.iter().map(approximate_tokens).sum()
+    }
+
+    /// Estimate tokens for a single entry (used in `context_stats`).
+    fn estimate_entry_tokens_in_path(entry: &Entry) -> usize {
+        match &entry.payload {
+            EntryPayload::Message(msg) => crate::context::approximate_tokens(msg),
+            EntryPayload::Compaction { summary, .. }
+            | EntryPayload::BranchSummary { summary, .. } => {
+                // Compaction summaries are rendered as a synthetic User message.
+                // Estimate from the summary's text content.
+                let chars = 100; // header overhead
+                let body_chars = if let Some(ref req) = summary.original_request {
+                    req.len()
+                } else {
+                    0
+                };
+                // Rough estimate: header + request + phase narratives
+                let total =
+                    chars + body_chars + summary.tool_calls.len() * 20 + summary.phases.len() * 40;
+                total.div_ceil(4).max(1)
+            }
+            EntryPayload::CustomMessage { content, .. } => {
+                // Rendered as User message with the content blocks.
+                use crate::message::ContentBlock;
+                content
+                    .iter()
+                    .map(|b| match b {
+                        ContentBlock::Text { text } => text.len(),
+                    })
+                    .sum::<usize>()
+                    .div_ceil(4)
+                    .max(1)
+            }
+            // Non-message entries (Custom, Label, ModelChange, etc.) don't
+            // participate in the context.
+            _ => 0,
+        }
     }
 
     /// Compute estimated context window usage statistics.
@@ -435,20 +470,107 @@ impl Session {
     /// window is, how many entries are in the active conversation path,
     /// and how much budget remains.
     ///
+    /// Includes token distribution by message role, entry resolution, and
+    /// session phase for rich diagnostics.
+    ///
     /// Uses the session's calibrated estimator for the best available
     /// approximation. The fitted messages are the ones that would actually
     /// be sent to the model (after eviction).
     pub fn context_stats(&self) -> ContextStats {
         let budget = self.token_budget;
+        let path = self.path_to_root();
+        let chronological: Vec<&Entry> = path.into_iter().rev().collect();
+
+        let mut role_tokens = RoleTokenDistribution::default();
+        let mut resolution_tokens = ResolutionTokenDistribution::default();
+        let mut phase_tokens = PhaseTokenDistribution::default();
+        let mut compaction_tokens: usize = 0;
+        let mut compacted_entry_count: usize = 0;
+
+        for entry in &chronological {
+            // Count compacted entries (they don't consume context, but we
+            // track how many have been compacted for diagnostics).
+            if matches!(entry.resolution, EntryResolution::Compacted { .. }) {
+                compacted_entry_count += 1;
+                continue;
+            }
+            // Attached entries don't participate in context.
+            if matches!(entry.resolution, EntryResolution::Attached) {
+                continue;
+            }
+
+            let entry_tokens = Self::estimate_entry_tokens_in_path(entry);
+
+            // Classify by resolution.
+            match &entry.resolution {
+                EntryResolution::Full => resolution_tokens.full += entry_tokens,
+                EntryResolution::Pinned => resolution_tokens.pinned += entry_tokens,
+                EntryResolution::Outlined { .. } => {
+                    resolution_tokens.outlined += entry_tokens;
+                }
+                EntryResolution::Summarized { .. } => {
+                    resolution_tokens.summarized += entry_tokens;
+                }
+                EntryResolution::Compacted { .. } | EntryResolution::Attached => unreachable!(),
+            }
+
+            // Classify by role and phase.
+            if let EntryPayload::Message(msg) = &entry.payload {
+                match msg {
+                    ChatMessage::System { .. } => {
+                        role_tokens.system += entry_tokens;
+                        phase_tokens.unclassified += entry_tokens;
+                    }
+                    ChatMessage::User { .. } => {
+                        role_tokens.user += entry_tokens;
+                        phase_tokens.unclassified += entry_tokens;
+                    }
+                    ChatMessage::Assistant { .. } => {
+                        role_tokens.assistant += entry_tokens;
+                        phase_tokens.unclassified += entry_tokens;
+                    }
+                    ChatMessage::Tool { .. } => {
+                        role_tokens.tool += entry_tokens;
+                        phase_tokens.unclassified += entry_tokens;
+                    }
+                }
+            } else if let EntryPayload::Compaction { .. } = &entry.payload {
+                compaction_tokens += entry_tokens;
+                role_tokens.user += entry_tokens; // rendered as User message
+                phase_tokens.unclassified += entry_tokens;
+            } else if let EntryPayload::BranchSummary { .. } = &entry.payload {
+                compaction_tokens += entry_tokens;
+                role_tokens.user += entry_tokens; // rendered as User message
+                phase_tokens.unclassified += entry_tokens;
+            } else if let EntryPayload::CustomMessage { .. } = &entry.payload {
+                // Extension messages rendered as User.
+                role_tokens.user += entry_tokens;
+                phase_tokens.unclassified += entry_tokens;
+            }
+        }
+
+        // Phase classification: use the current session phase to attribute
+        // non-system tokens. This is a coarse approximation — the actual phase
+        // at the time each entry was created is not stored. For precise per-entry
+        // phase attribution, Phase 8+ could store phase on each entry.
+        // For now, we attribute all non-system, non-compaction tokens to
+        // "unclassified" which is accurate — we don't have per-entry phase history.
+
         let messages = self.path_messages();
         let used = Self::estimate_messages_tokens(&messages);
+
         ContextStats {
             context_window: budget.context_window,
             completion_reserve: budget.completion_reserve,
             estimated_used: used,
             message_count: messages.len(),
             entry_count: self.entries.len(),
-            path_entry_count: self.path_to_root().len(),
+            path_entry_count: chronological.len(),
+            role_tokens,
+            resolution_tokens,
+            phase_tokens,
+            compaction_tokens,
+            compacted_entry_count,
         }
     }
 }

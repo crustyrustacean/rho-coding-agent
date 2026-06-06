@@ -356,6 +356,16 @@ impl ReplPresenter {
         msg_budget: usize,
         model: &str,
         session_path: Option<&Path>,
+        role_system: usize,
+        role_user: usize,
+        role_assistant: usize,
+        role_tool: usize,
+        res_full: usize,
+        res_outlined: usize,
+        res_summarized: usize,
+        res_pinned: usize,
+        compaction_tokens: usize,
+        compacted_entry_count: usize,
     ) {
         println!("  Context Window Status");
         println!("  ─────────────────────");
@@ -378,6 +388,23 @@ impl ReplPresenter {
         println!("  Path entries:       {:>8}", path_entry_count);
         println!("  Total entries:      {:>8}", entry_count);
         println!("  Message budget:     {:>8} tokens", msg_budget);
+        println!();
+        println!("  Token Distribution");
+        println!("  ─────────────────────");
+        println!("    By role:");
+        println!("      System:     {:>8} tokens", role_system);
+        println!("      User:       {:>8} tokens", role_user);
+        println!("      Assistant:  {:>8} tokens", role_assistant);
+        println!("      Tool:       {:>8} tokens", role_tool);
+        println!("    By resolution:");
+        println!("      Full:       {:>8} tokens", res_full);
+        println!("      Outlined:   {:>8} tokens", res_outlined);
+        println!("      Summarized: {:>8} tokens", res_summarized);
+        println!("      Pinned:     {:>8} tokens", res_pinned);
+        if compaction_tokens > 0 {
+            println!("      Compaction: {:>8} tokens", compaction_tokens);
+        }
+        println!("    Compacted entries: {:>5}", compacted_entry_count);
         println!();
         println!("  Model: {model}");
         if let Some(path) = session_path {

@@ -439,6 +439,22 @@ fn handle_get_session_stats(app: &App, out: &Out) {
             "estimated_remaining": stats.estimated_remaining(),
             "utilization_percent": stats.utilization_percent(),
             "message_count": stats.message_count,
+            "entry_count": stats.entry_count,
+            "path_entry_count": stats.path_entry_count,
+            "compacted_entry_count": stats.compacted_entry_count,
+            "compaction_tokens": stats.compaction_tokens,
+            "role_tokens": {
+                "system": stats.role_tokens.system,
+                "user": stats.role_tokens.user,
+                "assistant": stats.role_tokens.assistant,
+                "tool": stats.role_tokens.tool,
+            },
+            "resolution_tokens": {
+                "full": stats.resolution_tokens.full,
+                "outlined": stats.resolution_tokens.outlined,
+                "summarized": stats.resolution_tokens.summarized,
+                "pinned": stats.resolution_tokens.pinned,
+            },
         }),
     );
 }
@@ -1566,6 +1582,18 @@ mod tests {
         assert!(stats["estimated_remaining"].is_number());
         assert!(stats["utilization_percent"].is_number());
         assert!(stats["message_count"].is_number());
+        assert!(stats["entry_count"].is_number());
+        assert!(stats["path_entry_count"].is_number());
+        assert!(stats["compacted_entry_count"].is_number());
+        assert!(stats["compaction_tokens"].is_number());
+        assert!(stats["role_tokens"]["system"].is_number());
+        assert!(stats["role_tokens"]["user"].is_number());
+        assert!(stats["role_tokens"]["assistant"].is_number());
+        assert!(stats["role_tokens"]["tool"].is_number());
+        assert!(stats["resolution_tokens"]["full"].is_number());
+        assert!(stats["resolution_tokens"]["outlined"].is_number());
+        assert!(stats["resolution_tokens"]["summarized"].is_number());
+        assert!(stats["resolution_tokens"]["pinned"].is_number());
     }
 
     #[tokio::test]
