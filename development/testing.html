@@ -183,15 +183,18 @@
 <p>rho uses a layered test strategy: unit tests within each source file, integration tests at the crate level, and end-to-end scenario tests that exercise the full agent loop.</p>
 <h2 id="running-tests"><a class="header" href="#running-tests">Running tests</a></h2>
 <pre><code class="language-sh">cargo xtask ci        # Full CI pipeline: fmt → lint → build → test
-cargo xtask test      # All tests with stdout visible
+ctest                 # All tests via cargo-nextest (falls back to cargo test)
 cargo xtask test -p rho-core -- --nocapture  # Single crate
 </code></pre>
 <h2 id="test-structure"><a class="header" href="#test-structure">Test structure</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Layer</th><th>Location</th><th>What it tests</th></tr></thead><tbody>
 <tr><td>Unit tests</td><td><code>#[cfg(test)] mod tests</code> inside each source file</td><td>Individual functions, types, edge cases</td></tr>
 <tr><td>Integration tests</td><td><code>rho-core/tests/integration_tests.rs</code></td><td>Agent loop, approval flow, context management</td></tr>
-<tr><td>RPC integration tests</td><td><code>rho/src/rpc.rs</code> (<code>#[cfg(test)] mod tests</code>)</td><td>Full JSONL protocol: command dispatch, event sequencing, approval round-trips, tool calls, errors, multi-turn sessions, JSONL conformance</td></tr>
+<tr><td>Security integration tests</td><td><code>rho-core/tests/security_tests.rs</code></td><td>Sandbox enforcement, denylist, trust store</td></tr>
+<tr><td>Session integration tests</td><td><code>rho-core/tests/session_integration_tests.rs</code></td><td>Session tree operations, persistence, branching</td></tr>
+<tr><td>RPC integration tests</td><td><code>rho/src/rpc.rs</code> (<code>#[cfg(test)] mod tests</code>)</td><td>Full JSON-RPC 2.0 protocol: command dispatch, event sequencing, approval round-trips, tool calls, errors, multi-turn sessions</td></tr>
 <tr><td>Tool integration tests</td><td><code>rho-tools/tests/tool_tests.rs</code></td><td>Tool execution, sandbox enforcement, denylist</td></tr>
+<tr><td>Shell executor tests</td><td><code>rho-tools/tests/shell_executor_tests.rs</code></td><td>Shell command execution, path normalization</td></tr>
 <tr><td>Extension unit tests</td><td><code>rho-ext/src/*.rs</code> (<code>#[cfg(test)] mod tests</code>)</td><td>Runtime spawning, manifest parsing, discovery, transpilation, DenoTool, DenoObserver, host ops, module loader</td></tr>
 <tr><td>Eval unit tests</td><td><code>rho-eval/src/tasks.rs</code></td><td>Task verification logic (pass/fail/error)</td></tr>
 <tr><td>Bench unit tests</td><td><code>rho-bench/src/*.rs</code></td><td>Harness config, display formatting, persistence</td></tr>
@@ -217,9 +220,7 @@ cargo xtask test -p rho-core -- --nocapture  # Single crate
 <tr><td><code>FixedResponseTool</code></td><td>A tool that always returns the same output</td></tr>
 <tr><td><code>FailingTool</code></td><td>A tool that always returns an error</td></tr>
 </tbody></table>
-</div>
-<h3 id="fixtures-and-utilities"><a class="header" href="#fixtures-and-utilities">Fixtures and utilities</a></h3>
-<div class="table-wrapper"><table><thead><tr><th>Helper</th><th>Purpose</th></tr></thead><tbody>
+</div><div class="table-wrapper"><table><thead><tr><th>Fixtures and utilities</th><th>Purpose</th></tr></thead><tbody>
 <tr><td><code>FileTestEnv</code></td><td>Temporary directory with file-system operations for sandbox tests</td></tr>
 <tr><td><code>in_memory_session(prompt)</code></td><td>Create a session without disk persistence</td></tr>
 <tr><td><code>empty_trust_store()</code></td><td>Trust store with no trusted files</td></tr>

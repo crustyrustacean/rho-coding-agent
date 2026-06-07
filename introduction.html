@@ -182,10 +182,10 @@
                         <h1 id="introduction"><a class="header" href="#introduction">Introduction</a></h1>
 <p><strong>rho</strong> is a Rust coding agent that runs against local and remote LLMs.</p>
 <p>It connects to OpenAI-compatible endpoints (LM Studio, Ollama, OpenAI, Groq, OpenRouter, DeepInfra, and more), gives the model access to tools for reading and writing files, executing shell commands, and running Rust tooling — then runs an autonomous agent loop that the user supervises through an approval gate.</p>
-<p>rho supports two execution modes:</p>
+<p>rho has two entry points:</p>
 <ul>
-<li><strong>REPL mode</strong> (default) — interactive terminal session with slash commands and live output</li>
-<li><strong>RPC mode</strong> (<code>--mode rpc</code>) — headless JSONL over stdin/stdout for embedding in editors, bots, and custom UIs</li>
+<li><strong><code>rho</code></strong> — headless JSON-RPC 2.0 over stdin/stdout for embedding in editors, bots, and custom UIs</li>
+<li><strong><code>rho-repl</code></strong> — an interactive terminal client that spawns <code>rho</code> as a subprocess and provides slash commands, streaming output, and approval prompts</li>
 </ul>
 <p>See <a href="./rpc-mode.html">RPC Mode</a> for the full protocol reference.</p>
 <p>Design priorities:</p>
@@ -211,7 +211,7 @@
 <li>Monitor context window usage with a live status bar, <code>/status</code> REPL command, and enhanced token distribution stats</li>
 <li>Graduated resolution (Outlined/Summarized) with selective per-entry eviction before turn-level eviction</li>
 <li>Phase-aware and LLM-assisted compaction for high-fidelity context summaries</li>
-<li>Run headless via JSONL-over-stdio RPC mode for integration with editors, bots, and custom UIs</li>
+<li>Run headless via JSON-RPC 2.0 over stdin/stdout for integration with editors, bots, and custom UIs</li>
 </ul>
 <p>This book documents the architecture, security model, configuration, and development of rho.</p>
 

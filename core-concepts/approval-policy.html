@@ -207,12 +207,13 @@ run_command = "ask"   # always ask
 <tr><td><code>Destructive</code></td><td>Ask</td></tr>
 </tbody></table>
 </div>
-<h2 id="gate-replapprovalgate"><a class="header" href="#gate-replapprovalgate">Gate: <code>ReplApprovalGate</code></a></h2>
-<p>The REPL implementation presents a preview and reads <code>y/N</code> from stdin:</p>
-<pre><code class="language-text">  Tool     : write_file
-  Risk     : write
-  Arguments: {"path":"src/main.rs","content":"..."}
-  Execute? [y/n] 
+<h2 id="gate-rpcapprovalgate"><a class="header" href="#gate-rpcapprovalgate">Gate: <code>RpcApprovalGate</code></a></h2>
+<p>The RPC implementation reads an <code>approvalResponse</code> JSON-RPC 2.0 method from stdin and returns the <code>approved</code> boolean. See <a href="../rpc-mode.html">RPC Mode</a> for the approval flow.</p>
+<h2 id="gate-rho-repl-approval"><a class="header" href="#gate-rho-repl-approval">Gate: <code>rho-repl</code> approval</a></h2>
+<p>The terminal client (<code>rho-repl</code>) presents a preview and reads <code>y/N</code> from stderr/stdin:</p>
+<pre><code class="language-text">  approve? run_command [destructive]
+  {"command":"Remove-Item temp/*"}
+  [y/N] 
 </code></pre>
 <p>On denial, a synthetic error result is fed back to the model as if the tool had failed. The model can then adjust its approach — it does not crash or get stuck.</p>
 <h2 id="custom-gates"><a class="header" href="#custom-gates">Custom gates</a></h2>
@@ -224,7 +225,6 @@ pub trait ApprovalGate: Send + Sync {
     async fn request_approval(&amp;self, call: &amp;ModelToolCall, risk: ToolRisk) -&gt; bool;
 }
 <span class="boring">}</span></code></pre></pre>
-<p>The TUI (Phase 4) will implement this with an in-terminal prompt that shows rich previews (syntax-highlighted diffs, command inspection) rather than the plain-text REPL format.</p>
 
                     </main>
 

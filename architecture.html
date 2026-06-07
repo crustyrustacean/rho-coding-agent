@@ -184,9 +184,9 @@
 <pre><code class="language-text">┌─────────────────────────────────────────────────┐
 │                   rho (binary)                   │
 ├─────────────────────────────────────────────────┤
-│                   rho-ext                        │
+│                   rho-repl                       │
 ├─────────────────────────────────────────────────┤
-│                   rho-tui                        │
+│                   rho-ext                        │
 ├─────────────────────────────────────────────────┤
 │                   rho-tools                      │
 ├─────────────────────────────────────────────────┤
@@ -197,7 +197,7 @@
 │                   rho-ai                         │
 └─────────────────────────────────────────────────┘
 </code></pre>
-<p>The rule is simple: a crate may only depend on crates below it in the stack. <code>rho-ai</code> and <code>rho-highlight</code> depend on nothing but external libraries.</p>
+<p>The rule is simple: a crate may only depend on crates below it in the stack. <code>rho-ai</code> and <code>rho-highlight</code> depend on nothing but external libraries. <code>rho-repl</code> spawns <code>rho</code> as a subprocess and does not depend on any rho crate.</p>
 <p>See also:</p>
 <ul>
 <li><a href="./architecture/workspace-layout.html">Workspace Layout</a></li>

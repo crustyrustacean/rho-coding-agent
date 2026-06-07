@@ -180,67 +180,77 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="rpc-mode"><a class="header" href="#rpc-mode">RPC Mode</a></h1>
-<p>rho supports a headless <strong>RPC mode</strong> for integration with editors, bots, custom UIs, and scripts. Instead of an interactive REPL, rho reads newline-delimited JSON commands from stdin and writes newline-delimited JSON events to stdout.</p>
+<p><code>rho</code> runs as a headless agent communicating via <strong>JSON-RPC 2.0</strong> over stdin/stdout. All requests must include <code>"jsonrpc": "2.0"</code>, a <code>method</code> field, optional <code>params</code>, and a numeric or string <code>id</code> for response correlation. Streaming events are delivered as JSON-RPC notifications (no <code>id</code> field).</p>
+<p>Diagnostic output (warnings, budget info, session status) is written to <strong>stderr</strong>, keeping <strong>stdout</strong> exclusively for the protocol.</p>
 <h2 id="usage"><a class="header" href="#usage">Usage</a></h2>
-<pre><code class="language-sh">echo '{"type":"prompt","message":"fix the bug"}' | \
-  rho --mode rpc \
-    --ephemeral \
-    --endpoint http://localhost:1234/v1/chat/completions \
-    --model my-model
+<pre><code class="language-sh">echo '{"jsonrpc":"2.0","method":"prompt","params":{"message":"fix the bug"},"id":1}' | \
+  rho --model my-model
 </code></pre>
 <p>Or with an external provider:</p>
-<pre><code class="language-sh">echo '{"type":"prompt","message":"explain this function"}' | \
-  rho --mode rpc \
-    --ephemeral \
-    --endpoint https://openrouter.ai/api/v1/chat/completions \
+<pre><code class="language-sh">echo '{"jsonrpc":"2.0","method":"prompt","params":{"message":"explain this function"},"id":1}' | \
+  rho --endpoint https://openrouter.ai/api/v1/chat/completions \
     --api-key-env OPENROUTER_API_KEY \
     --model deepseek/deepseek-v4-flash \
     --accept-external-provider
 </code></pre>
 <h2 id="protocol"><a class="header" href="#protocol">Protocol</a></h2>
-<p>Every outbound line is a compact JSON object followed by <code>\n</code>. Every inbound command must be a JSON object with at least a <code>"type"</code> field.</p>
-<h3 id="commands-stdin--rho"><a class="header" href="#commands-stdin--rho">Commands (stdin → rho)</a></h3>
-<div class="table-wrapper"><table><thead><tr><th><code>type</code></th><th>Required fields</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>prompt</code></td><td><code>message</code></td><td>Send a user message to the agent</td></tr>
+<h3 id="methods-stdin--rho"><a class="header" href="#methods-stdin--rho">Methods (stdin → rho)</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Method</th><th>Params</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>prompt</code></td><td><code>{message: string}</code></td><td>Send a user message to the agent</td></tr>
 <tr><td><code>abort</code></td><td>—</td><td>Cancel the current operation</td></tr>
-<tr><td><code>get_state</code></td><td>—</td><td>Return current model and provider name</td></tr>
-<tr><td><code>get_messages</code></td><td>—</td><td>Return all messages on the active session path</td></tr>
-<tr><td><code>set_model</code></td><td><code>model</code></td><td>Switch the active model</td></tr>
-<tr><td><code>get_session_stats</code></td><td>—</td><td>Return token budget and context usage</td></tr>
+<tr><td><code>clear</code></td><td>—</td><td>Clear conversation history</td></tr>
+<tr><td><code>getState</code></td><td>—</td><td>Return model, provider, and cwd</td></tr>
+<tr><td><code>getMessages</code></td><td>—</td><td>Return all messages on active path</td></tr>
+<tr><td><code>setModel</code></td><td><code>{model: string}</code></td><td>Switch the active model</td></tr>
+<tr><td><code>listModels</code></td><td>—</td><td>List available models from providers</td></tr>
+<tr><td><code>getSessionStats</code></td><td>—</td><td>Return token budget / usage info</td></tr>
+<tr><td><code>listSessions</code></td><td>—</td><td>List previous sessions for project</td></tr>
+<tr><td><code>listExtensions</code></td><td>—</td><td>List loaded extensions and tools</td></tr>
+<tr><td><code>reloadExtensions</code></td><td>—</td><td>Reload extensions from disk</td></tr>
 <tr><td><code>compact</code></td><td>—</td><td>Trigger context compaction</td></tr>
+<tr><td><code>approvalResponse</code></td><td><code>{approved: boolean}</code></td><td>Respond to an <code>approval/request</code> notification</td></tr>
 </tbody></table>
 </div>
-<h3 id="events-rho--stdout"><a class="header" href="#events-rho--stdout">Events (rho → stdout)</a></h3>
-<div class="table-wrapper"><table><thead><tr><th><code>type</code></th><th>Key fields</th><th>Description</th></tr></thead><tbody>
+<h3 id="notifications-rho--stdout-no-id"><a class="header" href="#notifications-rho--stdout-no-id">Notifications (rho → stdout, no <code>id</code>)</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Method</th><th>Params</th><th>Description</th></tr></thead><tbody>
 <tr><td><code>ready</code></td><td>—</td><td>Emitted once on startup</td></tr>
-<tr><td><code>agent_start</code></td><td>—</td><td>Agent began processing a prompt</td></tr>
-<tr><td><code>agent_end</code></td><td><code>reply</code></td><td>Agent finished; full text reply</td></tr>
-<tr><td><code>agent_error</code></td><td><code>error</code></td><td>Agent loop encountered an error</td></tr>
-<tr><td><code>state_change</code></td><td><code>state</code></td><td>Loop state transition (<code>thinking</code>, <code>executing_tool</code>, <code>awaiting_approval</code>, <code>idle</code>)</td></tr>
-<tr><td><code>message_update</code></td><td><code>delta</code></td><td>Streaming text chunk</td></tr>
-<tr><td><code>reasoning_delta</code></td><td><code>delta</code></td><td>Streaming reasoning / chain-of-thought chunk</td></tr>
-<tr><td><code>tool_call</code></td><td><code>name</code>, <code>arguments</code></td><td>Model requested a tool call</td></tr>
-<tr><td><code>tool_result</code></td><td><code>name</code>, <code>is_error</code>, <code>output</code></td><td>Tool finished executing</td></tr>
-<tr><td><code>tool_denied</code></td><td><code>name</code></td><td>Tool call denied by approval gate</td></tr>
-<tr><td><code>approval_request</code></td><td><code>tool</code>, <code>arguments</code>, <code>risk</code></td><td>Approval required — respond with <code>approval_response</code></td></tr>
-<tr><td><code>response</code></td><td><code>success</code>, [<code>error</code>]</td><td>Command acknowledgment (for non-prompt commands)</td></tr>
+<tr><td><code>agent/start</code></td><td>—</td><td>Agent began processing a prompt</td></tr>
+<tr><td><code>agent/end</code></td><td><code>{reply: string}</code></td><td>Agent finished; full text reply</td></tr>
+<tr><td><code>agent/error</code></td><td><code>{error: string}</code></td><td>Agent loop encountered an error</td></tr>
+<tr><td><code>state/change</code></td><td><code>{state: string}</code></td><td>Loop state transition (<code>thinking</code>, <code>executing_tool</code>, <code>awaiting_approval</code>, <code>idle</code>)</td></tr>
+<tr><td><code>message/delta</code></td><td><code>{delta: string}</code></td><td>Streaming text chunk</td></tr>
+<tr><td><code>reasoning/delta</code></td><td><code>{delta: string}</code></td><td>Streaming reasoning chunk</td></tr>
+<tr><td><code>tool/call</code></td><td><code>{name, arguments}</code></td><td>Model requested a tool call</td></tr>
+<tr><td><code>tool/result</code></td><td><code>{name, is_error, output}</code></td><td>Tool finished executing</td></tr>
+<tr><td><code>tool/denied</code></td><td><code>{name}</code></td><td>Tool call denied by approval gate</td></tr>
+<tr><td><code>approval/request</code></td><td><code>{tool, arguments, risk}</code></td><td>Approval required — send <code>approvalResponse</code></td></tr>
+</tbody></table>
+</div>
+<h3 id="error-codes"><a class="header" href="#error-codes">Error codes</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Code</th><th>Meaning</th></tr></thead><tbody>
+<tr><td><code>-32700</code></td><td>Parse error</td></tr>
+<tr><td><code>-32600</code></td><td>Invalid request</td></tr>
+<tr><td><code>-32601</code></td><td>Method not found</td></tr>
+<tr><td><code>-32602</code></td><td>Invalid params</td></tr>
+<tr><td><code>-32603</code></td><td>Internal error</td></tr>
 </tbody></table>
 </div>
 <h2 id="approval-flow"><a class="header" href="#approval-flow">Approval flow</a></h2>
-<p>When rho emits an <code>approval_request</code> event, it blocks until it reads an <code>approval_response</code> from stdin:</p>
-<pre><code class="language-json">{"type": "approval_response", "approved": true}
+<p>When rho emits an <code>approval/request</code> notification, it blocks until it reads an <code>approvalResponse</code> method from stdin:</p>
+<pre><code class="language-json">{"jsonrpc": "2.0", "method": "approvalResponse", "params": {"approved": true}, "id": 2}
 </code></pre>
-<p>Send <code>"approved": false</code> (or any non-boolean / missing field) to deny the tool call. The agent continues after denial — the model sees the denial reason and can adapt.</p>
+<p>Sending <code>approved: false</code> denies the tool call and lets the agent continue.</p>
 <p>Example interaction with a destructive tool:</p>
-<pre><code class="language-json">→ {"type":"prompt","message":"delete the temp files"}
-← {"type":"agent_start"}
-← {"type":"state_change","state":"thinking"}
-← {"type":"tool_call","name":"run_command","arguments":"{\"command\":\"Remove-Item temp/*\"}"}
-← {"type":"approval_request","tool":"run_command","arguments":"{\"command\":\"Remove-Item temp/*\"}","risk":"destructive"}
-→ {"type":"approval_response","approved":true}
-← {"type":"tool_result","name":"run_command","is_error":false,"output":""}
-← {"type":"state_change","state":"idle"}
-← {"type":"agent_end","reply":"Done — the temp files have been removed."}
+<pre><code class="language-json">→ {"jsonrpc":"2.0","method":"prompt","params":{"message":"delete the temp files"},"id":1}
+← {"jsonrpc":"2.0","method":"agent/start"}
+← {"jsonrpc":"2.0","method":"state/change","params":{"state":"thinking"}}
+← {"jsonrpc":"2.0","method":"tool/call","params":{"name":"run_command","arguments":"{\"command\":\"Remove-Item temp/*\"}"}}
+← {"jsonrpc":"2.0","method":"approval/request","params":{"tool":"run_command","arguments":"{\"command\":\"Remove-Item temp/*\"}","risk":"destructive"}}
+→ {"jsonrpc":"2.0","method":"approvalResponse","params":{"approved":true},"id":2}
+← {"jsonrpc":"2.0","method":"tool/result","params":{"name":"run_command","is_error":false,"output":""}}
+← {"jsonrpc":"2.0","method":"state/change","params":{"state":"idle"}}
+← {"jsonrpc":"2.0","method":"agent/end","params":{"reply":"Done — the temp files have been removed."}}
+← {"jsonrpc":"2.0","result":{"reply":"Done..."},"id":1}
 </code></pre>
 <h2 id="headless-startup-policy"><a class="header" href="#headless-startup-policy">Headless startup policy</a></h2>
 <p>In RPC mode there is no interactive terminal, so the startup phases that normally prompt the user use safe defaults instead:</p>
@@ -251,23 +261,24 @@
 </tbody></table>
 </div>
 <h2 id="session-management"><a class="header" href="#session-management">Session management</a></h2>
-<p>RPC mode supports the same session options as REPL mode:</p>
+<p>RPC mode supports the same session options:</p>
 <ul>
 <li><code>--ephemeral</code> — in-memory session, no disk I/O (recommended for scripts)</li>
 <li><code>--continue</code> / <code>-c</code> — resume the most recent session</li>
 <li><code>--session &lt;path&gt;</code> — resume a specific session file</li>
 </ul>
-<p>Use <code>get_session_stats</code> to monitor context usage and <code>compact</code> to free space when the context fills up.</p>
+<p>Use <code>getSessionStats</code> to monitor context usage and <code>compact</code> to free space when the context fills up.</p>
 <h2 id="testing"><a class="header" href="#testing">Testing</a></h2>
-<p>The RPC core loop is generic over I/O (<code>run_rpc_on&lt;R, W&gt;</code>), enabling 43 in-process integration tests that inject canned stdin via <code>Cursor&lt;Vec&lt;u8&gt;&gt;</code> and capture stdout without touching real file descriptors. Tests use <code>TestProvider</code> (from <code>rho-test-helpers</code>) to wrap a <code>MockChatClient</code> as a <code>Provider</code> and construct <code>App</code> directly, bypassing CLI startup. See <a href="./development/testing.html">Testing</a> for details.</p>
+<p>The RPC core loop is generic over I/O (<code>run_rpc_on&lt;R, W&gt;</code>), enabling in-process integration tests that inject canned stdin via <code>Cursor&lt;Vec&lt;u8&gt;&gt;</code> and capture stdout without touching real file descriptors. Tests use <code>TestProvider</code> (from <code>rho-test-helpers</code>) to wrap a <code>MockChatClient</code> as a <code>Provider</code> and construct <code>App</code> directly, bypassing CLI startup. See <a href="./development/testing.html">Testing</a> for details.</p>
 <h3 id="example-test-session"><a class="header" href="#example-test-session">Example test session</a></h3>
-<pre><code class="language-text">stdin:  {"type":"prompt","message":"say hello"}
-stdout: {"type":"ready"}
-stdout: {"type":"agent_start"}
-stdout: {"type":"state_change","state":"thinking"}
-stdout: {"type":"message_update","delta":"hello"}
-stdout: {"type":"state_change","state":"idle"}
-stdout: {"type":"agent_end","reply":"hello"}
+<pre><code class="language-text">stdin:  {"jsonrpc":"2.0","method":"prompt","params":{"message":"say hello"},"id":1}
+stdout: {"jsonrpc":"2.0","method":"ready"}
+stdout: {"jsonrpc":"2.0","method":"agent/start"}
+stdout: {"jsonrpc":"2.0","method":"state/change","params":{"state":"thinking"}}
+stdout: {"jsonrpc":"2.0","method":"message/delta","params":{"delta":"hello"}}
+stdout: {"jsonrpc":"2.0","method":"state/change","params":{"state":"idle"}}
+stdout: {"jsonrpc":"2.0","method":"agent/end","params":{"reply":"hello"}}
+stdout: {"jsonrpc":"2.0","result":{"reply":"hello"},"id":1}
 </code></pre>
 
                     </main>

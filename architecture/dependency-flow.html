@@ -191,12 +191,14 @@
     │
     └── rho-core ─────────────────────────────────────
             │
+rho-repl ──── (no rho deps, spawns rho as subprocess)
 rho-bench ──────── rho-eval ── rho-core ─────────────
-rho-test-helpers ── rho-core ────────────────────────
+rho-test-helpers ── rho-core, rho-ai ────────────────
 xtask ──────────────────────────────────────────────
 </code></pre>
 <div class="table-wrapper"><table><thead><tr><th>Crate</th><th>Depends on</th><th>Notes</th></tr></thead><tbody>
-<tr><td><code>rho</code></td><td><code>rho-core</code>, <code>rho-tools</code>, <code>rho-ext</code></td><td>Binary entry point — REPL and RPC modes, wires everything together</td></tr>
+<tr><td><code>rho</code></td><td><code>rho-core</code>, <code>rho-tools</code>, <code>rho-ext</code>, <code>rho-ai</code></td><td>Headless JSON-RPC 2.0 agent</td></tr>
+<tr><td><code>rho-repl</code></td><td>none (external only)</td><td>Interactive terminal client — spawns <code>rho</code> as a subprocess</td></tr>
 <tr><td><code>rho-ext</code></td><td><code>rho-core</code>, <code>deno_core</code>, <code>deno_ast</code></td><td>TypeScript extension runtime</td></tr>
 <tr><td><code>rho-tools</code></td><td><code>rho-core</code>, <code>rho-highlight</code></td><td>Tool implementations use core types and highlight for node-splitting</td></tr>
 <tr><td><code>rho-highlight</code></td><td>none (external only)</td><td>Tree-sitter grammar — standalone, no rho dependencies</td></tr>
@@ -228,9 +230,9 @@ xtask ────────────────────────�
 <h2 id="what-this-buys-you"><a class="header" href="#what-this-buys-you">What this buys you</a></h2>
 <p>The layered structure means:</p>
 <ul>
-<li><strong><code>rho-core</code> is UI-agnostic</strong> — no shell, no filesystem, no terminal. The TUI (Phase 4) and REPL both consume it through the same traits.</li>
+<li><strong><code>rho-core</code> is UI-agnostic</strong> — no shell, no filesystem, no terminal. The REPL (<code>rho-repl</code>) and any future TUI both consume it through the same JSON-RPC 2.0 protocol.</li>
 <li><strong>Tools are pluggable</strong> — <code>ToolRegistry</code> stores <code>Box&lt;dyn Tool&gt;</code>, so adding a tool is <code>registry.register(Box::new(MyTool))</code>.</li>
-<li><strong>Testing is isolated</strong> — <code>rho-test-helpers</code> mocks the core traits (<code>ChatClient</code>, <code>ShellExecutor</code>, <code>ApprovalGate</code>) so tool and agent loop tests run without a model server.</li>
+<li><strong>Testing is isolated</strong> — <code>rho-test-helpers</code> mocks the core traits (<code>MockChatClient</code>, <code>MockShellExecutor</code>, <code>ApprovalGate</code>) so tool and agent loop tests run without a model server.</li>
 </ul>
 
                     </main>
