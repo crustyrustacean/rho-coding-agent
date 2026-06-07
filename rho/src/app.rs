@@ -6,7 +6,7 @@
 
 use crate::cli::Cli;
 use crate::presenter::RpcPresenter as P;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rho_core::tool::CancellationToken as Cancel;
 use rho_core::{
     AgentConfig, ConfigLoader, LoopParams, MechanicalCompactionStrategy, Provider,
@@ -108,7 +108,8 @@ impl App {
 
         // ── 7. Tool registry + extensions ────────────────────────────────
         let mut tool_registry = ToolRegistry::new();
-        let session_path_holder = register_all(&mut tool_registry, sandbox.clone(), &config);
+        let session_path_holder = register_all(&mut tool_registry, sandbox.clone(), &config)
+            .context("no PowerShell found on PATH — install PowerShell 7+ (pwsh) or ensure Windows PowerShell (powershell) is available")?;
 
         let mut ext_loader = ExtensionLoader::new(
             config.extensions.clone(),

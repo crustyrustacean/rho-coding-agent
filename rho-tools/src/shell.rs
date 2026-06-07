@@ -50,10 +50,16 @@ impl PowerShellExecutor {
     /// Create a new executor, detecting the available PowerShell.
     ///
     /// Tries `pwsh` first (PowerShell 7+), then falls back to `powershell`
-    /// (Windows PowerShell 5.1). Panics if neither is available.
-    pub fn new() -> Self {
-        let shell = detect_powershell();
-        Self { shell }
+    /// (Windows PowerShell 5.1).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ToolError::Internal`] if neither PowerShell is found on `PATH`.
+    pub fn new() -> crate::ToolResult<Self> {
+        let shell = detect_powershell().ok_or_else(|| ToolError::Internal {
+            message: "no PowerShell found on PATH — install PowerShell 7+ (pwsh) or ensure Windows PowerShell (powershell) is available".into(),
+        })?;
+        Ok(Self { shell })
     }
 
     /// Returns the detected PowerShell executable name.
@@ -81,11 +87,9 @@ impl PowerShellExecutor {
     }
 }
 
-impl Default for PowerShellExecutor {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// NOTE: No `Default` impl — `PowerShellExecutor::new()` returns `ToolResult`
+// because PowerShell detection can fail. Use `.expect()` or `?` explicitly.
+
 
 #[async_trait]
 impl ShellExecutor for PowerShellExecutor {
@@ -409,25 +413,17 @@ fn cd_warning(command: &str) -> Option<&'static str> {
 /// Detect the best available PowerShell executable.
 ///
 /// Tries `pwsh` first (PowerShell 7+), then falls back to `powershell`
-/// (Windows PowerShell 5.1). Returns a `&'static str` so the result can be
-/// held in the executor without lifetime concerns.
-///
-/// # Panics
-///
-/// Panics if neither `pwsh` nor `powershell` is found on `PATH`.
-fn detect_powershell() -> &'static str {
+/// (Windows PowerShell 5.1). Returns `None` if neither is found.
+fn detect_powershell() -> Option<&'static str> {
     // Try pwsh first.
     if which_exists("pwsh") {
-        return "pwsh";
+        return Some("pwsh");
     }
     // Fall back to Windows PowerShell.
     if which_exists("powershell") {
-        return "powershell";
+        return Some("powershell");
     }
-    panic!(
-        "no PowerShell found on PATH — install PowerShell 7+ (pwsh) \
-         or ensure Windows PowerShell (powershell) is available"
-    )
+    None
 }
 
 /// Check whether an executable exists on `PATH`.

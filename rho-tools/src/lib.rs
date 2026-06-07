@@ -40,7 +40,7 @@ pub type SessionPathHolder = Arc<Mutex<Option<PathBuf>>>;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-pub use crate::error::ToolError;
+pub use crate::error::{ToolError, ToolResult};
 pub use crates_io::CratesIoLookup;
 pub use files::{EditFile, ListDir, ReadFile, WriteFile};
 pub use hashline::compute_line_hash;
@@ -55,38 +55,47 @@ use rho_core::{SandboxRoot, ToolRegistry};
 /// the project sandbox. The default shell executor is [`PowerShellExecutor`]
 /// with a [`CommandDenylist`] built from the default PowerShell list plus any
 /// config-supplied additions.
+///
+/// # Errors
+///
+/// Returns an error if no PowerShell (`pwsh` or `powershell`) is found on
+/// `PATH`. Shell-based tools require PowerShell for command execution.
 pub fn register_all(
     registry: &mut ToolRegistry,
     root: SandboxRoot,
     config: &rho_core::RhoConfig,
-) -> SessionPathHolder {
+) -> ToolResult<SessionPathHolder> {
     registry.register(Box::new(ReadFile { root: root.clone() }));
     registry.register(Box::new(WriteFile { root: root.clone() }));
     registry.register(Box::new(ListDir { root: root.clone() }));
     registry.register(Box::new(EditFile { root: root.clone() }));
 
+    let make_executor = || -> ToolResult<Box<PowerShellExecutor>> {
+        PowerShellExecutor::new().map(Box::new)
+    };
+
     // Rust tooling (Phase 3)
-    let check_executor = Box::new(PowerShellExecutor::new());
+    let check_executor = make_executor()?;
     registry.register(Box::new(CargoCheck {
         root: root.clone(),
         executor: check_executor,
     }));
-    let clippy_executor = Box::new(PowerShellExecutor::new());
+    let clippy_executor = make_executor()?;
     registry.register(Box::new(CargoClippy {
         root: root.clone(),
         executor: clippy_executor,
     }));
-    let explain_executor = Box::new(PowerShellExecutor::new());
+    let explain_executor = make_executor()?;
     registry.register(Box::new(RustcExplain {
         root: root.clone(),
         executor: explain_executor,
     }));
-    let test_executor = Box::new(PowerShellExecutor::new());
+    let test_executor = make_executor()?;
     registry.register(Box::new(CargoTest {
         root: root.clone(),
         executor: test_executor,
     }));
-    let fix_executor = Box::new(PowerShellExecutor::new());
+    let fix_executor = make_executor()?;
     registry.register(Box::new(CargoFix {
         root: root.clone(),
         executor: fix_executor,
@@ -98,7 +107,7 @@ pub fn register_all(
     // crates.io lookup (Phase 3.6)
     registry.register(Box::new(CratesIoLookup::new()));
 
-    let executor = Box::new(PowerShellExecutor::new());
+    let executor = make_executor()?;
     let denylist = CommandDenylist::from_config(config);
     registry.register(Box::new(RunCommand {
         root,
@@ -109,5 +118,5 @@ pub fn register_all(
     // Session summary tool (context recovery)
     let (session_summary, path_holder) = SessionSummary::new();
     registry.register(Box::new(session_summary));
-    path_holder
+    Ok(path_holder)
 }

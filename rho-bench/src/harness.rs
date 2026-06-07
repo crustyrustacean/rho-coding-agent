@@ -209,7 +209,8 @@ async fn run_single_task(
 
     // Set up tool registry with auto-approve policy for benchmarking.
     let mut registry = ToolRegistry::new();
-    register_all(&mut registry, sandbox.clone(), rho_config);
+    register_all(&mut registry, sandbox.clone(), rho_config)
+        .context("failed to register tools (PowerShell required for benchmarks)")?;
 
     // Build system prompt using shared construction (no context file scanning
     // in bench — task dirs are ephemeral and don't have project context files).

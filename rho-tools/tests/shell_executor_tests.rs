@@ -36,6 +36,7 @@ macro_rules! skip_if_no_powershell {
 /// Use `skip_if_no_powershell!()` before calling this function.
 fn get_executor() -> PowerShellExecutor {
     PowerShellExecutor::new()
+        .expect("PowerShell is required for shell executor tests (use skip_if_no_powershell!)")
 }
 
 // ── Basic execution ───────────────────────────────────────────────────────────
