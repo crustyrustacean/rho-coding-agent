@@ -1727,7 +1727,7 @@ mod tests {
                     risk: "read" as const,
                     parameters: {},
                     execute: async () => {
-                        return JSON.stringify(rho.runCommand("sleep", ["10"]));
+                        return JSON.stringify(rho.runCommand("pwsh", ["-Command", "Start-Sleep -Seconds 10"]));
                     },
                 }],
             };

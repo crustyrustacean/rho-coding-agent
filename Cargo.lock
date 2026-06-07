@@ -248,9 +248,9 @@ checksum = "5e764a1d40d510daf35e07be9eb06e75770908c27d411ee6c92109c9840eaaf7"
 
 [[package]]
 name = "bitflags"
-version = "2.11.1"
+version = "2.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4512299f36f043ab09a583e57bceb5a5aab7a73db1805848e8fef3c9e8c78b3"
+checksum = "b4388bee8683e3d04af747c73422af53102d2bd24d9eadb6cbc100baef4b43f8"
 
 [[package]]
 name = "bitvec"
@@ -319,9 +319,9 @@ checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 
 [[package]]
 name = "bytes-str"
-version = "0.2.7"
+version = "0.2.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c60b5ce37e0b883c37eb89f79a1e26fbe9c1081945d024eee93e8d91a7e18b3"
+checksum = "577d2bf5650f8554d5a372af5ac93535110a0fc75b3e702bb853369febf227c2"
 dependencies = [
  "bytes",
  "serde",
@@ -401,9 +401,9 @@ checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
 name = "chrono"
-version = "0.4.44"
+version = "0.4.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c673075a2e0e5f4a1dde27ce9dee1ea4558c7ffe648f576438a20ca1d2acc4b0"
+checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
 dependencies = [
  "iana-time-zone",
  "js-sys",
@@ -1602,9 +1602,9 @@ checksum = "cd62e6b5e86ea8eeeb8db1de02880a6abc01a397b2ebb64b5d74ac255318f5cb"
 
 [[package]]
 name = "ignore"
-version = "0.4.25"
+version = "0.4.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3d782a365a015e0f5c04902246139249abf769125006fbe7649e2ee88169b4a"
+checksum = "b915661dd01db3f05050265b2477bcc6527b3792388e2749b41623cc592be67d"
 dependencies = [
  "crossbeam-deque",
  "globset",
@@ -1816,9 +1816,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.30"
+version = "0.4.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "616ec5685824bcc94416c6d4a7a446eea774a31efd7062c8480ba6fd06d7a6e5"
+checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
 
 [[package]]
 name = "lru-slab"
@@ -2401,7 +2401,7 @@ dependencies = [
 
 [[package]]
 name = "rho"
-version = "0.68.1"
+version = "0.69.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2420,7 +2420,7 @@ dependencies = [
 
 [[package]]
 name = "rho-ai"
-version = "0.68.1"
+version = "0.69.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2435,7 +2435,7 @@ dependencies = [
 
 [[package]]
 name = "rho-bench"
-version = "0.68.1"
+version = "0.69.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2457,7 +2457,7 @@ dependencies = [
 
 [[package]]
 name = "rho-core"
-version = "0.68.1"
+version = "0.69.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2482,7 +2482,7 @@ dependencies = [
 
 [[package]]
 name = "rho-eval"
-version = "0.68.1"
+version = "0.69.0"
 dependencies = [
  "chrono",
  "rho-core",
@@ -2494,7 +2494,7 @@ dependencies = [
 
 [[package]]
 name = "rho-ext"
-version = "0.68.1"
+version = "0.69.0"
 dependencies = [
  "async-trait",
  "deno_ast",
@@ -2513,7 +2513,7 @@ dependencies = [
 
 [[package]]
 name = "rho-highlight"
-version = "0.68.1"
+version = "0.69.0"
 dependencies = [
  "rho-core",
  "rho-test-helpers",
@@ -2524,7 +2524,7 @@ dependencies = [
 
 [[package]]
 name = "rho-repl"
-version = "0.68.1"
+version = "0.69.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2537,7 +2537,7 @@ dependencies = [
 
 [[package]]
 name = "rho-test-helpers"
-version = "0.68.1"
+version = "0.69.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -2551,7 +2551,7 @@ dependencies = [
 
 [[package]]
 name = "rho-tools"
-version = "0.68.1"
+version = "0.69.0"
 dependencies = [
  "async-trait",
  "dunce",
@@ -2641,9 +2641,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-native-certs"
-version = "0.8.3"
+version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "612460d5f7bea540c490b2b6395d8e34a953e52b491accd6c86c8164c5932a63"
+checksum = "dab5152771c58876a2146916e53e35057e1a4dfa2b9df0f0305b07f611fdea4d"
 dependencies = [
  "openssl-probe",
  "rustls-pki-types",
@@ -4786,7 +4786,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.68.1"
+version = "0.69.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -4797,9 +4797,9 @@ dependencies = [
 
 [[package]]
 name = "yoke"
-version = "0.8.2"
+version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "abe8c5fda708d9ca3df187cae8bfb9ceda00dd96231bed36e445a1a48e66f9ca"
+checksum = "709fe23a0424b6a435d82152b1bd3fdfb0833487d5fa90d05d42762a9891fef5"
 dependencies = [
  "stable_deref_trait",
  "yoke-derive",
