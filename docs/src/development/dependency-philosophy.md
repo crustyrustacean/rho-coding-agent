@@ -27,7 +27,8 @@ rho's direct (non-transitive) dependencies are:
 | `clap` | CLI parsing | De-facto standard; derives-based API |
 | `tracing` | Structured logging | De-facto standard; `log`-compatible |
 | `async-trait` | Async trait support | Required for `Box<dyn Tool>` |
-| `thiserror` | Error derive macros | Clean `RhoError` definition |
+| `thiserror` | Error derive macros | Clean error type definition |
+| `anyhow` | Ergonomic error handling | Used in binary crates (`rho`, `rho-repl`, `xtask`); library crates use domain-specific error types |
 | `ignore` | `.gitignore` walking | From ripgrep; mature, well-maintained |
 | `tree-sitter` + grammars | Syntax analysis | Standard for tree-sitter in Rust |
 | `which` | Executable detection | Small, focused, no replacement needed |
@@ -38,6 +39,6 @@ rho's direct (non-transitive) dependencies are:
 |---|---|
 | `scraper` (HTML parsing) | Not yet needed; regex-based extraction suffices for now |
 | `ureq` (minimal HTTP) | `reqwest` already in tree; adding a second HTTP client is fragmentation |
-| `anyhow` | Error handling | Removed from library crates; domain-specific error types used instead |
+| `anyhow` | Binary crates only | `anyhow` is used in `rho`, `rho-repl`, and `xtask` for ergonomic error handling. Library crates (`rho-core`, `rho-ai`, etc.) use domain-specific error types (`RhoError`, `ProviderError`, etc.) to maintain error boundary discipline. |
 | `rand` | UUID generation uses `uuid` crate only in test helpers (dev-only) |
 | `clap-cargo` | Manual `cargo_metadata` integration avoided; `--version` from `clap` derive |

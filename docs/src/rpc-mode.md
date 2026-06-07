@@ -1,24 +1,21 @@
 # RPC Mode
 
-rho supports a headless **RPC mode** for integration with editors, bots, custom UIs, and scripts. Instead of an interactive REPL, rho reads newline-delimited JSON commands from stdin and writes newline-delimited JSON events to stdout.
+`rho` runs as a headless agent communicating via **JSON-RPC 2.0** over stdin/stdout. All requests must include `"jsonrpc": "2.0"`, a `method` field, optional `params`, and a numeric or string `id` for response correlation. Streaming events are delivered as JSON-RPC notifications (no `id` field).
+
+Diagnostic output (warnings, budget info, session status) is written to **stderr**, keeping **stdout** exclusively for the protocol.
 
 ## Usage
 
 ```sh
-echo '{"type":"prompt","message":"fix the bug"}' | \
-  rho --mode rpc \
-    --ephemeral \
-    --endpoint http://localhost:1234/v1/chat/completions \
-    --model my-model
+echo '{"jsonrpc":"2.0","method":"prompt","params":{"message":"fix the bug"},"id":1}' | \
+  rho --model my-model
 ```
 
 Or with an external provider:
 
 ```sh
-echo '{"type":"prompt","message":"explain this function"}' | \
-  rho --mode rpc \
-    --ephemeral \
-    --endpoint https://openrouter.ai/api/v1/chat/completions \
+echo '{"jsonrpc":"2.0","method":"prompt","params":{"message":"explain this function"},"id":1}' | \
+  rho --endpoint https://openrouter.ai/api/v1/chat/completions \
     --api-key-env OPENROUTER_API_KEY \
     --model deepseek/deepseek-v4-flash \
     --accept-external-provider
@@ -26,59 +23,73 @@ echo '{"type":"prompt","message":"explain this function"}' | \
 
 ## Protocol
 
-Every outbound line is a compact JSON object followed by `\n`. Every inbound command must be a JSON object with at least a `"type"` field.
+### Methods (stdin → rho)
 
-### Commands (stdin → rho)
-
-| `type` | Required fields | Description |
+| Method | Params | Description |
 |---|---|---|
-| `prompt` | `message` | Send a user message to the agent |
+| `prompt` | `{message: string}` | Send a user message to the agent |
 | `abort` | — | Cancel the current operation |
-| `get_state` | — | Return current model and provider name |
-| `get_messages` | — | Return all messages on the active session path |
-| `set_model` | `model` | Switch the active model |
-| `get_session_stats` | — | Return token budget and context usage |
+| `clear` | — | Clear conversation history |
+| `getState` | — | Return model, provider, and cwd |
+| `getMessages` | — | Return all messages on active path |
+| `setModel` | `{model: string}` | Switch the active model |
+| `listModels` | — | List available models from providers |
+| `getSessionStats` | — | Return token budget / usage info |
+| `listSessions` | — | List previous sessions for project |
+| `listExtensions` | — | List loaded extensions and tools |
+| `reloadExtensions` | — | Reload extensions from disk |
 | `compact` | — | Trigger context compaction |
+| `approvalResponse` | `{approved: boolean}` | Respond to an `approval/request` notification |
 
-### Events (rho → stdout)
+### Notifications (rho → stdout, no `id`)
 
-| `type` | Key fields | Description |
+| Method | Params | Description |
 |---|---|---|
 | `ready` | — | Emitted once on startup |
-| `agent_start` | — | Agent began processing a prompt |
-| `agent_end` | `reply` | Agent finished; full text reply |
-| `agent_error` | `error` | Agent loop encountered an error |
-| `state_change` | `state` | Loop state transition (`thinking`, `executing_tool`, `awaiting_approval`, `idle`) |
-| `message_update` | `delta` | Streaming text chunk |
-| `reasoning_delta` | `delta` | Streaming reasoning / chain-of-thought chunk |
-| `tool_call` | `name`, `arguments` | Model requested a tool call |
-| `tool_result` | `name`, `is_error`, `output` | Tool finished executing |
-| `tool_denied` | `name` | Tool call denied by approval gate |
-| `approval_request` | `tool`, `arguments`, `risk` | Approval required — respond with `approval_response` |
-| `response` | `success`, [`error`] | Command acknowledgment (for non-prompt commands) |
+| `agent/start` | — | Agent began processing a prompt |
+| `agent/end` | `{reply: string}` | Agent finished; full text reply |
+| `agent/error` | `{error: string}` | Agent loop encountered an error |
+| `state/change` | `{state: string}` | Loop state transition (`thinking`, `executing_tool`, `awaiting_approval`, `idle`) |
+| `message/delta` | `{delta: string}` | Streaming text chunk |
+| `reasoning/delta` | `{delta: string}` | Streaming reasoning chunk |
+| `tool/call` | `{name, arguments}` | Model requested a tool call |
+| `tool/result` | `{name, is_error, output}` | Tool finished executing |
+| `tool/denied` | `{name}` | Tool call denied by approval gate |
+| `approval/request` | `{tool, arguments, risk}` | Approval required — send `approvalResponse` |
+
+### Error codes
+
+| Code | Meaning |
+|---|---|
+| `-32700` | Parse error |
+| `-32600` | Invalid request |
+| `-32601` | Method not found |
+| `-32602` | Invalid params |
+| `-32603` | Internal error |
 
 ## Approval flow
 
-When rho emits an `approval_request` event, it blocks until it reads an `approval_response` from stdin:
+When rho emits an `approval/request` notification, it blocks until it reads an `approvalResponse` method from stdin:
 
 ```json
-{"type": "approval_response", "approved": true}
+{"jsonrpc": "2.0", "method": "approvalResponse", "params": {"approved": true}, "id": 2}
 ```
 
-Send `"approved": false` (or any non-boolean / missing field) to deny the tool call. The agent continues after denial — the model sees the denial reason and can adapt.
+Sending `approved: false` denies the tool call and lets the agent continue.
 
 Example interaction with a destructive tool:
 
 ```json
-→ {"type":"prompt","message":"delete the temp files"}
-← {"type":"agent_start"}
-← {"type":"state_change","state":"thinking"}
-← {"type":"tool_call","name":"run_command","arguments":"{\"command\":\"Remove-Item temp/*\"}"}
-← {"type":"approval_request","tool":"run_command","arguments":"{\"command\":\"Remove-Item temp/*\"}","risk":"destructive"}
-→ {"type":"approval_response","approved":true}
-← {"type":"tool_result","name":"run_command","is_error":false,"output":""}
-← {"type":"state_change","state":"idle"}
-← {"type":"agent_end","reply":"Done — the temp files have been removed."}
+→ {"jsonrpc":"2.0","method":"prompt","params":{"message":"delete the temp files"},"id":1}
+← {"jsonrpc":"2.0","method":"agent/start"}
+← {"jsonrpc":"2.0","method":"state/change","params":{"state":"thinking"}}
+← {"jsonrpc":"2.0","method":"tool/call","params":{"name":"run_command","arguments":"{\"command\":\"Remove-Item temp/*\"}"}}
+← {"jsonrpc":"2.0","method":"approval/request","params":{"tool":"run_command","arguments":"{\"command\":\"Remove-Item temp/*\"}","risk":"destructive"}}
+→ {"jsonrpc":"2.0","method":"approvalResponse","params":{"approved":true},"id":2}
+← {"jsonrpc":"2.0","method":"tool/result","params":{"name":"run_command","is_error":false,"output":""}}
+← {"jsonrpc":"2.0","method":"state/change","params":{"state":"idle"}}
+← {"jsonrpc":"2.0","method":"agent/end","params":{"reply":"Done — the temp files have been removed."}}
+← {"jsonrpc":"2.0","result":{"reply":"Done..."},"id":1}
 ```
 
 ## Headless startup policy
@@ -93,26 +104,27 @@ In RPC mode there is no interactive terminal, so the startup phases that normall
 
 ## Session management
 
-RPC mode supports the same session options as REPL mode:
+RPC mode supports the same session options:
 
 - `--ephemeral` — in-memory session, no disk I/O (recommended for scripts)
 - `--continue` / `-c` — resume the most recent session
 - `--session <path>` — resume a specific session file
 
-Use `get_session_stats` to monitor context usage and `compact` to free space when the context fills up.
+Use `getSessionStats` to monitor context usage and `compact` to free space when the context fills up.
 
 ## Testing
 
-The RPC core loop is generic over I/O (`run_rpc_on<R, W>`), enabling 43 in-process integration tests that inject canned stdin via `Cursor<Vec<u8>>` and capture stdout without touching real file descriptors. Tests use `TestProvider` (from `rho-test-helpers`) to wrap a `MockChatClient` as a `Provider` and construct `App` directly, bypassing CLI startup. See [Testing](./development/testing.md) for details.
+The RPC core loop is generic over I/O (`run_rpc_on<R, W>`), enabling in-process integration tests that inject canned stdin via `Cursor<Vec<u8>>` and capture stdout without touching real file descriptors. Tests use `TestProvider` (from `rho-test-helpers`) to wrap a `MockChatClient` as a `Provider` and construct `App` directly, bypassing CLI startup. See [Testing](./development/testing.md) for details.
 
 ### Example test session
 
 ```text
-stdin:  {"type":"prompt","message":"say hello"}
-stdout: {"type":"ready"}
-stdout: {"type":"agent_start"}
-stdout: {"type":"state_change","state":"thinking"}
-stdout: {"type":"message_update","delta":"hello"}
-stdout: {"type":"state_change","state":"idle"}
-stdout: {"type":"agent_end","reply":"hello"}
+stdin:  {"jsonrpc":"2.0","method":"prompt","params":{"message":"say hello"},"id":1}
+stdout: {"jsonrpc":"2.0","method":"ready"}
+stdout: {"jsonrpc":"2.0","method":"agent/start"}
+stdout: {"jsonrpc":"2.0","method":"state/change","params":{"state":"thinking"}}
+stdout: {"jsonrpc":"2.0","method":"message/delta","params":{"delta":"hello"}}
+stdout: {"jsonrpc":"2.0","method":"state/change","params":{"state":"idle"}}
+stdout: {"jsonrpc":"2.0","method":"agent/end","params":{"reply":"hello"}}
+stdout: {"jsonrpc":"2.0","result":{"reply":"hello"},"id":1}
 ```

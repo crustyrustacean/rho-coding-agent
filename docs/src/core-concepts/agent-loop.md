@@ -86,9 +86,9 @@ pub trait AgentObserver: Send + Sync {
 }
 ```
 
-All methods have default no-op implementations, so observers only need to override the events they care about. The REPL's `ReplObserver` streams reasoning deltas and tool activity to stdout so the user can see what the model is doing in real time. For tests, benchmarks, and headless use, `NopObserver` discards all events.
+All methods have default no-op implementations, so observers only need to override the events they care about. The RPC observer streams reasoning deltas and tool activity as notifications. For tests, benchmarks, and headless use, `NopObserver` discards all events.
 
-When extensions are loaded, the `CompositeObserver` fans out every call to both the REPL/RPC observer and the extension `DenoObserver`s. For `on_tool_call_intercept`, the **first `Block` wins** — if any extension blocks a tool call, execution is denied immediately.
+When extensions are loaded, the `CompositeObserver` fans out every call to both the RPC observer and the extension `DenoObserver`s. For `on_tool_call_intercept`, the **first `Block` wins** — if any extension blocks a tool call, execution is denied immediately.
 
 The observer is called:
 - At every state transition (`on_state_change`)

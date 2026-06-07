@@ -8,7 +8,9 @@
 
 ```
 ┌─────────────────────────────────────────────────┐
-│                   rho (binary)                   │  ← Assembles all layers, runs the app
+│                   rho (binary)                   │  ← Headless JSON-RPC 2.0 agent
+├─────────────────────────────────────────────────┤
+│                   rho-repl                       │  ← Interactive terminal client (spawns rho)
 ├─────────────────────────────────────────────────┤
 │                   rho-ext                        │  ← TypeScript extension runtime (V8/deno-core)
 ├─────────────────────────────────────────────────┤
@@ -28,10 +30,12 @@
                   rho-bench → rho-eval → rho-core → rho-ai
                   rho-ext → rho-core
                   rho-tools → rho-highlight → rho-core
-                  rho-test-helpers → rho-core
+                  rho → rho-core, rho-tools, rho-ext, rho-ai
+                  rho-test-helpers → rho-core, rho-ai
+                  rho-repl → (no rho deps, spawns rho as subprocess)
 ```
 
-**Rule:** a crate may only depend on crates below it in the stack. `rho-ai` is the lowest layer; `rho-core` depends on it for the `LlmService` trait and unified streaming types. `rho-ext` depends on `rho-core` for the `Tool` and `AgentObserver` trait implementations.
+**Rule:** a crate may only depend on crates below it in the stack. `rho-ai` is the lowest layer; `rho-core` depends on it for the `LlmService` trait and unified streaming types. `rho-ext` depends on `rho-core` for the `Tool` and `AgentObserver` trait implementations. `rho-repl` does not depend on any rho crate — it spawns `rho` as a subprocess.
 
 ## Crate Responsibilities
 
@@ -111,7 +115,7 @@ Enables user-authored TypeScript extensions that add tools, hooks, and commands 
 
 Extension directories: `~/.rho/extensions/` (user-level) and `.rho/extensions/` (project-level). Project-local extensions override user-level ones with the same name.
 
-### `rho` — Binary Entry Point
+### `rho` — Headless JSON-RPC 2.0 Agent
 
 Assembles all layers and runs the headless JSON-RPC 2.0 protocol over stdin/stdout.
 
@@ -131,9 +135,13 @@ Assembles all layers and runs the headless JSON-RPC 2.0 protocol over stdin/stdo
 
 **`App::run`):** fires extension `onLoad` hooks, then starts the JSON-RPC 2.0 loop via `run_rpc`.
 
+### `rho-repl` — Interactive Terminal Client
+
+Spawns `rho` as a subprocess and communicates via JSON-RPC 2.0. Provides readline input with persistent history, slash command dispatch (`/clear`, `/models`, `/model`, `/status`, `/sessions`, `/extensions`, `/reload`, `/compact`, `/quit`), streaming output rendering, and approval prompts. Does not depend on any rho crate.
+
 ## Execution Mode: JSON-RPC 2.0
 
-rho runs as a headless agent communicating via **JSON-RPC 2.0** over stdin/stdout. All requests must include `"jsonrpc": "2.0"`, a `method` field, optional `params`, and a numeric or string `id` for response correlation. Streaming events are delivered as JSON-RPC notifications (no `id` field).
+`rho` runs as a headless agent communicating via **JSON-RPC 2.0** over stdin/stdout. All requests must include `"jsonrpc": "2.0"`, a `method` field, optional `params`, and a numeric or string `id` for response correlation. Streaming events are delivered as JSON-RPC notifications (no `id` field).
 
 Diagnostic output (warnings, budget info, session status) is written to **stderr**, keeping **stdout** exclusively for the protocol.
 
@@ -142,9 +150,11 @@ Diagnostic output (warnings, budget info, session status) is written to **stderr
 echo '{"jsonrpc":"2.0","method":"prompt","params":{"message":"fix the bug"},"id":1}' | rho --model <id>
 ```
 
+The `rho-repl` binary provides an interactive terminal experience by spawning `rho` as a subprocess and handling the JSON-RPC 2.0 protocol on its behalf.
+
 The core RPC loop is generic over I/O (`run_rpc_on<R, W>`) so the in-process integration tests can inject canned stdin and capture stdout without touching real file descriptors. The public entry point (`run_rpc`) delegates with real `io::stdin()` and `io::stdout()`.
 
-**Integration tests.** 34 end-to-end tests in `rho/src/rpc.rs` cover the full JSON-RPC 2.0 protocol. Tests use `MockChatClient` via `TestProvider` (in `rho-test-helpers`) and construct `App` directly (bypassing CLI startup) to exercise the RPC adapter layer over the real agent loop.
+**Integration tests.** 12 end-to-end tests in `rho/src/rpc.rs` cover the full JSON-RPC 2.0 protocol. Tests use `MockChatClient` via `TestProvider` (in `rho-test-helpers`) and construct `App` directly (bypassing CLI startup) to exercise the RPC adapter layer over the real agent loop.
 
 ### Protocol
 
@@ -301,7 +311,7 @@ The agent uses defense-in-depth — no single layer is sufficient, but each rais
 ## Project Layout
 
 ```
-rho/                # Binary entry point (`rho` CLI)
+rho/                # Headless JSON-RPC 2.0 agent
   src/
     main.rs         # Thin entry: parse CLI, build App, run
     lib.rs          # Module declarations
@@ -313,6 +323,11 @@ rho/                # Binary entry point (`rho` CLI)
     presenter.rs    # Presenter module root
     presenter/
       rpc.rs        # `RpcPresenter` — diagnostic output to stderr
+rho-repl/           # Interactive terminal client (spawns rho as subprocess)
+  src/
+    main.rs         # REPL loop, slash commands, approval prompts
+    client.rs       # JSON-RPC 2.0 subprocess client
+    render.rs       # Terminal rendering for streaming output
 rho-ai/             # Unified LLM provider abstraction
   src/
     lib.rs          # Re-exports: `LlmService`, `EventStream`, unified types
@@ -335,8 +350,8 @@ rho-ext/            # TypeScript extension runtime
     module_loader.rs# `RhoModuleLoader` — ESM module resolution for extensions
     host.rs         # `rho.*` host ops (log, readFile, writeFile, runCommand, getModel, getCwd)
     host_shim.js    # ESM shim for extension module loading
+    std_shim.js    # Standard library shim for extensions
     error.rs        # `ExtensionError` enum
-    spike.rs        # Original spike validation code
   types/
     rho.d.ts        # TypeScript type definitions for extension authors
 rho-core/           # Core library
@@ -350,7 +365,8 @@ rho-core/           # Core library
     config.rs       # `RhoConfig`, `ConfigLoader`, config sub-types
     context.rs      # `ContextManager` trait, `SlidingWindowContextManager`, `TokenBudget`
     context_files.rs# Project context file scanner, `TrustStore`
-    conversation.rs # `AssistantResponse`
+    conversation.rs # `Conversation`, `AssistantResponse`
+    denylist.rs    # `CommandDenylist` — shell command denylist
     diagnostic.rs   # `Diagnostic`, `DiagnosticSeverity`, `DiagnosticSpan`
     error.rs        # `RhoError` and `Result`
     message.rs      # `ChatMessage`, `ContentBlock`, `ModelToolCall`
@@ -374,7 +390,7 @@ rho-tools/          # Built-in tool implementations
     lib.rs          # `register_all()`
     files.rs        # `ReadFile`, `WriteFile`, `ListDir`, `EditFile`
     hashline.rs     # Hashline content-addressed editing
-    shell.rs        # `PowerShellExecutor`, `RunCommand`
+    shell.rs        # `PowerShellExecutor`, `RunCommand`, `CommandDenylist`
     rust.rs         # `CargoCheck`, `CargoClippy`, `CargoTest`, `CargoFix`, `RustcExplain`
 rho-highlight/      # Tree-sitter syntax analysis
   src/
@@ -400,7 +416,7 @@ rho-test-helpers/   # Shared test infrastructure (dev-only)
 xtask/              # Dev task runner
   src/
     main.rs         # CLI dispatch
-    tasks.rs        # `ci`, `test`, `release`, `changelog` tasks
+    tasks.rs        # `ci`, `test`, `build`, `release`, `changelog`, `fmt`, `lint`, `run`, `clean`, `status` tasks
 Cargo.toml          # Workspace root
 CHANGELOG.md        # Generated via git-cliff
 cliff.toml          # git-cliff configuration

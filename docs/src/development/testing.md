@@ -6,7 +6,7 @@ rho uses a layered test strategy: unit tests within each source file, integratio
 
 ```sh
 cargo xtask ci        # Full CI pipeline: fmt → lint → build → test
-cargo xtask test      # All tests with stdout visible
+ctest                 # All tests via cargo-nextest (falls back to cargo test)
 cargo xtask test -p rho-core -- --nocapture  # Single crate
 ```
 
@@ -16,8 +16,11 @@ cargo xtask test -p rho-core -- --nocapture  # Single crate
 |---|---|---|
 | Unit tests | `#[cfg(test)] mod tests` inside each source file | Individual functions, types, edge cases |
 | Integration tests | `rho-core/tests/integration_tests.rs` | Agent loop, approval flow, context management |
-| RPC integration tests | `rho/src/rpc.rs` (`#[cfg(test)] mod tests`) | Full JSONL protocol: command dispatch, event sequencing, approval round-trips, tool calls, errors, multi-turn sessions, JSONL conformance |
+| Security integration tests | `rho-core/tests/security_tests.rs` | Sandbox enforcement, denylist, trust store |
+| Session integration tests | `rho-core/tests/session_integration_tests.rs` | Session tree operations, persistence, branching |
+| RPC integration tests | `rho/src/rpc.rs` (`#[cfg(test)] mod tests`) | Full JSON-RPC 2.0 protocol: command dispatch, event sequencing, approval round-trips, tool calls, errors, multi-turn sessions |
 | Tool integration tests | `rho-tools/tests/tool_tests.rs` | Tool execution, sandbox enforcement, denylist |
+| Shell executor tests | `rho-tools/tests/shell_executor_tests.rs` | Shell command execution, path normalization |
 | Extension unit tests | `rho-ext/src/*.rs` (`#[cfg(test)] mod tests`) | Runtime spawning, manifest parsing, discovery, transpilation, DenoTool, DenoObserver, host ops, module loader |
 | Eval unit tests | `rho-eval/src/tasks.rs` | Task verification logic (pass/fail/error) |
 | Bench unit tests | `rho-bench/src/*.rs` | Harness config, display formatting, persistence |
@@ -48,9 +51,7 @@ RPC integration tests live in `rho/src/rpc.rs` (not `rho/tests/`) because `App`'
 | `FixedResponseTool` | A tool that always returns the same output |
 | `FailingTool` | A tool that always returns an error |
 
-### Fixtures and utilities
-
-| Helper | Purpose |
+| Fixtures and utilities | Purpose |
 |---|---|
 | `FileTestEnv` | Temporary directory with file-system operations for sandbox tests |
 | `in_memory_session(prompt)` | Create a session without disk persistence |

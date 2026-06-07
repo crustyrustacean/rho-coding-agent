@@ -7,21 +7,22 @@ rho-coding-agent/
 ├── cliff.toml               # git-cliff configuration
 ├── AGENTS.md                # Project instructions for AI assistants
 ├── docs/                    # This book (mdBook)
-├── rho/                     # Binary entry point + library crate (`rho` CLI)
+├── rho/                     # Binary entry point (headless JSON-RPC 2.0)
 │   └── src/
 │       ├── main.rs           # Thin: parse CLI, build App, run
 │       ├── lib.rs            # Module declarations
-│       ├── cli.rs            # `Cli` — 17 CLI flags with clap
+│       ├── cli.rs            # `Cli` — CLI flags with clap
 │       ├── app.rs            # `App` — runtime state, build/run orchestration, extension loading
 │       ├── model.rs          # Model resolution + interactive picker
-│       ├── ext_observer.rs   # `CompositeObserver` — fans out to REPL/RPC + extension observers
-│       ├── gate.rs           # Approval gate module root
-│       │   └── interactive.rs # `ReplApprovalGate` — y/N from stdin
-│       ├── rpc.rs            # RPC mode: `run_rpc`, `run_rpc_on`, observer, approval gate
-│       ├── repl.rs           # `run_repl()` — REPL loop with `/reload`, `/extensions`
-│       ├── presenter.rs      # Presenter module root
-│       │   ├── repl.rs       # `ReplPresenter` — all REPL terminal output
-│       │   └── rpc.rs        # `RpcPresenter` — startup output for RPC mode
+│       ├── ext_observer.rs   # `CompositeObserver` — fans out to RPC observer + extension observers
+│       ├── rpc.rs            # JSON-RPC 2.0: `run_rpc`, `run_rpc_on`, observer, approval gate
+│       └── presenter/
+│           └── rpc.rs        # `RpcPresenter` — diagnostic output to stderr
+├── rho-repl/                # Interactive terminal client (spawns rho as subprocess)
+│   └── src/
+│       ├── main.rs           # REPL loop, slash commands, approval prompts, readline
+│       ├── client.rs         # JSON-RPC 2.0 subprocess client
+│       └── render.rs         # Terminal rendering for streaming output and notifications
 ├── rho-ai/                 # Unified LLM provider abstraction
 │   └── src/
 │       ├── lib.rs           # Re-exports: `LlmService`, `EventStream`, unified types
@@ -45,7 +46,9 @@ rho-coding-agent/
 │       ├── module_loader.rs# `RhoModuleLoader` — ESM module resolution
 │       ├── host.rs         # `rho.*` host ops (log, readFile, writeFile, runCommand, getModel, getCwd)
 │       ├── ops.rs          # Helper macros for host op boilerplate
-│       └── error.rs        # `ExtensionError`
+│       ├── error.rs        # `ExtensionError`
+│       ├── host_shim.js    # ESM shim for extension module loading
+│       └── std_shim.js    # Standard library shim for extensions
 │   └── types/
 │       └── rho.d.ts        # TypeScript type definitions for extension authors
 ├── rho-core/                # Agent kernel
@@ -60,6 +63,7 @@ rho-coding-agent/
 │       ├── context.rs       # `ContextManager`, `SlidingWindowContextManager`, `TokenBudget`
 │       ├── context_files.rs # Project context file scanner, `TrustStore`, prompt composition
 │       ├── conversation.rs  # `Conversation`, `AssistantResponse`
+│       ├── denylist.rs      # `CommandDenylist` — shell command denylist
 │       ├── diagnostic.rs    # Structured compiler diagnostic types
 │       ├── error.rs         # `RhoError` and `Result`
 │       ├── message.rs       # `ChatMessage`, `ContentBlock`, `ModelToolCall`
@@ -110,6 +114,7 @@ rho-coding-agent/
 │       ├── shell.rs         # `RunCommand`, `PowerShellExecutor`, `CommandDenylist`
 │       ├── crates_io.rs     # `CratesIoLookup`
 │       ├── session_summary.rs # `SessionSummary` — compressed session history tool
+│       ├── error.rs         # Tool error types
 │       └── rust/
 │           ├── mod.rs       # Rust tools module
 │           ├── tools.rs     # `CargoCheck`, `CargoClippy`, `CargoTest`, `CargoFix`, `RustcExplain`
@@ -119,7 +124,7 @@ rho-coding-agent/
 │           ├── format.rs     # Diagnostic formatting
 │           └── types.rs     # Shared Rust tool types
 ├── rho-test-helpers/        # Shared test infrastructure (dev-only)
-│   └── src/lib.rs           # `MockChatClient`, `MockLlmService`, `TestProvider`, response builders, helpers
+│   └── src/lib.rs           # `MockChatClient`, `TestProvider`, response builders, helpers
 ├── rho-bench/               # Benchmark harness for multi-model evaluation
 │   └── src/
 │       ├── main.rs          # CLI: --models, --tasks, --repeats, --output
@@ -133,5 +138,7 @@ rho-coding-agent/
 │       ├── report.rs        # EvalRun, EvalReport — results + regression gating
 │       └── tasks.rs         # Built-in task definitions
 └── xtask/                   # Dev task runner
-    └── src/main.rs          # `cargo xtask ci`, `cargo xtask test`, `cargo xtask changelog`, `cargo xtask release`
+    └── src/
+        ├── main.rs          # CLI dispatch
+        └── tasks.rs         # `ci`, `test`, `build`, `release`, `changelog`, `fmt`, `lint`, `run`, `clean`, `status` tasks
 ```

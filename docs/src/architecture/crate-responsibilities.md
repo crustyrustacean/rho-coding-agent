@@ -2,12 +2,9 @@
 
 ## `rho` (binary)
 
-The binary entry point: CLI argument parsing, tool wiring, extension loading, and system prompt assembly. Supports two execution modes:
+The headless JSON-RPC 2.0 agent: CLI argument parsing, tool wiring, extension loading, and system prompt assembly. Reads newline-delimited JSON-RPC 2.0 requests from stdin and writes responses/notifications to stdout. Diagnostic output goes to stderr.
 
-- **REPL mode** (default) — interactive terminal session with slash commands and live output
-- **RPC mode** (`--mode rpc`) — headless JSONL over stdin/stdout for process integration
-
-Constructs a `Session`, connects to the model via a `Provider`, and drives the agent loop. Handles provider consent checks, model resolution, startup budget diagnostics, shell-specific prompt extensions, session discovery (`rho -c`), extension loading and hot reload (`/reload`, `/extensions`), and live observer output (reasoning deltas, tool activity).
+Constructs a `Session`, connects to the model via a `Provider`, and drives the agent loop. Handles provider consent checks, model resolution, startup budget diagnostics, shell-specific prompt extensions, session discovery, extension loading, and live observer output via `RpcObserver`.
 
 The RPC implementation is generic over I/O (`run_rpc_on<R, W>`) so the in-process integration tests can inject canned stdin and capture stdout without touching real file descriptors. See [RPC Mode](../rpc-mode.md) for the full protocol reference.
 
@@ -15,12 +12,21 @@ The RPC implementation is generic over I/O (`run_rpc_on<R, W>`) so the in-proces
 
 The kernel: agent loop state machine (with `AgentObserver` for live output, phase tracking, auto-compaction), session management (tree persistence, graduated resolution, phase-aware compaction, LLM compaction, selective eviction, branching, session discovery), context window management (sliding window, token estimation, enhanced `ContextStats` with role/resolution/phase token distributions), tool registry and traits, approval gates, secret redaction, file sandbox, provider abstraction (`Provider` trait, `ProviderRegistry`), LLM client (`RhoAiClient`), configuration loading, and all shared types.
 
-Key types: `Session`, `AgentConfig`, `AgentObserver`, `NopObserver`, `ContextStats`, `RoleTokenDistribution`, `ResolutionTokenDistribution`, `PhaseTokenDistribution`, `SessionMetadata`, `ToolRegistry`, `Tool`, `Provider`, `ProviderRegistry`, `ContextManager`, `TokenBudget`, `SandboxRoot`, `Redactor`, `RhoConfig`, `SessionPhase`, `CompactionPhase`, `CompactionStrategy`, `LlmCompactionStrategy`, `MechanicalCompactionStrategy`.
+Key types: `Session`, `AgentConfig`, `AgentObserver`, `NopObserver`, `ContextStats`, `RoleTokenDistribution`, `ResolutionTokenDistribution`, `PhaseTokenDistribution`, `SessionMetadata`, `ToolRegistry`, `Tool`, `Provider`, `ProviderRegistry`, `ContextManager`, `TokenBudget`, `SandboxRoot`, `Redactor`, `RhoConfig`, `SessionPhase`, `CompactionPhase`, `CompactionStrategy`, `LlmCompactionStrategy`, `MechanicalCompactionStrategy`, `CommandDenylist`.
+
+
+## `rho-repl`
+
+Interactive terminal client that spawns `rho` as a subprocess and communicates via JSON-RPC 2.0 over stdin/stdout. Provides readline input with persistent history (`~/.rho/repl-history`), slash command dispatch, streaming output rendering, and approval prompts.
+
+Does **not** depend on any rho crate — all interaction is through the JSON-RPC 2.0 protocol. Uses `rustyline` for input, `colored` for terminal colors, and `tokio` for async subprocess I/O.
+
+Key types: `Cli`, `RhoClient`, `Renderer`.
 
 
 ## `rho-highlight`
 
-Tree-sitter-based syntax analysis. Provides `parse()`, `highlight()`, and `node_at()` for Rust source code. Used by `EditFile` for node-splitting validation and by the TUI (Phase 4) for syntax highlighting.
+Tree-sitter-based syntax analysis. Provides `parse()`, `highlight()`, and `node_at()` for Rust source code. Used by `EditFile` for node-splitting validation and by tools that need structural code awareness.
 
 Key types: `Language`, `Highlight`, `NodeInfo`.
 
@@ -54,7 +60,7 @@ See [Extensions](../extensions.md) for the full extension system documentation.
 
 ## `rho-test-helpers`
 
-Shared test infrastructure (dev-only): `MockChatClient`, `TestProvider`, `MockShellExecutor`, `AutoApproveGate`, `AutoDenyGate`, `FixedResponseTool`, `FailingTool`, `FileTestEnv`, `in_memory_session`, `empty_trust_store`, `detect_shell`, `tempdir_with_sandbox`, `assert_no_orphan_tool_results`. Never published.
+Shared test infrastructure (dev-only): `MockChatClient`, `TestProvider`, `MockShellExecutor`, `AutoApproveGate`, `AutoDenyGate`, `FixedResponseTool`, `FailingTool`, `FileTestEnv`, `in_memory_session`, `empty_trust_store`, `detect_shell`, `tempdir_with_sandbox`, `assert_no_orphan_tool_results`. Depends on `rho-core` and `rho-ai`. Never published.
 
 `TestProvider` wraps a `MockChatClient` as a `Provider` impl, enabling integration tests that need a `ProviderRegistry` without a live model server.
 
@@ -68,4 +74,4 @@ Benchmark harness binary (dev-only): runs `rho-eval` tasks against one or more l
 
 ## `xtask`
 
-Dev task runner: `cargo xtask ci` (fmt → lint → build → test), `cargo xtask test`, `cargo xtask changelog`.
+Dev task runner: `cargo xtask ci` (fmt → lint → build → test), `cargo xtask test`, `cargo xtask build`, `cargo xtask release`, `cargo xtask changelog`, `cargo xtask fmt`, `cargo xtask run`, `cargo xtask clean`, `cargo xtask status`. Tests use `cargo-nextest` when available, falling back to `cargo test`.
