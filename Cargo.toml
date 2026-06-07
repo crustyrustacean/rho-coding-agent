@@ -5,10 +5,12 @@ members = [
     "rho-bench",
     "rho-core",
     "rho-eval",
+    "rho-ext",
     "rho-highlight",
+    "rho-repl",
     "rho-tools",
     "rho-test-helpers",
-    "xtask", "rho-ext",
+    "xtask",
 ]
 resolver = "3"
 
@@ -29,7 +31,7 @@ tracing = "0.1.44"
 bytes = "1"
 
 [workspace.package]
-version = "0.68.1"
+version = "0.69.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/crustyrustacean/rho-coding-agent"

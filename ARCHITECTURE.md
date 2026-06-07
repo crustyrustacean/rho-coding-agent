@@ -81,7 +81,7 @@ Security controls: command denylist, sandbox-scoped working directory, structure
 Syntax highlighting and structural code awareness. Serves two roles:
 
 1. **Structural understanding** — Tools use tree-sitter to reason about code (find function boundaries, validate edit regions).
-2. **Rendering** — The TUI uses tree-sitter to syntax-highlight code blocks and diffs.
+2. **Rendering** — Tools and extensions use tree-sitter to syntax-highlight code blocks and diffs.
 
 Currently ships the Rust grammar. PowerShell, TOML, and JSON grammars are future additions.
 
@@ -103,7 +103,7 @@ Enables user-authored TypeScript extensions that add tools, hooks, and commands 
 - **`ExtensionLoader`** — orchestrates discovery, filtering (config-driven), spawning, tool registration, and hot reload (mtime-based change detection).
 - **`DenoTool`** — wraps extension tool functions as `Box<dyn Tool>` for the `ToolRegistry`.
 - **`DenoObserver`** — wraps extension hooks as `AgentObserver` for agent-loop event interception.
-- **`CompositeObserver`** — fans out agent-loop events to REPL/RPC observer + extension observers. First `Block` wins for tool-call interception.
+- **`CompositeObserver`** — fans out agent-loop events to RPC observer + extension observers. First `Block` wins for tool-call interception.
 - **TypeScript transpilation** — `deno_ast` transpiles `.ts` to JS at load time (no external Deno CLI needed).
 - **Host functions** — `rho.log()`, `rho.readFile()`, `rho.writeFile()`, `rho.runCommand()`, `rho.getModel()`, `rho.getCwd()` with permission gating.
 - **Config** — `[extensions]` section in config.toml with enabled/disabled allowlists and per-extension permissions.
@@ -113,84 +113,100 @@ Extension directories: `~/.rho/extensions/` (user-level) and `.rho/extensions/` 
 
 ### `rho` — Binary Entry Point
 
-Assembles all layers and dispatches to the selected execution mode.
+Assembles all layers and runs the headless JSON-RPC 2.0 protocol over stdin/stdout.
 
 **Startup sequence (`App::build`):**
-1. Parse CLI arguments (`Cli` — `--mode`, `--model`, `--endpoint`, `--api-key-env`, session flags, etc.)
+1. Parse CLI arguments (`Cli` — `--model`, `--endpoint`, `--api-key-env`, session flags, etc.)
 2. Load config (two-tier TOML)
 3. Construct `ProviderRegistry` from config + CLI overrides
-4. Run interactive startup phases (consent, context files, model picker) — headless in RPC mode
+4. Check provider type compatibility and external provider consent (`--accept-external-provider` required for external endpoints)
 5. Create tool registry and register built-in tools
 6. Discover and load TypeScript extensions via `ExtensionLoader` (spawn V8 isolates, register extension tools)
-7. Build `CompositeObserver` from REPL/RPC observer + extension `DenoObserver`s
-8. Compose system prompt (base + trusted context files + environment block)
-9. Construct session (persisted, resumed, or ephemeral)
-10. Fire extension `onLoad` hooks
+7. Build `CompositeObserver` from RPC observer + extension `DenoObserver`s
+8. Scan context files (headless policy: auto-deny new/changed files)
+9. Compose system prompt (base + trusted context files + environment block)
+10. Resolve model identifier (requires `--model`)
+11. Construct session (persisted, resumed, or ephemeral)
+12. Fire extension `onLoad` hooks
 
-**Mode dispatch (`App::run`):** routes to the selected mode after startup.
+**`App::run`):** fires extension `onLoad` hooks, then starts the JSON-RPC 2.0 loop via `run_rpc`.
 
-## Execution Modes
+## Execution Mode: JSON-RPC 2.0
 
-rho supports three execution modes selected via `--mode` (default: `repl`):
+rho runs as a headless agent communicating via **JSON-RPC 2.0** over stdin/stdout. All requests must include `"jsonrpc": "2.0"`, a `method` field, optional `params`, and a numeric or string `id` for response correlation. Streaming events are delivered as JSON-RPC notifications (no `id` field).
 
-### REPL Mode (default)
-
-Interactive terminal session. Reads prompts from stdin, renders output to the terminal.
-
-- `ReplObserver` — prints agent events (tool calls, errors, reasoning) to stdout
-- `ReplApprovalGate` — reads `y/N` from stdin for destructive tool calls
-- `ReplPresenter` — all formatted terminal output (startup messages, slash commands, context bar)
-
-### RPC Mode (`--mode rpc`)
-
-Headless JSONL over stdin/stdout for process integration with editors, bots, and custom UIs.
+Diagnostic output (warnings, budget info, session status) is written to **stderr**, keeping **stdout** exclusively for the protocol.
 
 ```
 # Example session
-echo '{"type":"prompt","message":"fix the bug"}' | rho --mode rpc --model <id>
+echo '{"jsonrpc":"2.0","method":"prompt","params":{"message":"fix the bug"},"id":1}' | rho --model <id>
 ```
 
 The core RPC loop is generic over I/O (`run_rpc_on<R, W>`) so the in-process integration tests can inject canned stdin and capture stdout without touching real file descriptors. The public entry point (`run_rpc`) delegates with real `io::stdin()` and `io::stdout()`.
 
-**Integration tests.** 43 end-to-end tests in `rho/src/rpc.rs` cover the full JSONL protocol: Tests use `MockChatClient` via `TestProvider` (in `rho-test-helpers`) and construct `App` directly (bypassing CLI startup) to exercise the RPC adapter layer over the real agent loop.
+**Integration tests.** 34 end-to-end tests in `rho/src/rpc.rs` cover the full JSON-RPC 2.0 protocol. Tests use `MockChatClient` via `TestProvider` (in `rho-test-helpers`) and construct `App` directly (bypassing CLI startup) to exercise the RPC adapter layer over the real agent loop.
 
-**Commands (stdin → rho):**
+### Protocol
 
-| `type` | Fields | Description |
+**Methods (stdin → rho):**
+
+| Method | Params | Description |
 |---|---|---|
-| `prompt` | `message` | Send a user message to the agent |
+| `prompt` | `{message: string}` | Send a user message to the agent |
 | `abort` | — | Cancel the current operation |
-| `get_state` | — | Return current model / provider |
-| `get_messages` | — | Return all messages on active path |
-| `set_model` | `model` | Switch the active model |
-| `get_session_stats` | — | Return token budget / usage info |
+| `clear` | — | Clear conversation history |
+| `getState` | — | Return model, provider, and cwd |
+| `getMessages` | — | Return all messages on active path |
+| `setModel` | `{model: string}` | Switch the active model |
+| `listModels` | — | List available models from providers |
+| `getSessionStats` | — | Return token budget / usage info |
+| `listSessions` | — | List previous sessions for project |
+| `listExtensions` | — | List loaded extensions and tools |
+| `reloadExtensions` | — | Reload extensions from disk |
 | `compact` | — | Trigger context compaction |
+| `approvalResponse` | `{approved: boolean}` | Respond to an `approval/request` notification |
 
-**Events (rho → stdout):**
+**Notifications (rho → stdout, no `id`):**
 
-| `type` | Fields | Description |
+| Method | Params | Description |
 |---|---|---|
 | `ready` | — | Emitted once on startup |
-| `agent_start` | — | Agent began processing a prompt |
-| `agent_end` | `reply` | Agent finished; full text reply |
-| `agent_error` | `error` | Agent loop encountered an error |
-| `state_change` | `state` | Loop state transition (`thinking`, `executing_tool`, etc.) |
-| `message_update` | `delta` | Streaming text chunk |
-| `reasoning_delta` | `delta` | Streaming reasoning/chain-of-thought chunk |
-| `tool_call` | `name`, `arguments` | Model requested a tool call |
-| `tool_result` | `name`, `is_error`, `output` | Tool finished executing |
-| `tool_denied` | `name` | Tool call denied by approval gate |
-| `approval_request` | `tool`, `arguments`, `risk` | Approval required — send `{"type":"approval_response","approved":true}` |
-| `response` | `success`, [`error`] | Command acknowledgment |
+| `agent/start` | — | Agent began processing a prompt |
+| `agent/end` | `{reply: string}` | Agent finished; full text reply |
+| `agent/error` | `{error: string}` | Agent loop encountered an error |
+| `state/change` | `{state: string}` | Loop state transition |
+| `message/delta` | `{delta: string}` | Streaming text chunk |
+| `reasoning/delta` | `{delta: string}` | Streaming reasoning chunk |
+| `tool/call` | `{name, arguments}` | Model requested a tool call |
+| `tool/result` | `{name, is_error, output}` | Tool finished executing |
+| `tool/denied` | `{name}` | Tool call denied by approval gate |
+| `approval/request` | `{tool, arguments, risk}` | Approval required — send `approvalResponse` |
 
-**Headless startup policy:**
-- Provider consent requires `--accept-external-provider` (no interactive prompt).
+**Error codes:**
+
+| Code | Meaning |
+|---|---|
+| `-32700` | Parse error |
+| `-32600` | Invalid request |
+| `-32601` | Method not found |
+| `-32602` | Invalid params |
+| `-32603` | Internal error |
+
+### Approval flow
+
+When rho emits an `approval/request` notification it blocks until it reads an `approvalResponse` method from stdin:
+
+```json
+{"jsonrpc": "2.0", "method": "approvalResponse", "params": {"approved": true}, "id": 2}
+```
+
+Sending `approved: false` denies the tool call and lets the agent continue.
+
+### Headless startup policy
+
+- Provider consent requires `--accept-external-provider` (or `--endpoint`); no interactive prompt.
 - Context file trust: already-trusted files load silently; new/changed files are auto-denied.
-- Model picker: requires `--model` (returns an error instead of interactive selection).
-
-### TUI Mode (future)
-
-Rich terminal UI with streaming output, syntax highlighting, and inline approval prompts. Planned for Phase 4.
+- Model resolution: requires `--model`; returns an error if the model is not found in any provider's list.
 
 ### `rho-test-helpers` — Shared Test Utilities (dev-only)
 
@@ -231,7 +247,7 @@ Before sending to the model, `rho` constructs a `ChatRequest` containing:
 
 #### B. Model Inference
 
-The request is sent via the `ChatClient` trait to an OpenAI-compatible API (e.g., LM Studio, Ollama). The model returns either:
+The request is sent via the `LlmService` trait to an OpenAI-compatible API (e.g., LM Studio, Ollama). The model returns either:
 1. **Text content** — A direct response (no more tools needed).
 2. **Tool calls** — One or more `ModelToolCall` values requesting tool execution.
 
@@ -289,19 +305,14 @@ rho/                # Binary entry point (`rho` CLI)
   src/
     main.rs         # Thin entry: parse CLI, build App, run
     lib.rs          # Module declarations
-    cli.rs          # `Cli` + `Mode` enum (--mode repl|rpc)
-    app.rs          # `App::build` (startup phases, extension loading) + `App::run` (mode dispatch)
-    model.rs        # Model resolution + interactive picker
-    ext_observer.rs # `CompositeObserver` — fans out to REPL/RPC + extension observers
-    gate.rs         # Approval gate module root
-    gate/
-      interactive.rs # `ReplApprovalGate` — reads y/N from stdin
-    rpc.rs          # RPC mode: `run_rpc`, `run_rpc_on`, `RpcObserver`, `RpcApprovalGate`
-    repl.rs         # `run_repl` — interactive REPL loop with `/reload`, `/extensions`
+    cli.rs          # `Cli` struct (model, endpoint, session flags, etc.)
+    app.rs          # `App::build` (startup phases, extension loading) + `App::run` (JSON-RPC loop)
+    model.rs        # Model resolution
+    ext_observer.rs # `CompositeObserver` — fans out to RPC observer + extension observers
+    rpc.rs          # JSON-RPC 2.0 protocol: `run_rpc`, `run_rpc_on`, `RpcObserver`, `RpcApprovalGate`
     presenter.rs    # Presenter module root
     presenter/
-      repl.rs       # `ReplPresenter` — all REPL terminal output
-      rpc.rs        # `RpcPresenter` — startup output for RPC mode
+      rpc.rs        # `RpcPresenter` — diagnostic output to stderr
 rho-ai/             # Unified LLM provider abstraction
   src/
     lib.rs          # Re-exports: `LlmService`, `EventStream`, unified types
@@ -415,7 +426,7 @@ cliff.toml          # git-cliff configuration
 |---|---|---|
 | `Tool` | `tool.rs` | Trait: `name`, `description`, `schema`, `risk`, `execute` |
 | `ToolRegistry` | `tool.rs` | Maps tool names to `Box<dyn Tool>` |
-| `ToolRisk` | `tool.rs` | `Read`, `Write`, `Destructive` |
+| `ToolRisk` | `tool.rs` | `Read`, `Write`, `Destructive`, `Network` |
 | `ToolResult` | `tool.rs` | Result of a tool execution |
 | `ToolSchema` | `schema.rs` | Wire-format tool definition |
 | `CancellationToken` | `tool.rs` | Cooperative cancellation signal |
@@ -429,7 +440,7 @@ cliff.toml          # git-cliff configuration
 | `StreamEvent` | `rho-ai/types.rs` | Streaming response event (`Text`, `Reasoning`, `ToolUse*`, `Done`) |
 | `AccumulatedResponse` | `rho-ai/types.rs` | Fully-accumulated response (text + tool calls + usage) |
 | `RhoAiClient` | `client/mod.rs` | Wraps `LlmService` for use in the agent loop |
-| `Provider` | `provider.rs` | Trait: `name`, `is_external`, `list_models`, `clone_boxed_service` |
+| `Provider` | `provider.rs` | Trait: `name`, `is_external`, `list_models`, `clone_boxed_service`, `llm_service` |
 | `ProviderRegistry` | `provider.rs` | Ordered collection of `Box<dyn Provider>` |
 | `ModelInfo` | `client/mod.rs` | A model entry from `/v1/models` |
 | `ProviderConfig` | `config.rs` | Endpoint and API key env var configuration |
@@ -501,7 +512,7 @@ cliff.toml          # git-cliff configuration
 | `DenoTool` | `rho-ext/src/deno_tool.rs` | `Tool` trait wrapper for extension functions |
 | `DenoObserver` | `rho-ext/src/deno_observer.rs` | `AgentObserver` wrapper for extension hooks |
 | `LoadedExtension` | `rho-ext/src/manifest.rs` | Parsed extension manifest (tools, hooks, commands) |
-| `CompositeObserver` | `rho/src/ext_observer.rs` | Fans out to REPL/RPC + extension observers |
+| `CompositeObserver` | `rho/src/ext_observer.rs` | Fans out to RPC observer + extension observers |
 | `ExtensionError` | `rho-ext/src/error.rs` | Transpile, load, manifest, execution errors |
 | `InterceptResult` | `rho-core/src/agent.rs` | `Block`/`Allow` for tool-call interception
 

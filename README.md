@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./License.txt)
 [![Rust 2024 Edition](https://img.shields.io/badge/edition-2024-orange.svg)](https://doc.rust-lang.org/edition-guide/rust-2024/index.html)
 
-A local coding agent written in Rust. rho runs in your terminal, talks to a model on your machine, and uses tools to read files, edit code, and run commands — with your approval at every step.
+A local coding agent written in Rust. rho runs as a headless process communicating via JSON-RPC 2.0 over stdin/stdout, talks to a model on your machine, and uses tools to read files, edit code, and run commands — with your approval at every step.
 
 ## Features
 
@@ -15,7 +15,7 @@ A local coding agent written in Rust. rho runs in your terminal, talks to a mode
 - 📂 **Project-aware** — auto-detects project root, loads context files (`AGENTS.md`, `CLAUDE.md`, `.cursorrules`, etc.) with hash-verified trust
 - ⚙️ **Configurable** — two-tier TOML config (user-level `~/.rho/config.toml` + project-level `.rho/config.toml`), per-tool approval policies, command denylist
 - 🧠 **Local and remote models** — targets OpenAI-compatible endpoints (LM Studio, Ollama, OpenAI, Groq, OpenRouter, DeepInfra, and more)
-- 🔌 **RPC mode** — headless JSONL over stdin/stdout for embedding in editors, bots, and custom UIs (`--mode rpc`)
+- 🔌 **JSON-RPC 2.0** — headless protocol over stdin/stdout for embedding in editors, bots, and custom UIs
 
 ## Quick Start
 
@@ -26,16 +26,17 @@ A local coding agent written in Rust. rho runs in your terminal, talks to a mode
 2. **Build and run:**
 
    ```sh
-   cargo run --package rho
+   cargo run --package rho --model <model-id>
    ```
 
-3. **Ask the agent to do something:**
+3. **Send a prompt via JSON-RPC:**
 
-   ```
-   User: list the Rust source files in this project and tell me what each does
+   ```sh
+   echo '{"jsonrpc":"2.0","method":"prompt","params":{"message":"list the source files"},"id":1}' | \
+     cargo run --package rho --model <model-id>
    ```
 
-   rho will use its tools to read your project, ask for approval before writing files or running commands, and report back.
+   rho will use its tools to read your project, emit streaming events as notifications, and return a response via JSON-RPC.
 
 ### Using an external provider (e.g. OpenAI)
 
@@ -76,7 +77,6 @@ rho [OPTIONS]
 
 Options:
   -m, --model <MODEL>                    Model identifier (auto-detected if omitted)
-      --mode <MODE>                      Execution mode: `repl` (default) or `rpc`
   -s, --system <SYSTEM>                  Override the system prompt
       --compact                          Use a compact prompt for small-context models (~100 tokens)
       --root <ROOT>                      Project/sandbox root (auto-detected if omitted)
@@ -90,34 +90,21 @@ Options:
       --ephemeral                        Run without disk persistence
 ```
 
-### REPL Commands
+## JSON-RPC 2.0 Protocol
 
-| Command | Action |
-|---|---|
-| `/clear` | Reset conversation history (keeps system prompt) |
-| `/models` | List all models across all providers |
-| `/model <id>` | Switch to a model (fuzzy match or `provider/model` syntax) |
-| `/paste` | Enter multi-line paste mode (or `/paste <file>` to read from a file) |
-| `/sessions` | List recent sessions for this project |
-| `/status` | Show context window usage |
-| `/reload` | Hot-reload TypeScript extensions from disk |
-| `/extensions` | List loaded extension names |
-| `/quit` | Exit the agent |
+rho communicates via [JSON-RPC 2.0](https://www.jsonrpc.org/specification) over stdin/stdout. Diagnostic output (warnings, budget info) goes to stderr.
 
-### RPC Mode
-
-Run rho as a headless agent controlled via JSONL:
+### Example
 
 ```sh
-echo '{"type":"prompt","message":"list the source files"}' | \
+echo '{"jsonrpc":"2.0","method":"prompt","params":{"message":"list the source files"},"id":1}' | \
   cargo run --package rho -- \
-    --mode rpc \
     --ephemeral \
     --endpoint http://localhost:1234/v1/chat/completions \
     --model my-model
 ```
 
-Output is a stream of JSONL events (`ready`, `agent_start`, `message_update`, `tool_call`, `tool_result`, `agent_end`, etc.). See [ARCHITECTURE.md](ARCHITECTURE.md) for the full protocol reference.
+Output is a stream of JSON-RPC responses and notifications (`ready`, `agent/start`, `message/delta`, `tool/call`, `tool/result`, `agent/end`, etc.). See [ARCHITECTURE.md](ARCHITECTURE.md) for the full protocol reference.
 
 ## Configuration
 
@@ -187,7 +174,7 @@ rho treats model output as untrusted and applies defense-in-depth:
 
 ```
 ┌──────────────────┐
-│      rho         │  ← Binary: CLI, REPL, RPC, wiring
+│      rho         │  ← Binary: CLI, JSON-RPC 2.0 protocol
 ├──────────────────┤
 │    rho-ext       │  ← TypeScript extension runtime (V8/deno-core)
 ├──────────────────┤
@@ -222,12 +209,14 @@ rho/                  # Binary entry point + library crate
   src/
     main.rs           # Thin: parse CLI, build App, run
     lib.rs            # Module declarations
-    cli.rs            # CLI argument parsing (17 flags)
+    cli.rs            # CLI argument parsing
     app.rs            # App struct — startup orchestration, extension loading
-    ext_observer.rs   # CompositeObserver — fans out to REPL + extension observers
-    gate.rs           # REPL approval gate (replaced by TUI in Phase 4)
-    repl.rs           # REPL loop: /reload, /extensions, /model, /paste, etc.
-    rpc.rs            # RPC mode — headless JSONL protocol
+    model.rs          # Model resolution
+    ext_observer.rs   # CompositeObserver — fans out to RPC + extension observers
+    rpc.rs            # JSON-RPC 2.0 protocol (methods, notifications, approval gate)
+    presenter.rs      # Presenter module root
+    presenter/
+      rpc.rs          # RpcPresenter — diagnostic output to stderr
 rho-ai/               # Unified LLM provider abstraction (streaming, retry, SSE)
 rho-ext/              # TypeScript extension runtime (V8/deno-core)
 rho-core/             # Agent kernel (loop, types, traits, config)
