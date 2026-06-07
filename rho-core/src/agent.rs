@@ -249,6 +249,10 @@ pub struct AgentConfig {
     /// may repeat before the agent injects a stuck-loop nudge. Set to 0 to
     /// disable stuck-loop detection.
     pub stuck_loop_threshold: u32,
+    /// Maximum number of consecutive empty model responses before aborting
+    /// with an error. Empty responses consume iterations without making
+    /// progress. Set to 0 to allow unlimited empty retries (not recommended).
+    pub max_consecutive_empty: u32,
     /// Whether to display full chain-of-thought reasoning in the output.
     /// When `false`, shows a one-line summary instead.
     pub show_reasoning: bool,
@@ -279,6 +283,7 @@ impl std::fmt::Debug for AgentConfig {
             .field("initial_backoff_ms", &self.initial_backoff_ms)
             .field("approval_policy", &"<dyn ApprovalPolicy>")
             .field("stuck_loop_threshold", &self.stuck_loop_threshold)
+            .field("max_consecutive_empty", &self.max_consecutive_empty)
             .field("show_reasoning", &self.show_reasoning)
             .field(
                 "context_pressure_threshold",
@@ -299,6 +304,7 @@ impl Default for AgentConfig {
             initial_backoff_ms: 500,
             approval_policy: Box::new(DefaultApprovalPolicy),
             stuck_loop_threshold: 3,
+            max_consecutive_empty: 5,
             show_reasoning: false,
             context_pressure_threshold: 0,
             context_pressure_interval: 5,
@@ -321,6 +327,7 @@ impl AgentConfig {
             initial_backoff_ms: config.agent.initial_backoff_ms,
             approval_policy: Box::new(ConfigApprovalPolicy::new(config)),
             stuck_loop_threshold: config.agent.stuck_loop_threshold,
+            max_consecutive_empty: config.agent.max_consecutive_empty,
             show_reasoning: config.agent.show_reasoning,
             context_pressure_threshold: config.agent.context_pressure_threshold,
             context_pressure_interval: config.agent.context_pressure_interval,
@@ -420,6 +427,8 @@ struct LoopContext<'a> {
     phase: crate::session::phase::SessionPhase,
     /// Whether any edit/write tools have been executed in this loop.
     has_had_edits: bool,
+    /// Number of consecutive empty model responses (for abort threshold).
+    consecutive_empty_count: u32,
 }
 
 impl LoopContext<'_> {
@@ -512,6 +521,8 @@ impl LoopContext<'_> {
                 text,
                 reasoning_content,
             } => {
+                // Model produced actual output — reset empty counter.
+                self.consecutive_empty_count = 0;
                 info!(reply_len = text.len());
                 if !reasoning_content.is_empty() {
                     info!(
@@ -539,6 +550,8 @@ impl LoopContext<'_> {
                         AgentError::ProtocolViolation("empty tool_calls".to_string()).into(),
                     );
                 }
+                // Model produced tool calls — reset empty counter.
+                self.consecutive_empty_count = 0;
                 Ok(self.classify_first_call(calls))
             }
         }
@@ -608,9 +621,10 @@ impl LoopContext<'_> {
                 // Feed the error back to the model as a tool result so it can
                 // see what went wrong and retry.
                 warn!(error = %e, "tool execution failed, feeding error back to model");
+                let msg = self.format_tool_error(&e);
                 let _ = self
                     .session
-                    .append_tool_result(call_id, &ToolResult::error(format!("{e}")));
+                    .append_tool_result(call_id, &ToolResult::error(msg));
                 return Ok(self.advance_to_next_call(remaining));
             }
         };
@@ -698,7 +712,27 @@ impl LoopContext<'_> {
         // LM Studio) that report "stop" instead of "length" when the
         // completion budget is exhausted during thinking.
         if content.is_empty() && reasoning_content.is_empty() {
-            warn!("model produced empty response, injecting nudge and retrying");
+            self.consecutive_empty_count += 1;
+            let max = self.params.config.max_consecutive_empty;
+            if max > 0 && self.consecutive_empty_count >= max {
+                let count = self.consecutive_empty_count;
+                error!(
+                    count,
+                    max, "aborting: model produced {count} consecutive empty responses"
+                );
+                self.params.observer.on_state_change(AgentState::Idle);
+                return Ok(State::Done(
+                    "The model returned empty responses \
+                        consecutively and was unable to continue. \
+                        This may indicate the model is not functioning \
+                        correctly or is too small for the task."
+                        .to_owned(),
+                ));
+            }
+            warn!(
+                count = self.consecutive_empty_count,
+                "model produced empty response, injecting nudge and retrying"
+            );
             self.session.append_user_message(
                 "Your previous response was empty. Please provide a \
                  tool call or text response and try again.",
@@ -707,6 +741,7 @@ impl LoopContext<'_> {
         }
 
         // Attempt compaction to free context space, then retry.
+        self.consecutive_empty_count = 0;
         let strategy = self.make_compaction_strategy();
         let budget = self.session.message_budget();
         let compact_threshold = budget / 4;
@@ -861,6 +896,26 @@ impl LoopContext<'_> {
 
     // ── Formatting helpers ───────────────────────────────────────────────
 
+    /// Format a tool error for the model, adding actionable hints for
+    /// common failure modes (e.g. sandbox path resolution).
+    fn format_tool_error(&self, error: &crate::error::RhoError) -> String {
+        let base = format!("{error}");
+        if let crate::error::RhoError::Sandbox(_) = error {
+            // Sandbox path resolution failures are the #1 reason small models
+            // get stuck in retry loops. Append a hint so the model can
+            // self-correct without wasting iterations.
+            let cwd = self.session.header().cwd.to_string_lossy();
+            format!(
+                "{base}\n\nHint: paths are resolved relative to the sandbox root ({cwd}). \
+                    Use a path relative to that root (e.g. \"rho-ai/src/openai.rs\"), \
+                    not a shell-style path. Do not use \"cd\" — `read_file` and `edit_file` \
+                    are not shell commands."
+            )
+        } else {
+            base
+        }
+    }
+
     /// Format the final reply, optionally including reasoning content.
     fn format_reply(&self, text: String, reasoning_content: &str) -> String {
         if reasoning_content.is_empty() {
@@ -1008,6 +1063,7 @@ pub async fn run_loop(
         iterations: 0,
         phase: crate::session::phase::SessionPhase::default(),
         has_had_edits: false,
+        consecutive_empty_count: 0,
     };
 
     let mut state = State::Thinking;

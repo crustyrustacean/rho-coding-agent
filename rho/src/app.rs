@@ -218,16 +218,50 @@ impl App {
 
     /// Switch the active model.
     ///
-    /// Discovers which provider serves the requested model, switches
-    /// `active_provider_index` to that provider, then updates the session
-    /// and all extension observers.
+    /// Accepts a bare model ID or `provider:model` syntax:
     ///
-    /// If the model is not found on any provider (e.g. network error,
-    /// model not advertised via `/v1/models`), the current provider is
-    /// kept and the model string is still updated — matching the
+    /// - **Bare `model_id`**: Discovers which provider serves the model via
+    ///   `/v1/models`, switches `active_provider_index`, then updates the
+    ///   session and extension observers.
+    ///
+    /// - **`provider:model_id`**: Switches to the named provider directly
+    ///   (no model discovery), then sets the model string. Useful when the
+    ///   target provider is slow to respond or doesn't support `/v1/models`.
+    ///
+    /// If the model is not found on any provider (bare syntax) or the
+    /// provider name is unknown (`provider:` prefix), the current provider
+    /// is kept and the model string is still updated — matching the
     /// startup behaviour where a model is accepted verbatim with a warning.
-    pub(crate) async fn set_model(&mut self, model_id: &str) {
-        if let Some(index) = self.providers.find_model_index(model_id).await {
+    pub(crate) async fn set_model(&mut self, spec: &str) {
+        // Parse optional `provider:model` syntax.
+        let (explicit_provider, model_id) = if let Some((provider, model)) = spec.split_once(':') {
+            (Some(provider), model)
+        } else {
+            (None, spec)
+        };
+
+        if let Some(provider_name) = explicit_provider {
+            // Explicit provider selection — switch by name without model discovery.
+            if let Some(index) = self.providers.index_of(provider_name) {
+                let old_provider = self.active_provider().name().to_owned();
+                self.active_provider_index = index;
+                let new_provider = self.active_provider().name().to_owned();
+                if old_provider != new_provider {
+                    tracing::info!(
+                        old_provider = %old_provider,
+                        new_provider = %new_provider,
+                        model = %model_id,
+                        "switched provider explicitly"
+                    );
+                }
+            } else {
+                tracing::warn!(
+                    provider = %provider_name,
+                    model = %model_id,
+                    "unknown provider; keeping current provider"
+                );
+            }
+        } else if let Some(index) = self.providers.find_model_index(model_id).await {
             let old_provider = self.active_provider().name().to_owned();
             self.active_provider_index = index;
             let new_provider = self.active_provider().name().to_owned();

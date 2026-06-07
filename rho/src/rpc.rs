@@ -18,9 +18,9 @@
 //! | `clear`            | —                           | Clear conversation history         |
 //! | `getState`         | —                           | Return model, provider, and cwd  |
 //! | `getMessages`      | —                           | Return all messages on active path |
-//! | `setModel`         | `{model: string}`          | Switch the active model            |
+//! | `setModel`         | `{model: string}`          | Switch model (`id` or `provider:id`) |
 //! | `listModels`       | —                           | List available models from providers |
-//! | `getSessionStats`  | —                           | Return token budget / usage info   |
+//! | `listProviders`    | —                           | List configured providers with reachability |//! | `getSessionStats`  | —                           | Return token budget / usage info   |
 //! | `listSessions`     | —                           | List previous sessions for project |
 //! | `listExtensions`   | —                           | List loaded extensions and tools   |
 //! | `reloadExtensions` | —                           | Reload extensions from disk        |
@@ -381,6 +381,7 @@ async fn dispatch_request(
         "getMessages" => handle_get_messages(app, id, out),
         "setModel" => handle_set_model(app, params, id, out).await,
         "listModels" => handle_list_models(app, id, out).await,
+        "listProviders" => handle_list_providers(app, id, out).await,
         "getSessionStats" => handle_get_session_stats(app, id, out),
         "listSessions" => handle_list_sessions(app, id, out),
         "listExtensions" => handle_list_extensions(app, id, out),
@@ -491,12 +492,13 @@ fn handle_get_messages(app: &App, id: &Value, out: &Out) {
 /// Switch the active model.
 async fn handle_set_model(app: &mut App, params: Value, id: &Value, out: &Out) {
     match params.get("model").and_then(|v| v.as_str()) {
-        Some(m) if !m.is_empty() => {
-            app.set_model(m).await;
+        Some(spec) if !spec.is_empty() => {
+            app.set_model(spec).await;
             let provider = app.active_provider().name().to_owned();
+            let model = app.session.model().to_owned();
             write_jsonrpc(
                 out,
-                &success_response(id, json!({"model": m, "provider": provider})),
+                &success_response(id, json!({"model": model, "provider": provider})),
             );
         }
         _ => write_jsonrpc(
@@ -581,6 +583,24 @@ async fn handle_list_models(app: &App, id: &Value, out: &Out) {
         })
         .collect();
     write_jsonrpc(out, &success_response(id, json!({"models": models})));
+}
+
+/// List configured providers with reachability status.
+async fn handle_list_providers(app: &App, id: &Value, out: &Out) {
+    let providers = app.providers.list_providers().await;
+    let active = app.active_provider().name();
+    let list: Vec<Value> = providers
+        .iter()
+        .map(|p| {
+            json!({
+                "name": p.name,
+                "isExternal": p.is_external,
+                "reachable": p.reachable,
+                "active": p.name == active,
+            })
+        })
+        .collect();
+    write_jsonrpc(out, &success_response(id, json!({"providers": list})));
 }
 
 /// List previous sessions for this project.

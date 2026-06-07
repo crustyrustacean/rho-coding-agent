@@ -185,6 +185,43 @@ impl Renderer {
                 }
             }
 
+            "listProviders" => {
+                if let Some(providers) = result.get("providers").and_then(|v| v.as_array()) {
+                    if providers.is_empty() {
+                        println!("no providers configured");
+                    } else {
+                        println!("{}", "configured providers:".bold());
+                        for p in providers {
+                            let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                            let is_active =
+                                p.get("active").and_then(|v| v.as_bool()).unwrap_or(false);
+                            let reachable = p
+                                .get("reachable")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+                            let is_external = p
+                                .get("isExternal")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+
+                            let status = if is_active {
+                                "*".green().to_string()
+                            } else {
+                                " ".to_string()
+                            };
+                            let kind = if is_external { "remote" } else { "local" };
+                            let health = if reachable {
+                                "ok".green().to_string()
+                            } else {
+                                "down".red().to_string()
+                            };
+                            println!("  {status} {name} ({kind}, {health})");
+                        }
+                        println!("  {} = active", "*".green());
+                    }
+                }
+            }
+
             "getSessionStats" => {
                 let cw = result
                     .get("contextWindow")

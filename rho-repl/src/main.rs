@@ -169,8 +169,9 @@ fn history_path() -> Option<std::path::PathBuf> {
 fn print_help() {
     let lines = [
         ("  /clear", "Clear conversation history"),
-        ("  /model <id>", "Switch to a model"),
+        ("  /model <id>", "Switch model (bare id or provider:id)"),
         ("  /models", "List available models"),
+        ("  /providers", "List configured providers"),
         ("  /status", "Show context window usage"),
         ("  /sessions", "List previous sessions"),
         ("  /extensions", "List loaded extensions"),
@@ -379,6 +380,11 @@ async fn handle_input(
 
         "models" => {
             request_and_render(rho, renderer, "listModels", json!({})).await?;
+            Ok(Action::Continue)
+        }
+
+        "providers" => {
+            request_and_render(rho, renderer, "listProviders", json!({})).await?;
             Ok(Action::Continue)
         }
 

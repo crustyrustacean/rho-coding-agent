@@ -441,11 +441,18 @@ pub struct OpenAiService {
 
 impl OpenAiService {
     /// Create a new OpenAI-compatible service.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the `reqwest::Client` builder configuration is invalid.
+    /// This only occurs for system-level errors (e.g. TLS backend failure).
     pub fn new(config: ProviderConfig) -> Self {
-        Self {
-            http: Client::new(),
-            config,
-        }
+        let http = Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(30))
+            .timeout(std::time::Duration::from_mins(2))
+            .build()
+            .expect("reqwest Client builder configuration is valid");
+        Self { http, config }
     }
 
     /// Build and send the streaming HTTP request.

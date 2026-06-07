@@ -130,6 +130,17 @@ impl Provider for OpenAiCompatibleProvider {
 /// The default endpoint URL when no override or config is set.
 const DEFAULT_ENDPOINT: &str = "http://localhost:1234/v1/chat/completions";
 
+/// Summary of a configured provider for display purposes.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ProviderInfo {
+    /// Provider name.
+    pub name: String,
+    /// Whether this provider sends data externally.
+    pub is_external: bool,
+    /// Whether the provider's `/v1/models` endpoint is reachable.
+    pub reachable: bool,
+}
+
 /// A named collection of model providers.
 ///
 /// Owns one or more `Box<dyn Provider>` instances. Provides lookup by name,
@@ -336,6 +347,24 @@ impl ProviderRegistry {
             .filter(|p| p.is_external())
             .map(|p| p.name())
             .collect()
+    }
+
+    /// List all configured providers with reachability status.
+    ///
+    /// Probes each provider's `/v1/models` endpoint to determine
+    /// reachability. Returns [`ProviderInfo`] structs suitable for
+    /// display (e.g. the `/providers` REPL command).
+    pub async fn list_providers(&self) -> Vec<ProviderInfo> {
+        let mut result = Vec::new();
+        for provider in &self.providers {
+            let reachable = provider.list_models().await.is_ok();
+            result.push(ProviderInfo {
+                name: provider.name().to_owned(),
+                is_external: provider.is_external(),
+                reachable,
+            });
+        }
+        result
     }
 }
 

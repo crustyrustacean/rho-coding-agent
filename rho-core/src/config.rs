@@ -117,6 +117,10 @@ pub struct AgentLoopConfig {
     /// Set to 0 to disable. Defaults to 3.
     #[serde(default = "default_stuck_loop_threshold")]
     pub stuck_loop_threshold: u32,
+    /// Maximum number of consecutive empty model responses before aborting.
+    /// Defaults to 5. Set to 0 to allow unlimited empty retries.
+    #[serde(default = "default_max_consecutive_empty")]
+    pub max_consecutive_empty: u32,
     /// Whether to display chain-of-thought reasoning from reasoning models
     /// (DeepSeek-R1, Qwen3, etc.) in the REPL output.
     ///
@@ -169,6 +173,7 @@ impl Default for AgentLoopConfig {
             token_budget: default_token_budget(),
             completion_reserve: default_completion_reserve(),
             stuck_loop_threshold: default_stuck_loop_threshold(),
+            max_consecutive_empty: default_max_consecutive_empty(),
             show_reasoning: default_show_reasoning(),
             context_pressure_threshold: default_context_pressure_threshold(),
             context_pressure_interval: default_context_pressure_interval(),
@@ -207,6 +212,10 @@ fn default_completion_reserve() -> u32 {
 /// Default value for `stuck_loop_threshold`.
 fn default_stuck_loop_threshold() -> u32 {
     3
+}
+/// Default value for `max_consecutive_empty`.
+fn default_max_consecutive_empty() -> u32 {
+    5
 }
 /// Default value for `show_reasoning`.
 fn default_show_reasoning() -> bool {
@@ -653,6 +662,9 @@ struct WireAgentLoopConfig {
     /// Stuck-loop detection threshold.
     #[serde(default)]
     stuck_loop_threshold: Option<u32>,
+    /// Maximum consecutive empty responses.
+    #[serde(default)]
+    max_consecutive_empty: Option<u32>,
     /// Whether to display full reasoning content.
     #[serde(default)]
     show_reasoning: Option<bool>,
@@ -902,6 +914,10 @@ impl ConfigLoader {
                     .stuck_loop_threshold
                     .or(user_agent.stuck_loop_threshold)
                     .unwrap_or(default_stuck_loop_threshold()),
+                max_consecutive_empty: project_agent
+                    .max_consecutive_empty
+                    .or(user_agent.max_consecutive_empty)
+                    .unwrap_or(default_max_consecutive_empty()),
                 show_reasoning: project_agent
                     .show_reasoning
                     .or(user_agent.show_reasoning)
