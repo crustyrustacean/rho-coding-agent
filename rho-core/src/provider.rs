@@ -313,6 +313,22 @@ impl ProviderRegistry {
         None
     }
 
+    /// Find which provider has a given model ID, returning its index.
+    ///
+    /// Searches providers in order. Returns the index of the first
+    /// provider whose `list_models()` includes a model matching `model_id`,
+    /// or `None` if no provider has it.
+    pub async fn find_model_index(&self, model_id: &str) -> Option<usize> {
+        for (i, provider) in self.providers.iter().enumerate() {
+            if let Ok(list) = provider.list_models().await
+                && list.data.iter().any(|m| m.id == model_id)
+            {
+                return Some(i);
+            }
+        }
+        None
+    }
+
     /// Collect the names of all external providers.
     pub fn external_provider_names(&self) -> Vec<&str> {
         self.providers

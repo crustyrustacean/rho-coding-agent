@@ -834,15 +834,27 @@ pub struct TestProvider {
     name: String,
     /// The mock LLM service.
     client: MockChatClient,
+    /// Model IDs served by this provider.
+    models: Vec<String>,
 }
 
 impl TestProvider {
     /// Create a new test provider with the given name and mock client.
+    ///
+    /// Defaults to serving a single model named `"mock-model"`.
     pub fn new(name: &str, client: MockChatClient) -> Self {
         Self {
             name: name.to_owned(),
             client,
+            models: vec!["mock-model".to_owned()],
         }
+    }
+
+    /// Override the model IDs served by this provider.
+    #[must_use]
+    pub fn with_models(mut self, models: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.models = models.into_iter().map(Into::into).collect();
+        self
     }
 }
 
@@ -858,12 +870,16 @@ impl rho_core::Provider for TestProvider {
 
     async fn list_models(&self) -> rho_core::Result<rho_core::ModelList> {
         Ok(rho_core::ModelList {
-            data: vec![rho_core::ModelInfo {
-                id: "mock-model".to_owned(),
-                object: "model".to_owned(),
-                created: 0,
-                owned_by: "test".to_owned(),
-            }],
+            data: self
+                .models
+                .iter()
+                .map(|id| rho_core::ModelInfo {
+                    id: id.clone(),
+                    object: "model".to_owned(),
+                    created: 0,
+                    owned_by: "test".to_owned(),
+                })
+                .collect(),
         })
     }
 

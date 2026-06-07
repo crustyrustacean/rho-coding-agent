@@ -152,7 +152,11 @@ impl Renderer {
 
             "setModel" => {
                 if let Some(model) = result.get("model").and_then(|v| v.as_str()) {
-                    println!("model: {}", model.green());
+                    if let Some(provider) = result.get("provider").and_then(|v| v.as_str()) {
+                        println!("model: {} (provider: {})", model.green(), provider.dimmed());
+                    } else {
+                        println!("model: {}", model.green());
+                    }
                 }
             }
 

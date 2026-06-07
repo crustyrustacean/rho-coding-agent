@@ -216,8 +216,36 @@ impl App {
         self.providers.providers()[self.active_provider_index].as_ref()
     }
 
-    /// Switch the active model. Updates session and all extension observers.
+    /// Switch the active model.
+    ///
+    /// Discovers which provider serves the requested model, switches
+    /// `active_provider_index` to that provider, then updates the session
+    /// and all extension observers.
+    ///
+    /// If the model is not found on any provider (e.g. network error,
+    /// model not advertised via `/v1/models`), the current provider is
+    /// kept and the model string is still updated — matching the
+    /// startup behaviour where a model is accepted verbatim with a warning.
     pub(crate) async fn set_model(&mut self, model_id: &str) {
+        if let Some(index) = self.providers.find_model_index(model_id).await {
+            let old_provider = self.active_provider().name().to_owned();
+            self.active_provider_index = index;
+            let new_provider = self.active_provider().name().to_owned();
+            if old_provider != new_provider {
+                tracing::info!(
+                    old_provider = %old_provider,
+                    new_provider = %new_provider,
+                    model = %model_id,
+                    "switched provider for model"
+                );
+            }
+        } else {
+            tracing::warn!(
+                model = %model_id,
+                "model not found on any provider via /v1/models; keeping current provider"
+            );
+        }
+
         self.session.set_model(model_id);
         self.ext_loader.set_model_all(model_id).await;
     }

@@ -493,7 +493,11 @@ async fn handle_set_model(app: &mut App, params: Value, id: &Value, out: &Out) {
     match params.get("model").and_then(|v| v.as_str()) {
         Some(m) if !m.is_empty() => {
             app.set_model(m).await;
-            write_jsonrpc(out, &success_response(id, json!({"model": m})));
+            let provider = app.active_provider().name().to_owned();
+            write_jsonrpc(
+                out,
+                &success_response(id, json!({"model": m, "provider": provider})),
+            );
         }
         _ => write_jsonrpc(
             out,
@@ -832,6 +836,34 @@ mod tests {
         parse_output(&output)
     }
 
+    fn test_app_with_providers(providers: ProviderRegistry, registry: ToolRegistry) -> App {
+        let session = Session::in_memory(
+            "test-model",
+            Some("You are a helpful assistant."),
+            vec![],
+            std::path::Path::new("."),
+        )
+        .with_token_budget(rho_core::TokenBudget::default());
+        App {
+            session,
+            providers,
+            active_provider_index: 0,
+            registry,
+            config: AgentConfig::default(),
+            cancel: CancellationToken::new(),
+            ext_loader: rho_ext::loader::ExtensionLoader::new(
+                rho_core::ExtensionConfig::default(),
+                std::path::PathBuf::new(),
+                rho_core::denylist::CommandDenylist::default_powershell(),
+            ),
+            ext_observers: vec![],
+            _log_guard: tracing_appender::non_blocking(tracing_appender::rolling::never(
+                "logs", "test.log",
+            ))
+            .1,
+        }
+    }
+
     fn parse_output(bytes: &[u8]) -> Vec<Value> {
         String::from_utf8_lossy(bytes)
             .lines()
@@ -1160,6 +1192,92 @@ mod tests {
 
         let resp = &responses(&events)[0];
         assert_eq!(resp["result"]["model"], "new-model");
+        assert_eq!(resp["result"]["provider"], "test");
+    }
+
+    #[tokio::test]
+    async fn set_model_switches_provider() {
+        // Two providers: alpha serves alpha-1/alpha-2, beta serves beta-1/beta-2.
+        let providers = {
+            let mut providers = ProviderRegistry::new();
+            providers.add(Box::new(
+                TestProvider::new("alpha", MockChatClient::new(vec![]))
+                    .with_models(["alpha-1", "alpha-2"]),
+            ));
+            providers.add(Box::new(
+                TestProvider::new("beta", MockChatClient::new(vec![]))
+                    .with_models(["beta-1", "beta-2"]),
+            ));
+            providers
+        };
+
+        let app = test_app_with_providers(providers, echo_registry());
+
+        // Send setModel + getState in a single stream.
+        let msg1 = serde_json::to_string(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "setModel",
+            "params": {"model": "beta-1"},
+            "id": 1
+        }))
+        .unwrap();
+        let msg2 = serde_json::to_string(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "getState",
+            "id": 2
+        }))
+        .unwrap();
+        let stdin_data = format!(
+            "{msg1}
+{msg2}
+"
+        );
+        let reader = Cursor::new(stdin_data.as_bytes().to_vec());
+        let writer = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let writer_clone = std::sync::Arc::clone(&writer);
+
+        run_rpc_on(app, reader, WriterWrapper(writer_clone))
+            .await
+            .expect("should not panic");
+
+        let output = std::sync::Arc::try_unwrap(writer)
+            .unwrap()
+            .into_inner()
+            .unwrap();
+        let events = parse_output(&output);
+        let all_resps = responses(&events);
+
+        // setModel response: model switched to beta-1, provider switched to beta.
+        assert_eq!(all_resps[0]["result"]["model"], "beta-1");
+        assert_eq!(all_resps[0]["result"]["provider"], "beta");
+
+        // getState confirms the switch persisted.
+        assert_eq!(all_resps[1]["result"]["provider"], "beta");
+        assert_eq!(all_resps[1]["result"]["model"], "beta-1");
+    }
+
+    #[tokio::test]
+    async fn set_model_keeps_provider_when_not_found() {
+        // Provider test only serves mock-model.
+        let events = rpc_run(
+            MockChatClient::new(vec![]),
+            echo_registry(),
+            &[
+                r#"{"jsonrpc":"2.0","method":"setModel","params":{"model":"unknown-model"},"id":1}"#,
+                r#"{"jsonrpc":"2.0","method":"getState","id":2}"#,
+            ],
+        )
+        .await;
+
+        let resps = responses(&events);
+
+        // setModel response should have the model and current provider.
+        assert_eq!(resps[0]["result"]["model"], "unknown-model");
+        assert_eq!(resps[0]["result"]["provider"], "test");
+
+        // getState should confirm the provider did not change.
+        assert_eq!(resps[1]["result"]["provider"], "test");
+        assert_eq!(resps[1]["result"]["model"], "unknown-model");
     }
 
     #[tokio::test]

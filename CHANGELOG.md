@@ -1,3 +1,16 @@
+## [0.69.1] - 2026-06-07
+
+### 🐛 Bug Fixes
+
+- *(provider)* `/model` now discovers and switches the correct provider when changing models at runtime — previously only updated the session model string, leaving requests routed to the startup provider
+- *(rpc)* `setModel` response now includes the active provider name
+- *(repl)* `/model` output now shows the active provider alongside the model name
+
+## [0.68.1] - 2026-06-06
+
+### 🚀 Features
+
+- *(rpc)* [**breaking**] Switch to JSON-RPC 2.0 protocol
 ## [0.68.1] - 2026-06-07
 
 ### 🚀 Features
