@@ -31,6 +31,13 @@
 //! the project-level list **replaces** the user-level list, it does not
 //! append. This avoids surprising composition effects and keeps overrides
 //! predictable.
+//!
+//! For providers (`[[providers]]`):
+//! project-level providers **merge** with user-level providers by name.
+//! A project provider with the same name overrides the user's; a new name
+//! is added; user providers with no project match are preserved. This lets
+//! users configure providers once globally and override selectively per
+//! project.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -650,6 +657,40 @@ struct WireAgentLoopConfig {
     compaction_mode: Option<String>,
 }
 
+// ── Provider merge ──────────────────────────────────────────────────────────
+
+/// Merge user-level and project-level provider configurations.
+///
+/// Project-level providers override user-level providers by **name**.
+/// A project provider with the same name as a user provider replaces it
+/// entirely (all fields come from the project). A project provider with
+/// a new name is appended. User providers with no matching project
+/// provider are preserved in their original order.
+///
+/// This allows a user to configure providers once in `~/.rho/config.toml`
+/// and have project configs selectively override or add providers without
+/// losing the global configuration.
+fn merge_providers(user: &[ProviderConfig], project: &[ProviderConfig]) -> Vec<ProviderConfig> {
+    let project_names: std::collections::HashSet<&str> =
+        project.iter().filter_map(|p| p.name.as_deref()).collect();
+
+    let mut merged = Vec::with_capacity(user.len() + project.len());
+
+    // 1. User providers that are NOT overridden by a project provider.
+    for p in user {
+        if !project_names.contains(p.name.as_deref().unwrap_or("")) {
+            merged.push(p.clone());
+        }
+    }
+
+    // 2. All project providers (both overrides and new additions).
+    //    These come after user providers to maintain deterministic ordering
+    //    and ensure project providers are the "active" versions.
+    merged.extend(project.iter().cloned());
+
+    merged
+}
+
 // ── ConfigLoader ──────────────────────────────────────────────────────────────
 
 /// Loads and merges rho configuration from user-level and project-level files.
@@ -700,8 +741,9 @@ impl ConfigLoader {
     ///
     /// For providers: project `[[providers]]` > user `[[providers]]` >
     /// project `[provider]` > user `[provider]` > empty. Project-level
-    /// `[[providers]]` **replaces** user-level `[[providers]]` (same as
-    /// other `Vec` fields — no appending).
+    /// `[[providers]]` **merges** with user-level by provider name: a project
+    /// provider with the same name overrides the user's, a new name is added,
+    /// and user providers with no project match are preserved.
     #[allow(clippy::too_many_lines)]
     fn merge(user: Option<WireConfig>, project: Option<WireConfig>) -> RhoConfig {
         let user = user.unwrap_or_default();
@@ -760,14 +802,14 @@ impl ConfigLoader {
             },
             provider: {
                 // New `[[providers]]` format takes precedence over legacy `[provider]`.
-                // Project-level replaces user-level (same as other Vec fields).
+                // Project-level merges with user-level by name: a project provider
+                // with the same name overrides the user's, a new name is added,
+                // and user providers with no project match are preserved.
                 let pp = project.providers.unwrap_or_default();
                 let up = user.providers.unwrap_or_default();
 
-                let entries = if !pp.is_empty() {
-                    pp
-                } else if !up.is_empty() {
-                    up
+                let entries = if !pp.is_empty() || !up.is_empty() {
+                    merge_providers(&up, &pp)
                 } else {
                     // Fall back to legacy single-provider config.
                     let legacy = project.provider.or(user.provider);
@@ -1628,7 +1670,7 @@ endpoint = "http://modern:1234/v1/chat/completions"
     }
 
     #[test]
-    fn providers_project_replaces_user() {
+    fn providers_project_merges_with_user() {
         let user_wire: WireConfig = toml::from_str(
             r#"
 [[providers]]
@@ -1648,12 +1690,72 @@ api_key_env = "OPENROUTER_API_KEY"
         .unwrap();
 
         let config = ConfigLoader::merge(Some(user_wire), Some(project_wire));
-        // Project replaces user (same as other Vec fields).
+        // Project adds a new provider (different name), user provider preserved.
+        assert_eq!(config.provider.providers.len(), 2);
+        assert_eq!(
+            config.provider.providers[0].name.as_deref(),
+            Some("user-local")
+        );
+        assert_eq!(
+            config.provider.providers[1].name.as_deref(),
+            Some("project-openrouter")
+        );
+    }
+
+    #[test]
+    fn providers_project_overrides_user_by_name() {
+        let user_wire: WireConfig = toml::from_str(
+            r#"
+[[providers]]
+name = "openrouter"
+endpoint = "http://localhost:1234/v1/chat/completions"
+"#,
+        )
+        .unwrap();
+        let project_wire: WireConfig = toml::from_str(
+            r#"
+[[providers]]
+name = "openrouter"
+endpoint = "https://openrouter.ai/api/v1/chat/completions"
+api_key_env = "OPENROUTER_API_KEY"
+"#,
+        )
+        .unwrap();
+
+        let config = ConfigLoader::merge(Some(user_wire), Some(project_wire));
+        // Project overrides user provider with the same name.
+        assert_eq!(config.provider.providers.len(), 1);
+        let p = config.provider.default_provider().unwrap();
+        assert_eq!(p.name.as_deref(), Some("openrouter"));
+        assert_eq!(p.api_key_env.as_deref(), Some("OPENROUTER_API_KEY"));
+    }
+
+    #[test]
+    fn providers_project_only_adds_to_user() {
+        let user_wire: WireConfig = toml::from_str(
+            r#"
+[[providers]]
+name = "local"
+endpoint = "http://localhost:1234/v1/chat/completions"
+"#,
+        )
+        .unwrap();
+        let project_wire: WireConfig = toml::from_str(
+            r#"
+[agent]
+model = "gpt-4o"
+"#,
+        )
+        .unwrap();
+
+        let config = ConfigLoader::merge(Some(user_wire), Some(project_wire));
+        // Project doesn't set any provider; user providers preserved.
         assert_eq!(config.provider.providers.len(), 1);
         assert_eq!(
             config.provider.default_provider().unwrap().name.as_deref(),
-            Some("project-openrouter")
+            Some("local")
         );
+        assert_eq!(config.agent.model.as_deref(), Some("gpt-4o"));
     }
 
     #[test]
