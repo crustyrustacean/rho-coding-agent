@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./License.txt)
 [![Rust 2024 Edition](https://img.shields.io/badge/edition-2024-orange.svg)](https://doc.rust-lang.org/edition-guide/rust-2024/index.html)
 
-A local coding agent written in Rust. rho runs as a headless process communicating via JSON-RPC 2.0 over stdin/stdout, talks to a model on your machine, and uses tools to read files, edit code, and run commands — with your approval at every step.
+A local coding agent written in Rust. `rho` runs as a headless process communicating via JSON-RPC 2.0 over stdin/stdout, talks to a model on your machine, and uses tools to read files, edit code, and run commands — with your approval at every step. `rho-repl` provides an interactive terminal experience on top.
 
 ## Features
 
@@ -19,17 +19,23 @@ A local coding agent written in Rust. rho runs as a headless process communicati
 
 ## Quick Start
 
+### Prerequisites
+
+- Rust toolchain (edition 2024)
+- [PowerShell 7+](https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell) (`pwsh`) — required for shell command execution
+- A local model server (e.g. [LM Studio](https://lmstudio.ai/) or [Ollama](https://ollama.com/)) on `localhost:1234`, **or** an API key for an external provider
+
 ### Using a local model
 
-1. **Start a local model server** (e.g. [LM Studio](https://lmstudio.ai/) or [Ollama](https://ollama.com/)) on `localhost:1234`.
+1. **Start a local model server** on `localhost:1234`.
 
-2. **Build and run:**
+2. **Build and run the interactive client:**
 
    ```sh
-   cargo run --package rho --model <model-id>
+   cargo run --package rho-repl --model <model-id>
    ```
 
-3. **Send a prompt via JSON-RPC:**
+   Or run `rho` headless and send prompts via JSON-RPC:
 
    ```sh
    echo '{"jsonrpc":"2.0","method":"prompt","params":{"message":"list the source files"},"id":1}' | \
@@ -174,7 +180,9 @@ rho treats model output as untrusted and applies defense-in-depth:
 
 ```
 ┌──────────────────┐
-│      rho         │  ← Binary: CLI, JSON-RPC 2.0 protocol
+│      rho         │  ← Headless JSON-RPC 2.0 agent
+├──────────────────┤
+│    rho-repl      │  ← Interactive terminal client (spawns rho)
 ├──────────────────┤
 │    rho-ext       │  ← TypeScript extension runtime (V8/deno-core)
 ├──────────────────┤
@@ -205,7 +213,7 @@ cargo xtask changelog <ver>   # Generate CHANGELOG.md
 ### Project layout
 
 ```
-rho/                  # Binary entry point + library crate
+rho/                  # Headless JSON-RPC 2.0 agent
   src/
     main.rs           # Thin: parse CLI, build App, run
     lib.rs            # Module declarations
@@ -217,6 +225,11 @@ rho/                  # Binary entry point + library crate
     presenter.rs      # Presenter module root
     presenter/
       rpc.rs          # RpcPresenter — diagnostic output to stderr
+rho-repl/               # Interactive terminal client (spawns rho as subprocess)
+  src/
+    main.rs           # REPL loop, slash commands, approval prompts
+    client.rs         # JSON-RPC 2.0 subprocess client
+    render.rs         # Terminal rendering for streaming output
 rho-ai/               # Unified LLM provider abstraction (streaming, retry, SSE)
 rho-ext/              # TypeScript extension runtime (V8/deno-core)
 rho-core/             # Agent kernel (loop, types, traits, config)

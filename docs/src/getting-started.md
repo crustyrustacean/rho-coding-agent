@@ -3,6 +3,7 @@
 ## Prerequisites
 
 - Rust toolchain (edition 2024)
+- [PowerShell 7+](https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell) (`pwsh`) — required for shell command execution
 - A local LLM server (LM Studio, Ollama) running on `localhost:1234`, **or** an API key for an external provider (OpenAI, Groq, OpenRouter, DeepInfra, etc.)
 
 ### Local model (default)
