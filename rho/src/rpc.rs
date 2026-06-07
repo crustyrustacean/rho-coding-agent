@@ -16,7 +16,7 @@
 //! | `prompt`           | `{message: string}`         | Send a user message to the agent   |
 //! | `abort`            | —                           | Cancel the current operation       |
 //! | `clear`            | —                           | Clear conversation history         |
-//! | `getState`         | —                           | Return current model / provider    |
+//! | `getState`         | —                           | Return model, provider, and cwd  |
 //! | `getMessages`      | —                           | Return all messages on active path |
 //! | `setModel`         | `{model: string}`          | Switch the active model            |
 //! | `listModels`       | —                           | List available models from providers |
@@ -462,7 +462,7 @@ async fn handle_prompt(app: &mut App, params: Value, id: &Value, out: &Out, inp:
     }
 }
 
-/// Return the current model and active provider name.
+/// Return the current model, provider, and working directory.
 fn handle_get_state(app: &App, id: &Value, out: &Out) {
     write_jsonrpc(
         out,
@@ -471,6 +471,7 @@ fn handle_get_state(app: &App, id: &Value, out: &Out) {
             json!({
                 "model": app.session.model(),
                 "provider": app.active_provider().name(),
+                "cwd": app.session.header().cwd.to_string_lossy(),
             }),
         ),
     );
@@ -985,6 +986,7 @@ mod tests {
         assert_eq!(resp["id"], 1);
         assert_eq!(resp["result"]["model"], "test-model");
         assert_eq!(resp["result"]["provider"], "test");
+        assert!(resp["result"]["cwd"].is_string());
     }
 
     // ═══════════════════════════════════════════════════════════════════════

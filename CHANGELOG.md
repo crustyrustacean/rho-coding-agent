@@ -1,3 +1,8 @@
+## [0.68.1] - 2026-06-07
+
+### 🚀 Features
+
+- *(rpc)* [**breaking**] Switch to JSON-RPC 2.0 protocol
 ## [0.68.0] - 2026-06-06
 
 ### ⚙️ Miscellaneous Tasks
