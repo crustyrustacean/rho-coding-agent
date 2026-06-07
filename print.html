@@ -222,7 +222,14 @@
 <h3 id="local-model-default"><a class="header" href="#local-model-default">Local model (default)</a></h3>
 <p>No configuration needed — just start a local server on <code>localhost:1234</code> and run <code>rho-repl</code>. It will auto-detect the loaded model.</p>
 <h3 id="external-provider"><a class="header" href="#external-provider">External provider</a></h3>
-<p>Create <code>~/.rho/config.toml</code> with the endpoint and API key env var. See <a href="./providers.html">External Providers</a> for worked examples.</p>
+<p>Create <code>~/.rho/config.toml</code> with a provider preset. See <a href="./providers.html">External Providers</a> for worked examples.</p>
+<pre><code class="language-toml">[[providers]]
+preset = "openrouter"
+api_key_env = "OPENROUTER_API_KEY"
+
+[agent]
+model = "deepseek-v4-flash"
+</code></pre>
 <h3 id="no-server-running"><a class="header" href="#no-server-running">No server running?</a></h3>
 <p>If you run <code>rho-repl</code> with no local server and no configured external provider, rho will print a startup error indicating no models were found.</p>
 <p>If you have an external provider configured but rho cannot list models (e.g. the API key is wrong or the endpoint is slow), rho offers an interactive model picker:</p>
@@ -479,7 +486,7 @@ rho-repl --ephemeral   # in-memory mode, no session file
 <p>Constructs a <code>Session</code>, connects to the model via a <code>Provider</code>, and drives the agent loop. Handles provider consent checks, model resolution, startup budget diagnostics, shell-specific prompt extensions, session discovery, extension loading, and live observer output via <code>RpcObserver</code>.</p>
 <p>The RPC implementation is generic over I/O (<code>run_rpc_on&lt;R, W&gt;</code>) so the in-process integration tests can inject canned stdin and capture stdout without touching real file descriptors. See <a href="architecture/../rpc-mode.html">RPC Mode</a> for the full protocol reference.</p>
 <h2 id="rho-core"><a class="header" href="#rho-core"><code>rho-core</code></a></h2>
-<p>The kernel: agent loop state machine (with <code>AgentObserver</code> for live output, phase tracking, auto-compaction), session management (tree persistence, graduated resolution, phase-aware compaction, LLM compaction, selective eviction, branching, session discovery), context window management (sliding window, token estimation, enhanced <code>ContextStats</code> with role/resolution/phase token distributions), tool registry and traits, approval gates, secret redaction, file sandbox, provider abstraction (<code>Provider</code> trait, <code>ProviderRegistry</code>), LLM client (<code>RhoAiClient</code>), configuration loading, and all shared types.</p>
+<p>The kernel: agent loop state machine (with <code>AgentObserver</code> for live output, phase tracking, auto-compaction), session management (tree persistence, graduated resolution, phase-aware compaction, LLM compaction, selective eviction, branching, session discovery), context window management (sliding window, token estimation, enhanced <code>ContextStats</code> with role/resolution/phase token distributions), tool registry and traits, approval gates, secret redaction, file sandbox, provider abstraction (<code>Provider</code> trait, <code>ProviderRegistry</code> with named presets and additive config merge), LLM client (<code>RhoAiClient</code>), configuration loading (two-tier TOML with provider preset resolution), and all shared types.</p>
 <p>Key types: <code>Session</code>, <code>AgentConfig</code>, <code>AgentObserver</code>, <code>NopObserver</code>, <code>ContextStats</code>, <code>RoleTokenDistribution</code>, <code>ResolutionTokenDistribution</code>, <code>PhaseTokenDistribution</code>, <code>SessionMetadata</code>, <code>ToolRegistry</code>, <code>Tool</code>, <code>Provider</code>, <code>ProviderRegistry</code>, <code>ContextManager</code>, <code>TokenBudget</code>, <code>SandboxRoot</code>, <code>Redactor</code>, <code>RhoConfig</code>, <code>SessionPhase</code>, <code>CompactionPhase</code>, <code>CompactionStrategy</code>, <code>LlmCompactionStrategy</code>, <code>MechanicalCompactionStrategy</code>, <code>CommandDenylist</code>.</p>
 <h2 id="rho-repl"><a class="header" href="#rho-repl"><code>rho-repl</code></a></h2>
 <p>Interactive terminal client that spawns <code>rho</code> as a subprocess and communicates via JSON-RPC 2.0 over stdin/stdout. Provides readline input with persistent history (<code>~/.rho/repl-history</code>), slash command dispatch, streaming output rendering, and approval prompts.</p>
@@ -789,17 +796,16 @@ pub trait LlmService: Send + Sync {
 </span>use rho_ai::OpenAiService;
 
 // Default: localhost
-let service = OpenAiService::from_config(ProviderConfig {
-    endpoint: "http://localhost:1234/v1/chat/completions".into(),
-    api_key: None,
-});
+let service = OpenAiService::new(rho_ai::ProviderConfig::new(
+    "",  // no API key for local
+    "http://localhost:1234/v1",\n));
 
 // Custom endpoint with API key
-let service = OpenAiService::from_config(ProviderConfig {
-    endpoint: "https://api.openai.com/v1/chat/completions".into(),
-    api_key: Some("sk-...".into()),
-});
+let service = OpenAiService::new(rho_ai::ProviderConfig::new(
+    "sk-...",
+    "https://api.openai.com/v1",\n));
 <span class="boring">}</span></code></pre></pre>
+<p>The model is specified per-request via <code>LlmRequest::model</code>, not in the provider config. This ensures the model always comes from the session, never from a stale config value.</p>
 <h3 id="redacted"><a class="header" href="#redacted">[REDACTED]</a></h3>
 <p>When an API key is provided via <code>api_key_env</code> in config, it is sent as an <code>Authorization: Bearer &lt;key&gt;</code> header with every request. Local endpoints typically don't need this. See <a href="core-concepts/../providers.html">External Providers</a> for setup details.</p>
 <h3 id="provider-consent"><a class="header" href="#provider-consent">Provider consent</a></h3>
@@ -828,12 +834,25 @@ let service = OpenAiService::from_config(ProviderConfig {
 <h2 id="multi-provider-support"><a class="header" href="#multi-provider-support">Multi-provider support</a></h2>
 <p>rho can manage multiple providers simultaneously via the <code>ProviderRegistry</code> and <code>Provider</code> trait:</p>
 <ul>
-<li>Each provider has a name, type, endpoint, and optional API key.</li>
+<li>Each provider has a name, endpoint, and optional API key (configured via <code>[[providers]]</code> with optional <code>preset</code>).</li>
 <li>The registry scans all providers to find which one serves a given model.</li>
 <li><code>/models</code> lists all models across all configured providers.</li>
-<li><code>/model &lt;id&gt;</code> switches to a model, automatically selecting the right provider.</li>
+<li><code>/model &lt;id&gt;</code> switches to a model, <strong>automatically selecting the right provider</strong> based on which provider serves that model.</li>
+<li>Project-level providers merge with user-level providers by name, so you can configure providers once globally and override selectively per project.</li>
 </ul>
-<p>See <a href="core-concepts/../providers.html">External Providers</a> for configuration details.</p>
+<p>Example with multiple providers:</p>
+<pre><code class="language-toml"># ~/.rho/config.toml
+[[providers]]
+preset = "lm-studio"
+
+[[providers]]
+preset = "openrouter"
+api_key_env = "OPENROUTER_API_KEY"
+
+[agent]
+model = "deepseek-v4-flash"  # served by openrouter
+</code></pre>
+<p>See <a href="core-concepts/../configuration.html#provider-presets">Configuration</a> for preset details and <a href="core-concepts/../providers.html">External Providers</a> for provider setup.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="approval-policy"><a class="header" href="#approval-policy">Approval Policy</a></h1>
 <p>The approval policy sits between the model's tool call and its execution. It decides whether a tool call needs human confirmation, and the approval gate presents that decision to the user.</p>
 <h2 id="two-part-system"><a class="header" href="#two-part-system">Two-part system</a></h2>
@@ -1360,7 +1379,7 @@ enabled = false
 <p>rho reads configuration from two TOML files, merged with project-level overrides taking precedence over user-level defaults.</p>
 <h2 id="file-locations"><a class="header" href="#file-locations">File locations</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Tier</th><th>Path</th><th>Purpose</th></tr></thead><tbody>
-<tr><td>User-level</td><td><code>~/.rho/config.toml</code></td><td>Global defaults: model, API endpoint, provider</td></tr>
+<tr><td>User-level</td><td><code>~/.rho/config.toml</code></td><td>Global defaults: model, providers, approval policies</td></tr>
 <tr><td>Project-level</td><td><code>.rho/config.toml</code> (relative to sandbox root)</td><td>Per-project: model, approval policies, command denylist, sandbox, context files</td></tr>
 </tbody></table>
 </div>
@@ -1368,6 +1387,38 @@ enabled = false
 <h2 id="merging-strategy"><a class="header" href="#merging-strategy">Merging strategy</a></h2>
 <p>Project-level config overrides user-level config on a per-field basis. For struct fields: if the project sets a field, it wins; if not, the user-level value applies; if neither sets it, the hardcoded default applies.</p>
 <p>For <code>Vec</code> fields (denylist commands, context scan list, custom redaction patterns): the project-level list <strong>replaces</strong> the user-level list. It does not append. This avoids surprising composition effects.</p>
+<h3 id="provider-merging"><a class="header" href="#provider-merging">Provider merging</a></h3>
+<p>Project-level <code>[[providers]]</code> <strong>merge</strong> with user-level <code>[[providers]]</code> by name (not replaced). This lets you configure providers once globally and override selectively per project:</p>
+<ul>
+<li><strong>Same name</strong> → project provider overrides user provider entirely (all fields from project)</li>
+<li><strong>New name</strong> → project provider is appended</li>
+<li><strong>No match</strong> → user provider preserved in original order</li>
+<li><strong>No project providers</strong> → user providers preserved unchanged</li>
+</ul>
+<h2 id="provider-presets"><a class="header" href="#provider-presets">Provider presets</a></h2>
+<p>The <code>preset</code> field auto-fills <code>endpoint</code> and <code>name</code> from a built-in registry of known providers. This reduces config boilerplate and eliminates typo-prone URLs.</p>
+<pre><code class="language-toml"># Instead of writing out the full endpoint URL:
+[[providers]]
+preset = "openrouter"
+api_key_env = "OPENROUTER_API_KEY"
+</code></pre>
+<p>Built-in presets:</p>
+<div class="table-wrapper"><table><thead><tr><th>Preset</th><th>Endpoint</th><th>API key env</th><th>Notes</th></tr></thead><tbody>
+<tr><td><code>lm-studio</code></td><td><code>http://localhost:1234/v1/chat/completions</code></td><td><em>(none)</em></td><td>Local, no key needed</td></tr>
+<tr><td><code>ollama</code></td><td><code>http://localhost:11434/v1/chat/completions</code></td><td><em>(none)</em></td><td>Local, no key needed</td></tr>
+<tr><td><code>openrouter</code></td><td><code>https://openrouter.ai/api/v1/chat/completions</code></td><td><code>OPENROUTER_API_KEY</code></td><td>Remote</td></tr>
+<tr><td><code>openai</code></td><td><code>https://api.openai.com/v1/chat/completions</code></td><td><code>OPENAI_API_KEY</code></td><td>Remote</td></tr>
+<tr><td><code>groq</code></td><td><code>https://api.groq.com/openai/v1/chat/completions</code></td><td><code>GROQ_API_KEY</code></td><td>Remote</td></tr>
+<tr><td><code>zai</code></td><td><code>https://z.ai/v1/chat/completions</code></td><td><code>ZAI_API_KEY</code></td><td>Remote</td></tr>
+</tbody></table>
+</div>
+<p>Resolution rules:</p>
+<ul>
+<li>If <code>preset</code> is set and <code>endpoint</code> is also set → <code>endpoint</code> wins (preset is informational)</li>
+<li>If <code>preset</code> is set and <code>name</code> is also set → <code>name</code> wins</li>
+<li>If <code>preset</code> is set and <code>api_key_env</code> is not set → a hint is logged at startup (not auto-injected)</li>
+<li>Unknown presets → warning logged, treated as if no preset was set</li>
+</ul>
 <h2 id="full-configuration-reference"><a class="header" href="#full-configuration-reference">Full configuration reference</a></h2>
 <pre><code class="language-toml">[agent]
 # Model identifier (overrides auto-detection)
@@ -1402,20 +1453,46 @@ compaction_mode = "mechanical"
 # Context-pressure threshold (deprecated, no-op, default: 0 = disabled)
 # context_pressure_threshold = 0
 
-[provider]
-# Provider name — shown in consent prompt and /models output.
-# If not set, rho uses the 'type' field, then the endpoint hostname.
-# name = "my-provider"
+# ── Providers ────────────────────────────────────────────────────
+# Use the [[providers]] array format for single or multiple providers.
+# The legacy [provider] single-table format still works but [[providers]]
+# is preferred.
+#
+# Each provider has:
+#   name       — display name (shown in /models, consent prompt)
+#   preset     — built-in preset (fills endpoint/name automatically)
+#   endpoint   — explicit endpoint URL (overrides preset)
+#   api_key_env — env var holding the API key (not auto-injected by presets)
+#   type       — informational label, has no effect on behavior
 
-# Provider type label — informational only, has no effect on behavior.
-# Used as display name if 'name' is not set.
-# type = "local"
+# Example: LM Studio via preset (local, no API key needed)
+[[providers]]
+preset = "lm-studio"
 
-# API endpoint URL (default: http://localhost:1234/v1/chat/completions)
-endpoint = "http://localhost:1234/v1/chat/completions"
+# Example: OpenRouter via preset
+# [[providers]]
+# preset = "openrouter"
+# api_key_env = "OPENROUTER_API_KEY"
 
-# Environment variable holding the API key (never stored in plaintext)
-api_key_env = "OPENAI_API_KEY"
+# Example: custom endpoint (preset as label, endpoint overrides)
+# [[providers]]
+# name = "my-proxy"
+# preset = "openrouter"
+# endpoint = "https://my-proxy.example.com/v1/chat/completions"
+# api_key_env = "MY_PROXY_KEY"
+
+# Example: multiple providers (local + remote)
+# [[providers]]
+# preset = "lm-studio"
+#
+# [[providers]]
+# preset = "openrouter"
+# api_key_env = "OPENROUTER_API_KEY"
+
+# Legacy single-provider format (still supported):
+# [provider]
+# endpoint = "http://localhost:1234/v1/chat/completions"
+# api_key_env = "OPENAI_API_KEY"
 
 [approval.per_tool]
 # Per-tool approval overrides: "auto", "ask", "deny"
@@ -1469,7 +1546,8 @@ commands = false         # deny rho.runCommand()
 </code></pre>
 <h2 id="api-key-handling"><a class="header" href="#api-key-handling">API key handling</a></h2>
 <p>API keys are <strong>never</strong> stored in plaintext in config files. Instead, config references environment variable names:</p>
-<pre><code class="language-toml">[provider]
+<pre><code class="language-toml">[[providers]]
+preset = "openai"
 api_key_env = "OPENAI_API_KEY"
 </code></pre>
 <p>The provider reads the key from the environment variable at runtime. If the variable is not set, the key is silently omitted (local endpoints typically don't need one).</p>
@@ -1546,8 +1624,8 @@ rho --endpoint https://api.openai.com/v1/chat/completions \
 model = "gpt-4o"
 token_budget = 131072
 
-[provider]
-endpoint = "https://api.openai.com/v1/chat/completions"
+[[providers]]
+preset = "openai"
 api_key_env = "OPENAI_API_KEY"
 </code></pre>
 <pre><code class="language-sh">export OPENAI_API_KEY="sk-..."
@@ -1606,12 +1684,12 @@ rho --endpoint https://api.openai.com/v1/chat/completions \
     --api-key-env OPENAI_API_KEY \
     --model gpt-4o
 </code></pre>
-<p>Or via config:</p>
+<p>Or via config with a preset:</p>
 <pre><code class="language-toml">[agent]
 model = "gpt-4o"
 
-[provider]
-endpoint = "https://api.openai.com/v1/chat/completions"
+[[providers]]
+preset = "openai"
 api_key_env = "OPENAI_API_KEY"
 </code></pre>
 <h3 id="openrouter"><a class="header" href="#openrouter">OpenRouter</a></h3>
@@ -1621,12 +1699,12 @@ rho --endpoint https://openrouter.ai/api/v1/chat/completions \
     --api-key-env OPENROUTER_API_KEY \
     --model anthropic/claude-sonnet-4-20250514
 </code></pre>
-<p>Or via config:</p>
+<p>Or via config with a preset:</p>
 <pre><code class="language-toml">[agent]
 model = "anthropic/claude-sonnet-4-20250514"
 
-[provider]
-endpoint = "https://openrouter.ai/api/v1/chat/completions"
+[[providers]]
+preset = "openrouter"
 api_key_env = "OPENROUTER_API_KEY"
 </code></pre>
 <h3 id="groq"><a class="header" href="#groq">Groq</a></h3>
@@ -1647,7 +1725,8 @@ rho --endpoint https://api.deepinfra.com/v1/openai/chat/completions \
 </code></pre>
 <h2 id="api-key-handling-1"><a class="header" href="#api-key-handling-1">API key handling</a></h2>
 <p>API keys are <strong>never</strong> stored in config files. Instead, config references an environment variable name:</p>
-<pre><code class="language-toml">[provider]
+<pre><code class="language-toml">[[providers]]
+preset = "openai"
 api_key_env = "OPENAI_API_KEY"
 </code></pre>
 <p>At runtime, rho reads the environment variable and sends the key as an <code>Authorization: Bearer &lt;key&gt;</code> header with every request. If the variable is not set, the key is silently omitted (local endpoints don't need one).</p>
@@ -1681,14 +1760,25 @@ token_budget = 131072
 <p>Run rho with <code>RUST_LOG=info</code> to see budget diagnostics at startup:</p>
 <pre><code>budget: 131072T context, 4096T reserve, 126976T prompt (4700T system + 2000T schema = 6700T overhead, 120276T for conversation)
 </code></pre>
-<h2 id="the-providertype-and-providername-fields"><a class="header" href="#the-providertype-and-providername-fields">The <code>provider.type</code> and <code>provider.name</code> fields</a></h2>
-<p>The <code>type</code> field in <code>[provider]</code> is <strong>informational only</strong> — it has no effect on behavior. rho uses <code>endpoint</code> and <code>api_key_env</code> to determine how to connect; it doesn't branch on <code>type</code>.</p>
-<p>However, if <code>name</code> is not set, rho uses <code>type</code> as the display name for the provider (shown in the consent prompt and <code>/models</code> output). If neither <code>name</code> nor <code>type</code> is set, rho derives the name from the endpoint hostname (e.g. <code>openrouter.ai</code> → <code>openrouter.ai</code>). Only if none of these are available does it fall back to the provider index (<code>0</code>, <code>1</code>, …).</p>
-<pre><code class="language-toml">[provider]
-name = "my-openrouter"    # explicit name (optional)
-type = "openrouter"        # used as display name if name is not set
-endpoint = "https://..."    # this is what actually matters
+<h2 id="the-type-name-and-preset-fields"><a class="header" href="#the-type-name-and-preset-fields">The <code>type</code>, <code>name</code>, and <code>preset</code> fields</a></h2>
+<p>The <code>type</code> field in a provider config is <strong>informational only</strong> — it has no effect on behavior. rho uses <code>endpoint</code> and <code>api_key_env</code> to determine how to connect; it doesn't branch on <code>type</code>.</p>
+<p>The <code>name</code> field is used as the display name in the consent prompt, <code>/models</code> output, and provider switching. If not set, rho uses the <code>type</code> field, then the endpoint hostname, then the provider index.</p>
+<p>The <code>preset</code> field auto-fills <code>endpoint</code> and <code>name</code> from a built-in registry. See the <a href="./configuration.html#provider-presets">Configuration</a> page for the full list of presets.</p>
+<pre><code class="language-toml">[[providers]]
+# Explicit name (optional, set automatically by preset)
+name = "my-openrouter"
+
+# Preset fills in endpoint and display name
+preset = "openrouter"
+
+# Explicit endpoint overrides preset (optional)
+endpoint = "https://..."
+
+# API key env var (required for remote providers)
 api_key_env = "OPENROUTER_API_KEY"
+
+# Informational type label (has no effect on behavior)
+type = "openrouter"
 </code></pre>
 <p>If <code>type</code> is set to a known non-OpenAI-compatible provider name (e.g. <code>"anthropic"</code>, <code>"google"</code>, <code>"bedrock"</code>), rho will print a warning at startup. This is a safety net — the real check is that your endpoint accepts and returns the OpenAI Chat Completions format.</p>
 <h2 id="privacy-considerations"><a class="header" href="#privacy-considerations">Privacy considerations</a></h2>

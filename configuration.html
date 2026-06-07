@@ -183,7 +183,7 @@
 <p>rho reads configuration from two TOML files, merged with project-level overrides taking precedence over user-level defaults.</p>
 <h2 id="file-locations"><a class="header" href="#file-locations">File locations</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Tier</th><th>Path</th><th>Purpose</th></tr></thead><tbody>
-<tr><td>User-level</td><td><code>~/.rho/config.toml</code></td><td>Global defaults: model, API endpoint, provider</td></tr>
+<tr><td>User-level</td><td><code>~/.rho/config.toml</code></td><td>Global defaults: model, providers, approval policies</td></tr>
 <tr><td>Project-level</td><td><code>.rho/config.toml</code> (relative to sandbox root)</td><td>Per-project: model, approval policies, command denylist, sandbox, context files</td></tr>
 </tbody></table>
 </div>
@@ -191,6 +191,38 @@
 <h2 id="merging-strategy"><a class="header" href="#merging-strategy">Merging strategy</a></h2>
 <p>Project-level config overrides user-level config on a per-field basis. For struct fields: if the project sets a field, it wins; if not, the user-level value applies; if neither sets it, the hardcoded default applies.</p>
 <p>For <code>Vec</code> fields (denylist commands, context scan list, custom redaction patterns): the project-level list <strong>replaces</strong> the user-level list. It does not append. This avoids surprising composition effects.</p>
+<h3 id="provider-merging"><a class="header" href="#provider-merging">Provider merging</a></h3>
+<p>Project-level <code>[[providers]]</code> <strong>merge</strong> with user-level <code>[[providers]]</code> by name (not replaced). This lets you configure providers once globally and override selectively per project:</p>
+<ul>
+<li><strong>Same name</strong> → project provider overrides user provider entirely (all fields from project)</li>
+<li><strong>New name</strong> → project provider is appended</li>
+<li><strong>No match</strong> → user provider preserved in original order</li>
+<li><strong>No project providers</strong> → user providers preserved unchanged</li>
+</ul>
+<h2 id="provider-presets"><a class="header" href="#provider-presets">Provider presets</a></h2>
+<p>The <code>preset</code> field auto-fills <code>endpoint</code> and <code>name</code> from a built-in registry of known providers. This reduces config boilerplate and eliminates typo-prone URLs.</p>
+<pre><code class="language-toml"># Instead of writing out the full endpoint URL:
+[[providers]]
+preset = "openrouter"
+api_key_env = "OPENROUTER_API_KEY"
+</code></pre>
+<p>Built-in presets:</p>
+<div class="table-wrapper"><table><thead><tr><th>Preset</th><th>Endpoint</th><th>API key env</th><th>Notes</th></tr></thead><tbody>
+<tr><td><code>lm-studio</code></td><td><code>http://localhost:1234/v1/chat/completions</code></td><td><em>(none)</em></td><td>Local, no key needed</td></tr>
+<tr><td><code>ollama</code></td><td><code>http://localhost:11434/v1/chat/completions</code></td><td><em>(none)</em></td><td>Local, no key needed</td></tr>
+<tr><td><code>openrouter</code></td><td><code>https://openrouter.ai/api/v1/chat/completions</code></td><td><code>OPENROUTER_API_KEY</code></td><td>Remote</td></tr>
+<tr><td><code>openai</code></td><td><code>https://api.openai.com/v1/chat/completions</code></td><td><code>OPENAI_API_KEY</code></td><td>Remote</td></tr>
+<tr><td><code>groq</code></td><td><code>https://api.groq.com/openai/v1/chat/completions</code></td><td><code>GROQ_API_KEY</code></td><td>Remote</td></tr>
+<tr><td><code>zai</code></td><td><code>https://z.ai/v1/chat/completions</code></td><td><code>ZAI_API_KEY</code></td><td>Remote</td></tr>
+</tbody></table>
+</div>
+<p>Resolution rules:</p>
+<ul>
+<li>If <code>preset</code> is set and <code>endpoint</code> is also set → <code>endpoint</code> wins (preset is informational)</li>
+<li>If <code>preset</code> is set and <code>name</code> is also set → <code>name</code> wins</li>
+<li>If <code>preset</code> is set and <code>api_key_env</code> is not set → a hint is logged at startup (not auto-injected)</li>
+<li>Unknown presets → warning logged, treated as if no preset was set</li>
+</ul>
 <h2 id="full-configuration-reference"><a class="header" href="#full-configuration-reference">Full configuration reference</a></h2>
 <pre><code class="language-toml">[agent]
 # Model identifier (overrides auto-detection)
@@ -225,20 +257,46 @@ compaction_mode = "mechanical"
 # Context-pressure threshold (deprecated, no-op, default: 0 = disabled)
 # context_pressure_threshold = 0
 
-[provider]
-# Provider name — shown in consent prompt and /models output.
-# If not set, rho uses the 'type' field, then the endpoint hostname.
-# name = "my-provider"
+# ── Providers ────────────────────────────────────────────────────
+# Use the [[providers]] array format for single or multiple providers.
+# The legacy [provider] single-table format still works but [[providers]]
+# is preferred.
+#
+# Each provider has:
+#   name       — display name (shown in /models, consent prompt)
+#   preset     — built-in preset (fills endpoint/name automatically)
+#   endpoint   — explicit endpoint URL (overrides preset)
+#   api_key_env — env var holding the API key (not auto-injected by presets)
+#   type       — informational label, has no effect on behavior
 
-# Provider type label — informational only, has no effect on behavior.
-# Used as display name if 'name' is not set.
-# type = "local"
+# Example: LM Studio via preset (local, no API key needed)
+[[providers]]
+preset = "lm-studio"
 
-# API endpoint URL (default: http://localhost:1234/v1/chat/completions)
-endpoint = "http://localhost:1234/v1/chat/completions"
+# Example: OpenRouter via preset
+# [[providers]]
+# preset = "openrouter"
+# api_key_env = "OPENROUTER_API_KEY"
 
-# Environment variable holding the API key (never stored in plaintext)
-api_key_env = "OPENAI_API_KEY"
+# Example: custom endpoint (preset as label, endpoint overrides)
+# [[providers]]
+# name = "my-proxy"
+# preset = "openrouter"
+# endpoint = "https://my-proxy.example.com/v1/chat/completions"
+# api_key_env = "MY_PROXY_KEY"
+
+# Example: multiple providers (local + remote)
+# [[providers]]
+# preset = "lm-studio"
+#
+# [[providers]]
+# preset = "openrouter"
+# api_key_env = "OPENROUTER_API_KEY"
+
+# Legacy single-provider format (still supported):
+# [provider]
+# endpoint = "http://localhost:1234/v1/chat/completions"
+# api_key_env = "OPENAI_API_KEY"
 
 [approval.per_tool]
 # Per-tool approval overrides: "auto", "ask", "deny"
@@ -292,7 +350,8 @@ commands = false         # deny rho.runCommand()
 </code></pre>
 <h2 id="api-key-handling"><a class="header" href="#api-key-handling">API key handling</a></h2>
 <p>API keys are <strong>never</strong> stored in plaintext in config files. Instead, config references environment variable names:</p>
-<pre><code class="language-toml">[provider]
+<pre><code class="language-toml">[[providers]]
+preset = "openai"
 api_key_env = "OPENAI_API_KEY"
 </code></pre>
 <p>The provider reads the key from the environment variable at runtime. If the variable is not set, the key is silently omitted (local endpoints typically don't need one).</p>

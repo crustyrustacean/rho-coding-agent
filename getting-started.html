@@ -189,7 +189,14 @@
 <h3 id="local-model-default"><a class="header" href="#local-model-default">Local model (default)</a></h3>
 <p>No configuration needed — just start a local server on <code>localhost:1234</code> and run <code>rho-repl</code>. It will auto-detect the loaded model.</p>
 <h3 id="external-provider"><a class="header" href="#external-provider">External provider</a></h3>
-<p>Create <code>~/.rho/config.toml</code> with the endpoint and API key env var. See <a href="./providers.html">External Providers</a> for worked examples.</p>
+<p>Create <code>~/.rho/config.toml</code> with a provider preset. See <a href="./providers.html">External Providers</a> for worked examples.</p>
+<pre><code class="language-toml">[[providers]]
+preset = "openrouter"
+api_key_env = "OPENROUTER_API_KEY"
+
+[agent]
+model = "deepseek-v4-flash"
+</code></pre>
 <h3 id="no-server-running"><a class="header" href="#no-server-running">No server running?</a></h3>
 <p>If you run <code>rho-repl</code> with no local server and no configured external provider, rho will print a startup error indicating no models were found.</p>
 <p>If you have an external provider configured but rho cannot list models (e.g. the API key is wrong or the endpoint is slow), rho offers an interactive model picker:</p>

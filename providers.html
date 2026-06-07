@@ -237,8 +237,8 @@ rho --endpoint https://api.openai.com/v1/chat/completions \
 model = "gpt-4o"
 token_budget = 131072
 
-[provider]
-endpoint = "https://api.openai.com/v1/chat/completions"
+[[providers]]
+preset = "openai"
 api_key_env = "OPENAI_API_KEY"
 </code></pre>
 <pre><code class="language-sh">export OPENAI_API_KEY="sk-..."
@@ -297,12 +297,12 @@ rho --endpoint https://api.openai.com/v1/chat/completions \
     --api-key-env OPENAI_API_KEY \
     --model gpt-4o
 </code></pre>
-<p>Or via config:</p>
+<p>Or via config with a preset:</p>
 <pre><code class="language-toml">[agent]
 model = "gpt-4o"
 
-[provider]
-endpoint = "https://api.openai.com/v1/chat/completions"
+[[providers]]
+preset = "openai"
 api_key_env = "OPENAI_API_KEY"
 </code></pre>
 <h3 id="openrouter"><a class="header" href="#openrouter">OpenRouter</a></h3>
@@ -312,12 +312,12 @@ rho --endpoint https://openrouter.ai/api/v1/chat/completions \
     --api-key-env OPENROUTER_API_KEY \
     --model anthropic/claude-sonnet-4-20250514
 </code></pre>
-<p>Or via config:</p>
+<p>Or via config with a preset:</p>
 <pre><code class="language-toml">[agent]
 model = "anthropic/claude-sonnet-4-20250514"
 
-[provider]
-endpoint = "https://openrouter.ai/api/v1/chat/completions"
+[[providers]]
+preset = "openrouter"
 api_key_env = "OPENROUTER_API_KEY"
 </code></pre>
 <h3 id="groq"><a class="header" href="#groq">Groq</a></h3>
@@ -338,7 +338,8 @@ rho --endpoint https://api.deepinfra.com/v1/openai/chat/completions \
 </code></pre>
 <h2 id="api-key-handling"><a class="header" href="#api-key-handling">API key handling</a></h2>
 <p>API keys are <strong>never</strong> stored in config files. Instead, config references an environment variable name:</p>
-<pre><code class="language-toml">[provider]
+<pre><code class="language-toml">[[providers]]
+preset = "openai"
 api_key_env = "OPENAI_API_KEY"
 </code></pre>
 <p>At runtime, rho reads the environment variable and sends the key as an <code>Authorization: Bearer &lt;key&gt;</code> header with every request. If the variable is not set, the key is silently omitted (local endpoints don't need one).</p>
@@ -372,14 +373,25 @@ token_budget = 131072
 <p>Run rho with <code>RUST_LOG=info</code> to see budget diagnostics at startup:</p>
 <pre><code>budget: 131072T context, 4096T reserve, 126976T prompt (4700T system + 2000T schema = 6700T overhead, 120276T for conversation)
 </code></pre>
-<h2 id="the-providertype-and-providername-fields"><a class="header" href="#the-providertype-and-providername-fields">The <code>provider.type</code> and <code>provider.name</code> fields</a></h2>
-<p>The <code>type</code> field in <code>[provider]</code> is <strong>informational only</strong> — it has no effect on behavior. rho uses <code>endpoint</code> and <code>api_key_env</code> to determine how to connect; it doesn't branch on <code>type</code>.</p>
-<p>However, if <code>name</code> is not set, rho uses <code>type</code> as the display name for the provider (shown in the consent prompt and <code>/models</code> output). If neither <code>name</code> nor <code>type</code> is set, rho derives the name from the endpoint hostname (e.g. <code>openrouter.ai</code> → <code>openrouter.ai</code>). Only if none of these are available does it fall back to the provider index (<code>0</code>, <code>1</code>, …).</p>
-<pre><code class="language-toml">[provider]
-name = "my-openrouter"    # explicit name (optional)
-type = "openrouter"        # used as display name if name is not set
-endpoint = "https://..."    # this is what actually matters
+<h2 id="the-type-name-and-preset-fields"><a class="header" href="#the-type-name-and-preset-fields">The <code>type</code>, <code>name</code>, and <code>preset</code> fields</a></h2>
+<p>The <code>type</code> field in a provider config is <strong>informational only</strong> — it has no effect on behavior. rho uses <code>endpoint</code> and <code>api_key_env</code> to determine how to connect; it doesn't branch on <code>type</code>.</p>
+<p>The <code>name</code> field is used as the display name in the consent prompt, <code>/models</code> output, and provider switching. If not set, rho uses the <code>type</code> field, then the endpoint hostname, then the provider index.</p>
+<p>The <code>preset</code> field auto-fills <code>endpoint</code> and <code>name</code> from a built-in registry. See the <a href="./configuration.html#provider-presets">Configuration</a> page for the full list of presets.</p>
+<pre><code class="language-toml">[[providers]]
+# Explicit name (optional, set automatically by preset)
+name = "my-openrouter"
+
+# Preset fills in endpoint and display name
+preset = "openrouter"
+
+# Explicit endpoint overrides preset (optional)
+endpoint = "https://..."
+
+# API key env var (required for remote providers)
 api_key_env = "OPENROUTER_API_KEY"
+
+# Informational type label (has no effect on behavior)
+type = "openrouter"
 </code></pre>
 <p>If <code>type</code> is set to a known non-OpenAI-compatible provider name (e.g. <code>"anthropic"</code>, <code>"google"</code>, <code>"bedrock"</code>), rho will print a warning at startup. This is a safety net — the real check is that your endpoint accepts and returns the OpenAI Chat Completions format.</p>
 <h2 id="privacy-considerations"><a class="header" href="#privacy-considerations">Privacy considerations</a></h2>

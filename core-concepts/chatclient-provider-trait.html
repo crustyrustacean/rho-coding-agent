@@ -201,17 +201,16 @@ pub trait LlmService: Send + Sync {
 </span>use rho_ai::OpenAiService;
 
 // Default: localhost
-let service = OpenAiService::from_config(ProviderConfig {
-    endpoint: "http://localhost:1234/v1/chat/completions".into(),
-    api_key: None,
-});
+let service = OpenAiService::new(rho_ai::ProviderConfig::new(
+    "",  // no API key for local
+    "http://localhost:1234/v1",\n));
 
 // Custom endpoint with API key
-let service = OpenAiService::from_config(ProviderConfig {
-    endpoint: "https://api.openai.com/v1/chat/completions".into(),
-    api_key: Some("sk-...".into()),
-});
+let service = OpenAiService::new(rho_ai::ProviderConfig::new(
+    "sk-...",
+    "https://api.openai.com/v1",\n));
 <span class="boring">}</span></code></pre></pre>
+<p>The model is specified per-request via <code>LlmRequest::model</code>, not in the provider config. This ensures the model always comes from the session, never from a stale config value.</p>
 <h3 id="redacted"><a class="header" href="#redacted">[REDACTED]</a></h3>
 <p>When an API key is provided via <code>api_key_env</code> in config, it is sent as an <code>Authorization: Bearer &lt;key&gt;</code> header with every request. Local endpoints typically don't need this. See <a href="../providers.html">External Providers</a> for setup details.</p>
 <h3 id="provider-consent"><a class="header" href="#provider-consent">Provider consent</a></h3>
@@ -240,12 +239,25 @@ let service = OpenAiService::from_config(ProviderConfig {
 <h2 id="multi-provider-support"><a class="header" href="#multi-provider-support">Multi-provider support</a></h2>
 <p>rho can manage multiple providers simultaneously via the <code>ProviderRegistry</code> and <code>Provider</code> trait:</p>
 <ul>
-<li>Each provider has a name, type, endpoint, and optional API key.</li>
+<li>Each provider has a name, endpoint, and optional API key (configured via <code>[[providers]]</code> with optional <code>preset</code>).</li>
 <li>The registry scans all providers to find which one serves a given model.</li>
 <li><code>/models</code> lists all models across all configured providers.</li>
-<li><code>/model &lt;id&gt;</code> switches to a model, automatically selecting the right provider.</li>
+<li><code>/model &lt;id&gt;</code> switches to a model, <strong>automatically selecting the right provider</strong> based on which provider serves that model.</li>
+<li>Project-level providers merge with user-level providers by name, so you can configure providers once globally and override selectively per project.</li>
 </ul>
-<p>See <a href="../providers.html">External Providers</a> for configuration details.</p>
+<p>Example with multiple providers:</p>
+<pre><code class="language-toml"># ~/.rho/config.toml
+[[providers]]
+preset = "lm-studio"
+
+[[providers]]
+preset = "openrouter"
+api_key_env = "OPENROUTER_API_KEY"
+
+[agent]
+model = "deepseek-v4-flash"  # served by openrouter
+</code></pre>
+<p>See <a href="../configuration.html#provider-presets">Configuration</a> for preset details and <a href="../providers.html">External Providers</a> for provider setup.</p>
 
                     </main>
 
