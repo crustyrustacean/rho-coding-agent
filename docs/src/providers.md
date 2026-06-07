@@ -77,8 +77,8 @@ rho --endpoint https://api.openai.com/v1/chat/completions \
 model = "gpt-4o"
 token_budget = 131072
 
-[provider]
-endpoint = "https://api.openai.com/v1/chat/completions"
+[[providers]]
+preset = "openai"
 api_key_env = "OPENAI_API_KEY"
 ```
 
@@ -161,14 +161,14 @@ rho --endpoint https://api.openai.com/v1/chat/completions \
     --model gpt-4o
 ```
 
-Or via config:
+Or via config with a preset:
 
 ```toml
 [agent]
 model = "gpt-4o"
 
-[provider]
-endpoint = "https://api.openai.com/v1/chat/completions"
+[[providers]]
+preset = "openai"
 api_key_env = "OPENAI_API_KEY"
 ```
 
@@ -183,14 +183,14 @@ rho --endpoint https://openrouter.ai/api/v1/chat/completions \
     --model anthropic/claude-sonnet-4-20250514
 ```
 
-Or via config:
+Or via config with a preset:
 
 ```toml
 [agent]
 model = "anthropic/claude-sonnet-4-20250514"
 
-[provider]
-endpoint = "https://openrouter.ai/api/v1/chat/completions"
+[[providers]]
+preset = "openrouter"
 api_key_env = "OPENROUTER_API_KEY"
 ```
 
@@ -225,7 +225,8 @@ rho --endpoint http://192.168.1.100:11434/v1/chat/completions --model llama3
 API keys are **never** stored in config files. Instead, config references an environment variable name:
 
 ```toml
-[provider]
+[[providers]]
+preset = "openai"
 api_key_env = "OPENAI_API_KEY"
 ```
 
@@ -274,18 +275,30 @@ Run rho with `RUST_LOG=info` to see budget diagnostics at startup:
 budget: 131072T context, 4096T reserve, 126976T prompt (4700T system + 2000T schema = 6700T overhead, 120276T for conversation)
 ```
 
-## The `provider.type` and `provider.name` fields
+## The `type`, `name`, and `preset` fields
 
-The `type` field in `[provider]` is **informational only** — it has no effect on behavior. rho uses `endpoint` and `api_key_env` to determine how to connect; it doesn't branch on `type`.
+The `type` field in a provider config is **informational only** — it has no effect on behavior. rho uses `endpoint` and `api_key_env` to determine how to connect; it doesn't branch on `type`.
 
-However, if `name` is not set, rho uses `type` as the display name for the provider (shown in the consent prompt and `/models` output). If neither `name` nor `type` is set, rho derives the name from the endpoint hostname (e.g. `openrouter.ai` → `openrouter.ai`). Only if none of these are available does it fall back to the provider index (`0`, `1`, …).
+The `name` field is used as the display name in the consent prompt, `/models` output, and provider switching. If not set, rho uses the `type` field, then the endpoint hostname, then the provider index.
+
+The `preset` field auto-fills `endpoint` and `name` from a built-in registry. See the [Configuration](./configuration.md#provider-presets) page for the full list of presets.
 
 ```toml
-[provider]
-name = "my-openrouter"    # explicit name (optional)
-type = "openrouter"        # used as display name if name is not set
-endpoint = "https://..."    # this is what actually matters
+[[providers]]
+# Explicit name (optional, set automatically by preset)
+name = "my-openrouter"
+
+# Preset fills in endpoint and display name
+preset = "openrouter"
+
+# Explicit endpoint overrides preset (optional)
+endpoint = "https://..."
+
+# API key env var (required for remote providers)
 api_key_env = "OPENROUTER_API_KEY"
+
+# Informational type label (has no effect on behavior)
+type = "openrouter"
 ```
 
 If `type` is set to a known non-OpenAI-compatible provider name (e.g. `"anthropic"`, `"google"`, `"bedrock"`), rho will print a warning at startup. This is a safety net — the real check is that your endpoint accepts and returns the OpenAI Chat Completions format.

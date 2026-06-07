@@ -20,23 +20,16 @@ use async_trait::async_trait;
 /// unified types at the boundary.
 #[derive(Clone, Debug)]
 pub struct RhoAiClient {
-    /// The model identifier.
-    model: String,
-    /// The endpoint URL (used for display/debugging).
+    /// The endpoint URL (used for display/debugging and constructing requests).
     endpoint: String,
-    /// Optional API key (used for display/debugging).
+    /// Optional API key (used for authentication and display/debugging).
     api_key: Option<String>,
 }
 
 impl RhoAiClient {
     /// Create a new client.
-    pub fn new(
-        model: impl Into<String>,
-        endpoint: impl Into<String>,
-        api_key: Option<String>,
-    ) -> Self {
+    pub fn new(endpoint: impl Into<String>, api_key: Option<String>) -> Self {
         Self {
-            model: model.into(),
             endpoint: endpoint.into(),
             api_key,
         }
@@ -45,7 +38,7 @@ impl RhoAiClient {
     /// Build an `OpenAiService` for a specific request.
     fn service(&self) -> rho_ai::openai::OpenAiService {
         let api_key = self.api_key.clone().unwrap_or_default();
-        let config = rho_ai::ProviderConfig::new(&self.model, api_key, &self.endpoint);
+        let config = rho_ai::ProviderConfig::new(api_key, &self.endpoint);
         rho_ai::openai::OpenAiService::new(config)
     }
 
@@ -85,7 +78,7 @@ impl RhoAiClient {
 
 impl Default for RhoAiClient {
     fn default() -> Self {
-        Self::new("default", DEFAULT_ENDPOINT, None)
+        Self::new(DEFAULT_ENDPOINT, None)
     }
 }
 
@@ -135,9 +128,7 @@ pub fn client_factory(
 
     let api_key = resolve_api_key(config, api_key_env_override);
 
-    // Extract model from the endpoint's base URL or use a default.
-    // The model will be overridden per-request via ChatRequest.model.
-    RhoAiClient::new("default", endpoint, api_key)
+    RhoAiClient::new(endpoint, api_key)
 }
 
 /// Resolve the API key from provider configuration.

@@ -242,9 +242,20 @@ pub struct ProviderConfig {
     ///
     /// Used by `/model` for disambiguation when multiple providers have the
     /// same model. Defaults to the provider index (`"0"`, `"1"`, …) if not
-    /// set.
+    /// set, or to the preset's name if a preset is configured.
     #[serde(default)]
     pub name: Option<String>,
+    /// Provider preset name (e.g. `"lm-studio"`, `"openrouter"`, `"openai"`).
+    ///
+    /// Fills in `endpoint` and `name` when not explicitly set. If both
+    /// `preset` and `endpoint` are set, `endpoint` wins (the preset is
+    /// informational only).
+    ///
+    /// Built-in presets: `lm-studio`, `ollama`, `openrouter`, `openai`,
+    /// `groq`, `zai`. An unknown preset logs a warning and is treated as
+    /// if no preset was set.
+    #[serde(default)]
+    pub preset: Option<String>,
     /// Provider type label — informational only, has no effect on behavior.
     ///
     /// rho uses `endpoint` and `api_key_env` to determine how to connect;
@@ -259,7 +270,9 @@ pub struct ProviderConfig {
     /// Environment variable name holding the API key.
     ///
     /// The key itself is never stored in config; this field names the env var
-    /// to read at runtime.
+    /// to read at runtime. Presets do **not** auto-inject this field — the user
+    /// must explicitly set it. A hint is logged at startup if a preset suggests
+    /// a key and none is configured.
     #[serde(default)]
     pub api_key_env: Option<String>,
 }
@@ -657,6 +670,117 @@ struct WireAgentLoopConfig {
     compaction_mode: Option<String>,
 }
 
+// ── Provider presets ───────────────────────────────────────────────────────
+
+/// A named preset for a known model provider.
+///
+/// Provides default endpoint and display name. The `api_key_env` is
+/// informational — used to log a hint at startup, **not** auto-injected.
+struct ProviderPreset {
+    /// Display name (used when config omits `name`).
+    name: &'static str,
+    /// Default endpoint URL.
+    endpoint: &'static str,
+    /// Suggested env var for the API key (logged as a hint, not applied).
+    api_key_env: &'static str,
+}
+
+/// Built-in provider presets.
+///
+/// Lookup by preset name (lowercase). Unknown presets produce a warning
+/// at startup and are treated as if no preset was set.
+fn presets() -> &'static std::collections::HashMap<&'static str, ProviderPreset> {
+    static PRESETS: std::sync::OnceLock<std::collections::HashMap<&'static str, ProviderPreset>> =
+        std::sync::OnceLock::new();
+    PRESETS.get_or_init(|| {
+        let mut m = std::collections::HashMap::new();
+        m.insert(
+            "lm-studio",
+            ProviderPreset {
+                name: "lm-studio",
+                endpoint: "http://localhost:1234/v1/chat/completions",
+                api_key_env: "",
+            },
+        );
+        m.insert(
+            "ollama",
+            ProviderPreset {
+                name: "ollama",
+                endpoint: "http://localhost:11434/v1/chat/completions",
+                api_key_env: "",
+            },
+        );
+        m.insert(
+            "openrouter",
+            ProviderPreset {
+                name: "openrouter",
+                endpoint: "https://openrouter.ai/api/v1/chat/completions",
+                api_key_env: "OPENROUTER_API_KEY",
+            },
+        );
+        m.insert(
+            "openai",
+            ProviderPreset {
+                name: "openai",
+                endpoint: "https://api.openai.com/v1/chat/completions",
+                api_key_env: "OPENAI_API_KEY",
+            },
+        );
+        m.insert(
+            "groq",
+            ProviderPreset {
+                name: "groq",
+                endpoint: "https://api.groq.com/openai/v1/chat/completions",
+                api_key_env: "GROQ_API_KEY",
+            },
+        );
+        m.insert(
+            "zai",
+            ProviderPreset {
+                name: "zai",
+                endpoint: "https://z.ai/v1/chat/completions",
+                api_key_env: "ZAI_API_KEY",
+            },
+        );
+        m
+    })
+}
+
+/// Resolve preset defaults into provider configurations.
+///
+/// For each provider that has a `preset` set:
+/// - If `endpoint` is not set, use the preset's endpoint.
+/// - If `name` is not set, use the preset's name.
+/// - If `api_key_env` is not set and the preset suggests one, log a hint
+///   (do **not** auto-inject — the user must explicitly set it).
+/// - If the preset is unknown, log a warning and skip.
+/// - If both `preset` and `endpoint`/`name` are set, the explicit values
+///   win (preset only fills gaps).
+fn resolve_presets(providers: &mut [ProviderConfig]) {
+    for p in providers {
+        let Some(preset_name) = &p.preset else {
+            continue;
+        };
+        let Some(preset) = presets().get(preset_name.as_str()) else {
+            tracing::warn!(preset = %preset_name, "unknown provider preset");
+            continue;
+        };
+        if p.endpoint.is_none() {
+            p.endpoint = Some(preset.endpoint.to_owned());
+        }
+        if p.name.is_none() {
+            p.name = Some(preset.name.to_owned());
+        }
+        if p.api_key_env.is_none() && !preset.api_key_env.is_empty() {
+            tracing::info!(
+                provider = preset.name,
+                api_key_env = preset.api_key_env,
+                "hint: preset provider may require API key"
+            );
+        }
+    }
+}
+
 // ── Provider merge ──────────────────────────────────────────────────────────
 
 /// Merge user-level and project-level provider configurations.
@@ -808,7 +932,7 @@ impl ConfigLoader {
                 let pp = project.providers.unwrap_or_default();
                 let up = user.providers.unwrap_or_default();
 
-                let entries = if !pp.is_empty() || !up.is_empty() {
+                let mut entries = if !pp.is_empty() || !up.is_empty() {
                     merge_providers(&up, &pp)
                 } else {
                     // Fall back to legacy single-provider config.
@@ -818,6 +942,10 @@ impl ConfigLoader {
                         None => vec![],
                     }
                 };
+
+                // Resolve presets after merge so project-level overrides
+                // (e.g. api_key_env) are preserved.
+                resolve_presets(&mut entries);
 
                 ProviderSettings { providers: entries }
             },
@@ -1779,6 +1907,129 @@ model = "gpt-4o"
         assert!(empty.default_provider().is_none());
         assert!(empty.default_endpoint().is_none());
         assert!(empty.default_api_key_env().is_none());
+    }
+
+    // ── Preset resolution ───────────────────────────────────────────────────
+
+    #[test]
+    fn preset_resolves_endpoint() {
+        let mut providers = vec![ProviderConfig {
+            preset: Some("openrouter".to_owned()),
+            ..Default::default()
+        }];
+        resolve_presets(&mut providers);
+        assert_eq!(
+            providers[0].endpoint.as_deref(),
+            Some("https://openrouter.ai/api/v1/chat/completions")
+        );
+    }
+
+    #[test]
+    fn preset_resolves_name() {
+        let mut providers = vec![ProviderConfig {
+            preset: Some("lm-studio".to_owned()),
+            ..Default::default()
+        }];
+        resolve_presets(&mut providers);
+        assert_eq!(providers[0].name.as_deref(), Some("lm-studio"));
+    }
+
+    #[test]
+    fn explicit_endpoint_overrides_preset() {
+        let mut providers = vec![ProviderConfig {
+            preset: Some("openrouter".to_owned()),
+            endpoint: Some("http://custom:9999/v1/chat/completions".to_owned()),
+            ..Default::default()
+        }];
+        resolve_presets(&mut providers);
+        assert_eq!(
+            providers[0].endpoint.as_deref(),
+            Some("http://custom:9999/v1/chat/completions")
+        );
+    }
+
+    #[test]
+    fn explicit_name_overrides_preset() {
+        let mut providers = vec![ProviderConfig {
+            preset: Some("lm-studio".to_owned()),
+            name: Some("my-local".to_owned()),
+            ..Default::default()
+        }];
+        resolve_presets(&mut providers);
+        assert_eq!(providers[0].name.as_deref(), Some("my-local"));
+    }
+
+    #[test]
+    fn unknown_preset_leaves_endpoint_none() {
+        let mut providers = vec![ProviderConfig {
+            preset: Some("nonexistent".to_owned()),
+            ..Default::default()
+        }];
+        resolve_presets(&mut providers);
+        assert!(providers[0].endpoint.is_none());
+    }
+
+    #[test]
+    fn no_preset_unchanged() {
+        let mut providers = vec![ProviderConfig {
+            name: Some("custom".to_owned()),
+            endpoint: Some("http://custom:1234/v1".to_owned()),
+            ..Default::default()
+        }];
+        resolve_presets(&mut providers);
+        assert_eq!(providers[0].name.as_deref(), Some("custom"));
+        assert_eq!(
+            providers[0].endpoint.as_deref(),
+            Some("http://custom:1234/v1")
+        );
+    }
+
+    #[test]
+    fn preset_after_merge_preserves_project_override() {
+        // User sets preset = "openrouter", project overrides api_key_env
+        // but keeps the preset so it resolves after merge.
+        let user_wire: WireConfig = toml::from_str(
+            r#"
+[[providers]]
+name = "openrouter"
+preset = "openrouter"
+"#,
+        )
+        .unwrap();
+        let project_wire: WireConfig = toml::from_str(
+            r#"
+[[providers]]
+name = "openrouter"
+preset = "openrouter"
+api_key_env = "MY_PROJECT_KEY"
+"#,
+        )
+        .unwrap();
+
+        let config = ConfigLoader::merge(Some(user_wire), Some(project_wire));
+        let p = config.provider.default_provider().unwrap();
+        // Preset resolved the endpoint.
+        assert_eq!(
+            p.endpoint.as_deref(),
+            Some("https://openrouter.ai/api/v1/chat/completions")
+        );
+        // Project's api_key_env overrides user's (user had none, project set it).
+        assert_eq!(p.api_key_env.as_deref(), Some("MY_PROJECT_KEY"));
+        // Name preserved from merge.
+        assert_eq!(p.name.as_deref(), Some("openrouter"));
+    }
+
+    #[test]
+    fn preset_toml_deserialize() {
+        let config: ProviderConfig = toml::from_str(
+            r#"
+preset = "ollama"
+api_key_env = "OLLAMA_KEY"
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.preset.as_deref(), Some("ollama"));
+        assert_eq!(config.api_key_env.as_deref(), Some("OLLAMA_KEY"));
     }
 
     #[test]

@@ -48,9 +48,9 @@ The foundation. Defines the contract everything else implements.
 - **Tool trait** — `Tool`: async, dyn-compatible, takes `CancellationToken`, returns `ToolOutcome`.
 - **Tool registry** — Maps tool names to `Box<dyn Tool>` implementations, each with a risk level.
 - **Approval policy** — `ApprovalPolicy` decides whether a tool call needs confirmation; `ApprovalGate` asks the user.
-- **LLM service** — `LlmService` trait (from `rho-ai`) abstracts the model API. `RhoAiClient` wraps it for use in the agent loop. `ProviderRegistry` manages one or more providers with CLI endpoint/key overrides.
+- **LLM service** — `LlmService` trait (from `rho-ai`) abstracts the model API. `RhoAiClient` wraps it for use in the agent loop. `ProviderRegistry` manages one or more providers with CLI endpoint/key overrides. Provider-aware model resolution ensures `/model` switches to the correct provider automatically.
 - **Session** — Tree-shaped conversation model with adaptive resolution, JSONL persistence, token estimation.
-- **Config** — `RhoConfig` merged from user-level (`~/.rho/config.toml`) and project-level (`.rho/config.toml`).
+- **Config** — `RhoConfig` merged from user-level (`~/.rho/config.toml`) and project-level (`.rho/config.toml`). Supports `[[providers]]` array with named presets (`lm-studio`, `ollama`, `openrouter`, `openai`, `groq`, `zai`). Project-level providers merge with user-level by name — same name overrides, new names are added, unmatched user providers are preserved.
 - **File sandbox** — `SandboxRoot` validates all file paths stay within the project root.
 - **Secret redaction** — `Redactor` replaces known secret patterns in tool output.
 - **Context management** — `SlidingWindowContextManager` keeps the conversation within the model's context limit.
@@ -239,7 +239,7 @@ CLI tool that runs eval tasks against models with timing and token metrics.
 Before the loop begins:
 
 1. **Environment discovery** — Identify the project root (markers like `Cargo.toml`).
-2. **Config loading** — Merge user-level (`~/.rho/config.toml`) and project-level (`.rho/config.toml`) configuration via `ConfigLoader`. This selects the model, approval strictness, and command denylist.
+2. **Config loading** — Merge user-level (`~/.rho/config.toml`) and project-level (`.rho/config.toml`) configuration via `ConfigLoader`. Provider presets (`lm-studio`, `ollama`, `openrouter`, etc.) fill in endpoints automatically. Project-level providers merge with user-level by name. This selects the model, approval strictness, and command denylist.
 3. **Tool registration** — Populate the `ToolRegistry` with built-in tools from `rho-tools`. Each tool provides a JSON schema (`ToolSchema`) so the model knows how to call it.
 4. **Session construction** — Create or resume a `Session` (tree-shaped conversation with JSONL persistence).
 
@@ -459,7 +459,8 @@ cliff.toml          # git-cliff configuration
 | `Provider` | `provider.rs` | Trait: `name`, `is_external`, `list_models`, `clone_boxed_service`, `llm_service` |
 | `ProviderRegistry` | `provider.rs` | Ordered collection of `Box<dyn Provider>` |
 | `ModelInfo` | `client/mod.rs` | A model entry from `/v1/models` |
-| `ProviderConfig` | `config.rs` | Endpoint and API key env var configuration |
+| `ProviderConfig` | `config.rs` | Provider config: name, preset, endpoint, API key env var |
+| `rho_ai::ProviderConfig` | `rho-ai/types.rs` | API key and base URL (model is per-request, not per-provider) |
 
 ### Session and context
 

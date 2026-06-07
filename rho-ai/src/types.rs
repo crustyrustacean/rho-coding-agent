@@ -175,10 +175,13 @@ impl StreamUsage {
 /// This is the minimal set of parameters every provider needs.
 /// Provider-specific config (extra headers, custom paths) is handled
 /// by each provider's own config type.
+///
+/// Note: the model identifier is **not** part of provider config.
+/// The model is set per-request via [`LlmRequest::model`], sourced from
+/// the session at the call site. This avoids stale model strings and
+/// makes the data flow explicit.
 #[derive(Debug, Clone)]
 pub struct ProviderConfig {
-    /// The model identifier (e.g., `"gpt-4o"`, `"claude-sonnet-4-20250514"`).
-    pub model: String,
     /// API key. Read from an environment variable by the factory.
     pub api_key: String,
     /// Base URL for the API endpoint.
@@ -188,13 +191,8 @@ pub struct ProviderConfig {
 impl ProviderConfig {
     /// Creates a new provider configuration.
     #[must_use]
-    pub fn new(
-        model: impl Into<String>,
-        api_key: impl Into<String>,
-        base_url: impl Into<String>,
-    ) -> Self {
+    pub fn new(api_key: impl Into<String>, base_url: impl Into<String>) -> Self {
         Self {
-            model: model.into(),
             api_key: api_key.into(),
             base_url: base_url.into(),
         }

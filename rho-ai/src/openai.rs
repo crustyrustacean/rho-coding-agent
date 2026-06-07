@@ -426,7 +426,6 @@ fn parse_sse_chunk(chunk: &SseChunk, tool_acc: &mut ToolCallAccumulator) -> Vec<
 /// use rho_ai::service::LlmService;
 ///
 /// let service = OpenAiService::new(ProviderConfig::new(
-///     "gpt-4o",
 ///     env::var("OPENAI_API_KEY").unwrap(),
 ///     "https://api.openai.com/v1",
 /// ));
@@ -436,7 +435,7 @@ fn parse_sse_chunk(chunk: &SseChunk, tool_acc: &mut ToolCallAccumulator) -> Vec<
 pub struct OpenAiService {
     /// The HTTP client.
     http: Client,
-    /// Provider configuration (model, API key, base URL).
+    /// Provider configuration (API key, base URL).
     config: ProviderConfig,
 }
 
@@ -457,12 +456,16 @@ impl OpenAiService {
         let wire_messages = build_messages(request.messages.clone());
         let wire_tools = build_tools(request.tools.clone());
 
+        let model = request.model.clone();
+        if model.is_empty() {
+            return Err(ProviderError::Response {
+                message: "model identifier is empty".to_owned(),
+                raw: None,
+            });
+        }
+
         let body = ChatCompletionRequest {
-            model: if request.model.is_empty() {
-                self.config.model.clone()
-            } else {
-                request.model.clone()
-            },
+            model,
             messages: wire_messages,
             tools: wire_tools,
             stream: true,
@@ -669,6 +672,33 @@ mod tests {
         assert_eq!(json["role"], "assistant");
         assert_eq!(json["content"], "Hi there");
         assert!(json.get("tool_calls").is_none()); // skip_serializing_if empty
+    }
+
+    // ── Empty model validation ──────────────────────────────────────────
+
+    #[test]
+    fn empty_model_returns_error() {
+        use crate::LlmRequest;
+
+        let service = OpenAiService::new(ProviderConfig::new("key", "http://localhost:1234/v1"));
+        let request = LlmRequest {
+            model: String::new(),
+            messages: vec![LlmMessage::User("test".into())],
+            tools: vec![],
+            max_tokens: None,
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(service.chat_stream(request));
+        match result {
+            Ok(_) => panic!("expected error for empty model"),
+            Err(ref e) => {
+                let msg = e.to_string();
+                assert!(
+                    msg.contains("model identifier is empty"),
+                    "expected empty-model error, got: {msg}"
+                );
+            }
+        }
     }
 
     #[test]

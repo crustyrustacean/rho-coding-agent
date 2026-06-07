@@ -12,7 +12,16 @@ No configuration needed — just start a local server on `localhost:1234` and ru
 
 ### External provider
 
-Create `~/.rho/config.toml` with the endpoint and API key env var. See [External Providers](./providers.md) for worked examples.
+Create `~/.rho/config.toml` with a provider preset. See [External Providers](./providers.md) for worked examples.
+
+```toml
+[[providers]]
+preset = "openrouter"
+api_key_env = "OPENROUTER_API_KEY"
+
+[agent]
+model = "deepseek-v4-flash"
+```
 
 ### No server running?
 

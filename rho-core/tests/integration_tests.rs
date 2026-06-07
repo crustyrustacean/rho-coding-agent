@@ -655,9 +655,9 @@ fn http_error_not_retryable_for_client_errors() {
 /// [`RhoError::is_retryable`] classifies as retryable.
 async fn retryable_http_error() -> RhoError {
     use rho_core::RhoAiClient;
-    let client = RhoAiClient::new("test", "http://127.0.0.1:1/", None);
+    let client = RhoAiClient::new("http://127.0.0.1/1/", None);
     let request = rho_ai::LlmRequest {
-        model: String::new(),
+        model: "test-model".to_owned(),
         messages: vec![],
         tools: vec![],
         max_tokens: None,
@@ -939,7 +939,7 @@ async fn rho_ai_client_returns_http_error_when_server_unreachable() {
     use rho_core::RhoAiClient;
     use std::time::Duration;
 
-    let client = RhoAiClient::new("test", "http://10.255.255.1/v1/chat/completions", None);
+    let client = RhoAiClient::new("http://10.255.255.1/v1/chat/completions", None);
     let request = rho_ai::LlmRequest {
         model: "test".to_owned(),
         messages: vec![rho_ai::LlmMessage::User("hello".into())],

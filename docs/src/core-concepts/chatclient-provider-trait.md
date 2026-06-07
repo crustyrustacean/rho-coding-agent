@@ -26,17 +26,17 @@ The default implementation targets any OpenAI-compatible endpoint:
 use rho_ai::OpenAiService;
 
 // Default: localhost
-let service = OpenAiService::from_config(ProviderConfig {
-    endpoint: "http://localhost:1234/v1/chat/completions".into(),
-    api_key: None,
-});
+let service = OpenAiService::new(rho_ai::ProviderConfig::new(
+    "",  // no API key for local
+    "http://localhost:1234/v1",\n));
 
 // Custom endpoint with API key
-let service = OpenAiService::from_config(ProviderConfig {
-    endpoint: "https://api.openai.com/v1/chat/completions".into(),
-    api_key: Some("sk-...".into()),
-});
+let service = OpenAiService::new(rho_ai::ProviderConfig::new(
+    "sk-...",
+    "https://api.openai.com/v1",\n));
 ```
+
+The model is specified per-request via `LlmRequest::model`, not in the provider config. This ensures the model always comes from the session, never from a stale config value.
 
 ### [REDACTED]
 
@@ -78,9 +78,25 @@ Auto-detection works well for local servers where `/v1/models` is reliable. **Fo
 
 rho can manage multiple providers simultaneously via the `ProviderRegistry` and `Provider` trait:
 
-- Each provider has a name, type, endpoint, and optional API key.
+- Each provider has a name, endpoint, and optional API key (configured via `[[providers]]` with optional `preset`).
 - The registry scans all providers to find which one serves a given model.
 - `/models` lists all models across all configured providers.
-- `/model <id>` switches to a model, automatically selecting the right provider.
+- `/model <id>` switches to a model, **automatically selecting the right provider** based on which provider serves that model.
+- Project-level providers merge with user-level providers by name, so you can configure providers once globally and override selectively per project.
 
-See [External Providers](../providers.md) for configuration details.
+Example with multiple providers:
+
+```toml
+# ~/.rho/config.toml
+[[providers]]
+preset = "lm-studio"
+
+[[providers]]
+preset = "openrouter"
+api_key_env = "OPENROUTER_API_KEY"
+
+[agent]
+model = "deepseek-v4-flash"  # served by openrouter
+```
+
+See [Configuration](../configuration.md#provider-presets) for preset details and [External Providers](../providers.md) for provider setup.

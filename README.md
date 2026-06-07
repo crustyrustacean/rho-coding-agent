@@ -14,7 +14,7 @@ A local coding agent written in Rust. `rho` runs as a headless process communica
 - 🐚 **PowerShell-native** — the shell is PowerShell (via `pwsh`); the model generates PowerShell commands, not bash
 - 📂 **Project-aware** — auto-detects project root, loads context files (`AGENTS.md`, `CLAUDE.md`, `.cursorrules`, etc.) with hash-verified trust
 - ⚙️ **Configurable** — two-tier TOML config (user-level `~/.rho/config.toml` + project-level `.rho/config.toml`), per-tool approval policies, command denylist
-- 🧠 **Local and remote models** — targets OpenAI-compatible endpoints (LM Studio, Ollama, OpenAI, Groq, OpenRouter, DeepInfra, and more)
+- 🧠 **Local and remote models** — targets OpenAI-compatible endpoints (LM Studio, Ollama, OpenAI, Groq, OpenRouter, DeepInfra, and more) with named presets (`lm-studio`, `openrouter`, `openai`, `groq`, `ollama`, `zai`) and multi-provider support
 - 🔌 **JSON-RPC 2.0** — headless protocol over stdin/stdout for embedding in editors, bots, and custom UIs
 
 ## Quick Start
@@ -59,8 +59,8 @@ A local coding agent written in Rust. `rho` runs as a headless process communica
    model = "gpt-4o"
    token_budget = 131072
 
-   [provider]
-   endpoint = "https://api.openai.com/v1/chat/completions"
+   [[providers]]
+   preset = "openai"
    api_key_env = "OPENAI_API_KEY"
    ```
 
@@ -121,15 +121,15 @@ rho loads config from two TOML files, with project-level overrides taking preced
 | User-level | `~/.rho/config.toml` | Global defaults: default model, API endpoint |
 | Project-level | `.rho/config.toml` | Per-project: model, approval policies, command denylist, sandbox toggle |
 
-Example `.rho/config.toml` (local model):
+Example `.rho/config.toml` (local model with preset):
 
 ```toml
 [agent]
 model = "qwen3-8b"
 token_budget = 32768
 
-[provider]
-endpoint = "http://localhost:1234/v1/chat/completions"
+[[providers]]
+preset = "lm-studio"
 
 [approval.per_tool]
 write_file = "ask"
@@ -143,22 +143,23 @@ denied_commands = ["Stop-Process"]
 enabled = true
 ```
 
-Example `.rho/config.toml` (OpenAI):
+Example `.rho/config.toml` (OpenAI with preset):
 
 ```toml
 [agent]
 model = "gpt-4o"
 token_budget = 131072
 
-[provider]
-endpoint = "https://api.openai.com/v1/chat/completions"
+[[providers]]
+preset = "openai"
 api_key_env = "OPENAI_API_KEY"
 ```
 
 API keys are **never** stored in config. Reference environment variables instead:
 
 ```toml
-[provider]
+[[providers]]
+preset = "openai"
 api_key_env = "OPENAI_API_KEY"
 ```
 
