@@ -1120,7 +1120,7 @@ mod tests {
 
         let result = eval(
             &mut rt,
-            r#"JSON.stringify(rho.runCommand("pwsh", ["-Command", "Write-Output 'hello world'"]))"#
+            r#"JSON.stringify(rho.runCommand("pwsh", ["-Command", "Write-Output 'hello world'"]))"#,
         );
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["exitCode"], 0);
@@ -1133,10 +1133,7 @@ mod tests {
         let mut rt = runtime_with_commands(dir.path().to_str().unwrap());
 
         // Use a command that exists as a standalone executable on all platforms.
-        let result = eval(
-            &mut rt,
-            r#"JSON.stringify(rho.runCommand("hostname"))"#
-        );
+        let result = eval(&mut rt, r#"JSON.stringify(rho.runCommand("hostname"))"#);
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["exitCode"], 0);
         // hostname should return a non-empty string

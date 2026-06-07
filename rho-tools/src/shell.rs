@@ -90,7 +90,6 @@ impl PowerShellExecutor {
 // NOTE: No `Default` impl — `PowerShellExecutor::new()` returns `ToolResult`
 // because PowerShell detection can fail. Use `.expect()` or `?` explicitly.
 
-
 #[async_trait]
 impl ShellExecutor for PowerShellExecutor {
     async fn execute(

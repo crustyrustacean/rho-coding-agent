@@ -70,9 +70,8 @@ pub fn register_all(
     registry.register(Box::new(ListDir { root: root.clone() }));
     registry.register(Box::new(EditFile { root: root.clone() }));
 
-    let make_executor = || -> ToolResult<Box<PowerShellExecutor>> {
-        PowerShellExecutor::new().map(Box::new)
-    };
+    let make_executor =
+        || -> ToolResult<Box<PowerShellExecutor>> { PowerShellExecutor::new().map(Box::new) };
 
     // Rust tooling (Phase 3)
     let check_executor = make_executor()?;
