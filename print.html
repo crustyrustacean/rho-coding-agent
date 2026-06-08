@@ -296,7 +296,8 @@ rho-repl --ephemeral   # in-memory mode, no session file
 <tr><td><code>/help</code></td><td>Show available commands</td></tr>
 <tr><td><code>/clear</code></td><td>Clear conversation history (creates a new branch)</td></tr>
 <tr><td><code>/models</code></td><td>List all models across all providers</td></tr>
-<tr><td><code>/model &lt;id&gt;</code></td><td>Switch to a model</td></tr>
+<tr><td><code>/model &lt;id&gt;</code></td><td>Switch model (bare id or <code>provider:id</code>)</td></tr>
+<tr><td><code>/providers</code></td><td>List configured providers with reachability status</td></tr>
 <tr><td><code>/status</code></td><td>Show context window usage breakdown</td></tr>
 <tr><td><code>/sessions</code></td><td>List previous sessions for this project</td></tr>
 <tr><td><code>/extensions</code></td><td>List loaded extension names</td></tr>
@@ -1439,6 +1440,10 @@ token_budget = 32768
 # Stuck-loop detection: consecutive identical outputs before nudge (default: 3, 0 = off)
 stuck_loop_threshold = 3
 
+# Maximum consecutive empty model responses before aborting (default: 5, 0 = unlimited)
+# Prevents infinite retry spirals with models that can't produce output.
+max_consecutive_empty = 5
+
 # Show full chain-of-thought reasoning in output (default: false)
 show_reasoning = false
 
@@ -1653,6 +1658,20 @@ rho --accept-external-provider
 <li><strong>Auto-detection</strong> — query the server's <code>/v1/models</code> endpoint and use the first loaded model</li>
 </ol>
 <p>Auto-detection works for local servers (LM Studio, Ollama) where <code>/v1/models</code> is reliable. For external providers, <strong>always specify the model explicitly</strong> with <code>--model</code> or in config.</p>
+<h3 id="providers-command"><a class="header" href="#providers-command"><code>/providers</code> command</a></h3>
+<p>The <code>/providers</code> REPL command shows all configured providers with their reachability status:</p>
+<pre><code class="language-text">  configured providers:
+  * lm-studio (local, ok)
+    openrouter (remote, ok)
+    ollama (remote, down)
+    * = active
+</code></pre>
+<p>Each entry shows:</p>
+<ul>
+<li><strong><code>*</code></strong> — active provider (where the next prompt will go)</li>
+<li><strong>local/remote</strong> — whether the endpoint is on localhost</li>
+<li><strong>ok/down</strong> — whether the <code>/v1/models</code> endpoint responded</li>
+</ul>
 <h3 id="interactive-model-picker"><a class="header" href="#interactive-model-picker">Interactive model picker</a></h3>
 <p>When rho has an external provider configured but cannot list models (e.g. <code>/v1/models</code> times out, the API key is wrong, or the provider doesn't support model listing), rho offers an interactive model picker instead of aborting:</p>
 <pre><code class="language-text">  Could not list models from: openrouter
@@ -1667,6 +1686,13 @@ rho --accept-external-provider
 </code></pre>
 <p>The picker offers one recommended model from each of Anthropic, OpenAI, and z.ai. Selecting <code>[0]</code> lets you type any model ID. You can also type a model ID directly instead of a number.</p>
 <p>The curated models use <code>OpenRouter</code> model IDs (e.g. <code>anthropic/claude-sonnet-4</code>) which work with any <code>OpenRouter</code>-compatible endpoint. For direct OpenAI or Anthropic API access, use <code>[0]</code> to enter the native model ID (e.g. <code>gpt-4o</code> or <code>claude-sonnet-4-20250514</code>).</p>
+<h3 id="mid-session-provider-switching"><a class="header" href="#mid-session-provider-switching">Mid-session provider switching</a></h3>
+<p>The <code>/model</code> command accepts <code>provider:model</code> syntax to switch to a specific provider without model discovery. This is useful when a provider is slow to respond or doesn't support <code>/v1/models</code>:</p>
+<pre><code>/model openrouter:deepseek/deepseek-v4-flash
+</code></pre>
+<p>With a bare model ID, rho discovers which provider serves it via <code>/v1/models</code> and switches automatically:</p>
+<pre><code>/model qwen3-8b
+</code></pre>
 <p>To skip the picker entirely, specify <code>--model</code> on the CLI or set <code>agent.model</code> in config.</p>
 <h2 id="cli-flags-for-provider-configuration"><a class="header" href="#cli-flags-for-provider-configuration">CLI flags for provider configuration</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Flag</th><th>Config override</th><th>Description</th></tr></thead><tbody>
@@ -1781,6 +1807,20 @@ api_key_env = "OPENROUTER_API_KEY"
 type = "openrouter"
 </code></pre>
 <p>If <code>type</code> is set to a known non-OpenAI-compatible provider name (e.g. <code>"anthropic"</code>, <code>"google"</code>, <code>"bedrock"</code>), rho will print a warning at startup. This is a safety net — the real check is that your endpoint accepts and returns the OpenAI Chat Completions format.</p>
+<h2 id="connection-timeouts"><a class="header" href="#connection-timeouts">Connection timeouts</a></h2>
+<p>The HTTP client uses sensible defaults to prevent indefinite hangs when a provider is unreachable:</p>
+<ul>
+<li><strong>Connect timeout</strong>: 30 seconds — how long to wait for the initial TCP/TLS connection</li>
+<li><strong>Request timeout</strong>: 2 minutes — total time allowed for the entire request (including streaming response)</li>
+</ul>
+<p>These are hardcoded and not currently configurable. If you frequently hit these timeouts with a slow local server, ensure the server is running before starting rho.</p>
+<h2 id="small-model-robustness"><a class="header" href="#small-model-robustness">Small-model robustness</a></h2>
+<p>rho includes safeguards for models that struggle with tool-use tasks:</p>
+<ul>
+<li><strong><code>max_consecutive_empty</code></strong> (default 5) — aborts the agent loop when the model returns too many consecutive empty responses, preventing infinite retry spirals. Set to 0 to disable.</li>
+<li><strong>Sandbox path hints</strong> — when a tool call fails with a sandbox path error, rho appends an actionable hint (sandbox root, correct path format) so the model can self-correct instead of repeating the same mistake.</li>
+</ul>
+<p>Both features are configured under <code>[agent]</code> — see <a href="./configuration.html">Configuration</a> for details.</p>
 <h2 id="privacy-considerations"><a class="header" href="#privacy-considerations">Privacy considerations</a></h2>
 <p>When you use an external provider, <strong>your entire conversation</strong> — including file contents read by the agent, shell command output, and your instructions — is sent to the provider's servers. Review the provider's privacy policy before use.</p>
 <p>The consent prompt reminds you of this on every startup for config-driven external endpoints.</p>
@@ -1806,8 +1846,9 @@ type = "openrouter"
 <tr><td><code>clear</code></td><td>—</td><td>Clear conversation history</td></tr>
 <tr><td><code>getState</code></td><td>—</td><td>Return model, provider, and cwd</td></tr>
 <tr><td><code>getMessages</code></td><td>—</td><td>Return all messages on active path</td></tr>
-<tr><td><code>setModel</code></td><td><code>{model: string}</code></td><td>Switch the active model</td></tr>
+<tr><td><code>setModel</code></td><td><code>{model: string}</code></td><td>Switch model (<code>id</code> or <code>provider:id</code>)</td></tr>
 <tr><td><code>listModels</code></td><td>—</td><td>List available models from providers</td></tr>
+<tr><td><code>listProviders</code></td><td>—</td><td>List configured providers with reachability</td></tr>
 <tr><td><code>getSessionStats</code></td><td>—</td><td>Return token budget / usage info</td></tr>
 <tr><td><code>listSessions</code></td><td>—</td><td>List previous sessions for project</td></tr>
 <tr><td><code>listExtensions</code></td><td>—</td><td>List loaded extensions and tools</td></tr>

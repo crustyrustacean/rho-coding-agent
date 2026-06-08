@@ -243,6 +243,10 @@ token_budget = 32768
 # Stuck-loop detection: consecutive identical outputs before nudge (default: 3, 0 = off)
 stuck_loop_threshold = 3
 
+# Maximum consecutive empty model responses before aborting (default: 5, 0 = unlimited)
+# Prevents infinite retry spirals with models that can't produce output.
+max_consecutive_empty = 5
+
 # Show full chain-of-thought reasoning in output (default: false)
 show_reasoning = false
 
