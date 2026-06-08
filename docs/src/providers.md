@@ -113,9 +113,9 @@ There are three ways to set the model, in priority order:
 
 1. **CLI flag** — `--model gpt-4o` (highest priority)
 2. **Config** — `[agent] model = "gpt-4o"`
-3. **Auto-detection** — query the server's `/v1/models` endpoint and use the first loaded model
+3. **Auto-detection** — query the provider's models endpoint (derived from the configured chat-completions URL) and use the first loaded model
 
-Auto-detection works for local servers (LM Studio, Ollama) where `/v1/models` is reliable. For external providers, **always specify the model explicitly** with `--model` or in config.
+Auto-detection works for local servers (LM Studio, Ollama) where the models endpoint is reliable. For external providers, **always specify the model explicitly** with `--model` or in config.
 
 ### `/providers` command
 
@@ -133,11 +133,11 @@ Each entry shows:
 
 - **`*`** — active provider (where the next prompt will go)
 - **local/remote** — whether the endpoint is on localhost
-- **ok/down** — whether the `/v1/models` endpoint responded
+- **ok/down** — whether the provider's models endpoint responded
 
 ### Interactive model picker
 
-When rho has an external provider configured but cannot list models (e.g. `/v1/models` times out, the API key is wrong, or the provider doesn't support model listing), rho offers an interactive model picker instead of aborting:
+When rho has an external provider configured but cannot list models (e.g. the models endpoint times out, the API key is wrong, or the provider doesn't support model listing), rho offers an interactive model picker instead of aborting:
 
 ```text
   Could not list models from: openrouter
@@ -157,13 +157,13 @@ The curated models use `OpenRouter` model IDs (e.g. `anthropic/claude-sonnet-4`)
 
 ### Mid-session provider switching
 
-The `/model` command accepts `provider:model` syntax to switch to a specific provider without model discovery. This is useful when a provider is slow to respond or doesn't support `/v1/models`:
+The `/model` command accepts `provider:model` syntax to switch to a specific provider without model discovery. This is useful when a provider is slow to respond or its models endpoint is unavailable:
 
 ```
 /model openrouter:deepseek/deepseek-v4-flash
 ```
 
-With a bare model ID, rho discovers which provider serves it via `/v1/models` and switches automatically:
+With a bare model ID, rho discovers which provider serves it by querying each provider's models endpoint and switches automatically:
 
 ```
 /model qwen3-8b

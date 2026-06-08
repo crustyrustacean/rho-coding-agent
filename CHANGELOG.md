@@ -1,3 +1,9 @@
+## [0.71.1] - 2026-06-08
+
+### 🐛 Bug Fixes
+
+- *(provider)* Fixed model listing for providers with non-standard base paths (OpenRouter `/api/v1/…`, Groq `/openai/v1/…`) — `list_models` now derives the models URL from the chat-completions endpoint instead of hardcoding `/v1/models`
+
 ## [0.69.1] - 2026-06-07
 
 ### 🐛 Bug Fixes
@@ -11,11 +17,7 @@
 ### 🚀 Features
 
 - *(rpc)* [**breaking**] Switch to JSON-RPC 2.0 protocol
-## [0.68.1] - 2026-06-07
 
-### 🚀 Features
-
-- *(rpc)* [**breaking**] Switch to JSON-RPC 2.0 protocol
 ## [0.68.0] - 2026-06-06
 
 ### ⚙️ Miscellaneous Tasks

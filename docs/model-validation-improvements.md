@@ -6,7 +6,7 @@ Looking at the code, there are three concrete gaps in model handling:
 
 ### 1. No validation of `--model` or config model
 
-In [`resolve_model`](rho/src/app.rs), when a model is specified via `--model` or config, it's used verbatim with zero validation against the provider's `/v1/models` endpoint. A typo like `--model qwen3-8` (when the real ID is `qwen3-8b`) silently passes until the first API call returns a cryptic 404 from the server.
+In [`resolve_model`](rho/src/app.rs), when a model is specified via `--model` or config, it's used verbatim with zero validation against the provider's models endpoint. A typo like `--model qwen3-8` (when the real ID is `qwen3-8b`) silently passes until the first API call returns a cryptic 404 from the server.
 
 ### 2. Auto-detect silently picks first model, no choice
 

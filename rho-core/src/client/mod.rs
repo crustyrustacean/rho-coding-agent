@@ -54,10 +54,15 @@ impl RhoAiClient {
         &self.api_key
     }
 
-    /// List models available at the server's `/v1/models` endpoint.
+    /// List models available at the server's models endpoint.
     ///
-    /// Derives the models URL from the configured endpoint by
-    /// replacing the path with `/v1/models`.
+    /// Derives the models URL from the configured chat-completions endpoint
+    /// by replacing the trailing `/chat/completions` with `/models`. This
+    /// preserves any provider-specific path prefix (e.g. OpenRouter's
+    /// `/api/v1/…` or Groq's `/openai/v1/…`).
+    ///
+    /// Falls back to `/v1/models` (origin-only) if the endpoint path
+    /// does not end with `/chat/completions`.
     ///
     /// # Errors
     ///
@@ -66,7 +71,12 @@ impl RhoAiClient {
     pub async fn list_models(&self) -> Result<ModelList> {
         let mut models_url = url::Url::parse(&self.endpoint)
             .map_err(|e| crate::error::RhoError::Client(ClientError::UrlParse(e)))?;
-        models_url.set_path("/v1/models");
+        let path = models_url.path();
+        if let Some(base) = path.strip_suffix("/chat/completions") {
+            models_url.set_path(&format!("{base}/models"));
+        } else {
+            models_url.set_path("/v1/models");
+        }
         let client = reqwest::Client::new();
         let mut req = client.get(models_url);
         if let Some(ref key) = self.api_key {

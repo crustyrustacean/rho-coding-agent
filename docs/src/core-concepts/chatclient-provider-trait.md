@@ -48,7 +48,7 @@ The binary (`rho`) checks whether the configured endpoint is local before connec
 
 ### Model picker
 
-When no models can be auto-detected (all providers unreachable or `/v1/models` unsupported), rho offers an interactive model picker with curated models from Anthropic, OpenAI, and z.ai. The user can also enter a model ID manually. This fallback only fires when neither `--model` nor `agent.model` is set and auto-detection fails.
+When no models can be auto-detected (all providers unreachable or their models endpoint unsupported), rho offers an interactive model picker with curated models from Anthropic, OpenAI, and z.ai. The user can also enter a model ID manually. This fallback only fires when neither `--model` nor `agent.model` is set and auto-detection fails.
 
 ## Model resolution
 
@@ -56,9 +56,9 @@ The model identifier is resolved in priority order:
 
 1. **CLI flag** — `--model <name>` (highest priority)
 2. **Config** — `agent.model` in `.rho/config.toml` or `~/.rho/config.toml`
-3. **Auto-detect** — query the server's `/v1/models` endpoint, use the first loaded model
+3. **Auto-detect** — query the provider's models endpoint (derived from the configured chat-completions URL), use the first loaded model
 
-Auto-detection works well for local servers where `/v1/models` is reliable. **For external providers, always specify the model explicitly** with `--model` or in config — external providers may return large model lists or non-standard responses that can cause auto-detection to pick an unexpected model or fail.
+Auto-detection works well for local servers where the models endpoint is reliable. **For external providers, always specify the model explicitly** with `--model` or in config — external providers may return large model lists or non-standard responses that can cause auto-detection to pick an unexpected model or fail.
 
 ## Request / response
 
