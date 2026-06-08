@@ -530,8 +530,7 @@ mod tests {
         assert!(prompt.contains("Working directory (project root)"));
         assert!(prompt.contains(dir.path().to_str().unwrap()));
         assert!(
-            prompt.contains("cwd")
-                && prompt.contains("subdirectory"),
+            prompt.contains("cwd") && prompt.contains("subdirectory"),
             "environment block must mention the cwd parameter"
         );
     }
