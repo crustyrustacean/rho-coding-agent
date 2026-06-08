@@ -80,6 +80,7 @@ Use these idioms instead of translating from bash:
 | `sort file` | `Sort-Object` |
 | `uniq` | `Select-Object -Unique` |
 | `xargs` | `ForEach-Object { ... }` |
+| `cd dir && cargo check` | Use `run_command(cwd="dir", command="cargo check")` |
 | `sed 's/old/new/' file` | Use `edit_file` tool instead |
 | `awk '{print $2}'` | `ForEach-Object { ($_ -split '\s+')[1] }` |
 
@@ -171,6 +172,24 @@ try {
 } catch {
     Write-Output "Could not read file: $_"
 }
+```
+
+## Working in subdirectories
+
+`run_command` has an optional `cwd` parameter for running commands in a subdirectory:
+
+```
+run_command(cwd="actix-web-sqlx-starter", command="cargo check")
+run_command(cwd="rho-core", command="cargo test")
+```
+
+**Prefer the `cwd` parameter over `cd` in your command string.** `cd` and `Set-Location` do not persist between `run_command` calls — each invocation starts a fresh process. The `cwd` parameter is reliable and explicit.
+
+For `read_file` and `edit_file`, use paths relative to the project root:
+
+```
+read_file("actix-web-sqlx-starter/Cargo.toml")
+edit_file(path="actix-web-sqlx-starter/src/main.rs", ...)
 ```
 
 ## Safety

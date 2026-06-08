@@ -303,7 +303,7 @@ impl Tool for RunCommand {
         };
 
         // 5. Ephemeral cd warning.
-        let warning = cd_warning(&command).map(str::to_owned);
+        let warning = cd_warning(&command);
 
         let result = if shell_output.is_success() {
             ToolResult::success(format!(
@@ -378,10 +378,13 @@ fn is_path_char(ch: char) -> bool {
 /// This is a best-effort heuristic — it catches the common cases but cannot
 /// detect every possible escape technique (environment variable expansion,
 /// indirection via aliases, etc.). The approval gate is the primary defense.
-fn cd_warning(command: &str) -> Option<&'static str> {
+fn cd_warning(command: &str) -> Option<String> {
     const NOTE: &str = "[NOTE: each run_command starts a fresh process in the project root. \
 \ncd and Set-Location do not persist between commands. \
-\nInclude the full relative path from the project root in every command.]\n";
+\nInclude the full relative path from the project root in every command. \
+\nAlternatively, use the `cwd` parameter: \
+\n  run_command(cwd=\"<subdirectory>\", command=\"<your command>\") \
+\nThis is more reliable than cd/Set-Location.]\n";
 
     let lower = command.to_lowercase();
 
@@ -392,16 +395,16 @@ fn cd_warning(command: &str) -> Option<&'static str> {
         // but defensive). "cd " followed by something is always a cd invocation.
         let after = lower[pos + 3..].trim_start();
         if !after.is_empty() {
-            return Some(NOTE);
+            return Some(NOTE.to_string());
         }
     }
 
     if lower.contains("set-location ") {
-        return Some(NOTE);
+        return Some(NOTE.to_string());
     }
 
     if lower.contains("push-location ") {
-        return Some(NOTE);
+        return Some(NOTE.to_string());
     }
 
     None
@@ -709,5 +712,6 @@ mod tests {
         let note = cd_warning("cd src").unwrap();
         assert!(note.contains("full relative path"));
         assert!(note.contains("fresh process"));
+        assert!(note.contains("cwd"));
     }
 }

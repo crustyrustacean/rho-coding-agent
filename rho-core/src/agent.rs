@@ -879,16 +879,36 @@ impl LoopContext<'_> {
             );
             // Reset counter so the model gets another chance.
             entry.1 = 0;
-            Some(ToolResult::error(format!(
-                "STUCK LOOP DETECTED: you have called `{}` with the \
-                 same arguments {count} times and received the same result \
-                 each time. The file on disk has NOT changed between \
-                 calls. You must use edit_file or write_file to modify \
-                 the source code BEFORE running the command again. \
-                 Re-read the file with read_file to see its current \
-                 state, then apply the necessary edits.",
-                call.function.name,
-            )))
+
+            // Tailor the nudge based on the tool that's stuck.
+            let nudge = if call.function.name == ToolName::from("run_command") {
+                format!(
+                    "STUCK LOOP DETECTED: you have called `run_command` {count} times \
+                     with the same arguments and received the same result each time. \
+                     The command is not producing different output on retry. \
+                     \n\
+                     Common causes: \
+                     - Wrong working directory: use the `cwd` parameter to run in a \
+                       subdirectory (e.g. `run_command(cwd=\"<subdir>\", command=\"<cmd>\")`). \
+                       Do not use `cd` or `Set-Location` — it does not persist. \
+                     - The command needs a file edit first: use `edit_file` or `write_file` \
+                       to change source code before re-running. \
+                     - The command itself is wrong: re-read the error output and try a \
+                       different approach."
+                )
+            } else {
+                format!(
+                    "STUCK LOOP DETECTED: you have called `{}` with the \
+                     same arguments {count} times and received the same result \
+                     each time. The file on disk has NOT changed between \
+                     calls. You must use edit_file or write_file to modify \
+                     the source code BEFORE running the command again. \
+                     Re-read the file with read_file to see its current \
+                     state, then apply the necessary edits.",
+                    call.function.name,
+                )
+            };
+            Some(ToolResult::error(nudge))
         } else {
             None
         }

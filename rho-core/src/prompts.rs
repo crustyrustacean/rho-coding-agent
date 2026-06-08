@@ -151,6 +151,28 @@ mod tests {
         );
     }
 
+    // ── Subdirectory / cwd guidance checks ───────────────────────────────
+
+    #[test]
+    fn base_prompt_teaches_cwd_parameter() {
+        let prompt = base_prompt();
+        assert!(
+            prompt.contains("cwd")
+                && prompt.contains("subdirectory")
+                && prompt.contains("run_command"),
+            "prompt must teach the cwd parameter of run_command for subdirectory work"
+        );
+    }
+
+    #[test]
+    fn base_prompt_idiom_table_has_cwd_alternative() {
+        let prompt = base_prompt();
+        assert!(
+            prompt.contains("cwd="),
+            "prompt idiom table must show cwd= alternative to cd && command"
+        );
+    }
+
     // ── Progress checkpointing checks ─────────────────────────────────────
 
     #[test]

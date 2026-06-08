@@ -332,8 +332,11 @@ pub fn compose_full_system_prompt(
          - Working directory (project root): `{root}`\n\
          - All relative file paths and shell commands resolve from this directory.\n\
          - Each `run_command` invocation starts a fresh process in this directory.\n\
-           `cd` and `Set-Location` do not persist between commands — include the\n\
-           full relative path from the project root in every command."
+           `cd` and `Set-Location` do not persist between commands.
+         - Use the `cwd` parameter of `run_command` to run in a subdirectory
+           (e.g. `run_command(cwd=\"subdirectory\", command=\"cargo check\")`).
+           For file tools, use paths relative to the project root
+           (e.g. `read_file(\"subdirectory/Cargo.toml\")`)."
     ));
 
     // Append Rust tooling guidance when Rust tools are available.
@@ -526,6 +529,11 @@ mod tests {
         assert!(prompt.contains("# Environment"));
         assert!(prompt.contains("Working directory (project root)"));
         assert!(prompt.contains(dir.path().to_str().unwrap()));
+        assert!(
+            prompt.contains("cwd")
+                && prompt.contains("subdirectory"),
+            "environment block must mention the cwd parameter"
+        );
     }
 
     #[test]
