@@ -58,8 +58,8 @@ impl RhoAiClient {
     ///
     /// Derives the models URL from the configured chat-completions endpoint
     /// by replacing the trailing `/chat/completions` with `/models`. This
-    /// preserves any provider-specific path prefix (e.g. OpenRouter's
-    /// `/api/v1/…` or Groq's `/openai/v1/…`).
+    /// preserves any provider-specific path prefix (e.g. `OpenRouter`'s
+    /// `/api/v1/…` or `Groq`'s `/openai/v1/…`).
     ///
     /// Falls back to `/v1/models` (origin-only) if the endpoint path
     /// does not end with `/chat/completions`.
