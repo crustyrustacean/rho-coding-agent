@@ -1,3 +1,10 @@
+## [0.71.2] - 2026-06-08
+
+### 🐛 Bug Fixes
+
+- Add backticks around provider names in doc comment
+- *(client)* Add timeouts and logging to list_models for reliable /providers reachability
+- *(client)* Make ModelInfo object field optional for OpenRouter compat
 ## [0.71.1] - 2026-06-08
 
 ### 🐛 Bug Fixes
