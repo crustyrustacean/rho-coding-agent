@@ -112,7 +112,8 @@ See [Sessions](./core-concepts/sessions.md) for details.
 | `/help` | Show available commands |
 | `/clear` | Clear conversation history (creates a new branch) |
 | `/models` | List all models across all providers |
-| `/model <id>` | Switch to a model |
+| `/model <id>` | Switch model (bare id or `provider:id`) |
+| `/providers` | List configured providers with reachability status |
 | `/status` | Show context window usage breakdown |
 | `/sessions` | List previous sessions for this project |
 | `/extensions` | List loaded extension names |

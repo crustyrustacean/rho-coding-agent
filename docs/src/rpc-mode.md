@@ -32,8 +32,9 @@ echo '{"jsonrpc":"2.0","method":"prompt","params":{"message":"explain this funct
 | `clear` | — | Clear conversation history |
 | `getState` | — | Return model, provider, and cwd |
 | `getMessages` | — | Return all messages on active path |
-| `setModel` | `{model: string}` | Switch the active model |
+| `setModel` | `{model: string}` | Switch model (`id` or `provider:id`) |
 | `listModels` | — | List available models from providers |
+| `listProviders` | — | List configured providers with reachability |
 | `getSessionStats` | — | Return token budget / usage info |
 | `listSessions` | — | List previous sessions for project |
 | `listExtensions` | — | List loaded extensions and tools |

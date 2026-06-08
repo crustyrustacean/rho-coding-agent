@@ -117,6 +117,24 @@ There are three ways to set the model, in priority order:
 
 Auto-detection works for local servers (LM Studio, Ollama) where `/v1/models` is reliable. For external providers, **always specify the model explicitly** with `--model` or in config.
 
+### `/providers` command
+
+The `/providers` REPL command shows all configured providers with their reachability status:
+
+```text
+  configured providers:
+  * lm-studio (local, ok)
+    openrouter (remote, ok)
+    ollama (remote, down)
+    * = active
+```
+
+Each entry shows:
+
+- **`*`** — active provider (where the next prompt will go)
+- **local/remote** — whether the endpoint is on localhost
+- **ok/down** — whether the `/v1/models` endpoint responded
+
 ### Interactive model picker
 
 When rho has an external provider configured but cannot list models (e.g. `/v1/models` times out, the API key is wrong, or the provider doesn't support model listing), rho offers an interactive model picker instead of aborting:
@@ -136,6 +154,20 @@ When rho has an external provider configured but cannot list models (e.g. `/v1/m
 The picker offers one recommended model from each of Anthropic, OpenAI, and z.ai. Selecting `[0]` lets you type any model ID. You can also type a model ID directly instead of a number.
 
 The curated models use `OpenRouter` model IDs (e.g. `anthropic/claude-sonnet-4`) which work with any `OpenRouter`-compatible endpoint. For direct OpenAI or Anthropic API access, use `[0]` to enter the native model ID (e.g. `gpt-4o` or `claude-sonnet-4-20250514`).
+
+### Mid-session provider switching
+
+The `/model` command accepts `provider:model` syntax to switch to a specific provider without model discovery. This is useful when a provider is slow to respond or doesn't support `/v1/models`:
+
+```
+/model openrouter:deepseek/deepseek-v4-flash
+```
+
+With a bare model ID, rho discovers which provider serves it via `/v1/models` and switches automatically:
+
+```
+/model qwen3-8b
+```
 
 To skip the picker entirely, specify `--model` on the CLI or set `agent.model` in config.
 
@@ -302,6 +334,24 @@ type = "openrouter"
 ```
 
 If `type` is set to a known non-OpenAI-compatible provider name (e.g. `"anthropic"`, `"google"`, `"bedrock"`), rho will print a warning at startup. This is a safety net — the real check is that your endpoint accepts and returns the OpenAI Chat Completions format.
+
+## Connection timeouts
+
+The HTTP client uses sensible defaults to prevent indefinite hangs when a provider is unreachable:
+
+- **Connect timeout**: 30 seconds — how long to wait for the initial TCP/TLS connection
+- **Request timeout**: 2 minutes — total time allowed for the entire request (including streaming response)
+
+These are hardcoded and not currently configurable. If you frequently hit these timeouts with a slow local server, ensure the server is running before starting rho.
+
+## Small-model robustness
+
+rho includes safeguards for models that struggle with tool-use tasks:
+
+- **`max_consecutive_empty`** (default 5) — aborts the agent loop when the model returns too many consecutive empty responses, preventing infinite retry spirals. Set to 0 to disable.
+- **Sandbox path hints** — when a tool call fails with a sandbox path error, rho appends an actionable hint (sandbox root, correct path format) so the model can self-correct instead of repeating the same mistake.
+
+Both features are configured under `[agent]` — see [Configuration](./configuration.md) for details.
 
 ## Privacy considerations
 
