@@ -68,6 +68,10 @@ impl RhoAiClient {
     ///
     /// Returns an error if the endpoint URL cannot be parsed or the request
     /// fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the `reqwest::Client` builder configuration is invalid.
     pub async fn list_models(&self) -> Result<ModelList> {
         let mut models_url = url::Url::parse(&self.endpoint)
             .map_err(|e| crate::error::RhoError::Client(ClientError::UrlParse(e)))?;
@@ -77,12 +81,17 @@ impl RhoAiClient {
         } else {
             models_url.set_path("/v1/models");
         }
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(15))
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .expect("reqwest Client builder configuration is valid");
         let mut req = client.get(models_url);
         if let Some(ref key) = self.api_key {
             req = req.bearer_auth(key);
         }
-        Ok(req.send().await?.json::<ModelList>().await?)
+        let resp = req.send().await?;
+        resp.json::<ModelList>().await.map_err(Into::into)
     }
 }
 

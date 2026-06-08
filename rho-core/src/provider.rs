@@ -357,12 +357,25 @@ impl ProviderRegistry {
     pub async fn list_providers(&self) -> Vec<ProviderInfo> {
         let mut result = Vec::new();
         for provider in &self.providers {
-            let reachable = provider.list_models().await.is_ok();
-            result.push(ProviderInfo {
-                name: provider.name().to_owned(),
-                is_external: provider.is_external(),
-                reachable,
-            });
+            let name = provider.name();
+            match provider.list_models().await {
+                Ok(_) => {
+                    tracing::debug!(provider = %name, "provider reachable");
+                    result.push(ProviderInfo {
+                        name: name.to_owned(),
+                        is_external: provider.is_external(),
+                        reachable: true,
+                    });
+                }
+                Err(e) => {
+                    tracing::warn!(provider = %name, error = %e, "provider unreachable");
+                    result.push(ProviderInfo {
+                        name: name.to_owned(),
+                        is_external: provider.is_external(),
+                        reachable: false,
+                    });
+                }
+            }
         }
         result
     }
