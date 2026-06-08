@@ -178,11 +178,15 @@ pub fn is_local_endpoint(endpoint: &str) -> bool {
 // ── Legacy types for backward compatibility ──────────────────────────────────
 
 /// A model returned by the `/v1/models` endpoint.
+///
+/// Fields beyond `id` use `#[serde(default)]` to accommodate providers
+/// (e.g. `OpenRouter`) that omit `object` and `owned_by` from their response.
 #[derive(Clone, Debug, serde::Deserialize)]
 pub struct ModelInfo {
     /// The model identifier (used in chat completion requests).
     pub id: String,
     /// The object type (always `"model"`).
+    #[serde(default)]
     pub object: String,
     /// Unix timestamp of creation.
     #[serde(default)]
