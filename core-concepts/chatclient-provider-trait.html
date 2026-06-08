@@ -216,15 +216,15 @@ let service = OpenAiService::new(rho_ai::ProviderConfig::new(
 <h3 id="provider-consent"><a class="header" href="#provider-consent">Provider consent</a></h3>
 <p>The binary (<code>rho</code>) checks whether the configured endpoint is local before connecting. Non-local endpoints (e.g., <code>api.openai.com</code>) trigger an interactive consent warning that lists the external provider(s) by name. If no local server is detected, the warning also notes this. Use <code>--accept-external-provider</code> to skip this in automated workflows, or <code>--endpoint</code> (which implies consent since the user explicitly chose the target).</p>
 <h3 id="model-picker"><a class="header" href="#model-picker">Model picker</a></h3>
-<p>When no models can be auto-detected (all providers unreachable or <code>/v1/models</code> unsupported), rho offers an interactive model picker with curated models from Anthropic, OpenAI, and z.ai. The user can also enter a model ID manually. This fallback only fires when neither <code>--model</code> nor <code>agent.model</code> is set and auto-detection fails.</p>
+<p>When no models can be auto-detected (all providers unreachable or their models endpoint unsupported), rho offers an interactive model picker with curated models from Anthropic, OpenAI, and z.ai. The user can also enter a model ID manually. This fallback only fires when neither <code>--model</code> nor <code>agent.model</code> is set and auto-detection fails.</p>
 <h2 id="model-resolution"><a class="header" href="#model-resolution">Model resolution</a></h2>
 <p>The model identifier is resolved in priority order:</p>
 <ol>
 <li><strong>CLI flag</strong> — <code>--model &lt;name&gt;</code> (highest priority)</li>
 <li><strong>Config</strong> — <code>agent.model</code> in <code>.rho/config.toml</code> or <code>~/.rho/config.toml</code></li>
-<li><strong>Auto-detect</strong> — query the server's <code>/v1/models</code> endpoint, use the first loaded model</li>
+<li><strong>Auto-detect</strong> — query the provider's models endpoint (derived from the configured chat-completions URL), use the first loaded model</li>
 </ol>
-<p>Auto-detection works well for local servers where <code>/v1/models</code> is reliable. <strong>For external providers, always specify the model explicitly</strong> with <code>--model</code> or in config — external providers may return large model lists or non-standard responses that can cause auto-detection to pick an unexpected model or fail.</p>
+<p>Auto-detection works well for local servers where the models endpoint is reliable. <strong>For external providers, always specify the model explicitly</strong> with <code>--model</code> or in config — external providers may return large model lists or non-standard responses that can cause auto-detection to pick an unexpected model or fail.</p>
 <h2 id="request--response"><a class="header" href="#request--response">Request / response</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Type</th><th>Purpose</th></tr></thead><tbody>
 <tr><td><code>LlmRequest</code></td><td><code>model</code>, <code>messages</code>, <code>tools</code> — the full API request body</td></tr>
