@@ -12,6 +12,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
+use tracing::{debug, warn};
 
 /// Configuration for retry behavior.
 #[derive(Debug, Clone)]
@@ -83,10 +84,19 @@ async fn retry_stream(
                 let mut s = state.lock().await;
                 s.attempt += 1;
                 let delay = backoff_delay(config, s.attempt);
+                let attempt_num = s.attempt;
                 drop(s);
+                warn!(attempt = attempt_num, max = config.max_retries, error = %e, "retryable error, backing off");
+                debug!(
+                    attempt = attempt_num,
+                    delay_ms = delay.as_millis() as u64,
+                    "waiting before retry"
+                );
                 tokio::time::sleep(delay).await;
             }
             Err(e) if e.is_retryable() => {
+                let attempts = state.lock().await.attempt;
+                warn!(attempts, max = config.max_retries, error = %e, "retry budget exhausted");
                 return Err(ProviderError::RetryBudgetExhausted {
                     last_error: Box::new(e),
                 });

@@ -29,6 +29,7 @@ impl SseParser {
     /// Skips comment lines (`: keepalive`) and other SSE fields.
     pub(crate) fn feed(&mut self, chunk: &str) -> Vec<SseEvent> {
         let mut events = Vec::new();
+        let prev_buf_len = self.buffer.len();
         self.buffer.push_str(chunk);
 
         while let Some(newline_pos) = self.buffer.find('\n') {
@@ -56,6 +57,12 @@ impl SseParser {
             }
         }
 
+        if events.is_empty() && self.buffer.len() > prev_buf_len + chunk.len() * 2 {
+            tracing::warn!(
+                buffer_bytes = self.buffer.len(),
+                "SSE buffer growing without yielding events (potential stall)"
+            );
+        }
         events
     }
 }
