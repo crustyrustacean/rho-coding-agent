@@ -1,3 +1,18 @@
+## [0.72.0] - 2026-06-10
+
+### 🐛 Bug Fixes
+
+- *(tests)* Eliminate flaky persist tests with UUID-based isolation
+
+### 🚜 Refactor
+
+- *(repl)* Remove rho-repl crate
+- *(prompts)* Slash system prompt by ~50% to reclaim context window
+## [0.71.3] - 2026-06-08
+
+### 🐛 Bug Fixes
+
+- *(agent)* Teach cwd parameter instead of cd chaining for subdirectory work
 ## [0.71.2] - 2026-06-08
 
 ### 🐛 Bug Fixes
