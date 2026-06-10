@@ -367,7 +367,7 @@ mod tests {
         let usage = ApiUsage::default();
         assert_eq!(usage.total_input_tokens, 0);
         assert_eq!(usage.total_output_tokens, 0);
-        assert_eq!(usage.total_cost, 0.0);
+        assert!((usage.total_cost).abs() < f64::EPSILON);
         assert_eq!(usage.request_count, 0);
         assert_eq!(usage.total_tokens(), 0);
     }
@@ -410,6 +410,6 @@ mod tests {
     fn api_usage_cost_defaults_to_zero() {
         let mut usage = ApiUsage::default();
         usage.accumulate(&rho_ai::StreamUsage::new(100, 50));
-        assert_eq!(usage.total_cost, 0.0);
+        assert!((usage.total_cost).abs() < f64::EPSILON);
     }
 }
