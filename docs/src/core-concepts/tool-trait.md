@@ -95,6 +95,6 @@ rho ships with 13 built-in tools, all registered in `rho-tools::register_all()`:
 
 TypeScript extensions can register additional tools via `rho-ext`. Each extension tool is wrapped in a `DenoTool` that implements the same `Tool` trait. Extension tools appear alongside built-in tools in the `ToolRegistry` and are visible to the model via the tool schema.
 
-Extension tools are discovered at startup from `~/.rho/extensions/` and `.rho/extensions/`. They can be hot-reloaded at runtime via the `/reload` REPL command.
+Extension tools are discovered at startup from `~/.rho/extensions/` and `.rho/extensions/`. They can be hot-reloaded at runtime via the `reloadExtensions` RPC method.
 
 See [Extensions](../extensions.md) for details.

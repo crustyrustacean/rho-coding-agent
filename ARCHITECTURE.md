@@ -127,7 +127,7 @@ Assembles all layers and runs the headless JSON-RPC 2.0 protocol over stdin/stdo
 7. Build `CompositeObserver` from RPC observer + extension `DenoObserver`s
 8. Scan context files (headless policy: auto-deny new/changed files)
 9. Compose system prompt (base + trusted context files + environment block)
-10. Resolve model identifier (requires `--model`)
+10. Resolve model identifier from config (`agent.model`, `agent.provider`, provider `default_model`, or `--model`). No network calls at startup.
 11. Construct session (persisted, resumed, or ephemeral)
 12. Fire extension `onLoad` hooks
 
@@ -208,7 +208,7 @@ Sending `approved: false` denies the tool call and lets the agent continue.
 
 - Provider consent requires `--accept-external-provider` (or `--endpoint`); no interactive prompt.
 - Context file trust: already-trusted files load silently; new/changed files are auto-denied.
-- Model resolution: requires `--model`; returns an error if the model is not found in any provider's list.
+- Model resolution: resolves from config (`agent.model`, `agent.provider`, provider `default_model`) or CLI `--model`. No network calls at startup.
 
 ### `rho-test-helpers` — Shared Test Utilities (dev-only)
 
@@ -439,6 +439,7 @@ cliff.toml          # git-cliff configuration
 | Type | Location | Purpose |
 |---|---|---|
 | `LlmService` | `rho-ai/service.rs` | Trait: `chat_stream(LlmRequest) → EventStream` |
+| `LlmRequest` | `rho-ai/types.rs` | Request: model, messages, tools, max_tokens, reasoning_effort |
 | `OpenAiService` | `rho-ai/openai.rs` | OpenAI-compatible HTTP client with SSE streaming |
 | `StreamEvent` | `rho-ai/types.rs` | Streaming response event (`Text`, `Reasoning`, `ToolUse*`, `Done`) |
 | `AccumulatedResponse` | `rho-ai/types.rs` | Fully-accumulated response (text + tool calls + usage) |
@@ -446,7 +447,7 @@ cliff.toml          # git-cliff configuration
 | `Provider` | `provider.rs` | Trait: `name`, `is_external`, `list_models`, `clone_boxed_service`, `llm_service` |
 | `ProviderRegistry` | `provider.rs` | Ordered collection of `Box<dyn Provider>` |
 | `ModelInfo` | `client/mod.rs` | A model entry from `/v1/models` |
-| `ProviderConfig` | `config.rs` | Provider config: name, preset, endpoint, API key env var |
+| `ProviderConfig` | `config.rs` | Provider config: name, preset, endpoint, API key env var, default_model |
 | `rho_ai::ProviderConfig` | `rho-ai/types.rs` | API key and base URL (model is per-request, not per-provider) |
 
 ### Session and context

@@ -87,6 +87,12 @@ max_consecutive_empty = 5
 # Show full chain-of-thought reasoning in output (default: false)
 show_reasoning = false
 
+# Reasoning effort for thinking-capable models (optional)
+# Common values: "low", "medium", "high".
+# Sent as `reasoning_effort` in every Chat Completions request.
+# Non-reasoning models silently ignore this.
+# reasoning_effort = "medium"
+
 # Context utilization threshold for auto-compaction (default: 0 = disabled)
 # When utilization >= this %, older entries are proactively compacted.
 auto_compact_threshold = 0

@@ -73,7 +73,7 @@ rho does **not** call `/v1/models` at startup. The config file is the source of 
 
 ## Streaming
 
-`OpenAiService` uses SSE streaming (`stream: true`) for the Chat Completions API. Streaming events are returned as an `EventStream` that the agent loop consumes. `StreamEvent::Text` and `StreamEvent::Reasoning` events are forwarded to the `AgentObserver` in real time, enabling live progress output in the REPL.
+`OpenAiService` uses SSE streaming (`stream: true`) for the Chat Completions API. Streaming events are returned as an `EventStream` that the agent loop consumes. `StreamEvent::Text` and `StreamEvent::Reasoning` events are forwarded to the `AgentObserver` in real time, enabling live progress output in the consumer.
 
 ## Multi-provider support
 

@@ -121,9 +121,9 @@ There are several ways to set the model, in priority order:
 
 rho does **not** call `/v1/models` at startup. The config file is the source of truth — model names are accepted as-is, and misconfiguration surfaces as a clear HTTP error at request time.
 
-### `/providers` command
+### `listProviders` RPC method
 
-The `/providers` REPL command shows all configured providers with their reachability status:
+The `listProviders` RPC method shows all configured providers with their reachability status:
 
 ```text
   configured providers:

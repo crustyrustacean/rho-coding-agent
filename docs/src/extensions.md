@@ -127,7 +127,7 @@ commands = false         # deny rho.runCommand()
 
 ## Hot reload
 
-Use the `/reload` REPL command to hot-reload extensions without restarting rho:
+Use the `reloadExtensions` RPC method to hot-reload extensions without restarting rho:
 
 - Extensions with changed file mtimes are destroyed and re-spawned
 - New extensions are loaded; removed extensions are shut down
@@ -136,12 +136,12 @@ Use the `/reload` REPL command to hot-reload extensions without restarting rho:
 
 V8 isolate creation takes ~20–50ms per extension. For 5 extensions, full reload is ~100–250ms.
 
-## REPL commands
+## RPC methods
 
-| Command | Description |
+| Method | Description |
 |---|---|
-| `/reload` | Hot-reload all extensions from disk |
-| `/extensions` | List names of currently loaded extensions |
+| `reloadExtensions` | Hot-reload all extensions from disk |
+| `listExtensions` | List names of currently loaded extensions |
 
 ## Extension types
 

@@ -66,7 +66,7 @@ Returns all saved sessions for the project, sorted by filesystem modification ti
 | `mtime` | Filesystem modification time |
 | `path` | Full path to the JSONL file |
 
-The `/sessions` REPL command uses this to display the 10 most recent sessions, marking which one `rho -c` will resume.
+The `listSessions` RPC method uses this to return the 10 most recent sessions, marking which one `rho -c` will resume.
 
 ### Resuming a session
 
@@ -135,13 +135,13 @@ Key methods:
 - `estimated_remaining()` — remaining tokens in the prompt budget (saturates at 0)
 - `prompt_budget()` — context window minus completion reserve
 
-The REPL prints a compact one-line status bar after every turn:
+A consumer can display a compact one-line status bar after every turn:
 
 ```text
 [████████████░░░░░░░░] 12.3k/32k tokens (50%) │ 12.3k remaining │ 10 messages
 ```
 
-Color-coded green (<60%), yellow (60–80%), red (>80%). The `/status` REPL command (aliased as `/context`) shows a detailed multi-line breakdown including token distribution by role, resolution level, compaction stats, system prompt overhead, tool schema overhead, and conversation token breakdown.
+Color-coded green (<60%), yellow (60–80%), red (>80%). The `getSessionStats` RPC method shows a detailed multi-line breakdown including token distribution by role, resolution level, compaction stats, system prompt overhead, tool schema overhead, and conversation token breakdown.
 
 ## Entry types
 
@@ -187,7 +187,7 @@ This prevents a single verbose tool call from consuming the entire context windo
 
 ## The `/clear` command
 
-In the REPL, `/clear` branches back to the system message entry. This has the same practical effect as clearing the conversation, but the old tree is preserved on disk. You can resume the old branch later with `rho -c` or `--session`.
+The `clear` RPC method branches back to the system message entry. This has the same practical effect as clearing the conversation, but the old tree is preserved on disk. You can resume the old branch later with `rho -c` or `--session`.
 
 ## Session API
 

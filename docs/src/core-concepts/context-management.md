@@ -144,15 +144,15 @@ Key methods:
 
 ## Context status bar
 
-The REPL displays a compact one-line status bar after every turn showing estimated token usage:
+A consumer (TUI, editor integration) can display a compact one-line status bar after every turn showing estimated token usage:
 
 ```text
 [████████████░░░░░░░░] 12.3k/32k tokens (50%) │ 12.3k remaining │ 10 messages
 ```
 
-The bar is color-coded by utilization: green (<60%), yellow (60–80%), red (>80%). This gives a quick at-a-glance sense of how much context window remains.
+The bar can be color-coded by utilization: green (<60%), yellow (60–80%), red (>80%). This gives a quick at-a-glance sense of how much context window remains.
 
-For a detailed breakdown, the `/status` REPL command (aliased as `/context`) shows:
+For a detailed breakdown, the `getSessionStats` RPC method shows:
 
 - Context window size and completion reserve
 - Prompt budget (context window minus reserve)

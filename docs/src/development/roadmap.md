@@ -15,7 +15,7 @@ rho is developed in phases, each building on the last. The current version is **
 | 3.6: crates.io Research | ✅ Complete | Crate metadata lookup, search, version history, dependency inspection |
 | 3.8: Hashline Editing | ✅ Complete | Content-addressed line references with fuzzy anchor matching |
 | 3.9: Streaming & Live Output | ✅ Complete | SSE streaming, `AgentObserver` trait, streaming output via JSON-RPC notifications |
-| 3.10: Multi-Provider & Model Picker | ✅ Complete | `Provider` trait, `ProviderRegistry`, interactive model picker, `/models`, `/model` |
+| 3.10: Multi-Provider & Model Picker | ✅ Complete | `Provider` trait, `ProviderRegistry`, `/models`, `/model` |
 | 3.11: Session Discovery & Context Visibility | ✅ Complete | `find_latest_session()`, `list_sessions()`, `rho -c`, `/sessions`, `/status`, context status bar |
 | 3.12: RPC Mode | ✅ Complete | Headless JSON-RPC 2.0 over stdin/stdout, `run_rpc_on<R, W>`, approval round-trips, integration tests |
 | 4: Terminal UI | 🔜 Next | Rich TUI replacing the bare REPL |

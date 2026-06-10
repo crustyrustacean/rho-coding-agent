@@ -13,7 +13,7 @@ rho-coding-agent/
 │       ├── lib.rs            # Module declarations
 │       ├── cli.rs            # `Cli` — CLI flags with clap
 │       ├── app.rs            # `App` — runtime state, build/run orchestration, extension loading
-│       ├── model.rs          # Model resolution + interactive picker
+│       ├── model.rs          # Model resolution (config-as-truth, provider-first)
 │       ├── ext_observer.rs   # `CompositeObserver` — fans out to RPC observer + extension observers
 │       ├── rpc.rs            # JSON-RPC 2.0: `run_rpc`, `run_rpc_on`, observer, approval gate
 │       └── presenter/
