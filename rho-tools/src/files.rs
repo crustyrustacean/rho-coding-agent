@@ -181,6 +181,145 @@ impl Tool for ReadFile {
     }
 }
 
+// ── BatchRead ────────────────────────────────────────────────────────────────
+
+/// Read multiple files in a single tool call.
+///
+/// Takes an array of paths, reads each within the sandbox, and returns
+/// all contents in one response. Each file is wrapped in its own
+/// `<context>` tags with hashline formatting.
+///
+/// This collapses N files × N LLM turns into 1 tool call, saving context
+/// window tokens on the tool-call/result scaffolding that would otherwise
+/// repeat for each file.
+pub struct BatchRead {
+    /// Sandbox root — all reads are validated against this.
+    pub root: SandboxRoot,
+}
+
+#[async_trait]
+impl Tool for BatchRead {
+    fn name(&self) -> ToolName {
+        ToolName::from("batch_read")
+    }
+
+    fn description(&self) -> &str {
+        "Read multiple files at once. Takes an array of paths, returns all \
+         contents in a single response. Each file is wrapped in <context> tags \
+         with hashline format. Faster than separate read_file calls when you \
+         need to understand several files before making an edit. Max 20 paths."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "paths": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Array of file paths to read (relative to the project root). Max 20."
+                }
+            },
+            "required": ["paths"]
+        })
+    }
+
+    fn risk(&self) -> ToolRisk {
+        ToolRisk::Read
+    }
+
+    async fn execute(
+        &self,
+        arguments: serde_json::Value,
+        cancel: CancellationToken,
+    ) -> Result<ToolOutcome> {
+        let paths_arg =
+            arguments["paths"]
+                .as_array()
+                .ok_or_else(|| ToolError::MissingArgument {
+                    name: "paths".to_string(),
+                })?;
+
+        if paths_arg.is_empty() {
+            return Ok(ToolOutcome::Immediate(ToolResult::error(
+                "batch_read: paths array is empty",
+            )));
+        }
+        if paths_arg.len() > 20 {
+            return Ok(ToolOutcome::Immediate(ToolResult::error(
+                "batch_read: max 20 paths per call",
+            )));
+        }
+
+        let mut results = Vec::with_capacity(paths_arg.len());
+
+        for (i, val) in paths_arg.iter().enumerate() {
+            if cancel.is_cancelled() {
+                return Ok(ToolOutcome::Immediate(ToolResult::error("cancelled")));
+            }
+
+            let path_str = val.as_str().unwrap_or("<invalid>");
+
+            // Validate path is within the sandbox root.
+            let candidate = self.root.path().join(path_str);
+            let safe_path = match self.root.validate(&candidate) {
+                Ok(p) => p,
+                Err(e) => {
+                    results.push(format!("[{}] error: {e}", i + 1));
+                    continue;
+                }
+            };
+
+            let content = match tokio::fs::read_to_string(&*safe_path).await {
+                Ok(c) => c,
+                Err(e) => {
+                    results.push(format!(
+                        "[{}] error: failed to read `{path_str}`: {e}",
+                        i + 1
+                    ));
+                    continue;
+                }
+            };
+
+            // Same hashline + <context> framing as ReadFile.
+            let lines: Vec<&str> = content.lines().collect();
+            let formatted = if lines.is_empty() {
+                format!(
+                    "<context file=\"{path_str}\">
+<context:end>"
+                )
+            } else {
+                let pad_width = lines.len().to_string().len();
+                let hashlined: Vec<String> = lines
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, line)| {
+                        let line_num = idx + 1;
+                        let hash = compute_line_hash(line, line_num);
+                        format!("{line_num:>pad_width$}#{hash}:{line}")
+                    })
+                    .collect();
+                format!(
+                    "<context file=\"{}\">\n{}\n<context:end>",
+                    path_str,
+                    hashlined.join("\n")
+                )
+            };
+            results.push(formatted);
+        }
+
+        let header = format!(
+            "batch_read: {}/{} files read",
+            results.len(),
+            paths_arg.len()
+        );
+        Ok(ToolOutcome::Immediate(ToolResult::success(format!(
+            "{header}\n\n{}",
+            results.join("\n\n")
+        ))))
+    }
+}
+
 // ── WriteFile ─────────────────────────────────────────────────────────────────
 
 /// Write content to a file, creating it if it does not exist.

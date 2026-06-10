@@ -42,7 +42,7 @@ use std::sync::{Arc, Mutex};
 
 pub use crate::error::{ToolError, ToolResult};
 pub use crates_io::CratesIoLookup;
-pub use files::{EditFile, ListDir, ReadFile, WriteFile};
+pub use files::{BatchRead, EditFile, ListDir, ReadFile, WriteFile};
 pub use hashline::compute_line_hash;
 pub use rust::{CargoCheck, CargoClippy, CargoFix, CargoTest, RustcExplain, RustdocTool};
 pub use shell::{CommandDenylist, PowerShellExecutor, RunCommand};
@@ -66,6 +66,7 @@ pub fn register_all(
     config: &rho_core::RhoConfig,
 ) -> ToolResult<SessionPathHolder> {
     registry.register(Box::new(ReadFile { root: root.clone() }));
+    registry.register(Box::new(BatchRead { root: root.clone() }));
     registry.register(Box::new(WriteFile { root: root.clone() }));
     registry.register(Box::new(ListDir { root: root.clone() }));
     registry.register(Box::new(EditFile { root: root.clone() }));
