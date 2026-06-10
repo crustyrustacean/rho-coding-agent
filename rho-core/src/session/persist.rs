@@ -594,6 +594,13 @@ mod tests {
         path
     }
 
+    /// Generate a unique temp dir path for a test, ensuring no hash
+    /// collisions with parallel test runs.
+    fn unique_test_dir(label: &str) -> PathBuf {
+        let uuid = uuid::Uuid::new_v4();
+        std::env::temp_dir().join(format!("rho_test_{label}_{uuid}"))
+    }
+
     #[test]
     fn list_sessions_returns_empty_for_nonexistent_directory() {
         let cwd = Path::new("/tmp/nonexistent_rho_test_12345");
@@ -603,37 +610,27 @@ mod tests {
 
     #[test]
     fn list_sessions_returns_empty_for_empty_directory() {
-        let dir = std::env::temp_dir().join("rho_test_list_empty");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let base = unique_test_dir("list_empty");
+        let hash = project_hash(&base);
+        let session_dir = dirs_home().join(".rho").join("sessions").join(&hash);
+        let _ = std::fs::create_dir_all(&session_dir);
 
-        let result = list_sessions(&dir);
+        let result = list_sessions(&base);
         assert!(result.is_empty());
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn list_sessions_returns_sessions_sorted_by_mtime() {
-        let base = std::env::temp_dir().join("rho_test_list_sorted");
-        let _ = std::fs::remove_dir_all(&base);
-
-        // Create a fake session directory with the right project hash.
+        let base = unique_test_dir("list_sorted");
         let hash = project_hash(&base);
         let session_dir = dirs_home().join(".rho").join("sessions").join(&hash);
-        let _ = std::fs::remove_dir_all(&session_dir);
-        std::fs::create_dir_all(&session_dir).unwrap();
+        let _ = std::fs::create_dir_all(&session_dir);
 
-        // Create two sessions with different timestamps.
         let _older = create_test_session(&session_dir, "aaa11111", 1000, 5);
         let _newer = create_test_session(&session_dir, "bbb22222", 2000, 10);
 
-        // Touch the older file so it has a more recent mtime.
         let older_path = session_dir.join("1000_aaa11111.jsonl");
         let newer_path = session_dir.join("2000_bbb22222.jsonl");
-
-        // On some systems, file creation order determines mtime.
-        // Explicitly set mtimes to guarantee ordering.
         let older_time =
             std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(50 * 60);
         let newer_time =
@@ -647,16 +644,11 @@ mod tests {
 
         let result = list_sessions(&base);
         assert_eq!(result.len(), 2);
-        // Most recent mtime first.
         assert_eq!(result[0].id, "bbb22222");
         assert_eq!(result[1].id, "aaa11111");
-
-        // Verify metadata is populated.
         assert_eq!(result[0].entry_count, 10);
         assert_eq!(result[1].entry_count, 5);
         assert_eq!(result[0].cwd, PathBuf::from("/tmp/test"));
-
-        let _ = std::fs::remove_dir_all(&session_dir);
     }
 
     #[test]
@@ -667,18 +659,14 @@ mod tests {
 
     #[test]
     fn find_latest_returns_most_recent_session() {
-        let base = std::env::temp_dir().join("rho_test_find_latest");
-        let _ = std::fs::remove_dir_all(&base);
-
+        let base = unique_test_dir("find_latest");
         let hash = project_hash(&base);
         let session_dir = dirs_home().join(".rho").join("sessions").join(&hash);
-        let _ = std::fs::remove_dir_all(&session_dir);
-        std::fs::create_dir_all(&session_dir).unwrap();
+        let _ = std::fs::create_dir_all(&session_dir);
 
         let _old = create_test_session(&session_dir, "ccc33333", 5000, 3);
         let _new = create_test_session(&session_dir, "ddd44444", 6000, 7);
 
-        // Set mtimes so the second is definitively newer.
         let old_path = session_dir.join("5000_ccc33333.jsonl");
         let new_path = session_dir.join("6000_ddd44444.jsonl");
         let older_time =
@@ -696,31 +684,21 @@ mod tests {
         assert!(result.is_some());
         let path = result.unwrap();
         assert!(path.to_string_lossy().contains("ddd44444"));
-
-        let _ = std::fs::remove_dir_all(&session_dir);
     }
 
     #[test]
     fn list_sessions_skips_non_jsonl_files() {
-        let base = std::env::temp_dir().join("rho_test_skip_files");
-        let _ = std::fs::remove_dir_all(&base);
-
+        let base = unique_test_dir("skip_files");
         let hash = project_hash(&base);
         let session_dir = dirs_home().join(".rho").join("sessions").join(&hash);
-        let _ = std::fs::remove_dir_all(&session_dir);
-        std::fs::create_dir_all(&session_dir).unwrap();
+        let _ = std::fs::create_dir_all(&session_dir);
 
-        // Create a valid session.
         let _ = create_test_session(&session_dir, "eee55555", 7000, 2);
-        // Create a non-JSONL file.
         std::fs::write(session_dir.join("readme.txt"), "not a session").unwrap();
-        // Create an empty file.
         std::fs::File::create(session_dir.join("empty.jsonl")).unwrap();
 
         let result = list_sessions(&base);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].id, "eee55555");
-
-        let _ = std::fs::remove_dir_all(&session_dir);
     }
 }
