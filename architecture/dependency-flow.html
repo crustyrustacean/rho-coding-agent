@@ -191,25 +191,23 @@
     │
     └── rho-core ─────────────────────────────────────
             │
-rho-repl ──── (no rho deps, spawns rho as subprocess)
 rho-bench ──────── rho-eval ── rho-core ─────────────
 rho-test-helpers ── rho-core, rho-ai ────────────────
 xtask ──────────────────────────────────────────────
 </code></pre>
 <div class="table-wrapper"><table><thead><tr><th>Crate</th><th>Depends on</th><th>Notes</th></tr></thead><tbody>
 <tr><td><code>rho</code></td><td><code>rho-core</code>, <code>rho-tools</code>, <code>rho-ext</code>, <code>rho-ai</code></td><td>Headless JSON-RPC 2.0 agent</td></tr>
-<tr><td><code>rho-repl</code></td><td>none (external only)</td><td>Interactive terminal client — spawns <code>rho</code> as a subprocess</td></tr>
-<tr><td><code>rho-ext</code></td><td><code>rho-core</code>, <code>deno_core</code>, <code>deno_ast</code></td><td>TypeScript extension runtime</td></tr>
-<tr><td><code>rho-tools</code></td><td><code>rho-core</code>, <code>rho-highlight</code></td><td>Tool implementations use core types and highlight for node-splitting</td></tr>
-<tr><td><code>rho-highlight</code></td><td>none (external only)</td><td>Tree-sitter grammar — standalone, no rho dependencies</td></tr>
-<tr><td><code>rho-core</code></td><td><code>rho-ai</code></td><td>Kernel — the foundation everything else builds on</td></tr>
-<tr><td><code>rho-ai</code></td><td>none (external only)</td><td>Unified LLM provider abstraction</td></tr>
-<tr><td><code>rho-test-helpers</code></td><td><code>rho-core</code>, <code>rho-ai</code></td><td>Dev-only — provides mocks and fixtures for testing</td></tr>
-<tr><td><code>rho-eval</code></td><td><code>rho-core</code></td><td>Dev-only — benchmark task definitions and scoring</td></tr>
-<tr><td><code>rho-bench</code></td><td><code>rho-core</code>, <code>rho-eval</code>, <code>rho-tools</code></td><td>Dev-only — benchmark harness binary for multi-model evaluation</td></tr>
-<tr><td><code>xtask</code></td><td>none (cargo integration)</td><td>Dev-only — task runner, no rho crate dependencies</td></tr>
 </tbody></table>
 </div>
+<p>| <code>rho-ext</code> | <code>rho-core</code>, <code>deno_core</code>, <code>deno_ast</code> | TypeScript extension runtime |
+| <code>rho-tools</code> | <code>rho-core</code>, <code>rho-highlight</code> | Tool implementations use core types and highlight for node-splitting |
+| <code>rho-highlight</code> | none (external only) | Tree-sitter grammar — standalone, no rho dependencies |
+| <code>rho-core</code> | <code>rho-ai</code> | Kernel — the foundation everything else builds on |
+| <code>rho-ai</code> | none (external only) | Unified LLM provider abstraction |
+| <code>rho-test-helpers</code> | <code>rho-core</code>, <code>rho-ai</code> | Dev-only — provides mocks and fixtures for testing |
+| <code>rho-eval</code> | <code>rho-core</code> | Dev-only — benchmark task definitions and scoring |
+| <code>rho-bench</code> | <code>rho-core</code>, <code>rho-eval</code>, <code>rho-tools</code> | Dev-only — benchmark harness binary for multi-model evaluation |
+| <code>xtask</code> | none (cargo integration) | Dev-only — task runner, no rho crate dependencies |</p>
 <h2 id="key-external-dependencies"><a class="header" href="#key-external-dependencies">Key external dependencies</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Dependency</th><th>Used by</th><th>Purpose</th></tr></thead><tbody>
 <tr><td><code>reqwest</code></td><td><code>rho-ai</code></td><td>HTTP client for model API</td></tr>
@@ -230,7 +228,7 @@ xtask ────────────────────────�
 <h2 id="what-this-buys-you"><a class="header" href="#what-this-buys-you">What this buys you</a></h2>
 <p>The layered structure means:</p>
 <ul>
-<li><strong><code>rho-core</code> is UI-agnostic</strong> — no shell, no filesystem, no terminal. The REPL (<code>rho-repl</code>) and any future TUI both consume it through the same JSON-RPC 2.0 protocol.</li>
+<li><strong><code>rho-core</code> is UI-agnostic</strong> — no shell, no filesystem, no terminal. Any frontend (REPL, TUI, editor integration) consumes it through the JSON-RPC 2.0 protocol.</li>
 <li><strong>Tools are pluggable</strong> — <code>ToolRegistry</code> stores <code>Box&lt;dyn Tool&gt;</code>, so adding a tool is <code>registry.register(Box::new(MyTool))</code>.</li>
 <li><strong>Testing is isolated</strong> — <code>rho-test-helpers</code> mocks the core traits (<code>MockChatClient</code>, <code>MockShellExecutor</code>, <code>ApprovalGate</code>) so tool and agent loop tests run without a model server.</li>
 </ul>

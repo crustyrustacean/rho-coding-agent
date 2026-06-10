@@ -187,7 +187,7 @@
 <li>A local LLM server (LM Studio, Ollama) running on <code>localhost:1234</code>, <strong>or</strong> an API key for an external provider (OpenAI, Groq, OpenRouter, DeepInfra, etc.)</li>
 </ul>
 <h3 id="local-model-default"><a class="header" href="#local-model-default">Local model (default)</a></h3>
-<p>No configuration needed — just start a local server on <code>localhost:1234</code> and run <code>rho-repl</code>. It will auto-detect the loaded model.</p>
+<p>No configuration needed — just start a local server on <code>localhost:1234</code> and run rho. It will auto-detect the loaded model.</p>
 <h3 id="external-provider"><a class="header" href="#external-provider">External provider</a></h3>
 <p>Create <code>~/.rho/config.toml</code> with a provider preset. See <a href="./providers.html">External Providers</a> for worked examples.</p>
 <pre><code class="language-toml">[[providers]]
@@ -198,7 +198,7 @@ api_key_env = "OPENROUTER_API_KEY"
 model = "deepseek-v4-flash"
 </code></pre>
 <h3 id="no-server-running"><a class="header" href="#no-server-running">No server running?</a></h3>
-<p>If you run <code>rho-repl</code> with no local server and no configured external provider, rho will print a startup error indicating no models were found.</p>
+<p>If you run rho with no local server and no configured external provider, rho will print a startup error indicating no models were found.</p>
 <p>If you have an external provider configured but rho cannot list models (e.g. the API key is wrong or the endpoint is slow), rho offers an interactive model picker:</p>
 <pre><code class="language-text">  Select a model to use:
 
@@ -212,17 +212,16 @@ model = "deepseek-v4-flash"
 <p>You can also skip the picker entirely with <code>--model &lt;id&gt;</code>.</p>
 <h2 id="build"><a class="header" href="#build">Build</a></h2>
 <pre><code class="language-sh">cargo build --release -p rho        # headless RPC agent
-cargo build --release -p rho-repl   # interactive terminal client
 </code></pre>
 <h2 id="run"><a class="header" href="#run">Run</a></h2>
-<pre><code class="language-sh">rho-repl                # auto-detect model, persist session to disk
-rho-repl -m my-model    # specify a model
-rho-repl -c             # resume the most recent session for this project
-rho-repl --session &lt;path&gt;  # resume a specific session
-rho-repl --ephemeral   # in-memory mode, no session file
+<pre><code class="language-sh">rho                      # auto-detect model, persist session to disk (headless RPC)
+rho -m my-model          # specify a model
+rho -c                   # resume the most recent session for this project
+rho --session &lt;path&gt;     # resume a specific session
+rho --ephemeral          # in-memory mode, no session file
 </code></pre>
-<p><code>rho-repl</code> spawns <code>rho</code> as a subprocess and communicates via JSON-RPC 2.0 over stdin/stdout. All model interaction happens inside <code>rho</code>; <code>rho-repl</code> provides the terminal UI, slash commands, and approval prompts.</p>
-<p>You can also run <code>rho</code> directly for headless/scripted use:</p>
+<p>rho runs as a headless JSON-RPC 2.0 agent over stdin/stdout. Send prompts and receive streaming responses via the protocol. See <a href="./rpc-mode.html">RPC Mode</a> for the full protocol reference.</p>
+<p>Example scripted use:</p>
 <pre><code class="language-sh">echo '{"jsonrpc":"2.0","method":"prompt","params":{"message":"fix the bug"},"id":1}' | rho --model &lt;id&gt;
 </code></pre>
 <p>On startup, rho:</p>
@@ -231,12 +230,12 @@ rho-repl --ephemeral   # in-memory mode, no session file
 <li>Loads configuration from <code>~/.rho/config.toml</code> and <code>.rho/config.toml</code>.</li>
 <li>Scans for project context files (<code>AGENTS.md</code>, etc.) and prompts for trust on first encounter.</li>
 <li>Checks provider consent for external endpoints.</li>
-<li>Connects to the model server and auto-detects the loaded model (unless <code>--model</code> is specified). If no model can be found, rho offers an interactive model picker.</li>
+<li>Connects to the model server and auto-detects the loaded model (unless <code>--model</code> is specified). If no model can be found, rho returns an error.</li>
 <li>Creates a session (persisted to <code>~/.rho/sessions/</code> by default, or in-memory with <code>--ephemeral</code>). If previous sessions exist, a hint is printed.</li>
-<li>Enters the RPC loop and waits for commands. <code>rho-repl</code> provides the interactive prompt.</li>
+<li>Enters the RPC loop and waits for commands.</li>
 </ol>
 <h2 id="cli-flags-rho"><a class="header" href="#cli-flags-rho">CLI flags (<code>rho</code>)</a></h2>
-<p>The <code>rho</code> binary runs in headless JSON-RPC 2.0 mode. All flags can also be forwarded by <code>rho-repl</code>.</p>
+<p>The <code>rho</code> binary runs in headless JSON-RPC 2.0 mode.</p>
 <div class="table-wrapper"><table><thead><tr><th>Flag</th><th>Description</th></tr></thead><tbody>
 <tr><td>Flag</td><td>Description</td></tr>
 <tr><td>---</td><td>---</td></tr>
@@ -255,24 +254,11 @@ rho-repl --ephemeral   # in-memory mode, no session file
 </tbody></table>
 </div>
 <h2 id="session-persistence"><a class="header" href="#session-persistence">Session persistence</a></h2>
-<p>By default, every rho invocation creates a new JSONL session file under <code>~/.rho/sessions/&lt;project-hash&gt;/</code>. Sessions survive process restarts — use <code>rho-repl -c</code> to resume the latest session or <code>--session &lt;path&gt;</code> to resume a specific one.</p>
-<p>The <code>/sessions</code> REPL command lists the 10 most recent sessions with timestamps, sizes, and entry counts. The latest session is marked so you know which one <code>rho -c</code> will pick.</p>
+<p>By default, every rho invocation creates a new JSONL session file under <code>~/.rho/sessions/&lt;project-hash&gt;/</code>. Sessions survive process restarts — use <code>rho -c</code> to resume the latest session or <code>--session &lt;path&gt;</code> to resume a specific one.</p>
+<p>The <code>listSessions</code> RPC method returns the 10 most recent sessions with timestamps, sizes, and entry counts. The latest session is marked so you know which one <code>rho -c</code> will pick.</p>
 <p>See <a href="./core-concepts/sessions.html">Sessions</a> for details.</p>
-<h2 id="repl-commands-rho-repl"><a class="header" href="#repl-commands-rho-repl">REPL commands (<code>rho-repl</code>)</a></h2>
-<div class="table-wrapper"><table><thead><tr><th>Command</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>/help</code></td><td>Show available commands</td></tr>
-<tr><td><code>/clear</code></td><td>Clear conversation history (creates a new branch)</td></tr>
-<tr><td><code>/models</code></td><td>List all models across all providers</td></tr>
-<tr><td><code>/model &lt;id&gt;</code></td><td>Switch model (bare id or <code>provider:id</code>)</td></tr>
-<tr><td><code>/providers</code></td><td>List configured providers with reachability status</td></tr>
-<tr><td><code>/status</code></td><td>Show context window usage breakdown</td></tr>
-<tr><td><code>/sessions</code></td><td>List previous sessions for this project</td></tr>
-<tr><td><code>/extensions</code></td><td>List loaded extension names</td></tr>
-<tr><td><code>/reload</code></td><td>Hot-reload TypeScript extensions from disk</td></tr>
-<tr><td><code>/compact</code></td><td>Trigger context compaction</td></tr>
-<tr><td><code>/quit</code> or <code>/exit</code></td><td>Exit rho-repl</td></tr>
-</tbody></table>
-</div>
+<h2 id="rpc-methods"><a class="header" href="#rpc-methods">RPC methods</a></h2>
+<p>rho communicates via JSON-RPC 2.0 over stdin/stdout. See <a href="./rpc-mode.html">RPC Mode</a> for the full protocol reference, including all methods, notifications, and the approval flow.</p>
 <h2 id="next-steps"><a class="header" href="#next-steps">Next Steps</a></h2>
 <ul>
 <li><a href="./architecture.html">Architecture</a> — how the crates fit together</li>

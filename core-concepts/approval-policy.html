@@ -209,12 +209,8 @@ run_command = "ask"   # always ask
 </div>
 <h2 id="gate-rpcapprovalgate"><a class="header" href="#gate-rpcapprovalgate">Gate: <code>RpcApprovalGate</code></a></h2>
 <p>The RPC implementation reads an <code>approvalResponse</code> JSON-RPC 2.0 method from stdin and returns the <code>approved</code> boolean. See <a href="../rpc-mode.html">RPC Mode</a> for the approval flow.</p>
-<h2 id="gate-rho-repl-approval"><a class="header" href="#gate-rho-repl-approval">Gate: <code>rho-repl</code> approval</a></h2>
-<p>The terminal client (<code>rho-repl</code>) presents a preview and reads <code>y/N</code> from stderr/stdin:</p>
-<pre><code class="language-text">  approve? run_command [destructive]
-  {"command":"Remove-Item temp/*"}
-  [y/N] 
-</code></pre>
+<h2 id="example-gate"><a class="header" href="#example-gate">Example gate</a></h2>
+<p>In RPC mode, the <code>RpcApprovalGate</code> reads an <code>approvalResponse</code> method from stdin (see <a href="../rpc-mode.html">RPC Mode</a>). A REPL, TUI, or editor integration can implement the <code>ApprovalGate</code> trait to present approvals however it chooses.</p>
 <p>On denial, a synthetic error result is fed back to the model as if the tool had failed. The model can then adjust its approach — it does not crash or get stuck.</p>
 <h2 id="custom-gates"><a class="header" href="#custom-gates">Custom gates</a></h2>
 <p>The <code>ApprovalGate</code> trait is async, so any UI can implement it:</p>

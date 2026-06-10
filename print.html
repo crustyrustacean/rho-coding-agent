@@ -180,11 +180,7 @@
                         <h1 id="introduction"><a class="header" href="#introduction">Introduction</a></h1>
 <p><strong>rho</strong> is a Rust coding agent that runs against local and remote LLMs.</p>
 <p>It connects to OpenAI-compatible endpoints (LM Studio, Ollama, OpenAI, Groq, OpenRouter, DeepInfra, and more), gives the model access to tools for reading and writing files, executing shell commands, and running Rust tooling — then runs an autonomous agent loop that the user supervises through an approval gate.</p>
-<p>rho has two entry points:</p>
-<ul>
-<li><strong><code>rho</code></strong> — headless JSON-RPC 2.0 over stdin/stdout for embedding in editors, bots, and custom UIs</li>
-<li><strong><code>rho-repl</code></strong> — an interactive terminal client that spawns <code>rho</code> as a subprocess and provides slash commands, streaming output, and approval prompts</li>
-</ul>
+<p>rho is a headless JSON-RPC 2.0 agent over stdin/stdout, suitable for embedding in editors, bots, and custom UIs.</p>
 <p>See <a href="./rpc-mode.html">RPC Mode</a> for the full protocol reference.</p>
 <p>Design priorities:</p>
 <ul>
@@ -220,7 +216,7 @@
 <li>A local LLM server (LM Studio, Ollama) running on <code>localhost:1234</code>, <strong>or</strong> an API key for an external provider (OpenAI, Groq, OpenRouter, DeepInfra, etc.)</li>
 </ul>
 <h3 id="local-model-default"><a class="header" href="#local-model-default">Local model (default)</a></h3>
-<p>No configuration needed — just start a local server on <code>localhost:1234</code> and run <code>rho-repl</code>. It will auto-detect the loaded model.</p>
+<p>No configuration needed — just start a local server on <code>localhost:1234</code> and run rho. It will auto-detect the loaded model.</p>
 <h3 id="external-provider"><a class="header" href="#external-provider">External provider</a></h3>
 <p>Create <code>~/.rho/config.toml</code> with a provider preset. See <a href="./providers.html">External Providers</a> for worked examples.</p>
 <pre><code class="language-toml">[[providers]]
@@ -231,7 +227,7 @@ api_key_env = "OPENROUTER_API_KEY"
 model = "deepseek-v4-flash"
 </code></pre>
 <h3 id="no-server-running"><a class="header" href="#no-server-running">No server running?</a></h3>
-<p>If you run <code>rho-repl</code> with no local server and no configured external provider, rho will print a startup error indicating no models were found.</p>
+<p>If you run rho with no local server and no configured external provider, rho will print a startup error indicating no models were found.</p>
 <p>If you have an external provider configured but rho cannot list models (e.g. the API key is wrong or the endpoint is slow), rho offers an interactive model picker:</p>
 <pre><code class="language-text">  Select a model to use:
 
@@ -245,17 +241,16 @@ model = "deepseek-v4-flash"
 <p>You can also skip the picker entirely with <code>--model &lt;id&gt;</code>.</p>
 <h2 id="build"><a class="header" href="#build">Build</a></h2>
 <pre><code class="language-sh">cargo build --release -p rho        # headless RPC agent
-cargo build --release -p rho-repl   # interactive terminal client
 </code></pre>
 <h2 id="run"><a class="header" href="#run">Run</a></h2>
-<pre><code class="language-sh">rho-repl                # auto-detect model, persist session to disk
-rho-repl -m my-model    # specify a model
-rho-repl -c             # resume the most recent session for this project
-rho-repl --session &lt;path&gt;  # resume a specific session
-rho-repl --ephemeral   # in-memory mode, no session file
+<pre><code class="language-sh">rho                      # auto-detect model, persist session to disk (headless RPC)
+rho -m my-model          # specify a model
+rho -c                   # resume the most recent session for this project
+rho --session &lt;path&gt;     # resume a specific session
+rho --ephemeral          # in-memory mode, no session file
 </code></pre>
-<p><code>rho-repl</code> spawns <code>rho</code> as a subprocess and communicates via JSON-RPC 2.0 over stdin/stdout. All model interaction happens inside <code>rho</code>; <code>rho-repl</code> provides the terminal UI, slash commands, and approval prompts.</p>
-<p>You can also run <code>rho</code> directly for headless/scripted use:</p>
+<p>rho runs as a headless JSON-RPC 2.0 agent over stdin/stdout. Send prompts and receive streaming responses via the protocol. See <a href="./rpc-mode.html">RPC Mode</a> for the full protocol reference.</p>
+<p>Example scripted use:</p>
 <pre><code class="language-sh">echo '{"jsonrpc":"2.0","method":"prompt","params":{"message":"fix the bug"},"id":1}' | rho --model &lt;id&gt;
 </code></pre>
 <p>On startup, rho:</p>
@@ -264,12 +259,12 @@ rho-repl --ephemeral   # in-memory mode, no session file
 <li>Loads configuration from <code>~/.rho/config.toml</code> and <code>.rho/config.toml</code>.</li>
 <li>Scans for project context files (<code>AGENTS.md</code>, etc.) and prompts for trust on first encounter.</li>
 <li>Checks provider consent for external endpoints.</li>
-<li>Connects to the model server and auto-detects the loaded model (unless <code>--model</code> is specified). If no model can be found, rho offers an interactive model picker.</li>
+<li>Connects to the model server and auto-detects the loaded model (unless <code>--model</code> is specified). If no model can be found, rho returns an error.</li>
 <li>Creates a session (persisted to <code>~/.rho/sessions/</code> by default, or in-memory with <code>--ephemeral</code>). If previous sessions exist, a hint is printed.</li>
-<li>Enters the RPC loop and waits for commands. <code>rho-repl</code> provides the interactive prompt.</li>
+<li>Enters the RPC loop and waits for commands.</li>
 </ol>
 <h2 id="cli-flags-rho"><a class="header" href="#cli-flags-rho">CLI flags (<code>rho</code>)</a></h2>
-<p>The <code>rho</code> binary runs in headless JSON-RPC 2.0 mode. All flags can also be forwarded by <code>rho-repl</code>.</p>
+<p>The <code>rho</code> binary runs in headless JSON-RPC 2.0 mode.</p>
 <div class="table-wrapper"><table><thead><tr><th>Flag</th><th>Description</th></tr></thead><tbody>
 <tr><td>Flag</td><td>Description</td></tr>
 <tr><td>---</td><td>---</td></tr>
@@ -288,24 +283,11 @@ rho-repl --ephemeral   # in-memory mode, no session file
 </tbody></table>
 </div>
 <h2 id="session-persistence"><a class="header" href="#session-persistence">Session persistence</a></h2>
-<p>By default, every rho invocation creates a new JSONL session file under <code>~/.rho/sessions/&lt;project-hash&gt;/</code>. Sessions survive process restarts — use <code>rho-repl -c</code> to resume the latest session or <code>--session &lt;path&gt;</code> to resume a specific one.</p>
-<p>The <code>/sessions</code> REPL command lists the 10 most recent sessions with timestamps, sizes, and entry counts. The latest session is marked so you know which one <code>rho -c</code> will pick.</p>
+<p>By default, every rho invocation creates a new JSONL session file under <code>~/.rho/sessions/&lt;project-hash&gt;/</code>. Sessions survive process restarts — use <code>rho -c</code> to resume the latest session or <code>--session &lt;path&gt;</code> to resume a specific one.</p>
+<p>The <code>listSessions</code> RPC method returns the 10 most recent sessions with timestamps, sizes, and entry counts. The latest session is marked so you know which one <code>rho -c</code> will pick.</p>
 <p>See <a href="./core-concepts/sessions.html">Sessions</a> for details.</p>
-<h2 id="repl-commands-rho-repl"><a class="header" href="#repl-commands-rho-repl">REPL commands (<code>rho-repl</code>)</a></h2>
-<div class="table-wrapper"><table><thead><tr><th>Command</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>/help</code></td><td>Show available commands</td></tr>
-<tr><td><code>/clear</code></td><td>Clear conversation history (creates a new branch)</td></tr>
-<tr><td><code>/models</code></td><td>List all models across all providers</td></tr>
-<tr><td><code>/model &lt;id&gt;</code></td><td>Switch model (bare id or <code>provider:id</code>)</td></tr>
-<tr><td><code>/providers</code></td><td>List configured providers with reachability status</td></tr>
-<tr><td><code>/status</code></td><td>Show context window usage breakdown</td></tr>
-<tr><td><code>/sessions</code></td><td>List previous sessions for this project</td></tr>
-<tr><td><code>/extensions</code></td><td>List loaded extension names</td></tr>
-<tr><td><code>/reload</code></td><td>Hot-reload TypeScript extensions from disk</td></tr>
-<tr><td><code>/compact</code></td><td>Trigger context compaction</td></tr>
-<tr><td><code>/quit</code> or <code>/exit</code></td><td>Exit rho-repl</td></tr>
-</tbody></table>
-</div>
+<h2 id="rpc-methods"><a class="header" href="#rpc-methods">RPC methods</a></h2>
+<p>rho communicates via JSON-RPC 2.0 over stdin/stdout. See <a href="./rpc-mode.html">RPC Mode</a> for the full protocol reference, including all methods, notifications, and the approval flow.</p>
 <h2 id="next-steps"><a class="header" href="#next-steps">Next Steps</a></h2>
 <ul>
 <li><a href="./architecture.html">Architecture</a> — how the crates fit together</li>
@@ -319,8 +301,6 @@ rho-repl --ephemeral   # in-memory mode, no session file
 <pre><code class="language-text">┌─────────────────────────────────────────────────┐
 │                   rho (binary)                   │
 ├─────────────────────────────────────────────────┤
-│                   rho-repl                       │
-├─────────────────────────────────────────────────┤
 │                   rho-ext                        │
 ├─────────────────────────────────────────────────┤
 │                   rho-tools                      │
@@ -332,7 +312,7 @@ rho-repl --ephemeral   # in-memory mode, no session file
 │                   rho-ai                         │
 └─────────────────────────────────────────────────┘
 </code></pre>
-<p>The rule is simple: a crate may only depend on crates below it in the stack. <code>rho-ai</code> and <code>rho-highlight</code> depend on nothing but external libraries. <code>rho-repl</code> spawns <code>rho</code> as a subprocess and does not depend on any rho crate.</p>
+<p>The rule is simple: a crate may only depend on crates below it in the stack. <code>rho-ai</code> and <code>rho-highlight</code> depend on nothing but external libraries.</p>
 <p>See also:</p>
 <ul>
 <li><a href="./architecture/workspace-layout.html">Workspace Layout</a></li>
@@ -357,11 +337,6 @@ rho-repl --ephemeral   # in-memory mode, no session file
 │       ├── rpc.rs            # JSON-RPC 2.0: `run_rpc`, `run_rpc_on`, observer, approval gate
 │       └── presenter/
 │           └── rpc.rs        # `RpcPresenter` — diagnostic output to stderr
-├── rho-repl/                # Interactive terminal client (spawns rho as subprocess)
-│   └── src/
-│       ├── main.rs           # REPL loop, slash commands, approval prompts, readline
-│       ├── client.rs         # JSON-RPC 2.0 subprocess client
-│       └── render.rs         # Terminal rendering for streaming output and notifications
 ├── rho-ai/                 # Unified LLM provider abstraction
 │   └── src/
 │       ├── lib.rs           # Re-exports: `LlmService`, `EventStream`, unified types
@@ -489,10 +464,6 @@ rho-repl --ephemeral   # in-memory mode, no session file
 <h2 id="rho-core"><a class="header" href="#rho-core"><code>rho-core</code></a></h2>
 <p>The kernel: agent loop state machine (with <code>AgentObserver</code> for live output, phase tracking, auto-compaction), session management (tree persistence, graduated resolution, phase-aware compaction, LLM compaction, selective eviction, branching, session discovery), context window management (sliding window, token estimation, enhanced <code>ContextStats</code> with role/resolution/phase token distributions), tool registry and traits, approval gates, secret redaction, file sandbox, provider abstraction (<code>Provider</code> trait, <code>ProviderRegistry</code> with named presets and additive config merge), LLM client (<code>RhoAiClient</code>), configuration loading (two-tier TOML with provider preset resolution), and all shared types.</p>
 <p>Key types: <code>Session</code>, <code>AgentConfig</code>, <code>AgentObserver</code>, <code>NopObserver</code>, <code>ContextStats</code>, <code>RoleTokenDistribution</code>, <code>ResolutionTokenDistribution</code>, <code>PhaseTokenDistribution</code>, <code>SessionMetadata</code>, <code>ToolRegistry</code>, <code>Tool</code>, <code>Provider</code>, <code>ProviderRegistry</code>, <code>ContextManager</code>, <code>TokenBudget</code>, <code>SandboxRoot</code>, <code>Redactor</code>, <code>RhoConfig</code>, <code>SessionPhase</code>, <code>CompactionPhase</code>, <code>CompactionStrategy</code>, <code>LlmCompactionStrategy</code>, <code>MechanicalCompactionStrategy</code>, <code>CommandDenylist</code>.</p>
-<h2 id="rho-repl"><a class="header" href="#rho-repl"><code>rho-repl</code></a></h2>
-<p>Interactive terminal client that spawns <code>rho</code> as a subprocess and communicates via JSON-RPC 2.0 over stdin/stdout. Provides readline input with persistent history (<code>~/.rho/repl-history</code>), slash command dispatch, streaming output rendering, and approval prompts.</p>
-<p>Does <strong>not</strong> depend on any rho crate — all interaction is through the JSON-RPC 2.0 protocol. Uses <code>rustyline</code> for input, <code>colored</code> for terminal colors, and <code>tokio</code> for async subprocess I/O.</p>
-<p>Key types: <code>Cli</code>, <code>RhoClient</code>, <code>Renderer</code>.</p>
 <h2 id="rho-highlight"><a class="header" href="#rho-highlight"><code>rho-highlight</code></a></h2>
 <p>Tree-sitter-based syntax analysis. Provides <code>parse()</code>, <code>highlight()</code>, and <code>node_at()</code> for Rust source code. Used by <code>EditFile</code> for node-splitting validation and by tools that need structural code awareness.</p>
 <p>Key types: <code>Language</code>, <code>Highlight</code>, <code>NodeInfo</code>.</p>
@@ -539,25 +510,23 @@ rho-repl --ephemeral   # in-memory mode, no session file
     │
     └── rho-core ─────────────────────────────────────
             │
-rho-repl ──── (no rho deps, spawns rho as subprocess)
 rho-bench ──────── rho-eval ── rho-core ─────────────
 rho-test-helpers ── rho-core, rho-ai ────────────────
 xtask ──────────────────────────────────────────────
 </code></pre>
 <div class="table-wrapper"><table><thead><tr><th>Crate</th><th>Depends on</th><th>Notes</th></tr></thead><tbody>
 <tr><td><code>rho</code></td><td><code>rho-core</code>, <code>rho-tools</code>, <code>rho-ext</code>, <code>rho-ai</code></td><td>Headless JSON-RPC 2.0 agent</td></tr>
-<tr><td><code>rho-repl</code></td><td>none (external only)</td><td>Interactive terminal client — spawns <code>rho</code> as a subprocess</td></tr>
-<tr><td><code>rho-ext</code></td><td><code>rho-core</code>, <code>deno_core</code>, <code>deno_ast</code></td><td>TypeScript extension runtime</td></tr>
-<tr><td><code>rho-tools</code></td><td><code>rho-core</code>, <code>rho-highlight</code></td><td>Tool implementations use core types and highlight for node-splitting</td></tr>
-<tr><td><code>rho-highlight</code></td><td>none (external only)</td><td>Tree-sitter grammar — standalone, no rho dependencies</td></tr>
-<tr><td><code>rho-core</code></td><td><code>rho-ai</code></td><td>Kernel — the foundation everything else builds on</td></tr>
-<tr><td><code>rho-ai</code></td><td>none (external only)</td><td>Unified LLM provider abstraction</td></tr>
-<tr><td><code>rho-test-helpers</code></td><td><code>rho-core</code>, <code>rho-ai</code></td><td>Dev-only — provides mocks and fixtures for testing</td></tr>
-<tr><td><code>rho-eval</code></td><td><code>rho-core</code></td><td>Dev-only — benchmark task definitions and scoring</td></tr>
-<tr><td><code>rho-bench</code></td><td><code>rho-core</code>, <code>rho-eval</code>, <code>rho-tools</code></td><td>Dev-only — benchmark harness binary for multi-model evaluation</td></tr>
-<tr><td><code>xtask</code></td><td>none (cargo integration)</td><td>Dev-only — task runner, no rho crate dependencies</td></tr>
 </tbody></table>
 </div>
+<p>| <code>rho-ext</code> | <code>rho-core</code>, <code>deno_core</code>, <code>deno_ast</code> | TypeScript extension runtime |
+| <code>rho-tools</code> | <code>rho-core</code>, <code>rho-highlight</code> | Tool implementations use core types and highlight for node-splitting |
+| <code>rho-highlight</code> | none (external only) | Tree-sitter grammar — standalone, no rho dependencies |
+| <code>rho-core</code> | <code>rho-ai</code> | Kernel — the foundation everything else builds on |
+| <code>rho-ai</code> | none (external only) | Unified LLM provider abstraction |
+| <code>rho-test-helpers</code> | <code>rho-core</code>, <code>rho-ai</code> | Dev-only — provides mocks and fixtures for testing |
+| <code>rho-eval</code> | <code>rho-core</code> | Dev-only — benchmark task definitions and scoring |
+| <code>rho-bench</code> | <code>rho-core</code>, <code>rho-eval</code>, <code>rho-tools</code> | Dev-only — benchmark harness binary for multi-model evaluation |
+| <code>xtask</code> | none (cargo integration) | Dev-only — task runner, no rho crate dependencies |</p>
 <h2 id="key-external-dependencies"><a class="header" href="#key-external-dependencies">Key external dependencies</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Dependency</th><th>Used by</th><th>Purpose</th></tr></thead><tbody>
 <tr><td><code>reqwest</code></td><td><code>rho-ai</code></td><td>HTTP client for model API</td></tr>
@@ -578,7 +547,7 @@ xtask ────────────────────────�
 <h2 id="what-this-buys-you"><a class="header" href="#what-this-buys-you">What this buys you</a></h2>
 <p>The layered structure means:</p>
 <ul>
-<li><strong><code>rho-core</code> is UI-agnostic</strong> — no shell, no filesystem, no terminal. The REPL (<code>rho-repl</code>) and any future TUI both consume it through the same JSON-RPC 2.0 protocol.</li>
+<li><strong><code>rho-core</code> is UI-agnostic</strong> — no shell, no filesystem, no terminal. Any frontend (REPL, TUI, editor integration) consumes it through the JSON-RPC 2.0 protocol.</li>
 <li><strong>Tools are pluggable</strong> — <code>ToolRegistry</code> stores <code>Box&lt;dyn Tool&gt;</code>, so adding a tool is <code>registry.register(Box::new(MyTool))</code>.</li>
 <li><strong>Testing is isolated</strong> — <code>rho-test-helpers</code> mocks the core traits (<code>MockChatClient</code>, <code>MockShellExecutor</code>, <code>ApprovalGate</code>) so tool and agent loop tests run without a model server.</li>
 </ul>
@@ -884,12 +853,8 @@ run_command = "ask"   # always ask
 </div>
 <h2 id="gate-rpcapprovalgate"><a class="header" href="#gate-rpcapprovalgate">Gate: <code>RpcApprovalGate</code></a></h2>
 <p>The RPC implementation reads an <code>approvalResponse</code> JSON-RPC 2.0 method from stdin and returns the <code>approved</code> boolean. See <a href="core-concepts/../rpc-mode.html">RPC Mode</a> for the approval flow.</p>
-<h2 id="gate-rho-repl-approval"><a class="header" href="#gate-rho-repl-approval">Gate: <code>rho-repl</code> approval</a></h2>
-<p>The terminal client (<code>rho-repl</code>) presents a preview and reads <code>y/N</code> from stderr/stdin:</p>
-<pre><code class="language-text">  approve? run_command [destructive]
-  {"command":"Remove-Item temp/*"}
-  [y/N] 
-</code></pre>
+<h2 id="example-gate"><a class="header" href="#example-gate">Example gate</a></h2>
+<p>In RPC mode, the <code>RpcApprovalGate</code> reads an <code>approvalResponse</code> method from stdin (see <a href="core-concepts/../rpc-mode.html">RPC Mode</a>). A REPL, TUI, or editor integration can implement the <code>ApprovalGate</code> trait to present approvals however it chooses.</p>
 <p>On denial, a synthetic error result is fed back to the model as if the tool had failed. The model can then adjust its approach — it does not crash or get stuck.</p>
 <h2 id="custom-gates"><a class="header" href="#custom-gates">Custom gates</a></h2>
 <p>The <code>ApprovalGate</code> trait is async, so any UI can implement it:</p>
@@ -2378,7 +2343,7 @@ impl EvalTask for MyNewTask {
 <tr><td><code>tracing</code></td><td>Structured logging</td><td>De-facto standard; <code>log</code>-compatible</td></tr>
 <tr><td><code>async-trait</code></td><td>Async trait support</td><td>Required for <code>Box&lt;dyn Tool&gt;</code></td></tr>
 <tr><td><code>thiserror</code></td><td>Error derive macros</td><td>Clean error type definition</td></tr>
-<tr><td><code>anyhow</code></td><td>Ergonomic error handling</td><td>Used in binary crates (<code>rho</code>, <code>rho-repl</code>, <code>xtask</code>); library crates use domain-specific error types</td></tr>
+<tr><td><code>anyhow</code></td><td>Ergonomic error handling</td><td>Used in binary crates (<code>rho</code>, <code>xtask</code>); library crates use domain-specific error types</td></tr>
 <tr><td><code>ignore</code></td><td><code>.gitignore</code> walking</td><td>From ripgrep; mature, well-maintained</td></tr>
 <tr><td><code>tree-sitter</code> + grammars</td><td>Syntax analysis</td><td>Standard for tree-sitter in Rust</td></tr>
 <tr><td><code>which</code></td><td>Executable detection</td><td>Small, focused, no replacement needed</td></tr>
