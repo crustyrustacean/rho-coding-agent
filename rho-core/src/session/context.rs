@@ -400,6 +400,7 @@ impl Session {
             messages: llm_messages,
             tools: self.tools.clone(),
             max_tokens: Some(self.token_budget.completion_reserve),
+            reasoning_effort: None,
         };
 
         let event_stream = client.chat_stream(llm_request).await.map_err(|e| {

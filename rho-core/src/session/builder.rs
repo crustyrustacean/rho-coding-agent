@@ -67,6 +67,7 @@ impl Session {
             leaf,
             estimator: Box::new(HeuristicEstimator::new()),
             model: model.into(),
+            reasoning_effort: None,
             tools,
             context_manager: Box::new(SlidingWindowContextManager::new()),
             token_budget: TokenBudget::default(),
@@ -119,6 +120,7 @@ impl Session {
             leaf,
             estimator: Box::new(HeuristicEstimator::new()),
             model: model.into(),
+            reasoning_effort: None,
             tools,
             context_manager: Box::new(SlidingWindowContextManager::new()),
             token_budget: TokenBudget::default(),
@@ -170,7 +172,8 @@ impl Session {
             leaf,
             estimator: Box::new(HeuristicEstimator::new()),
             model: String::new(), // Model is not persisted yet (Phase 2.6)
-            tools: vec![],        // Tools are not persisted yet (Phase 2.6)
+            reasoning_effort: None,
+            tools: vec![], // Tools are not persisted yet (Phase 2.6)
             context_manager: Box::new(SlidingWindowContextManager::new()),
             token_budget: TokenBudget::default(),
             redactor: Redactor::new(),
@@ -200,6 +203,13 @@ impl Session {
     #[must_use]
     pub fn with_redactor(mut self, redactor: Redactor) -> Self {
         self.redactor = redactor;
+        self
+    }
+
+    /// Set the reasoning effort for thinking-capable models.
+    #[must_use]
+    pub fn with_reasoning_effort(mut self, effort: impl Into<String>) -> Self {
+        self.reasoning_effort = Some(effort.into());
         self
     }
 

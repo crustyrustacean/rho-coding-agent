@@ -168,6 +168,13 @@ pub struct AgentLoopConfig {
     /// mechanical compaction (no error propagation).
     #[serde(default = "default_compaction_mode")]
     pub compaction_mode: String,
+    /// Reasoning effort for thinking-capable models.
+    ///
+    /// Passed as `reasoning_effort` in every Chat Completions request.
+    /// Common values: `"low"`, `"medium"`, `"high"`. `None` means
+    /// no reasoning parameter is sent (default).
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
 }
 
 impl Default for AgentLoopConfig {
@@ -187,6 +194,7 @@ impl Default for AgentLoopConfig {
             context_pressure_interval: default_context_pressure_interval(),
             auto_compact_threshold: default_auto_compact_threshold(),
             compaction_mode: default_compaction_mode(),
+            reasoning_effort: None,
         }
     }
 }
@@ -710,6 +718,9 @@ struct WireAgentLoopConfig {
     /// Compaction mode ("mechanical" or "llm").
     #[serde(default)]
     compaction_mode: Option<String>,
+    /// Reasoning effort for thinking-capable models.
+    #[serde(default)]
+    reasoning_effort: Option<String>,
 }
 
 // ── Provider presets ───────────────────────────────────────────────────────
@@ -970,6 +981,10 @@ impl ConfigLoader {
                     .clone()
                     .or(user_agent.compaction_mode.clone())
                     .unwrap_or(default_compaction_mode()),
+                reasoning_effort: project_agent
+                    .reasoning_effort
+                    .clone()
+                    .or(user_agent.reasoning_effort.clone()),
             },
             provider: {
                 // New `[[providers]]` format takes precedence over legacy `[provider]`.

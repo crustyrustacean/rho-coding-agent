@@ -157,6 +157,8 @@ pub struct Session {
     estimator: Box<dyn TokenEstimator>,
     /// Model identifier.
     pub model: String,
+    /// Reasoning effort for thinking-capable models.
+    pub reasoning_effort: Option<String>,
     /// Tool schemas sent with every request.
     pub tools: Vec<rho_ai::ToolDefinition>,
     /// Context window manager applied before each request.

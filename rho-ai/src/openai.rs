@@ -36,6 +36,9 @@ struct ChatCompletionRequest {
     tools: Vec<WireTool>,
     /// Whether to stream the response.
     stream: bool,
+    /// Reasoning effort for thinking-capable models.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<String>,
 }
 
 /// A message in the `OpenAI` wire format.
@@ -476,6 +479,7 @@ impl OpenAiService {
             messages: wire_messages,
             tools: wire_tools,
             stream: true,
+            reasoning_effort: request.reasoning_effort.clone(),
         };
 
         let url = completions_url(&self.config.base_url);
@@ -693,6 +697,7 @@ mod tests {
             messages: vec![LlmMessage::User("test".into())],
             tools: vec![],
             max_tokens: None,
+            reasoning_effort: None,
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
         let result = rt.block_on(service.chat_stream(request));
@@ -809,6 +814,7 @@ mod tests {
             }],
             tools: vec![],
             stream: true,
+            reasoning_effort: None,
         };
         let json = serde_json::to_value(&req).unwrap();
         assert_eq!(json["model"], "gpt-4o");
@@ -818,6 +824,32 @@ mod tests {
     }
 
     // ── SSE chunk parsing tests ───────────────────────────────────────────
+
+    #[test]
+    fn reasoning_effort_serializes_when_set() {
+        let req = ChatCompletionRequest {
+            model: "gpt-4o".into(),
+            messages: vec![],
+            tools: vec![],
+            stream: true,
+            reasoning_effort: Some("medium".into()),
+        };
+        let json = serde_json::to_value(&req).unwrap();
+        assert_eq!(json["reasoning_effort"], "medium");
+    }
+
+    #[test]
+    fn reasoning_effort_omitted_when_none() {
+        let req = ChatCompletionRequest {
+            model: "gpt-4o".into(),
+            messages: vec![],
+            tools: vec![],
+            stream: true,
+            reasoning_effort: None,
+        };
+        let json = serde_json::to_value(&req).unwrap();
+        assert!(json.get("reasoning_effort").is_none());
+    }
 
     #[test]
     fn parse_text_delta() {

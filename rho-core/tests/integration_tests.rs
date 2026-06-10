@@ -661,6 +661,7 @@ async fn retryable_http_error() -> RhoError {
         messages: vec![],
         tools: vec![],
         max_tokens: None,
+        reasoning_effort: None,
     };
     let result = rho_ai::LlmService::chat_stream(&client, request).await;
     match result {
@@ -945,6 +946,7 @@ async fn rho_ai_client_returns_http_error_when_server_unreachable() {
         messages: vec![rho_ai::LlmMessage::User("hello".into())],
         tools: vec![],
         max_tokens: None,
+        reasoning_effort: None,
     };
     let result = tokio::time::timeout(
         Duration::from_secs(5),
@@ -1404,6 +1406,7 @@ async fn test_chat_stream() {
         messages: vec![],
         tools: vec![],
         max_tokens: None,
+        reasoning_effort: None,
     };
     let service = provider.llm_service();
     let mut stream = service.chat_stream(request).await.unwrap();

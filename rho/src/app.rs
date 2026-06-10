@@ -188,6 +188,7 @@ impl App {
         let token_budget = build_token_budget(&config, &cli);
 
         // ── 14. Session ──────────────────────────────────────────────────
+        let reasoning_effort = config.agent.reasoning_effort.as_deref();
         let session = build_session(
             &cli,
             &model,
@@ -196,6 +197,7 @@ impl App {
             &sandbox,
             token_budget,
             redactor,
+            reasoning_effort,
             &session_path_holder,
         )?;
 
@@ -493,6 +495,7 @@ fn build_session(
     sandbox: &SandboxRoot,
     token_budget: TokenBudget,
     redactor: Redactor,
+    reasoning_effort: Option<&str>,
     session_path_holder: &rho_tools::SessionPathHolder,
 ) -> Result<Session> {
     if cli.r#continue {
@@ -520,7 +523,7 @@ fn build_session(
             session_path_holder,
         )
     } else if cli.ephemeral {
-        let s = Session::in_memory(
+        let mut s = Session::in_memory(
             model,
             Some(system_prompt),
             tool_schemas.to_vec(),
@@ -528,9 +531,12 @@ fn build_session(
         )
         .with_token_budget(token_budget)
         .with_redactor(redactor);
+        if let Some(effort) = reasoning_effort {
+            s = s.with_reasoning_effort(effort);
+        }
         Ok(s)
     } else {
-        let s = Session::new(
+        let mut s = Session::new(
             model,
             Some(system_prompt),
             tool_schemas.to_vec(),
@@ -538,6 +544,9 @@ fn build_session(
         )
         .with_token_budget(token_budget)
         .with_redactor(redactor);
+        if let Some(effort) = reasoning_effort {
+            s = s.with_reasoning_effort(effort);
+        }
         if let Some(path) = s.save_path() {
             P::session_created(path);
             rho_tools::SessionSummary::set_path(session_path_holder, path.to_path_buf());

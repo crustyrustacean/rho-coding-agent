@@ -1116,6 +1116,7 @@ fn build_llm_request(session: &Session) -> rho_ai::LlmRequest {
         messages: llm_messages,
         tools: session.tools.clone(),
         max_tokens: Some(session.token_budget().completion_reserve),
+        reasoning_effort: session.reasoning_effort.clone(),
     }
 }
 

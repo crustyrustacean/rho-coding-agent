@@ -214,6 +214,13 @@ pub struct LlmRequest {
     pub tools: Vec<ToolDefinition>,
     /// Maximum number of tokens the model may generate.
     pub max_tokens: Option<usize>,
+    /// Reasoning effort for thinking-capable models.
+    ///
+    /// Passed as `reasoning_effort` in the `OpenAI` Chat Completions request body.
+    /// Common values: `"low"`, `"medium"`, `"high"`. Non-reasoning models
+    /// silently ignore this field. `OpenRouter` proxies translate this to
+    /// provider-specific thinking parameters.
+    pub reasoning_effort: Option<String>,
 }
 
 impl LlmRequest {
@@ -225,6 +232,7 @@ impl LlmRequest {
             messages,
             tools: Vec::new(),
             max_tokens: None,
+            reasoning_effort: None,
         }
     }
 
