@@ -40,8 +40,29 @@ pub(crate) fn resolve_model(
     }
 
     // 3. Config agent.provider + that provider's default_model.
-    //    (Future: when `agent.provider` field is added to config.)
-    //    For now, skip — will be added in Phase B.
+    if let Some(provider_name) = config.agent.provider.as_deref() {
+        if let Some(provider_config) = config
+            .provider
+            .providers
+            .iter()
+            .find(|p| p.name.as_deref() == Some(provider_name))
+        {
+            if let Some(model) = provider_config.default_model.as_deref() {
+                P::model_from_source(model, "config", provider_name);
+                return Ok((model.to_owned(), Some(provider_name.to_owned())));
+            }
+            // Provider named but no default_model — fall through.
+            tracing::warn!(
+                provider = provider_name,
+                "provider specified in [agent] but has no default_model"
+            );
+        } else {
+            tracing::warn!(
+                provider = provider_name,
+                "provider specified in [agent] but not found in [[providers]]"
+            );
+        }
+    }
 
     // 4. First provider's default_model.
     if let Some(default) = config.provider.default_model() {
@@ -142,6 +163,22 @@ mod tests {
         }
     }
 
+    fn config_with_provider(
+        provider_name: Option<&str>,
+        model: Option<&str>,
+        providers: Vec<ProviderConfig>,
+    ) -> RhoConfig {
+        RhoConfig {
+            agent: rho_core::config::AgentLoopConfig {
+                model: model.map(String::from),
+                provider: provider_name.map(String::from),
+                ..Default::default()
+            },
+            provider: ProviderSettings { providers },
+            ..Default::default()
+        }
+    }
+
     fn provider(name: &str, default_model: Option<&str>) -> ProviderConfig {
         ProviderConfig {
             name: Some(name.to_owned()),
@@ -227,6 +264,79 @@ mod tests {
         );
         let (model, provider) = resolve_model(&config, None).unwrap();
         assert_eq!(model, "claude-sonnet-4");
+        assert_eq!(provider, None);
+    }
+
+    // ── Phase B: agent.provider ──────────────────────────────────────────
+
+    #[test]
+    fn agent_provider_selects_that_providers_default_model() {
+        let config = config_with_provider(
+            Some("openrouter"),
+            None,
+            vec![
+                provider("local", Some("qwen2.5-coder:7b")),
+                provider("openrouter", Some("claude-sonnet-4")),
+            ],
+        );
+        let (model, provider) = resolve_model(&config, None).unwrap();
+        assert_eq!(model, "claude-sonnet-4");
+        assert_eq!(provider, Some("openrouter".to_owned()));
+    }
+
+    #[test]
+    fn agent_provider_overrides_first_provider_default_model() {
+        let config = config_with_provider(
+            Some("openai"),
+            None,
+            vec![
+                provider("openrouter", Some("claude-sonnet-4")),
+                provider("openai", Some("gpt-4o")),
+            ],
+        );
+        let (model, provider) = resolve_model(&config, None).unwrap();
+        assert_eq!(model, "gpt-4o");
+        assert_eq!(provider, Some("openai".to_owned()));
+    }
+
+    #[test]
+    fn agent_model_overrides_agent_provider() {
+        let config = config_with_provider(
+            Some("openrouter"),
+            Some("gpt-4o"),
+            vec![
+                provider("openrouter", Some("claude-sonnet-4")),
+                provider("openai", Some("gpt-4o")),
+            ],
+        );
+        let (model, provider) = resolve_model(&config, None).unwrap();
+        assert_eq!(model, "gpt-4o");
+        // Provider resolved by matching default_model.
+        assert_eq!(provider, Some("openai".to_owned()));
+    }
+
+    #[test]
+    fn agent_provider_without_default_model_falls_through() {
+        let config = config_with_provider(
+            Some("openrouter"),
+            None,
+            vec![provider("local", None), provider("openrouter", None)],
+        );
+        // Both providers lack default_model — should error.
+        let result = resolve_model(&config, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn agent_provider_unknown_falls_through() {
+        let config = config_with_provider(
+            Some("nonexistent"),
+            None,
+            vec![provider("local", Some("qwen2.5-coder:7b"))],
+        );
+        // Unknown provider name — falls through to first provider's default_model.
+        let (model, provider) = resolve_model(&config, None).unwrap();
+        assert_eq!(model, "qwen2.5-coder:7b");
         assert_eq!(provider, None);
     }
 }

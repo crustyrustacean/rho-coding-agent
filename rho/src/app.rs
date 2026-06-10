@@ -166,7 +166,13 @@ impl App {
         }
 
         // ── 10. Model ─────────────────────────────────────────────────────
-        let (model, _model_provider) = resolve_model(&config, cli.model.as_ref())?;
+        let (model, model_provider) = resolve_model(&config, cli.model.as_ref())?;
+
+        // Resolve active provider index from the model resolution result.
+        let active_provider_index = model_provider
+            .as_deref()
+            .and_then(|name| provider_registry.index_of(name))
+            .unwrap_or(0);
 
         // Set model in all loaded extensions so rho.getModel() works.
         ext_loader.set_model_all(&model).await;
@@ -199,7 +205,7 @@ impl App {
         Ok(Self {
             session,
             providers: provider_registry,
-            active_provider_index: 0,
+            active_provider_index,
             registry: tool_registry,
             config: agent_config,
             cancel: Cancel::new(),

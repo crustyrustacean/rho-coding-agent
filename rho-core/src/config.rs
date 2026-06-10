@@ -77,6 +77,13 @@ pub struct AgentLoopConfig {
     /// Model identifier (e.g. `"qwen3-8b"`).
     #[serde(default)]
     pub model: Option<String>,
+    /// Active provider name (e.g. `"openrouter"`, `"local"`).
+    ///
+    /// When set, this provider is selected at startup. If `model` is
+    /// also set, the model is routed to this provider. If `model` is
+    /// not set, the provider's `default_model` is used.
+    #[serde(default)]
+    pub provider: Option<String>,
     /// Maximum model-tool-model round trips before the loop fails.
     #[serde(default = "default_max_iterations")]
     pub max_iterations: u32,
@@ -167,6 +174,7 @@ impl Default for AgentLoopConfig {
     fn default() -> Self {
         Self {
             model: None,
+            provider: None,
             max_iterations: default_max_iterations(),
             retry_budget: default_retry_budget(),
             initial_backoff_ms: default_initial_backoff_ms(),
@@ -659,6 +667,13 @@ struct WireAgentLoopConfig {
     /// Model identifier.
     #[serde(default)]
     model: Option<String>,
+    /// Active provider name.
+    ///
+    /// When set, this provider is used at startup and its `default_model`
+    /// is used if no `model` is set. The model string is sent to this
+    /// provider specifically.
+    #[serde(default)]
+    provider: Option<String>,
     /// Max iterations before loop fails.
     #[serde(default)]
     max_iterations: Option<u32>,
@@ -905,6 +920,7 @@ impl ConfigLoader {
         RhoConfig {
             agent: AgentLoopConfig {
                 model: project_agent.model.or(user_agent.model),
+                provider: project_agent.provider.or(user_agent.provider),
                 max_iterations: project_agent
                     .max_iterations
                     .or(user_agent.max_iterations)

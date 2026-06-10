@@ -10,8 +10,8 @@ use std::path::PathBuf;
 pub struct Cli {
     /// Model identifier.
     ///
-    /// If omitted (and not set in config), rho queries the server's
-    /// `/v1/models` endpoint and uses the first loaded model.
+    /// If omitted (and not set in config), rho uses the first provider's
+    /// `default_model` if configured, or reports an error.
     #[arg(short, long)]
     pub model: Option<String>,
 
