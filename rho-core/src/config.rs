@@ -284,6 +284,13 @@ pub struct ProviderConfig {
     /// a key and none is configured.
     #[serde(default)]
     pub api_key_env: Option<String>,
+    /// Default model for this provider.
+    ///
+    /// Used as the model identifier when no `agent.model` or `--model`
+    /// is set and this is the first (default) provider. Also used by
+    /// model resolution to route a model string to the correct provider.
+    #[serde(default)]
+    pub default_model: Option<String>,
 }
 
 // ── ProviderSettings ──────────────────────────────────────────────────────────
@@ -330,6 +337,14 @@ impl ProviderSettings {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.providers.is_empty()
+    }
+
+    /// The default (first) provider's default model, if configured.
+    #[must_use]
+    pub fn default_model(&self) -> Option<&str> {
+        self.providers
+            .first()
+            .and_then(|p| p.default_model.as_deref())
     }
 }
 

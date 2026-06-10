@@ -1,135 +1,232 @@
 //! Model resolution.
 //!
-//! Resolves which model to use based on CLI flags, config, and auto-detection
-//! against configured providers. All output goes to stderr via [`RpcPresenter`].
+//! Resolves which model to use based on CLI flags and config.
+//! Config is the source of truth — no network calls at startup.
+//! Discovery (`/v1/models`) is reserved for runtime commands
+//! (`/models`, `/model` browsing).
 
 use crate::presenter::RpcPresenter as P;
 use anyhow::Result;
-use rho_core::{ProviderRegistry, RhoConfig};
+use rho_core::RhoConfig;
 
-/// The minimum fuzzy similarity score to include a suggestion.
-const FUZZY_THRESHOLD: f64 = 0.5;
-
-/// Maximum number of fuzzy suggestions to display.
-const MAX_SUGGESTIONS: usize = 5;
-
-/// Resolve the model identifier.
+/// Resolve the model identifier without network calls.
 ///
-/// Priority: CLI `--model` → config `agent.model` → auto-detect via all
-/// providers (first model found in config order).
+/// Priority (first match wins):
 ///
-/// When a model is explicitly specified (via CLI or config), it is
-/// validated against the providers' model lists. If the model is not
-/// found, fuzzy suggestions are shown and an error is returned.
+/// 1. CLI `--model` — use verbatim
+/// 2. Config `agent.model` — use verbatim
+/// 3. Config `agent.provider` + that provider's `default_model` — use it
+/// 4. First provider's `default_model` — use it
+/// 5. None of the above — return an error
 ///
-/// When the model list cannot be obtained (e.g. `/v1/models` is not
-/// supported or all providers are unreachable), the user-specified model
-/// is accepted verbatim with a warning — this avoids blocking valid
-/// workflows on providers that simply don't advertise their models.
-pub(crate) async fn resolve_model(
+/// Model names are accepted as-is. Typos and misconfiguration surface
+/// as clear HTTP errors at request time, not as startup blocking calls.
+/// This matches the pi pattern: static declaration, request-time validation.
+pub(crate) fn resolve_model(
     config: &RhoConfig,
     cli_model: Option<&String>,
-    registry: &ProviderRegistry,
-) -> Result<String> {
-    let all_models = registry.list_all_models().await;
-
-    let available: Vec<(&str, String)> = all_models
-        .iter()
-        .map(|(provider, info)| (*provider, info.id.clone()))
-        .collect();
-
+) -> Result<(String, Option<String>)> {
     // 1. CLI flag takes highest priority.
     if let Some(model) = cli_model {
-        return Ok(validate_and_resolve(model, "--model", &available));
+        P::model_from_source(model, "--model", "cli");
+        return Ok((model.clone(), None));
     }
-    // 2. Config.
+
+    // 2. Config agent.model.
     if let Some(model) = config.agent.model.as_deref() {
-        return Ok(validate_and_resolve(model, "config", &available));
+        let provider = resolve_provider_for_model(model, config);
+        P::model_from_source(model, "config", provider.as_deref().unwrap_or("default"));
+        return Ok((model.to_owned(), provider));
     }
-    // 3. Auto-detect across all providers.
-    if available.is_empty() {
-        return no_models_fallback(config, registry);
+
+    // 3. Config agent.provider + that provider's default_model.
+    //    (Future: when `agent.provider` field is added to config.)
+    //    For now, skip — will be added in Phase B.
+
+    // 4. First provider's default_model.
+    if let Some(default) = config.provider.default_model() {
+        let provider_name = config
+            .provider
+            .default_provider()
+            .and_then(|p| p.name.as_deref())
+            .unwrap_or("default");
+        P::model_auto_detected(default, provider_name);
+        return Ok((default.to_owned(), None));
     }
-    let (provider_name, model_id) = &available[0];
-    P::model_auto_detected(model_id, provider_name);
-    Ok(model_id.clone())
+
+    // 5. Nothing configured.
+    no_model_configured(config)
 }
 
-/// Validate a user-specified model against the available model list.
+/// Find which configured provider should handle a given model string.
 ///
-/// Three outcomes:
-/// 1. Exact match found → use it, report the provider.
-/// 2. Models were discovered but the specified one isn't present →
-///    show fuzzy suggestions as a warning, then accept the model.
-/// 3. No models could be discovered (empty list) → accept the model
-///    verbatim with a warning (provider may not support `/v1/models`).
-fn validate_and_resolve(model: &str, source: &str, available: &[(&str, String)]) -> String {
-    if let Some((provider_name, model_id)) = rho_core::find_exact(model, available) {
-        P::model_from_source(model_id, source, provider_name);
-        return model_id.to_owned();
+/// Checks providers in order for a matching `default_model`. Returns
+/// `None` if no provider claims the model (it will be sent to the
+/// default provider).
+fn resolve_provider_for_model(model: &str, config: &RhoConfig) -> Option<String> {
+    for provider in &config.provider.providers {
+        if provider.default_model.as_deref() == Some(model) {
+            return provider.name.clone();
+        }
     }
-
-    if available.is_empty() {
-        P::model_accepting_verbatim(model, source);
-        return model.to_owned();
-    }
-
-    P::model_not_in_list(model);
-
-    let suggestions = rho_core::fuzzy_match(model, available, FUZZY_THRESHOLD);
-    if !suggestions.is_empty() {
-        P::model_suggestions(&rho_core::format_suggestions(&suggestions, MAX_SUGGESTIONS));
-    }
-
-    P::model_continuing(model, source);
-    model.to_owned()
+    None
 }
 
-/// Handle the case where no models could be discovered from any provider.
-///
-/// Two distinct scenarios:
-///
-/// 1. **Zero-config** — no providers configured, only the default localhost
-///    fallback exists, and it's unreachable. Returns an error with a
-///    getting-started guide.
-///
-/// 2. **Configured but unreachable** — one or more providers are configured
-///    but none could list models. Returns an error directing the user to
-///    specify a model explicitly.
-fn no_models_fallback(config: &RhoConfig, registry: &ProviderRegistry) -> Result<String> {
-    let is_zero_config =
-        config.provider.is_empty() && registry.external_provider_names().is_empty();
+/// Handle the case where no model is configured.
+fn no_model_configured(config: &RhoConfig) -> Result<(String, Option<String>)> {
+    let has_providers = !config.provider.is_empty();
 
-    if is_zero_config {
-        return Err(anyhow::anyhow!(
+    if has_providers {
+        // Providers are configured but none has a default_model.
+        let provider_hint = config
+            .provider
+            .default_provider()
+            .and_then(|p| p.name.as_deref())
+            .unwrap_or("provider1");
+        Err(anyhow::anyhow!(
             "\n\
-             No model provider detected.\n\
+             No model configured.\n\
              \n\
-             rho could not reach a local model server and no external\n\
-             provider is configured.\n\
+             Providers are configured but no model is specified.\n\
              \n\
-             To get started, either:\n\
+             To fix this, either:\n\
              \n\
-               1. Start a local model server (LM Studio, Ollama) on\n\
-                  localhost:1234, then run rho again.\n\
+               1. Add `default_model` to a provider in ~/.rho/config.toml:\n\
              \n\
-               2. Configure an external provider in ~/.rho/config.toml:\n\
+                      [[providers]]\n\
+                      name = \"{provider_hint}\"\n\
+                      default_model = \"gpt-4o\"\n\
              \n\
-                      [provider]\n\
-                      endpoint = \"https://openrouter.ai/api/v1/chat/completions\"\n\
-                      api_key_env = \"OPENROUTER_API_KEY\"\n\
+               2. Set a model in config:\n\
              \n\
                       [agent]\n\
                       model = \"gpt-4o\"\n\
              \n\
-               3. Use CLI flags:\n\
+               3. Pass --model on the command line:\n\
              \n\
-                      rho --endpoint <url> --api-key-env <VAR> --model <id>"
-        ));
+                      rho --model gpt-4o"
+        ))
+    } else {
+        Err(anyhow::anyhow!(
+            "\n\
+             No model provider or model configured.\n\
+             \n\
+             To get started, configure a provider in ~/.rho/config.toml:\n\
+             \n\
+               [[providers]]\n\
+               name = \"openrouter\"\n\
+               preset = \"openrouter\"\n\
+               api_key_env = \"OPENROUTER_API_KEY\"\n\
+               default_model = \"anthropic/claude-sonnet-4\"\n\
+             \n\
+             Or use CLI flags:\n\
+             \n\
+               rho --endpoint <url> --model <id>"
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rho_core::config::{ProviderConfig, ProviderSettings};
+
+    fn config_with(model: Option<&str>, providers: Vec<ProviderConfig>) -> RhoConfig {
+        RhoConfig {
+            agent: rho_core::config::AgentLoopConfig {
+                model: model.map(String::from),
+                ..Default::default()
+            },
+            provider: ProviderSettings { providers },
+            ..Default::default()
+        }
     }
 
-    Err(anyhow::anyhow!(
-        "no model could be auto-detected; \
-         specify one with --model <id>"
-    ))
+    fn provider(name: &str, default_model: Option<&str>) -> ProviderConfig {
+        ProviderConfig {
+            name: Some(name.to_owned()),
+            endpoint: Some("http://localhost:1234/v1/chat/completions".to_owned()),
+            default_model: default_model.map(String::from),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn cli_model_wins_over_config() {
+        let config = config_with(
+            Some("config-model"),
+            vec![provider("local", Some("local-default"))],
+        );
+        let cli = Some(&"cli-model".to_owned());
+        let (model, provider) = resolve_model(&config, cli).unwrap();
+        assert_eq!(model, "cli-model");
+        assert_eq!(provider, None);
+    }
+
+    #[test]
+    fn config_model_used_when_no_cli() {
+        let config = config_with(
+            Some("local-default"),
+            vec![provider("local", Some("local-default"))],
+        );
+        let (model, provider) = resolve_model(&config, None).unwrap();
+        assert_eq!(model, "local-default");
+        // Provider is resolved by matching default_model.
+        assert_eq!(provider, Some("local".to_owned()));
+    }
+
+    #[test]
+    fn default_model_used_when_no_agent_model() {
+        let config = config_with(None, vec![provider("local", Some("qwen2.5-coder:7b"))]);
+        let (model, provider) = resolve_model(&config, None).unwrap();
+        assert_eq!(model, "qwen2.5-coder:7b");
+        assert_eq!(provider, None);
+    }
+
+    #[test]
+    fn no_config_returns_error() {
+        let config = config_with(None, vec![]);
+        let result = resolve_model(&config, None);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("No model provider or model configured"));
+    }
+
+    #[test]
+    fn providers_without_default_model_returns_error() {
+        let config = config_with(None, vec![provider("local", None)]);
+        let result = resolve_model(&config, None);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("No model configured"));
+        assert!(err.contains("default_model"));
+    }
+
+    #[test]
+    fn provider_resolved_for_matching_default_model() {
+        let config = config_with(
+            Some("claude-sonnet-4"),
+            vec![
+                provider("local", Some("qwen2.5-coder:7b")),
+                provider("openrouter", Some("claude-sonnet-4")),
+            ],
+        );
+        let (model, provider) = resolve_model(&config, None).unwrap();
+        assert_eq!(model, "claude-sonnet-4");
+        assert_eq!(provider, Some("openrouter".to_owned()));
+    }
+
+    #[test]
+    fn first_provider_default_model_used() {
+        let config = config_with(
+            None,
+            vec![
+                provider("openrouter", Some("claude-sonnet-4")),
+                provider("local", Some("qwen2.5-coder:7b")),
+            ],
+        );
+        let (model, provider) = resolve_model(&config, None).unwrap();
+        assert_eq!(model, "claude-sonnet-4");
+        assert_eq!(provider, None);
+    }
 }

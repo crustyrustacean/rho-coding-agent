@@ -113,30 +113,6 @@ impl RpcPresenter {
     pub fn model_from_source(model: &str, source: &str, provider: &str) {
         eprintln!("using model from {source}: {model} (provider: {provider})");
     }
-
-    /// Could not list models; accepting verbatim.
-    pub fn model_accepting_verbatim(model: &str, source: &str) {
-        eprintln!(
-            "warning: could not list models from any provider; \
-             accepting model from {source}: {model}"
-        );
-    }
-
-    /// Model not found in provider's list.
-    pub fn model_not_in_list(model: &str) {
-        eprintln!("warning: model \"{model}\" not found in provider model list.");
-    }
-
-    /// Fuzzy suggestions for a near-miss model name.
-    pub fn model_suggestions(suggestions: &str) {
-        eprintln!("Did you mean:");
-        eprintln!("{suggestions}");
-    }
-
-    /// Continuing with the specified model despite warnings.
-    pub fn model_continuing(model: &str, source: &str) {
-        eprintln!("continuing with model from {source}: {model}");
-    }
 }
 
 // ── Provider consent ──────────────────────────────────────────────────────────

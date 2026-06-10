@@ -166,7 +166,7 @@ impl App {
         }
 
         // ── 10. Model ─────────────────────────────────────────────────────
-        let model = resolve_model(&config, cli.model.as_ref(), &provider_registry).await?;
+        let (model, _model_provider) = resolve_model(&config, cli.model.as_ref())?;
 
         // Set model in all loaded extensions so rho.getModel() works.
         ext_loader.set_model_all(&model).await;
@@ -575,12 +575,11 @@ fn resume_session(
 /// Resolve the model identifier.
 ///
 /// Delegates to [`crate::model::resolve_model`].
-async fn resolve_model(
+fn resolve_model(
     config: &RhoConfig,
     cli_model: Option<&String>,
-    registry: &ProviderRegistry,
-) -> Result<String> {
-    crate::model::resolve_model(config, cli_model, registry).await
+) -> Result<(String, Option<String>)> {
+    crate::model::resolve_model(config, cli_model)
 }
 
 /// Log token budget diagnostics at startup.
