@@ -4,10 +4,7 @@
 
 It connects to OpenAI-compatible endpoints (LM Studio, Ollama, OpenAI, Groq, OpenRouter, DeepInfra, and more), gives the model access to tools for reading and writing files, executing shell commands, and running Rust tooling — then runs an autonomous agent loop that the user supervises through an approval gate.
 
-rho has two entry points:
-
-- **`rho`** — headless JSON-RPC 2.0 over stdin/stdout for embedding in editors, bots, and custom UIs
-- **`rho-repl`** — an interactive terminal client that spawns `rho` as a subprocess and provides slash commands, streaming output, and approval prompts
+rho is a headless JSON-RPC 2.0 agent over stdin/stdout, suitable for embedding in editors, bots, and custom UIs.
 
 See [RPC Mode](./rpc-mode.md) for the full protocol reference.
 

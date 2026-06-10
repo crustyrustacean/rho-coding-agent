@@ -38,15 +38,9 @@ When a tool is not listed in config, the risk-based default applies:
 
 The RPC implementation reads an `approvalResponse` JSON-RPC 2.0 method from stdin and returns the `approved` boolean. See [RPC Mode](../rpc-mode.md) for the approval flow.
 
-## Gate: `rho-repl` approval
+## Example gate
 
-The terminal client (`rho-repl`) presents a preview and reads `y/N` from stderr/stdin:
-
-```text
-  approve? run_command [destructive]
-  {"command":"Remove-Item temp/*"}
-  [y/N] 
-```
+In RPC mode, the `RpcApprovalGate` reads an `approvalResponse` method from stdin (see [RPC Mode](../rpc-mode.md)). A REPL, TUI, or editor integration can implement the `ApprovalGate` trait to present approvals however it chooses.
 
 On denial, a synthetic error result is fed back to the model as if the tool had failed. The model can then adjust its approach — it does not crash or get stuck.
 

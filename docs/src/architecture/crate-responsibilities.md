@@ -15,15 +15,6 @@ The kernel: agent loop state machine (with `AgentObserver` for live output, phas
 Key types: `Session`, `AgentConfig`, `AgentObserver`, `NopObserver`, `ContextStats`, `RoleTokenDistribution`, `ResolutionTokenDistribution`, `PhaseTokenDistribution`, `SessionMetadata`, `ToolRegistry`, `Tool`, `Provider`, `ProviderRegistry`, `ContextManager`, `TokenBudget`, `SandboxRoot`, `Redactor`, `RhoConfig`, `SessionPhase`, `CompactionPhase`, `CompactionStrategy`, `LlmCompactionStrategy`, `MechanicalCompactionStrategy`, `CommandDenylist`.
 
 
-## `rho-repl`
-
-Interactive terminal client that spawns `rho` as a subprocess and communicates via JSON-RPC 2.0 over stdin/stdout. Provides readline input with persistent history (`~/.rho/repl-history`), slash command dispatch, streaming output rendering, and approval prompts.
-
-Does **not** depend on any rho crate — all interaction is through the JSON-RPC 2.0 protocol. Uses `rustyline` for input, `colored` for terminal colors, and `tokio` for async subprocess I/O.
-
-Key types: `Cli`, `RhoClient`, `Renderer`.
-
-
 ## `rho-highlight`
 
 Tree-sitter-based syntax analysis. Provides `parse()`, `highlight()`, and `node_at()` for Rust source code. Used by `EditFile` for node-splitting validation and by tools that need structural code awareness.

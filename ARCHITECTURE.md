@@ -10,7 +10,6 @@
 ┌─────────────────────────────────────────────────┐
 │                   rho (binary)                   │  ← Headless JSON-RPC 2.0 agent
 ├─────────────────────────────────────────────────┤
-│                   rho-repl                       │  ← Interactive terminal client (spawns rho)
 ├─────────────────────────────────────────────────┤
 │                   rho-ext                        │  ← TypeScript extension runtime (V8/deno-core)
 ├─────────────────────────────────────────────────┤
@@ -32,10 +31,9 @@
                   rho-tools → rho-highlight → rho-core
                   rho → rho-core, rho-tools, rho-ext, rho-ai
                   rho-test-helpers → rho-core, rho-ai
-                  rho-repl → (no rho deps, spawns rho as subprocess)
 ```
 
-**Rule:** a crate may only depend on crates below it in the stack. `rho-ai` is the lowest layer; `rho-core` depends on it for the `LlmService` trait and unified streaming types. `rho-ext` depends on `rho-core` for the `Tool` and `AgentObserver` trait implementations. `rho-repl` does not depend on any rho crate — it spawns `rho` as a subprocess.
+
 
 ## Crate Responsibilities
 
@@ -135,10 +133,6 @@ Assembles all layers and runs the headless JSON-RPC 2.0 protocol over stdin/stdo
 
 **`App::run`):** fires extension `onLoad` hooks, then starts the JSON-RPC 2.0 loop via `run_rpc`.
 
-### `rho-repl` — Interactive Terminal Client
-
-Spawns `rho` as a subprocess and communicates via JSON-RPC 2.0. Provides readline input with persistent history, slash command dispatch (`/clear`, `/models`, `/model`, `/status`, `/sessions`, `/extensions`, `/reload`, `/compact`, `/quit`), streaming output rendering, and approval prompts. Does not depend on any rho crate.
-
 ## Execution Mode: JSON-RPC 2.0
 
 `rho` runs as a headless agent communicating via **JSON-RPC 2.0** over stdin/stdout. All requests must include `"jsonrpc": "2.0"`, a `method` field, optional `params`, and a numeric or string `id` for response correlation. Streaming events are delivered as JSON-RPC notifications (no `id` field).
@@ -149,8 +143,6 @@ Diagnostic output (warnings, budget info, session status) is written to **stderr
 # Example session
 echo '{"jsonrpc":"2.0","method":"prompt","params":{"message":"fix the bug"},"id":1}' | rho --model <id>
 ```
-
-The `rho-repl` binary provides an interactive terminal experience by spawning `rho` as a subprocess and handling the JSON-RPC 2.0 protocol on its behalf.
 
 The core RPC loop is generic over I/O (`run_rpc_on<R, W>`) so the in-process integration tests can inject canned stdin and capture stdout without touching real file descriptors. The public entry point (`run_rpc`) delegates with real `io::stdin()` and `io::stdout()`.
 
@@ -323,11 +315,6 @@ rho/                # Headless JSON-RPC 2.0 agent
     presenter.rs    # Presenter module root
     presenter/
       rpc.rs        # `RpcPresenter` — diagnostic output to stderr
-rho-repl/           # Interactive terminal client (spawns rho as subprocess)
-  src/
-    main.rs         # REPL loop, slash commands, approval prompts
-    client.rs       # JSON-RPC 2.0 subprocess client
-    render.rs       # Terminal rendering for streaming output
 rho-ai/             # Unified LLM provider abstraction
   src/
     lib.rs          # Re-exports: `LlmService`, `EventStream`, unified types

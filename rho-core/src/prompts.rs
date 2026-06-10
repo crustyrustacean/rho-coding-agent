@@ -14,10 +14,9 @@ pub fn base_prompt() -> &'static str {
 
 /// A compact system prompt for models with small context windows.
 ///
-/// Use this when the full [`base_prompt()`] (~2,000 tokens) plus tool schemas
+/// Use this when the full [`base_prompt()`] plus tool schemas
 /// and context files would exceed the model's context length. The compact
-/// prompt omits PowerShell idioms, pipeline patterns, and Rust-specific
-/// guidance, retaining only the essential identity and safety instructions.
+/// prompt retains only the essential identity and safety instructions.
 pub fn compact_prompt() -> &'static str {
     include_str!("prompts/compact.md")
 }
@@ -37,11 +36,11 @@ mod tests {
         assert!(std::str::from_utf8(base_prompt().as_bytes()).is_ok());
     }
 
-    // ── PowerShell-aware prompt content checks ────────────────────────────
+    // ── PowerShell prompt checks ────────────────────────────────
     //
-    // These verify that the base prompt contains the key sections and idioms
-    // that Task 8 added. If the prompt is restructured, update the assertions
-    // but do not remove coverage for a topic without a deliberate decision.
+    // The shell is PowerShell. The model knows PowerShell idioms —
+    // the prompt does not need to teach them. It only needs to state
+    // the shell and warn against bypass attempts.
 
     #[test]
     fn base_prompt_instructs_powershell_not_bash() {
@@ -51,48 +50,8 @@ mod tests {
             "base prompt must mention PowerShell"
         );
         assert!(
-            prompt.contains("never bash"),
-            "base prompt must explicitly say never bash"
-        );
-    }
-
-    #[test]
-    fn base_prompt_has_powershell_idioms_table() {
-        let prompt = base_prompt();
-        // Key idioms that the model must know:
-        assert!(
-            prompt.contains("Get-ChildItem"),
-            "prompt must teach Get-ChildItem idiom"
-        );
-        assert!(
-            prompt.contains("Select-String"),
-            "prompt must teach Select-String idiom"
-        );
-        assert!(
-            prompt.contains("Get-Content"),
-            "prompt must teach Get-Content idiom"
-        );
-    }
-
-    #[test]
-    fn base_prompt_covers_pipeline_patterns() {
-        let prompt = base_prompt();
-        assert!(
-            prompt.contains("Where-Object"),
-            "prompt must cover pipeline filtering"
-        );
-        assert!(
-            prompt.contains("ForEach-Object"),
-            "prompt must cover pipeline iteration"
-        );
-    }
-
-    #[test]
-    fn base_prompt_covers_environment_variables() {
-        let prompt = base_prompt();
-        assert!(
-            prompt.contains("$env:"),
-            "prompt must show PowerShell env var syntax"
+            prompt.contains("Do not use bash"),
+            "base prompt must explicitly say not to use bash"
         );
     }
 
@@ -133,24 +92,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn base_prompt_covers_path_handling() {
-        let prompt = base_prompt();
-        assert!(
-            prompt.contains("Join-Path") || prompt.contains("Split-Path"),
-            "prompt must cover PowerShell path handling"
-        );
-    }
-
-    #[test]
-    fn base_prompt_covers_error_handling() {
-        let prompt = base_prompt();
-        assert!(
-            prompt.contains("ErrorAction"),
-            "prompt must cover PowerShell error handling"
-        );
-    }
-
     // ── Subdirectory / cwd guidance checks ───────────────────────────────
 
     #[test]
@@ -163,16 +104,6 @@ mod tests {
             "prompt must teach the cwd parameter of run_command for subdirectory work"
         );
     }
-
-    #[test]
-    fn base_prompt_idiom_table_has_cwd_alternative() {
-        let prompt = base_prompt();
-        assert!(
-            prompt.contains("cwd="),
-            "prompt idiom table must show cwd= alternative to cd && command"
-        );
-    }
-
     // ── Progress checkpointing checks ─────────────────────────────────────
 
     #[test]

@@ -18,11 +18,6 @@ rho-coding-agent/
 │       ├── rpc.rs            # JSON-RPC 2.0: `run_rpc`, `run_rpc_on`, observer, approval gate
 │       └── presenter/
 │           └── rpc.rs        # `RpcPresenter` — diagnostic output to stderr
-├── rho-repl/                # Interactive terminal client (spawns rho as subprocess)
-│   └── src/
-│       ├── main.rs           # REPL loop, slash commands, approval prompts, readline
-│       ├── client.rs         # JSON-RPC 2.0 subprocess client
-│       └── render.rs         # Terminal rendering for streaming output and notifications
 ├── rho-ai/                 # Unified LLM provider abstraction
 │   └── src/
 │       ├── lib.rs           # Re-exports: `LlmService`, `EventStream`, unified types

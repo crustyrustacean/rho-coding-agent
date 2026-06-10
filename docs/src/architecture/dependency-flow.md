@@ -13,7 +13,6 @@ rho (binary) ──────────────────────�
     │
     └── rho-core ─────────────────────────────────────
             │
-rho-repl ──── (no rho deps, spawns rho as subprocess)
 rho-bench ──────── rho-eval ── rho-core ─────────────
 rho-test-helpers ── rho-core, rho-ai ────────────────
 xtask ──────────────────────────────────────────────
@@ -22,7 +21,7 @@ xtask ────────────────────────�
 | Crate | Depends on | Notes |
 |---|---|---|
 | `rho` | `rho-core`, `rho-tools`, `rho-ext`, `rho-ai` | Headless JSON-RPC 2.0 agent |
-| `rho-repl` | none (external only) | Interactive terminal client — spawns `rho` as a subprocess |
+
 | `rho-ext` | `rho-core`, `deno_core`, `deno_ast` | TypeScript extension runtime |
 | `rho-tools` | `rho-core`, `rho-highlight` | Tool implementations use core types and highlight for node-splitting |
 | `rho-highlight` | none (external only) | Tree-sitter grammar — standalone, no rho dependencies |
@@ -54,6 +53,6 @@ xtask ────────────────────────�
 
 The layered structure means:
 
-- **`rho-core` is UI-agnostic** — no shell, no filesystem, no terminal. The REPL (`rho-repl`) and any future TUI both consume it through the same JSON-RPC 2.0 protocol.
+- **`rho-core` is UI-agnostic** — no shell, no filesystem, no terminal. Any frontend (REPL, TUI, editor integration) consumes it through the JSON-RPC 2.0 protocol.
 - **Tools are pluggable** — `ToolRegistry` stores `Box<dyn Tool>`, so adding a tool is `registry.register(Box::new(MyTool))`.
 - **Testing is isolated** — `rho-test-helpers` mocks the core traits (`MockChatClient`, `MockShellExecutor`, `ApprovalGate`) so tool and agent loop tests run without a model server.

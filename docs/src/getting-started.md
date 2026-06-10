@@ -8,7 +8,7 @@
 
 ### Local model (default)
 
-No configuration needed — just start a local server on `localhost:1234` and run `rho-repl`. It will auto-detect the loaded model.
+No configuration needed — just start a local server on `localhost:1234` and run rho. It will auto-detect the loaded model.
 
 ### External provider
 
@@ -25,7 +25,7 @@ model = "deepseek-v4-flash"
 
 ### No server running?
 
-If you run `rho-repl` with no local server and no configured external provider, rho will print a startup error indicating no models were found.
+If you run rho with no local server and no configured external provider, rho will print a startup error indicating no models were found.
 
 If you have an external provider configured but rho cannot list models (e.g. the API key is wrong or the endpoint is slow), rho offers an interactive model picker:
 
@@ -46,22 +46,21 @@ You can also skip the picker entirely with `--model <id>`.
 
 ```sh
 cargo build --release -p rho        # headless RPC agent
-cargo build --release -p rho-repl   # interactive terminal client
 ```
 
 ## Run
 
 ```sh
-rho-repl                # auto-detect model, persist session to disk
-rho-repl -m my-model    # specify a model
-rho-repl -c             # resume the most recent session for this project
-rho-repl --session <path>  # resume a specific session
-rho-repl --ephemeral   # in-memory mode, no session file
+rho                      # auto-detect model, persist session to disk (headless RPC)
+rho -m my-model          # specify a model
+rho -c                   # resume the most recent session for this project
+rho --session <path>     # resume a specific session
+rho --ephemeral          # in-memory mode, no session file
 ```
 
-`rho-repl` spawns `rho` as a subprocess and communicates via JSON-RPC 2.0 over stdin/stdout. All model interaction happens inside `rho`; `rho-repl` provides the terminal UI, slash commands, and approval prompts.
+rho runs as a headless JSON-RPC 2.0 agent over stdin/stdout. Send prompts and receive streaming responses via the protocol. See [RPC Mode](./rpc-mode.md) for the full protocol reference.
 
-You can also run `rho` directly for headless/scripted use:
+Example scripted use:
 
 ```sh
 echo '{"jsonrpc":"2.0","method":"prompt","params":{"message":"fix the bug"},"id":1}' | rho --model <id>
@@ -73,13 +72,13 @@ On startup, rho:
 2. Loads configuration from `~/.rho/config.toml` and `.rho/config.toml`.
 3. Scans for project context files (`AGENTS.md`, etc.) and prompts for trust on first encounter.
 4. Checks provider consent for external endpoints.
-5. Connects to the model server and auto-detects the loaded model (unless `--model` is specified). If no model can be found, rho offers an interactive model picker.
+5. Connects to the model server and auto-detects the loaded model (unless `--model` is specified). If no model can be found, rho returns an error.
 6. Creates a session (persisted to `~/.rho/sessions/` by default, or in-memory with `--ephemeral`). If previous sessions exist, a hint is printed.
-7. Enters the RPC loop and waits for commands. `rho-repl` provides the interactive prompt.
+7. Enters the RPC loop and waits for commands.
 
 ## CLI flags (`rho`)
 
-The `rho` binary runs in headless JSON-RPC 2.0 mode. All flags can also be forwarded by `rho-repl`.
+The `rho` binary runs in headless JSON-RPC 2.0 mode.
 
 | Flag | Description |
 |---|---|
@@ -99,27 +98,15 @@ The `rho` binary runs in headless JSON-RPC 2.0 mode. All flags can also be forwa
 | `--ephemeral` | Run without disk persistence |
 ## Session persistence
 
-By default, every rho invocation creates a new JSONL session file under `~/.rho/sessions/<project-hash>/`. Sessions survive process restarts — use `rho-repl -c` to resume the latest session or `--session <path>` to resume a specific one.
+By default, every rho invocation creates a new JSONL session file under `~/.rho/sessions/<project-hash>/`. Sessions survive process restarts — use `rho -c` to resume the latest session or `--session <path>` to resume a specific one.
 
-The `/sessions` REPL command lists the 10 most recent sessions with timestamps, sizes, and entry counts. The latest session is marked so you know which one `rho -c` will pick.
+The `listSessions` RPC method returns the 10 most recent sessions with timestamps, sizes, and entry counts. The latest session is marked so you know which one `rho -c` will pick.
 
 See [Sessions](./core-concepts/sessions.md) for details.
 
-## REPL commands (`rho-repl`)
+## RPC methods
 
-| Command | Description |
-|---|---|
-| `/help` | Show available commands |
-| `/clear` | Clear conversation history (creates a new branch) |
-| `/models` | List all models across all providers |
-| `/model <id>` | Switch model (bare id or `provider:id`) |
-| `/providers` | List configured providers with reachability status |
-| `/status` | Show context window usage breakdown |
-| `/sessions` | List previous sessions for this project |
-| `/extensions` | List loaded extension names |
-| `/reload` | Hot-reload TypeScript extensions from disk |
-| `/compact` | Trigger context compaction |
-| `/quit` or `/exit` | Exit rho-repl |
+rho communicates via JSON-RPC 2.0 over stdin/stdout. See [RPC Mode](./rpc-mode.md) for the full protocol reference, including all methods, notifications, and the approval flow.
 
 ## Next Steps
 
