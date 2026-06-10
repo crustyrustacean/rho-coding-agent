@@ -1,52 +1,30 @@
-# Model Validation Improvements
+# Model Resolution — Design Notes
 
-## Current Problems
+## Current approach (v0.72)
 
-Looking at the code, there are three concrete gaps in model handling:
+rho uses **config-as-truth** model resolution. No network calls at startup; the config file is the source of truth.
 
-### 1. No validation of `--model` or config model
+Resolution priority:
+1. `--model <id>` (CLI flag)
+2. `agent.model` (config)
+3. `agent.provider` → that provider's `default_model` (config)
+4. First provider's `default_model` (config fallback)
 
-In [`resolve_model`](rho/src/app.rs), when a model is specified via `--model` or config, it's used verbatim with zero validation against the provider's models endpoint. A typo like `--model qwen3-8` (when the real ID is `qwen3-8b`) silently passes until the first API call returns a cryptic 404 from the server.
+Misconfiguration surfaces as a clear HTTP error at request time (e.g. 404 for a typo'd model ID).
 
-### 2. Auto-detect silently picks first model, no choice
+## What changed from the old approach
 
-When no model is specified, [`resolve_model`](rho/src/app.rs) queries all providers and grabs the first model. The user has no way to pick — they must restart with `--model` after manually discovering the ID.
+The old approach queried `/v1/models` at startup to "auto-detect" the model. This was removed because:
+- External providers may return large or non-standard model lists
+- Added latency to every startup even with a config file
+- Broke the principle of "config is truth, validate at request time"
 
-### 3. No quick way to discover available models
+The `/v1/models` endpoint is still called at **runtime** for:
+- `/models` RPC command (list available models)
+- `/model <id>` command (switch models mid-session, with provider auto-detection)
 
-To find available models, users must start rho, type `/models`, then restart. There's no `--list-models` flag.
+## Future improvements
 
-## Proposed Improvements
-
-### A. Validate model existence at startup (`app.rs`)
-
-When `--model` or config specifies a model, query the provider(s) and verify it exists. If not, show available models and error out with a helpful message (including fuzzy suggestions).
-
-### B. Interactive model selection when no model specified
-
-When auto-detecting and multiple models are available, show a numbered list and let the user pick. Single-model auto-detect can still silently proceed.
-
-### C. `--list-models` CLI flag (`cli.rs`)
-
-A quick non-interactive way to discover models without starting a REPL.
-
-### D. Fuzzy model suggestions on miss (`app.rs` or new `model_match` module)
-
-When a specified model isn't found, use a simple string similarity metric to suggest likely alternatives.
-
-## Where Changes Land
-
-| Change | Crate | Files |
-|---|---|---|
-| A. Validate at startup | `rho` | `app.rs` (`resolve_model`) |
-| B. Interactive selection | `rho` | `app.rs` (`resolve_model`) |
-| C. `--list-models` flag | `rho` | `cli.rs`, `app.rs`, `main.rs` |
-| D. Fuzzy suggestions | `rho` | new `model_match.rs` or inline in `app.rs` |
-
-All changes are in the `rho` binary crate — no changes needed to `rho-core` since `ProviderRegistry::list_all_models()` and `ProviderRegistry::find_model()` already exist.
-
-## Implementation Plan
-
-- **A + D** first (biggest bang for the buck)
-- **C** (`--list-models`) as a quick follow-up
-- **B** (interactive selection) last (most UX polish)
+- **`--list-models` CLI flag** — non-interactive way to discover models without starting a session
+- **Fuzzy suggestions** — when a model ID returns 404, suggest similar model names from `/v1/models`
+- **Model aliases** — short names (e.g. `sonnet` → `anthropic/claude-sonnet-4`) via `~/.rho/models.toml`

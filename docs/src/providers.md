@@ -75,11 +75,13 @@ rho --endpoint https://api.openai.com/v1/chat/completions \
 # ~/.rho/config.toml
 [agent]
 model = "gpt-4o"
+provider = "openai"
 token_budget = 131072
 
 [[providers]]
 preset = "openai"
 api_key_env = "OPENAI_API_KEY"
+default_model = "gpt-4o"
 ```
 
 ```sh
@@ -109,13 +111,15 @@ The consent prompt fires automatically for config-driven external endpoints. It 
 
 ## Specifying the model
 
-There are three ways to set the model, in priority order:
+There are several ways to set the model, in priority order:
 
 1. **CLI flag** — `--model gpt-4o` (highest priority)
-2. **Config** — `[agent] model = "gpt-4o"`
-3. **Auto-detection** — query the provider's models endpoint (derived from the configured chat-completions URL) and use the first loaded model
+2. **Config model** — `[agent] model = "gpt-4o"`
+3. **Config provider** — `[agent] provider = "openrouter"` uses that provider's `default_model`
+4. **Provider default** — the first provider's `default_model` if configured
+5. **CLI flags** — `--endpoint <url> --model <id>` (no config needed)
 
-Auto-detection works for local servers (LM Studio, Ollama) where the models endpoint is reliable. For external providers, **always specify the model explicitly** with `--model` or in config.
+rho does **not** call `/v1/models` at startup. The config file is the source of truth — model names are accepted as-is, and misconfiguration surfaces as a clear HTTP error at request time.
 
 ### `/providers` command
 
@@ -126,7 +130,7 @@ The `/providers` REPL command shows all configured providers with their reachabi
   * lm-studio (local, ok)
     openrouter (remote, ok)
     ollama (remote, down)
-    * = active
+  * = active
 ```
 
 Each entry shows:
@@ -134,26 +138,6 @@ Each entry shows:
 - **`*`** — active provider (where the next prompt will go)
 - **local/remote** — whether the endpoint is on localhost
 - **ok/down** — whether the provider's models endpoint responded
-
-### Interactive model picker
-
-When rho has an external provider configured but cannot list models (e.g. the models endpoint times out, the API key is wrong, or the provider doesn't support model listing), rho offers an interactive model picker instead of aborting:
-
-```text
-  Could not list models from: openrouter
-  Select a model to use:
-
-    [1] Claude Sonnet 4        (Anthropic)
-    [2] GPT-4o                 (OpenAI)
-    [3] GLM-5                  (z.ai)
-    [0] Enter model ID manually
-
-  Choice:
-```
-
-The picker offers one recommended model from each of Anthropic, OpenAI, and z.ai. Selecting `[0]` lets you type any model ID. You can also type a model ID directly instead of a number.
-
-The curated models use `OpenRouter` model IDs (e.g. `anthropic/claude-sonnet-4`) which work with any `OpenRouter`-compatible endpoint. For direct OpenAI or Anthropic API access, use `[0]` to enter the native model ID (e.g. `gpt-4o` or `claude-sonnet-4-20250514`).
 
 ### Mid-session provider switching
 
@@ -168,8 +152,6 @@ With a bare model ID, rho discovers which provider serves it by querying each pr
 ```
 /model qwen3-8b
 ```
-
-To skip the picker entirely, specify `--model` on the CLI or set `agent.model` in config.
 
 ## CLI flags for provider configuration
 
@@ -198,10 +180,12 @@ Or via config with a preset:
 ```toml
 [agent]
 model = "gpt-4o"
+provider = "openai"
 
 [[providers]]
 preset = "openai"
 api_key_env = "OPENAI_API_KEY"
+default_model = "gpt-4o"
 ```
 
 ### OpenRouter
@@ -220,10 +204,12 @@ Or via config with a preset:
 ```toml
 [agent]
 model = "anthropic/claude-sonnet-4-20250514"
+provider = "openrouter"
 
 [[providers]]
 preset = "openrouter"
 api_key_env = "OPENROUTER_API_KEY"
+default_model = "anthropic/claude-sonnet-4-20250514"
 ```
 
 ### Groq
@@ -328,6 +314,9 @@ endpoint = "https://..."
 
 # API key env var (required for remote providers)
 api_key_env = "OPENROUTER_API_KEY"
+
+# Default model for this provider (used when agent.provider points here)
+default_model = "anthropic/claude-sonnet-4-20250514"
 
 # Informational type label (has no effect on behavior)
 type = "openrouter"

@@ -59,8 +59,11 @@ Resolution rules:
 
 ```toml
 [agent]
-# Model identifier (overrides auto-detection)
+# Model identifier (highest priority; overrides provider and default_model)
 model = "qwen3-8b"
+
+# Provider to use at startup (uses that provider's default_model if model not set)
+# provider = "openrouter"
 
 # Maximum model-tool-model round trips before the loop fails (default: 32)
 max_iterations = 32
@@ -101,11 +104,12 @@ compaction_mode = "mechanical"
 # is preferred.
 #
 # Each provider has:
-#   name       — display name (shown in /models, consent prompt)
-#   preset     — built-in preset (fills endpoint/name automatically)
-#   endpoint   — explicit endpoint URL (overrides preset)
-#   api_key_env — env var holding the API key (not auto-injected by presets)
-#   type       — informational label, has no effect on behavior
+#   name           — display name (shown in /models, consent prompt)
+#   preset         — built-in preset (fills endpoint/name automatically)
+#   endpoint       — explicit endpoint URL (overrides preset)
+#   api_key_env    — env var holding the API key (not auto-injected by presets)
+#   default_model  — model to use when selected via agent.provider
+#   type           — informational label, has no effect on behavior
 
 # Example: LM Studio via preset (local, no API key needed)
 [[providers]]
@@ -209,7 +213,8 @@ All config values can be overridden by CLI flags. CLI flags take highest priorit
 
 | Config field | CLI flag |
 |---|---|
-| `agent.model` | `--model` |
+| `agent.model` | `--model` | Model identifier |
+| `agent.provider` | — | Provider name (uses its `default_model`) |
 | `agent.token_budget` | `--token-budget` |
 | `provider.endpoint` | `--endpoint` |
 | `provider.api_key_env` | `--api-key-env` |

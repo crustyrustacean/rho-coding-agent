@@ -48,17 +48,18 @@ The binary (`rho`) checks whether the configured endpoint is local before connec
 
 ### Model picker
 
-When no models can be auto-detected (all providers unreachable or their models endpoint unsupported), rho offers an interactive model picker with curated models from Anthropic, OpenAI, and z.ai. The user can also enter a model ID manually. This fallback only fires when neither `--model` nor `agent.model` is set and auto-detection fails.
+When no model can be resolved from config or CLI, rho reports an error at startup. Set `--model <id>`, `agent.model`, or `agent.provider` with a `default_model` on the provider to ensure a model is always available.
 
 ## Model resolution
 
 The model identifier is resolved in priority order:
 
 1. **CLI flag** — `--model <name>` (highest priority)
-2. **Config** — `agent.model` in `.rho/config.toml` or `~/.rho/config.toml`
-3. **Auto-detect** — query the provider's models endpoint (derived from the configured chat-completions URL), use the first loaded model
+2. **Config model** — `agent.model` in `.rho/config.toml` or `~/.rho/config.toml`
+3. **Config provider** — `agent.provider` selects a provider and uses its `default_model`
+4. **Provider default** — the first provider's `default_model` if configured
 
-Auto-detection works well for local servers where the models endpoint is reliable. **For external providers, always specify the model explicitly** with `--model` or in config — external providers may return large model lists or non-standard responses that can cause auto-detection to pick an unexpected model or fail.
+rho does **not** call `/v1/models` at startup. The config file is the source of truth — model names are passed directly to the provider, and misconfiguration surfaces as a clear HTTP error at request time.
 
 ## Request / response
 

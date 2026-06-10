@@ -82,7 +82,7 @@ A local coding agent written in Rust. `rho` runs as a headless process communica
 rho [OPTIONS]
 
 Options:
-  -m, --model <MODEL>                    Model identifier (auto-detected if omitted)
+  -m, --model <MODEL>                    Model identifier (uses config default if omitted)
   -s, --system <SYSTEM>                  Override the system prompt
       --compact                          Use a compact prompt for small-context models (~100 tokens)
       --root <ROOT>                      Project/sandbox root (auto-detected if omitted)
