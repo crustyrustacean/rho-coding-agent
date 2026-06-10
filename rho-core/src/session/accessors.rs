@@ -183,6 +183,16 @@ impl Session {
         &self.persist
     }
 
+    /// Cumulative API token usage across all LLM requests.
+    pub fn api_usage(&self) -> &crate::session::context_stats::ApiUsage {
+        &self.api_usage
+    }
+
+    /// Accumulate token usage from a single LLM response.
+    pub fn accumulate_usage(&mut self, usage: &rho_ai::StreamUsage) {
+        self.api_usage.accumulate(usage);
+    }
+
     /// Update the flushed count after a successful flush.
     pub(crate) fn set_flushed_count(&mut self, count: usize) {
         self.persist.flushed_count = count;

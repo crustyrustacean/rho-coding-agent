@@ -175,6 +175,8 @@ pub struct Session {
     details_store: HashMap<EntryId, ToolResultDetails>,
     /// Persistence state (save path, flushed count).
     persist: PersistState,
+    /// Cumulative API token usage across all LLM requests.
+    api_usage: crate::session::context_stats::ApiUsage,
     /// Cached token overhead of the tool schemas.
     ///
     /// Set to `Some(n)` after the first computation and invalidated when

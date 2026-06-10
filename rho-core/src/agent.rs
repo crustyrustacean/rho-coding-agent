@@ -1199,6 +1199,9 @@ pub(crate) fn route_response(
 ) -> Result<AssistantResponse> {
     use crate::message::ContentBlock;
 
+    // Accumulate token usage from this response.
+    session.accumulate_usage(&acc.usage);
+
     match &acc.stop_reason {
         rho_ai::StopReason::ToolUse => {
             let tool_calls = build_tool_calls_from_accumulated(&acc.tool_calls)?;

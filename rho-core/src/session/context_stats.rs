@@ -1,4 +1,7 @@
-//! Context window usage statistics.
+//! Context window usage statistics and API token accumulation.
+//!
+//! [`ContextStats`] provides a snapshot of how full the context window is.
+//! [`ApiUsage`] tracks cumulative token counts across all LLM requests.
 //!
 //! [`ContextStats`] provides a snapshot of how full the context window is,
 //! how many entries are in the active path, and how much budget remains.
@@ -69,6 +72,41 @@ impl PhaseTokenDistribution {
     /// Total tokens across all phases.
     pub fn total(&self) -> usize {
         self.exploration + self.execution + self.verification + self.conclusion + self.unclassified
+    }
+}
+
+/// Cumulative token usage across all LLM requests in a session.
+///
+/// Accumulated from each [`rho_ai::StreamUsage`] reported by the model.
+/// Unlike [`ContextStats`] (which estimates tokens from message content),
+/// these are the actual token counts reported by the provider.
+#[derive(Clone, Debug, Default)]
+pub struct ApiUsage {
+    /// Total input (prompt) tokens across all requests.
+    pub total_input_tokens: u64,
+    /// Total output (completion) tokens across all requests.
+    pub total_output_tokens: u64,
+    /// Cumulative cost in USD, if the provider reports it.
+    pub total_cost: f64,
+    /// Number of LLM requests made.
+    pub request_count: u32,
+}
+
+impl ApiUsage {
+    /// Accumulate a single response's usage into the running totals.
+    pub fn accumulate(&mut self, usage: &rho_ai::StreamUsage) {
+        self.total_input_tokens += usage.input_tokens;
+        self.total_output_tokens += usage.output_tokens;
+        if let Some(cost) = usage.cost {
+            self.total_cost += cost;
+        }
+        self.request_count += 1;
+    }
+
+    /// Total tokens (input + output).
+    #[must_use]
+    pub fn total_tokens(&self) -> u64 {
+        self.total_input_tokens + self.total_output_tokens
     }
 }
 
@@ -320,5 +358,58 @@ mod tests {
             compacted_entry_count: 0,
         };
         assert_eq!(stats.resolution_tokens.total(), 500);
+    }
+
+    // ── ApiUsage tests ────────────────────────────────────────────────
+
+    #[test]
+    fn api_usage_starts_at_zero() {
+        let usage = ApiUsage::default();
+        assert_eq!(usage.total_input_tokens, 0);
+        assert_eq!(usage.total_output_tokens, 0);
+        assert_eq!(usage.total_cost, 0.0);
+        assert_eq!(usage.request_count, 0);
+        assert_eq!(usage.total_tokens(), 0);
+    }
+
+    #[test]
+    fn api_usage_accumulates_single_response() {
+        let mut usage = ApiUsage::default();
+        usage.accumulate(&rho_ai::StreamUsage::new(100, 50));
+        assert_eq!(usage.total_input_tokens, 100);
+        assert_eq!(usage.total_output_tokens, 50);
+        assert_eq!(usage.total_tokens(), 150);
+        assert_eq!(usage.request_count, 1);
+    }
+
+    #[test]
+    fn api_usage_accumulates_multiple_responses() {
+        let mut usage = ApiUsage::default();
+        usage.accumulate(&rho_ai::StreamUsage::new(1000, 200));
+        usage.accumulate(&rho_ai::StreamUsage::new(1500, 300));
+        usage.accumulate(&rho_ai::StreamUsage::new(2000, 100));
+        assert_eq!(usage.total_input_tokens, 4500);
+        assert_eq!(usage.total_output_tokens, 600);
+        assert_eq!(usage.total_tokens(), 5100);
+        assert_eq!(usage.request_count, 3);
+    }
+
+    #[test]
+    fn api_usage_accumulates_cost() {
+        let mut usage = ApiUsage::default();
+        let mut u1 = rho_ai::StreamUsage::new(100, 50);
+        u1.cost = Some(0.001);
+        let mut u2 = rho_ai::StreamUsage::new(200, 100);
+        u2.cost = Some(0.002);
+        usage.accumulate(&u1);
+        usage.accumulate(&u2);
+        assert!((usage.total_cost - 0.003).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn api_usage_cost_defaults_to_zero() {
+        let mut usage = ApiUsage::default();
+        usage.accumulate(&rho_ai::StreamUsage::new(100, 50));
+        assert_eq!(usage.total_cost, 0.0);
     }
 }

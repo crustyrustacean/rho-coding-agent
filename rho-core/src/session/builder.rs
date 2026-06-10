@@ -75,6 +75,7 @@ impl Session {
             details_store: HashMap::new(),
             schema_overhead_cache: std::cell::Cell::new(None),
             persist: PersistState::with_path(save_path, 0),
+            api_usage: crate::session::context_stats::ApiUsage::default(),
         }
     }
 
@@ -128,6 +129,7 @@ impl Session {
             details_store: HashMap::new(),
             schema_overhead_cache: std::cell::Cell::new(None),
             persist: PersistState::in_memory(),
+            api_usage: crate::session::context_stats::ApiUsage::default(),
         }
     }
 
@@ -180,6 +182,7 @@ impl Session {
             details_store: HashMap::new(),
             schema_overhead_cache: std::cell::Cell::new(None),
             persist: persist_state,
+            api_usage: crate::session::context_stats::ApiUsage::default(),
         }
     }
 

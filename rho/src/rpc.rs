@@ -515,6 +515,7 @@ async fn handle_set_model(app: &mut App, params: Value, id: &Value, out: &Out) {
 /// Return token budget and context-window usage statistics.
 fn handle_get_session_stats(app: &App, id: &Value, out: &Out) {
     let stats = app.session.context_stats();
+    let usage = app.session.api_usage();
     write_jsonrpc(
         out,
         &success_response(
@@ -541,6 +542,13 @@ fn handle_get_session_stats(app: &App, id: &Value, out: &Out) {
                     "outlined": stats.resolution_tokens.outlined,
                     "summarized": stats.resolution_tokens.summarized,
                     "pinned": stats.resolution_tokens.pinned,
+                },
+                "apiUsage": {
+                    "totalInputTokens": usage.total_input_tokens,
+                    "totalOutputTokens": usage.total_output_tokens,
+                    "totalTokens": usage.total_tokens(),
+                    "totalCost": usage.total_cost,
+                    "requestCount": usage.request_count,
                 },
             }),
         ),
@@ -1325,6 +1333,10 @@ mod tests {
         let resp = &responses(&events)[0];
         assert!(resp["result"]["contextWindow"].is_number());
         assert!(resp["result"]["estimatedUsed"].is_number());
+        assert!(resp["result"]["apiUsage"].is_object());
+        assert_eq!(resp["result"]["apiUsage"]["totalInputTokens"], 0);
+        assert_eq!(resp["result"]["apiUsage"]["totalOutputTokens"], 0);
+        assert_eq!(resp["result"]["apiUsage"]["requestCount"], 0);
     }
 
     #[tokio::test]
