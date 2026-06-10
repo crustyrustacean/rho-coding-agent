@@ -227,7 +227,7 @@
 <tr><td><code>path</code></td><td>Full path to the JSONL file</td></tr>
 </tbody></table>
 </div>
-<p>The <code>/sessions</code> REPL command uses this to display the 10 most recent sessions, marking which one <code>rho -c</code> will resume.</p>
+<p>The <code>listSessions</code> RPC method uses this to return the 10 most recent sessions, marking which one <code>rho -c</code> will resume.</p>
 <h3 id="resuming-a-session"><a class="header" href="#resuming-a-session">Resuming a session</a></h3>
 <p>Use <code>rho -c</code> to resume the most recent session for the current project:</p>
 <pre><code class="language-sh">rho -c
@@ -276,10 +276,10 @@
 <li><code>estimated_remaining()</code> — remaining tokens in the prompt budget (saturates at 0)</li>
 <li><code>prompt_budget()</code> — context window minus completion reserve</li>
 </ul>
-<p>The REPL prints a compact one-line status bar after every turn:</p>
+<p>A consumer can display a compact one-line status bar after every turn:</p>
 <pre><code class="language-text">[████████████░░░░░░░░] 12.3k/32k tokens (50%) │ 12.3k remaining │ 10 messages
 </code></pre>
-<p>Color-coded green (&lt;60%), yellow (60–80%), red (&gt;80%). The <code>/status</code> REPL command (aliased as <code>/context</code>) shows a detailed multi-line breakdown including token distribution by role, resolution level, compaction stats, system prompt overhead, tool schema overhead, and conversation token breakdown.</p>
+<p>Color-coded green (&lt;60%), yellow (60–80%), red (&gt;80%). The <code>getSessionStats</code> RPC method shows a detailed multi-line breakdown including token distribution by role, resolution level, compaction stats, system prompt overhead, tool schema overhead, and conversation token breakdown.</p>
 <h2 id="entry-types"><a class="header" href="#entry-types">Entry types</a></h2>
 <p>Each entry in the tree has a <code>payload</code> that describes what it represents:</p>
 <div class="table-wrapper"><table><thead><tr><th>Payload</th><th>Description</th></tr></thead><tbody>
@@ -316,7 +316,7 @@
 </ul>
 <p>This prevents a single verbose tool call from consuming the entire context window.</p>
 <h2 id="the-clear-command"><a class="header" href="#the-clear-command">The <code>/clear</code> command</a></h2>
-<p>In the REPL, <code>/clear</code> branches back to the system message entry. This has the same practical effect as clearing the conversation, but the old tree is preserved on disk. You can resume the old branch later with <code>rho -c</code> or <code>--session</code>.</p>
+<p>The <code>clear</code> RPC method branches back to the system message entry. This has the same practical effect as clearing the conversation, but the old tree is preserved on disk. You can resume the old branch later with <code>rho -c</code> or <code>--session</code>.</p>
 <h2 id="session-api"><a class="header" href="#session-api">Session API</a></h2>
 <p>The <code>Session</code> type in <code>rho-core</code> exposes:</p>
 <ul>

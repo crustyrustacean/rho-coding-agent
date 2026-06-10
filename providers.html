@@ -235,11 +235,13 @@ rho --endpoint https://api.openai.com/v1/chat/completions \
 <pre><code class="language-toml"># ~/.rho/config.toml
 [agent]
 model = "gpt-4o"
+provider = "openai"
 token_budget = 131072
 
 [[providers]]
 preset = "openai"
 api_key_env = "OPENAI_API_KEY"
+default_model = "gpt-4o"
 </code></pre>
 <pre><code class="language-sh">export OPENAI_API_KEY="sk-..."
 rho --accept-external-provider
@@ -259,20 +261,22 @@ rho --accept-external-provider
 <p>If rho also has a local provider (e.g. LM Studio is running alongside an external provider), the "No local model server detected" header is omitted.</p>
 <p>The consent prompt fires automatically for config-driven external endpoints. It is <strong>skipped</strong> when you use <code>--endpoint</code> on the CLI (explicit endpoint implies consent) or <code>--accept-external-provider</code>.</p>
 <h2 id="specifying-the-model"><a class="header" href="#specifying-the-model">Specifying the model</a></h2>
-<p>There are three ways to set the model, in priority order:</p>
+<p>There are several ways to set the model, in priority order:</p>
 <ol>
 <li><strong>CLI flag</strong> — <code>--model gpt-4o</code> (highest priority)</li>
-<li><strong>Config</strong> — <code>[agent] model = "gpt-4o"</code></li>
-<li><strong>Auto-detection</strong> — query the provider's models endpoint (derived from the configured chat-completions URL) and use the first loaded model</li>
+<li><strong>Config model</strong> — <code>[agent] model = "gpt-4o"</code></li>
+<li><strong>Config provider</strong> — <code>[agent] provider = "openrouter"</code> uses that provider's <code>default_model</code></li>
+<li><strong>Provider default</strong> — the first provider's <code>default_model</code> if configured</li>
+<li><strong>CLI flags</strong> — <code>--endpoint &lt;url&gt; --model &lt;id&gt;</code> (no config needed)</li>
 </ol>
-<p>Auto-detection works for local servers (LM Studio, Ollama) where the models endpoint is reliable. For external providers, <strong>always specify the model explicitly</strong> with <code>--model</code> or in config.</p>
-<h3 id="providers-command"><a class="header" href="#providers-command"><code>/providers</code> command</a></h3>
-<p>The <code>/providers</code> REPL command shows all configured providers with their reachability status:</p>
+<p>rho does <strong>not</strong> call <code>/v1/models</code> at startup. The config file is the source of truth — model names are accepted as-is, and misconfiguration surfaces as a clear HTTP error at request time.</p>
+<h3 id="listproviders-rpc-method"><a class="header" href="#listproviders-rpc-method"><code>listProviders</code> RPC method</a></h3>
+<p>The <code>listProviders</code> RPC method shows all configured providers with their reachability status:</p>
 <pre><code class="language-text">  configured providers:
   * lm-studio (local, ok)
     openrouter (remote, ok)
     ollama (remote, down)
-    * = active
+  * = active
 </code></pre>
 <p>Each entry shows:</p>
 <ul>
@@ -280,20 +284,6 @@ rho --accept-external-provider
 <li><strong>local/remote</strong> — whether the endpoint is on localhost</li>
 <li><strong>ok/down</strong> — whether the provider's models endpoint responded</li>
 </ul>
-<h3 id="interactive-model-picker"><a class="header" href="#interactive-model-picker">Interactive model picker</a></h3>
-<p>When rho has an external provider configured but cannot list models (e.g. the models endpoint times out, the API key is wrong, or the provider doesn't support model listing), rho offers an interactive model picker instead of aborting:</p>
-<pre><code class="language-text">  Could not list models from: openrouter
-  Select a model to use:
-
-    [1] Claude Sonnet 4        (Anthropic)
-    [2] GPT-4o                 (OpenAI)
-    [3] GLM-5                  (z.ai)
-    [0] Enter model ID manually
-
-  Choice:
-</code></pre>
-<p>The picker offers one recommended model from each of Anthropic, OpenAI, and z.ai. Selecting <code>[0]</code> lets you type any model ID. You can also type a model ID directly instead of a number.</p>
-<p>The curated models use <code>OpenRouter</code> model IDs (e.g. <code>anthropic/claude-sonnet-4</code>) which work with any <code>OpenRouter</code>-compatible endpoint. For direct OpenAI or Anthropic API access, use <code>[0]</code> to enter the native model ID (e.g. <code>gpt-4o</code> or <code>claude-sonnet-4-20250514</code>).</p>
 <h3 id="mid-session-provider-switching"><a class="header" href="#mid-session-provider-switching">Mid-session provider switching</a></h3>
 <p>The <code>/model</code> command accepts <code>provider:model</code> syntax to switch to a specific provider without model discovery. This is useful when a provider is slow to respond or its models endpoint is unavailable:</p>
 <pre><code>/model openrouter:deepseek/deepseek-v4-flash
@@ -301,7 +291,6 @@ rho --accept-external-provider
 <p>With a bare model ID, rho discovers which provider serves it by querying each provider's models endpoint and switches automatically:</p>
 <pre><code>/model qwen3-8b
 </code></pre>
-<p>To skip the picker entirely, specify <code>--model</code> on the CLI or set <code>agent.model</code> in config.</p>
 <h2 id="cli-flags-for-provider-configuration"><a class="header" href="#cli-flags-for-provider-configuration">CLI flags for provider configuration</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Flag</th><th>Config override</th><th>Description</th></tr></thead><tbody>
 <tr><td><code>--endpoint &lt;URL&gt;</code></td><td><code>provider.endpoint</code></td><td>API endpoint URL</td></tr>
@@ -321,10 +310,12 @@ rho --endpoint https://api.openai.com/v1/chat/completions \
 <p>Or via config with a preset:</p>
 <pre><code class="language-toml">[agent]
 model = "gpt-4o"
+provider = "openai"
 
 [[providers]]
 preset = "openai"
 api_key_env = "OPENAI_API_KEY"
+default_model = "gpt-4o"
 </code></pre>
 <h3 id="openrouter"><a class="header" href="#openrouter">OpenRouter</a></h3>
 <p>OpenRouter proxies many models behind a single endpoint. Model names include the provider prefix (e.g. <code>anthropic/claude-sonnet-4-20250514</code>).</p>
@@ -336,10 +327,12 @@ rho --endpoint https://openrouter.ai/api/v1/chat/completions \
 <p>Or via config with a preset:</p>
 <pre><code class="language-toml">[agent]
 model = "anthropic/claude-sonnet-4-20250514"
+provider = "openrouter"
 
 [[providers]]
 preset = "openrouter"
 api_key_env = "OPENROUTER_API_KEY"
+default_model = "anthropic/claude-sonnet-4-20250514"
 </code></pre>
 <h3 id="groq"><a class="header" href="#groq">Groq</a></h3>
 <pre><code class="language-sh">export GROQ_API_KEY="gsk_..."
@@ -410,6 +403,9 @@ endpoint = "https://..."
 
 # API key env var (required for remote providers)
 api_key_env = "OPENROUTER_API_KEY"
+
+# Default model for this provider (used when agent.provider points here)
+default_model = "anthropic/claude-sonnet-4-20250514"
 
 # Informational type label (has no effect on behavior)
 type = "openrouter"

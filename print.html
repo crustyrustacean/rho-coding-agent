@@ -202,7 +202,7 @@
 <li>Observe agent activity in real time (reasoning, tool calls, errors) via the <code>AgentObserver</code> trait</li>
 <li>Extend rho with TypeScript extensions that add tools, hooks, and commands — hot-reloadable at runtime</li>
 <li>Compact old conversation turns to stay within context limits</li>
-<li>Monitor context window usage with a live status bar, <code>/status</code> REPL command, and enhanced token distribution stats</li>
+<li>Monitor context window usage with a live status bar, <code>getSessionStats</code> RPC method, and enhanced token distribution stats</li>
 <li>Graduated resolution (Outlined/Summarized) with selective per-entry eviction before turn-level eviction</li>
 <li>Phase-aware and LLM-assisted compaction for high-fidelity context summaries</li>
 <li>Run headless via JSON-RPC 2.0 over stdin/stdout for integration with editors, bots, and custom UIs</li>
@@ -216,34 +216,31 @@
 <li>A local LLM server (LM Studio, Ollama) running on <code>localhost:1234</code>, <strong>or</strong> an API key for an external provider (OpenAI, Groq, OpenRouter, DeepInfra, etc.)</li>
 </ul>
 <h3 id="local-model-default"><a class="header" href="#local-model-default">Local model (default)</a></h3>
-<p>No configuration needed — just start a local server on <code>localhost:1234</code> and run rho. It will auto-detect the loaded model.</p>
+<p>No configuration needed — just start a local server on <code>localhost:1234</code> and run rho. Set the model explicitly with <code>--model</code>:</p>
+<pre><code class="language-sh">rho --model qwen3-8b
+</code></pre>
+<p>Or configure a default model in <code>~/.rho/config.toml</code>:</p>
+<pre><code class="language-toml">[[providers]]
+preset = "lm-studio"
+default_model = "qwen3-8b"
+</code></pre>
 <h3 id="external-provider"><a class="header" href="#external-provider">External provider</a></h3>
-<p>Create <code>~/.rho/config.toml</code> with a provider preset. See <a href="./providers.html">External Providers</a> for worked examples.</p>
+<p>Create <code>~/.rho/config.toml</code> with a provider preset and default model. See <a href="./providers.html">External Providers</a> for worked examples.</p>
 <pre><code class="language-toml">[[providers]]
 preset = "openrouter"
 api_key_env = "OPENROUTER_API_KEY"
+default_model = "deepseek-v4-flash"
 
 [agent]
-model = "deepseek-v4-flash"
+provider = "openrouter"
 </code></pre>
-<h3 id="no-server-running"><a class="header" href="#no-server-running">No server running?</a></h3>
-<p>If you run rho with no local server and no configured external provider, rho will print a startup error indicating no models were found.</p>
-<p>If you have an external provider configured but rho cannot list models (e.g. the API key is wrong or the endpoint is slow), rho offers an interactive model picker:</p>
-<pre><code class="language-text">  Select a model to use:
-
-    [1] Claude Sonnet 4        (Anthropic)
-    [2] GPT-4o                 (OpenAI)
-    [3] GLM-5                  (z.ai)
-    [0] Enter model ID manually
-
-  Choice:
-</code></pre>
-<p>You can also skip the picker entirely with <code>--model &lt;id&gt;</code>.</p>
+<h3 id="no-configuration"><a class="header" href="#no-configuration">No configuration?</a></h3>
+<p>If you run rho with no local server and no configured provider, rho will print an error telling you to configure a provider and model. Set them in config or pass <code>--endpoint &lt;url&gt; --model &lt;id&gt;</code> on the command line.</p>
 <h2 id="build"><a class="header" href="#build">Build</a></h2>
 <pre><code class="language-sh">cargo build --release -p rho        # headless RPC agent
 </code></pre>
 <h2 id="run"><a class="header" href="#run">Run</a></h2>
-<pre><code class="language-sh">rho                      # auto-detect model, persist session to disk (headless RPC)
+<pre><code class="language-sh">rho                      # persist session to disk (headless RPC)
 rho -m my-model          # specify a model
 rho -c                   # resume the most recent session for this project
 rho --session &lt;path&gt;     # resume a specific session
@@ -257,9 +254,9 @@ rho --ephemeral          # in-memory mode, no session file
 <ol>
 <li>Auto-detects the project root by walking up from the current directory looking for markers.</li>
 <li>Loads configuration from <code>~/.rho/config.toml</code> and <code>.rho/config.toml</code>.</li>
-<li>Scans for project context files (<code>AGENTS.md</code>, etc.) and prompts for trust on first encounter.</li>
+<li>Scans for project context files (<code>AGENTS.md</code>, etc.) and auto-denies untrusted files in headless mode.</li>
 <li>Checks provider consent for external endpoints.</li>
-<li>Connects to the model server and auto-detects the loaded model (unless <code>--model</code> is specified). If no model can be found, rho returns an error.</li>
+<li>Resolves the model from config (<code>agent.model</code>, <code>agent.provider</code>, or a provider's <code>default_model</code>) or CLI <code>--model</code>. No network calls at startup.</li>
 <li>Creates a session (persisted to <code>~/.rho/sessions/</code> by default, or in-memory with <code>--ephemeral</code>). If previous sessions exist, a hint is printed.</li>
 <li>Enters the RPC loop and waits for commands.</li>
 </ol>
@@ -268,7 +265,7 @@ rho --ephemeral          # in-memory mode, no session file
 <div class="table-wrapper"><table><thead><tr><th>Flag</th><th>Description</th></tr></thead><tbody>
 <tr><td>Flag</td><td>Description</td></tr>
 <tr><td>---</td><td>---</td></tr>
-<tr><td><code>-m, --model &lt;MODEL&gt;</code></td><td>Model identifier (auto-detected if omitted)</td></tr>
+<tr><td><code>-m, --model &lt;MODEL&gt;</code></td><td>Model identifier (uses config default if omitted)</td></tr>
 <tr><td><code>-s, --system &lt;SYSTEM&gt;</code></td><td>Override the system prompt</td></tr>
 <tr><td><code>--compact</code></td><td>Use a minimal system prompt for small-context models</td></tr>
 <tr><td><code>--root &lt;ROOT&gt;</code></td><td>Project root / sandbox root</td></tr>
@@ -332,7 +329,7 @@ rho --ephemeral          # in-memory mode, no session file
 │       ├── lib.rs            # Module declarations
 │       ├── cli.rs            # `Cli` — CLI flags with clap
 │       ├── app.rs            # `App` — runtime state, build/run orchestration, extension loading
-│       ├── model.rs          # Model resolution + interactive picker
+│       ├── model.rs          # Model resolution (config-as-truth, provider-first)
 │       ├── ext_observer.rs   # `CompositeObserver` — fans out to RPC observer + extension observers
 │       ├── rpc.rs            # JSON-RPC 2.0: `run_rpc`, `run_rpc_on`, observer, approval gate
 │       └── presenter/
@@ -742,7 +739,7 @@ let result = registry.execute(&amp;call, cancel).await?;
 </div>
 <h2 id="extension-tools"><a class="header" href="#extension-tools">Extension tools</a></h2>
 <p>TypeScript extensions can register additional tools via <code>rho-ext</code>. Each extension tool is wrapped in a <code>DenoTool</code> that implements the same <code>Tool</code> trait. Extension tools appear alongside built-in tools in the <code>ToolRegistry</code> and are visible to the model via the tool schema.</p>
-<p>Extension tools are discovered at startup from <code>~/.rho/extensions/</code> and <code>.rho/extensions/</code>. They can be hot-reloaded at runtime via the <code>/reload</code> REPL command.</p>
+<p>Extension tools are discovered at startup from <code>~/.rho/extensions/</code> and <code>.rho/extensions/</code>. They can be hot-reloaded at runtime via the <code>reloadExtensions</code> RPC method.</p>
 <p>See <a href="core-concepts/../extensions.html">Extensions</a> for details.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="provider-architecture"><a class="header" href="#provider-architecture">Provider Architecture</a></h1>
 <p>rho communicates with LLMs through a layered provider abstraction in <code>rho-ai</code>.</p>
@@ -781,15 +778,16 @@ let service = OpenAiService::new(rho_ai::ProviderConfig::new(
 <h3 id="provider-consent"><a class="header" href="#provider-consent">Provider consent</a></h3>
 <p>The binary (<code>rho</code>) checks whether the configured endpoint is local before connecting. Non-local endpoints (e.g., <code>api.openai.com</code>) trigger an interactive consent warning that lists the external provider(s) by name. If no local server is detected, the warning also notes this. Use <code>--accept-external-provider</code> to skip this in automated workflows, or <code>--endpoint</code> (which implies consent since the user explicitly chose the target).</p>
 <h3 id="model-picker"><a class="header" href="#model-picker">Model picker</a></h3>
-<p>When no models can be auto-detected (all providers unreachable or their models endpoint unsupported), rho offers an interactive model picker with curated models from Anthropic, OpenAI, and z.ai. The user can also enter a model ID manually. This fallback only fires when neither <code>--model</code> nor <code>agent.model</code> is set and auto-detection fails.</p>
+<p>When no model can be resolved from config or CLI, rho reports an error at startup. Set <code>--model &lt;id&gt;</code>, <code>agent.model</code>, or <code>agent.provider</code> with a <code>default_model</code> on the provider to ensure a model is always available.</p>
 <h2 id="model-resolution"><a class="header" href="#model-resolution">Model resolution</a></h2>
 <p>The model identifier is resolved in priority order:</p>
 <ol>
 <li><strong>CLI flag</strong> — <code>--model &lt;name&gt;</code> (highest priority)</li>
-<li><strong>Config</strong> — <code>agent.model</code> in <code>.rho/config.toml</code> or <code>~/.rho/config.toml</code></li>
-<li><strong>Auto-detect</strong> — query the provider's models endpoint (derived from the configured chat-completions URL), use the first loaded model</li>
+<li><strong>Config model</strong> — <code>agent.model</code> in <code>.rho/config.toml</code> or <code>~/.rho/config.toml</code></li>
+<li><strong>Config provider</strong> — <code>agent.provider</code> selects a provider and uses its <code>default_model</code></li>
+<li><strong>Provider default</strong> — the first provider's <code>default_model</code> if configured</li>
 </ol>
-<p>Auto-detection works well for local servers where the models endpoint is reliable. <strong>For external providers, always specify the model explicitly</strong> with <code>--model</code> or in config — external providers may return large model lists or non-standard responses that can cause auto-detection to pick an unexpected model or fail.</p>
+<p>rho does <strong>not</strong> call <code>/v1/models</code> at startup. The config file is the source of truth — model names are passed directly to the provider, and misconfiguration surfaces as a clear HTTP error at request time.</p>
 <h2 id="request--response"><a class="header" href="#request--response">Request / response</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Type</th><th>Purpose</th></tr></thead><tbody>
 <tr><td><code>LlmRequest</code></td><td><code>model</code>, <code>messages</code>, <code>tools</code> — the full API request body</td></tr>
@@ -800,7 +798,7 @@ let service = OpenAiService::new(rho_ai::ProviderConfig::new(
 </tbody></table>
 </div>
 <h2 id="streaming"><a class="header" href="#streaming">Streaming</a></h2>
-<p><code>OpenAiService</code> uses SSE streaming (<code>stream: true</code>) for the Chat Completions API. Streaming events are returned as an <code>EventStream</code> that the agent loop consumes. <code>StreamEvent::Text</code> and <code>StreamEvent::Reasoning</code> events are forwarded to the <code>AgentObserver</code> in real time, enabling live progress output in the REPL.</p>
+<p><code>OpenAiService</code> uses SSE streaming (<code>stream: true</code>) for the Chat Completions API. Streaming events are returned as an <code>EventStream</code> that the agent loop consumes. <code>StreamEvent::Text</code> and <code>StreamEvent::Reasoning</code> events are forwarded to the <code>AgentObserver</code> in real time, enabling live progress output in the consumer.</p>
 <h2 id="multi-provider-support"><a class="header" href="#multi-provider-support">Multi-provider support</a></h2>
 <p>rho can manage multiple providers simultaneously via the <code>ProviderRegistry</code> and <code>Provider</code> trait:</p>
 <ul>
@@ -976,11 +974,11 @@ pub trait ApprovalGate: Send + Sync {
 <li><code>prompt_budget()</code> — context window minus completion reserve</li>
 </ul>
 <h2 id="context-status-bar"><a class="header" href="#context-status-bar">Context status bar</a></h2>
-<p>The REPL displays a compact one-line status bar after every turn showing estimated token usage:</p>
+<p>A consumer (TUI, editor integration) can display a compact one-line status bar after every turn showing estimated token usage:</p>
 <pre><code class="language-text">[████████████░░░░░░░░] 12.3k/32k tokens (50%) │ 12.3k remaining │ 10 messages
 </code></pre>
-<p>The bar is color-coded by utilization: green (&lt;60%), yellow (60–80%), red (&gt;80%). This gives a quick at-a-glance sense of how much context window remains.</p>
-<p>For a detailed breakdown, the <code>/status</code> REPL command (aliased as <code>/context</code>) shows:</p>
+<p>The bar can be color-coded by utilization: green (&lt;60%), yellow (60–80%), red (&gt;80%). This gives a quick at-a-glance sense of how much context window remains.</p>
+<p>For a detailed breakdown, the <code>getSessionStats</code> RPC method shows:</p>
 <ul>
 <li>Context window size and completion reserve</li>
 <li>Prompt budget (context window minus reserve)</li>
@@ -1040,7 +1038,7 @@ pub trait ApprovalGate: Send + Sync {
 <tr><td><code>path</code></td><td>Full path to the JSONL file</td></tr>
 </tbody></table>
 </div>
-<p>The <code>/sessions</code> REPL command uses this to display the 10 most recent sessions, marking which one <code>rho -c</code> will resume.</p>
+<p>The <code>listSessions</code> RPC method uses this to return the 10 most recent sessions, marking which one <code>rho -c</code> will resume.</p>
 <h3 id="resuming-a-session"><a class="header" href="#resuming-a-session">Resuming a session</a></h3>
 <p>Use <code>rho -c</code> to resume the most recent session for the current project:</p>
 <pre><code class="language-sh">rho -c
@@ -1089,10 +1087,10 @@ pub trait ApprovalGate: Send + Sync {
 <li><code>estimated_remaining()</code> — remaining tokens in the prompt budget (saturates at 0)</li>
 <li><code>prompt_budget()</code> — context window minus completion reserve</li>
 </ul>
-<p>The REPL prints a compact one-line status bar after every turn:</p>
+<p>A consumer can display a compact one-line status bar after every turn:</p>
 <pre><code class="language-text">[████████████░░░░░░░░] 12.3k/32k tokens (50%) │ 12.3k remaining │ 10 messages
 </code></pre>
-<p>Color-coded green (&lt;60%), yellow (60–80%), red (&gt;80%). The <code>/status</code> REPL command (aliased as <code>/context</code>) shows a detailed multi-line breakdown including token distribution by role, resolution level, compaction stats, system prompt overhead, tool schema overhead, and conversation token breakdown.</p>
+<p>Color-coded green (&lt;60%), yellow (60–80%), red (&gt;80%). The <code>getSessionStats</code> RPC method shows a detailed multi-line breakdown including token distribution by role, resolution level, compaction stats, system prompt overhead, tool schema overhead, and conversation token breakdown.</p>
 <h2 id="entry-types"><a class="header" href="#entry-types">Entry types</a></h2>
 <p>Each entry in the tree has a <code>payload</code> that describes what it represents:</p>
 <div class="table-wrapper"><table><thead><tr><th>Payload</th><th>Description</th></tr></thead><tbody>
@@ -1129,7 +1127,7 @@ pub trait ApprovalGate: Send + Sync {
 </ul>
 <p>This prevents a single verbose tool call from consuming the entire context window.</p>
 <h2 id="the-clear-command"><a class="header" href="#the-clear-command">The <code>/clear</code> command</a></h2>
-<p>In the REPL, <code>/clear</code> branches back to the system message entry. This has the same practical effect as clearing the conversation, but the old tree is preserved on disk. You can resume the old branch later with <code>rho -c</code> or <code>--session</code>.</p>
+<p>The <code>clear</code> RPC method branches back to the system message entry. This has the same practical effect as clearing the conversation, but the old tree is preserved on disk. You can resume the old branch later with <code>rho -c</code> or <code>--session</code>.</p>
 <h2 id="session-api"><a class="header" href="#session-api">Session API</a></h2>
 <p>The <code>Session</code> type in <code>rho-core</code> exposes:</p>
 <ul>
@@ -1387,8 +1385,11 @@ api_key_env = "OPENROUTER_API_KEY"
 </ul>
 <h2 id="full-configuration-reference"><a class="header" href="#full-configuration-reference">Full configuration reference</a></h2>
 <pre><code class="language-toml">[agent]
-# Model identifier (overrides auto-detection)
+# Model identifier (highest priority; overrides provider and default_model)
 model = "qwen3-8b"
+
+# Provider to use at startup (uses that provider's default_model if model not set)
+# provider = "openrouter"
 
 # Maximum model-tool-model round trips before the loop fails (default: 32)
 max_iterations = 32
@@ -1412,6 +1413,12 @@ max_consecutive_empty = 5
 # Show full chain-of-thought reasoning in output (default: false)
 show_reasoning = false
 
+# Reasoning effort for thinking-capable models (optional)
+# Common values: "low", "medium", "high".
+# Sent as `reasoning_effort` in every Chat Completions request.
+# Non-reasoning models silently ignore this.
+# reasoning_effort = "medium"
+
 # Context utilization threshold for auto-compaction (default: 0 = disabled)
 # When utilization &gt;= this %, older entries are proactively compacted.
 auto_compact_threshold = 0
@@ -1429,11 +1436,12 @@ compaction_mode = "mechanical"
 # is preferred.
 #
 # Each provider has:
-#   name       — display name (shown in /models, consent prompt)
-#   preset     — built-in preset (fills endpoint/name automatically)
-#   endpoint   — explicit endpoint URL (overrides preset)
-#   api_key_env — env var holding the API key (not auto-injected by presets)
-#   type       — informational label, has no effect on behavior
+#   name           — display name (shown in /models, consent prompt)
+#   preset         — built-in preset (fills endpoint/name automatically)
+#   endpoint       — explicit endpoint URL (overrides preset)
+#   api_key_env    — env var holding the API key (not auto-injected by presets)
+#   default_model  — model to use when selected via agent.provider
+#   type           — informational label, has no effect on behavior
 
 # Example: LM Studio via preset (local, no API key needed)
 [[providers]]
@@ -1527,6 +1535,7 @@ api_key_env = "OPENAI_API_KEY"
 <p>All config values can be overridden by CLI flags. CLI flags take highest priority:</p>
 <div class="table-wrapper"><table><thead><tr><th>Config field</th><th>CLI flag</th></tr></thead><tbody>
 <tr><td><code>agent.model</code></td><td><code>--model</code></td></tr>
+<tr><td><code>agent.provider</code></td><td>—</td></tr>
 <tr><td><code>agent.token_budget</code></td><td><code>--token-budget</code></td></tr>
 <tr><td><code>provider.endpoint</code></td><td><code>--endpoint</code></td></tr>
 <tr><td><code>provider.api_key_env</code></td><td><code>--api-key-env</code></td></tr>
@@ -1592,11 +1601,13 @@ rho --endpoint https://api.openai.com/v1/chat/completions \
 <pre><code class="language-toml"># ~/.rho/config.toml
 [agent]
 model = "gpt-4o"
+provider = "openai"
 token_budget = 131072
 
 [[providers]]
 preset = "openai"
 api_key_env = "OPENAI_API_KEY"
+default_model = "gpt-4o"
 </code></pre>
 <pre><code class="language-sh">export OPENAI_API_KEY="sk-..."
 rho --accept-external-provider
@@ -1616,20 +1627,22 @@ rho --accept-external-provider
 <p>If rho also has a local provider (e.g. LM Studio is running alongside an external provider), the "No local model server detected" header is omitted.</p>
 <p>The consent prompt fires automatically for config-driven external endpoints. It is <strong>skipped</strong> when you use <code>--endpoint</code> on the CLI (explicit endpoint implies consent) or <code>--accept-external-provider</code>.</p>
 <h2 id="specifying-the-model"><a class="header" href="#specifying-the-model">Specifying the model</a></h2>
-<p>There are three ways to set the model, in priority order:</p>
+<p>There are several ways to set the model, in priority order:</p>
 <ol>
 <li><strong>CLI flag</strong> — <code>--model gpt-4o</code> (highest priority)</li>
-<li><strong>Config</strong> — <code>[agent] model = "gpt-4o"</code></li>
-<li><strong>Auto-detection</strong> — query the provider's models endpoint (derived from the configured chat-completions URL) and use the first loaded model</li>
+<li><strong>Config model</strong> — <code>[agent] model = "gpt-4o"</code></li>
+<li><strong>Config provider</strong> — <code>[agent] provider = "openrouter"</code> uses that provider's <code>default_model</code></li>
+<li><strong>Provider default</strong> — the first provider's <code>default_model</code> if configured</li>
+<li><strong>CLI flags</strong> — <code>--endpoint &lt;url&gt; --model &lt;id&gt;</code> (no config needed)</li>
 </ol>
-<p>Auto-detection works for local servers (LM Studio, Ollama) where the models endpoint is reliable. For external providers, <strong>always specify the model explicitly</strong> with <code>--model</code> or in config.</p>
-<h3 id="providers-command"><a class="header" href="#providers-command"><code>/providers</code> command</a></h3>
-<p>The <code>/providers</code> REPL command shows all configured providers with their reachability status:</p>
+<p>rho does <strong>not</strong> call <code>/v1/models</code> at startup. The config file is the source of truth — model names are accepted as-is, and misconfiguration surfaces as a clear HTTP error at request time.</p>
+<h3 id="listproviders-rpc-method"><a class="header" href="#listproviders-rpc-method"><code>listProviders</code> RPC method</a></h3>
+<p>The <code>listProviders</code> RPC method shows all configured providers with their reachability status:</p>
 <pre><code class="language-text">  configured providers:
   * lm-studio (local, ok)
     openrouter (remote, ok)
     ollama (remote, down)
-    * = active
+  * = active
 </code></pre>
 <p>Each entry shows:</p>
 <ul>
@@ -1637,20 +1650,6 @@ rho --accept-external-provider
 <li><strong>local/remote</strong> — whether the endpoint is on localhost</li>
 <li><strong>ok/down</strong> — whether the provider's models endpoint responded</li>
 </ul>
-<h3 id="interactive-model-picker"><a class="header" href="#interactive-model-picker">Interactive model picker</a></h3>
-<p>When rho has an external provider configured but cannot list models (e.g. the models endpoint times out, the API key is wrong, or the provider doesn't support model listing), rho offers an interactive model picker instead of aborting:</p>
-<pre><code class="language-text">  Could not list models from: openrouter
-  Select a model to use:
-
-    [1] Claude Sonnet 4        (Anthropic)
-    [2] GPT-4o                 (OpenAI)
-    [3] GLM-5                  (z.ai)
-    [0] Enter model ID manually
-
-  Choice:
-</code></pre>
-<p>The picker offers one recommended model from each of Anthropic, OpenAI, and z.ai. Selecting <code>[0]</code> lets you type any model ID. You can also type a model ID directly instead of a number.</p>
-<p>The curated models use <code>OpenRouter</code> model IDs (e.g. <code>anthropic/claude-sonnet-4</code>) which work with any <code>OpenRouter</code>-compatible endpoint. For direct OpenAI or Anthropic API access, use <code>[0]</code> to enter the native model ID (e.g. <code>gpt-4o</code> or <code>claude-sonnet-4-20250514</code>).</p>
 <h3 id="mid-session-provider-switching"><a class="header" href="#mid-session-provider-switching">Mid-session provider switching</a></h3>
 <p>The <code>/model</code> command accepts <code>provider:model</code> syntax to switch to a specific provider without model discovery. This is useful when a provider is slow to respond or its models endpoint is unavailable:</p>
 <pre><code>/model openrouter:deepseek/deepseek-v4-flash
@@ -1658,7 +1657,6 @@ rho --accept-external-provider
 <p>With a bare model ID, rho discovers which provider serves it by querying each provider's models endpoint and switches automatically:</p>
 <pre><code>/model qwen3-8b
 </code></pre>
-<p>To skip the picker entirely, specify <code>--model</code> on the CLI or set <code>agent.model</code> in config.</p>
 <h2 id="cli-flags-for-provider-configuration"><a class="header" href="#cli-flags-for-provider-configuration">CLI flags for provider configuration</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Flag</th><th>Config override</th><th>Description</th></tr></thead><tbody>
 <tr><td><code>--endpoint &lt;URL&gt;</code></td><td><code>provider.endpoint</code></td><td>API endpoint URL</td></tr>
@@ -1678,10 +1676,12 @@ rho --endpoint https://api.openai.com/v1/chat/completions \
 <p>Or via config with a preset:</p>
 <pre><code class="language-toml">[agent]
 model = "gpt-4o"
+provider = "openai"
 
 [[providers]]
 preset = "openai"
 api_key_env = "OPENAI_API_KEY"
+default_model = "gpt-4o"
 </code></pre>
 <h3 id="openrouter"><a class="header" href="#openrouter">OpenRouter</a></h3>
 <p>OpenRouter proxies many models behind a single endpoint. Model names include the provider prefix (e.g. <code>anthropic/claude-sonnet-4-20250514</code>).</p>
@@ -1693,10 +1693,12 @@ rho --endpoint https://openrouter.ai/api/v1/chat/completions \
 <p>Or via config with a preset:</p>
 <pre><code class="language-toml">[agent]
 model = "anthropic/claude-sonnet-4-20250514"
+provider = "openrouter"
 
 [[providers]]
 preset = "openrouter"
 api_key_env = "OPENROUTER_API_KEY"
+default_model = "anthropic/claude-sonnet-4-20250514"
 </code></pre>
 <h3 id="groq"><a class="header" href="#groq">Groq</a></h3>
 <pre><code class="language-sh">export GROQ_API_KEY="gsk_..."
@@ -1767,6 +1769,9 @@ endpoint = "https://..."
 
 # API key env var (required for remote providers)
 api_key_env = "OPENROUTER_API_KEY"
+
+# Default model for this provider (used when agent.provider points here)
+default_model = "anthropic/claude-sonnet-4-20250514"
 
 # Informational type label (has no effect on behavior)
 type = "openrouter"
@@ -2001,7 +2006,7 @@ network = false          # deny fetch()
 commands = false         # deny rho.runCommand()
 </code></pre>
 <h2 id="hot-reload"><a class="header" href="#hot-reload">Hot reload</a></h2>
-<p>Use the <code>/reload</code> REPL command to hot-reload extensions without restarting rho:</p>
+<p>Use the <code>reloadExtensions</code> RPC method to hot-reload extensions without restarting rho:</p>
 <ul>
 <li>Extensions with changed file mtimes are destroyed and re-spawned</li>
 <li>New extensions are loaded; removed extensions are shut down</li>
@@ -2009,10 +2014,10 @@ commands = false         # deny rho.runCommand()
 <li><code>onLoad</code> hooks fire on new/reloaded extensions</li>
 </ul>
 <p>V8 isolate creation takes ~20–50ms per extension. For 5 extensions, full reload is ~100–250ms.</p>
-<h2 id="repl-commands"><a class="header" href="#repl-commands">REPL commands</a></h2>
-<div class="table-wrapper"><table><thead><tr><th>Command</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>/reload</code></td><td>Hot-reload all extensions from disk</td></tr>
-<tr><td><code>/extensions</code></td><td>List names of currently loaded extensions</td></tr>
+<h2 id="rpc-methods-1"><a class="header" href="#rpc-methods-1">RPC methods</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Method</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>reloadExtensions</code></td><td>Hot-reload all extensions from disk</td></tr>
+<tr><td><code>listExtensions</code></td><td>List names of currently loaded extensions</td></tr>
 </tbody></table>
 </div>
 <h2 id="extension-types"><a class="header" href="#extension-types">Extension types</a></h2>
@@ -2370,7 +2375,7 @@ impl EvalTask for MyNewTask {
 <tr><td>3.6: crates.io Research</td><td>✅ Complete</td><td>Crate metadata lookup, search, version history, dependency inspection</td></tr>
 <tr><td>3.8: Hashline Editing</td><td>✅ Complete</td><td>Content-addressed line references with fuzzy anchor matching</td></tr>
 <tr><td>3.9: Streaming &amp; Live Output</td><td>✅ Complete</td><td>SSE streaming, <code>AgentObserver</code> trait, streaming output via JSON-RPC notifications</td></tr>
-<tr><td>3.10: Multi-Provider &amp; Model Picker</td><td>✅ Complete</td><td><code>Provider</code> trait, <code>ProviderRegistry</code>, interactive model picker, <code>/models</code>, <code>/model</code></td></tr>
+<tr><td>3.10: Multi-Provider &amp; Model Picker</td><td>✅ Complete</td><td><code>Provider</code> trait, <code>ProviderRegistry</code>, <code>/models</code>, <code>/model</code></td></tr>
 <tr><td>3.11: Session Discovery &amp; Context Visibility</td><td>✅ Complete</td><td><code>find_latest_session()</code>, <code>list_sessions()</code>, <code>rho -c</code>, <code>/sessions</code>, <code>/status</code>, context status bar</td></tr>
 <tr><td>3.12: RPC Mode</td><td>✅ Complete</td><td>Headless JSON-RPC 2.0 over stdin/stdout, <code>run_rpc_on&lt;R, W&gt;</code>, approval round-trips, integration tests</td></tr>
 <tr><td>4: Terminal UI</td><td>🔜 Next</td><td>Rich TUI replacing the bare REPL</td></tr>

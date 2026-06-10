@@ -290,11 +290,11 @@
 <li><code>prompt_budget()</code> — context window minus completion reserve</li>
 </ul>
 <h2 id="context-status-bar"><a class="header" href="#context-status-bar">Context status bar</a></h2>
-<p>The REPL displays a compact one-line status bar after every turn showing estimated token usage:</p>
+<p>A consumer (TUI, editor integration) can display a compact one-line status bar after every turn showing estimated token usage:</p>
 <pre><code class="language-text">[████████████░░░░░░░░] 12.3k/32k tokens (50%) │ 12.3k remaining │ 10 messages
 </code></pre>
-<p>The bar is color-coded by utilization: green (&lt;60%), yellow (60–80%), red (&gt;80%). This gives a quick at-a-glance sense of how much context window remains.</p>
-<p>For a detailed breakdown, the <code>/status</code> REPL command (aliased as <code>/context</code>) shows:</p>
+<p>The bar can be color-coded by utilization: green (&lt;60%), yellow (60–80%), red (&gt;80%). This gives a quick at-a-glance sense of how much context window remains.</p>
+<p>For a detailed breakdown, the <code>getSessionStats</code> RPC method shows:</p>
 <ul>
 <li>Context window size and completion reserve</li>
 <li>Prompt budget (context window minus reserve)</li>

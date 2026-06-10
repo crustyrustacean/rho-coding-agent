@@ -225,8 +225,11 @@ api_key_env = "OPENROUTER_API_KEY"
 </ul>
 <h2 id="full-configuration-reference"><a class="header" href="#full-configuration-reference">Full configuration reference</a></h2>
 <pre><code class="language-toml">[agent]
-# Model identifier (overrides auto-detection)
+# Model identifier (highest priority; overrides provider and default_model)
 model = "qwen3-8b"
+
+# Provider to use at startup (uses that provider's default_model if model not set)
+# provider = "openrouter"
 
 # Maximum model-tool-model round trips before the loop fails (default: 32)
 max_iterations = 32
@@ -250,6 +253,12 @@ max_consecutive_empty = 5
 # Show full chain-of-thought reasoning in output (default: false)
 show_reasoning = false
 
+# Reasoning effort for thinking-capable models (optional)
+# Common values: "low", "medium", "high".
+# Sent as `reasoning_effort` in every Chat Completions request.
+# Non-reasoning models silently ignore this.
+# reasoning_effort = "medium"
+
 # Context utilization threshold for auto-compaction (default: 0 = disabled)
 # When utilization &gt;= this %, older entries are proactively compacted.
 auto_compact_threshold = 0
@@ -267,11 +276,12 @@ compaction_mode = "mechanical"
 # is preferred.
 #
 # Each provider has:
-#   name       — display name (shown in /models, consent prompt)
-#   preset     — built-in preset (fills endpoint/name automatically)
-#   endpoint   — explicit endpoint URL (overrides preset)
-#   api_key_env — env var holding the API key (not auto-injected by presets)
-#   type       — informational label, has no effect on behavior
+#   name           — display name (shown in /models, consent prompt)
+#   preset         — built-in preset (fills endpoint/name automatically)
+#   endpoint       — explicit endpoint URL (overrides preset)
+#   api_key_env    — env var holding the API key (not auto-injected by presets)
+#   default_model  — model to use when selected via agent.provider
+#   type           — informational label, has no effect on behavior
 
 # Example: LM Studio via preset (local, no API key needed)
 [[providers]]
@@ -365,6 +375,7 @@ api_key_env = "OPENAI_API_KEY"
 <p>All config values can be overridden by CLI flags. CLI flags take highest priority:</p>
 <div class="table-wrapper"><table><thead><tr><th>Config field</th><th>CLI flag</th></tr></thead><tbody>
 <tr><td><code>agent.model</code></td><td><code>--model</code></td></tr>
+<tr><td><code>agent.provider</code></td><td>—</td></tr>
 <tr><td><code>agent.token_budget</code></td><td><code>--token-budget</code></td></tr>
 <tr><td><code>provider.endpoint</code></td><td><code>--endpoint</code></td></tr>
 <tr><td><code>provider.api_key_env</code></td><td><code>--api-key-env</code></td></tr>

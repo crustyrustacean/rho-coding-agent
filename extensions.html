@@ -289,7 +289,7 @@ network = false          # deny fetch()
 commands = false         # deny rho.runCommand()
 </code></pre>
 <h2 id="hot-reload"><a class="header" href="#hot-reload">Hot reload</a></h2>
-<p>Use the <code>/reload</code> REPL command to hot-reload extensions without restarting rho:</p>
+<p>Use the <code>reloadExtensions</code> RPC method to hot-reload extensions without restarting rho:</p>
 <ul>
 <li>Extensions with changed file mtimes are destroyed and re-spawned</li>
 <li>New extensions are loaded; removed extensions are shut down</li>
@@ -297,10 +297,10 @@ commands = false         # deny rho.runCommand()
 <li><code>onLoad</code> hooks fire on new/reloaded extensions</li>
 </ul>
 <p>V8 isolate creation takes ~20–50ms per extension. For 5 extensions, full reload is ~100–250ms.</p>
-<h2 id="repl-commands"><a class="header" href="#repl-commands">REPL commands</a></h2>
-<div class="table-wrapper"><table><thead><tr><th>Command</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>/reload</code></td><td>Hot-reload all extensions from disk</td></tr>
-<tr><td><code>/extensions</code></td><td>List names of currently loaded extensions</td></tr>
+<h2 id="rpc-methods"><a class="header" href="#rpc-methods">RPC methods</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Method</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>reloadExtensions</code></td><td>Hot-reload all extensions from disk</td></tr>
+<tr><td><code>listExtensions</code></td><td>List names of currently loaded extensions</td></tr>
 </tbody></table>
 </div>
 <h2 id="extension-types"><a class="header" href="#extension-types">Extension types</a></h2>

@@ -261,7 +261,7 @@ let result = registry.execute(&amp;call, cancel).await?;
 </div>
 <h2 id="extension-tools"><a class="header" href="#extension-tools">Extension tools</a></h2>
 <p>TypeScript extensions can register additional tools via <code>rho-ext</code>. Each extension tool is wrapped in a <code>DenoTool</code> that implements the same <code>Tool</code> trait. Extension tools appear alongside built-in tools in the <code>ToolRegistry</code> and are visible to the model via the tool schema.</p>
-<p>Extension tools are discovered at startup from <code>~/.rho/extensions/</code> and <code>.rho/extensions/</code>. They can be hot-reloaded at runtime via the <code>/reload</code> REPL command.</p>
+<p>Extension tools are discovered at startup from <code>~/.rho/extensions/</code> and <code>.rho/extensions/</code>. They can be hot-reloaded at runtime via the <code>reloadExtensions</code> RPC method.</p>
 <p>See <a href="../extensions.html">Extensions</a> for details.</p>
 
                     </main>
