@@ -7,7 +7,6 @@ members = [
     "rho-eval",
     "rho-ext",
     "rho-highlight",
-    "rho-repl",
     "rho-tools",
     "rho-test-helpers",
     "xtask",
