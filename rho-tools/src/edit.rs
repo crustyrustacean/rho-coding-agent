@@ -1,4 +1,4 @@
-//! EditFile tool: hashline-anchored editing with legacy exact-match support.
+//! `EditFile` tool: hashline-anchored editing with legacy exact-match support.
 
 use crate::error::ToolError;
 use crate::hashline::{apply_hashline_to_content, format_fresh_anchors, format_hashline_diff};
@@ -10,12 +10,17 @@ use rho_core::{
 };
 use tracing::{info, warn};
 
+/// A legacy edit using exact text matching.
 struct Edit {
+    /// The text to find in the file.
     old_text: String,
+    /// The replacement text.
     new_text: String,
 }
 
+/// Edit tool — applies hashline-anchored or legacy exact-match edits to a file.
 pub struct EditFile {
+    /// Sandbox root for path validation.
     pub root: SandboxRoot,
 }
 
@@ -166,6 +171,7 @@ impl Tool for EditFile {
 }
 
 impl EditFile {
+    /// Apply hashline-anchored edits to the file.
     async fn apply_hashline_edits(&self, path_str: &str, safe_path: &FilePath, edits_arg: &[serde_json::Value], cancel: CancellationToken) -> Result<ToolOutcome> {
         if cancel.is_cancelled() {
             return Ok(ToolOutcome::Immediate(ToolResult::error("cancelled")));
@@ -214,6 +220,7 @@ impl EditFile {
         }
     }
 
+    /// Apply a mix of hashline and legacy edits in one pass.
     async fn apply_mixed_edits(&self, path_str: &str, safe_path: &FilePath, edits_arg: &[serde_json::Value], cancel: CancellationToken) -> Result<ToolOutcome> {
         if cancel.is_cancelled() {
             return Ok(ToolOutcome::Immediate(ToolResult::error("cancelled")));
@@ -246,6 +253,7 @@ impl EditFile {
     }
 }
 
+/// Parse legacy `old_text`/`new_text` edits from raw JSON values.
 fn parse_legacy_edits(legacy_args: &[serde_json::Value]) -> std::result::Result<Vec<Edit>, ToolError> {
     let mut edits = Vec::with_capacity(legacy_args.len());
     for (i, edit_val) in legacy_args.iter().enumerate() {
@@ -256,6 +264,7 @@ fn parse_legacy_edits(legacy_args: &[serde_json::Value]) -> std::result::Result<
     Ok(edits)
 }
 
+/// Apply legacy (non-hashline) edits to file content, returning the modified string or an error.
 fn apply_legacy_edits_to_content(content: &str, path_str: &str, edits: &[Edit]) -> std::result::Result<String, String> {
     let mut match_ranges: Vec<(usize, usize, &Edit)> = Vec::with_capacity(edits.len());
 
@@ -293,6 +302,7 @@ fn apply_legacy_edits_to_content(content: &str, path_str: &str, edits: &[Edit]) 
     Ok(modified)
 }
 
+/// Check whether edits split AST nodes, returning warning strings.
 fn check_node_splitting(source: &str, match_ranges: &[(usize, usize, &Edit)]) -> Vec<String> {
     let Ok(tree) = rho_highlight::parse(source, rho_highlight::Language::Rust) else {
         return Vec::new();
@@ -310,6 +320,7 @@ fn check_node_splitting(source: &str, match_ranges: &[(usize, usize, &Edit)]) ->
     warnings
 }
 
+/// Check whether a byte boundary lands inside a non-structural AST node.
 fn check_boundary_at_byte(tree: &tree_sitter::Tree, source: &str, byte_pos: usize, boundary_label: &str) -> Option<String> {
     let (line, col) = byte_offset_to_line_col(source, byte_pos)?;
     let info = rho_highlight::node_at(tree, source, line, col).ok()?;
@@ -336,6 +347,7 @@ fn check_boundary_at_byte(tree: &tree_sitter::Tree, source: &str, byte_pos: usiz
     Some(format!("edit {boundary_label} splits a `{}` node: {:?}", info.kind, preview))
 }
 
+/// Return `true` if the node kind is structural (safe to split at its boundaries).
 fn is_structural_node(kind: &str) -> bool {
     matches!(
         kind,
@@ -343,6 +355,7 @@ fn is_structural_node(kind: &str) -> bool {
     )
 }
 
+/// Convert a byte offset to (line, column) coordinates.
 fn byte_offset_to_line_col(source: &str, byte_pos: usize) -> Option<(usize, usize)> {
     if byte_pos > source.len() {
         return None;

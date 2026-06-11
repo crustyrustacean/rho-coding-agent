@@ -25,6 +25,10 @@ const ALPHABET: &[u8] = b"ZPMQVRWSNKTXJBYH";
 pub const HASH_LEN: usize = 4;
 
 /// Compute a 4-character hash for a line.
+///
+/// # Panics
+///
+/// Never panics. Falls back to line number on non-alphanumeric lines.
 pub fn compute_line_hash(line: &str, line_num: usize) -> String {
     let seed = if line.chars().any(char::is_alphanumeric) {
         line.bytes().fold(0u32, |acc, b| {
@@ -124,6 +128,7 @@ pub fn detect_regex_patterns(text: &str) -> Option<String> {
     }
 }
 
+/// Return `true` if the line has enough distinct content to be a reliable anchor.
 fn is_high_information_line(line: &str) -> bool {
     let stripped = line.trim();
     if stripped.len() < 4 {
@@ -132,18 +137,13 @@ fn is_high_information_line(line: &str) -> bool {
     stripped.chars().any(char::is_alphanumeric)
 }
 
-fn first_token(s: &str) -> &str {
-    s.split(|c: char| c.is_whitespace() || c == '(' || c == ':' || c == '=')
-        .next()
-        .unwrap_or("")
-}
-
-fn content_similarity(_a: &str, _b: &str) -> usize {
-    0
-}
-
 // ── Public Functions ───────────────────────────────────────────────────────
 
+/// Parse raw JSON edit values into [`HashlineEdit`] structs.
+///
+/// # Errors
+///
+/// Returns an error string if any edit is missing required fields or has an unknown `op`.
 pub fn parse_hashline_edits(edits_arg: &[serde_json::Value]) -> std::result::Result<Vec<HashlineEdit>, String> {
     let mut hashline_edits = Vec::new();
     for (i, edit_val) in edits_arg.iter().enumerate() {
@@ -169,6 +169,12 @@ pub fn parse_hashline_edits(edits_arg: &[serde_json::Value]) -> std::result::Res
     Ok(hashline_edits)
 }
 
+/// Validate hashline anchors against actual file content with fuzzy fallback.
+///
+/// # Errors
+///
+/// Returns an error string if any anchor line is out of range, or all fuzzy
+/// relaxation attempts fail.
 pub fn validate_hashline_edits_fuzzy(lines: &[&str], hashline_edits: &[HashlineEdit]) -> std::result::Result<Vec<AnchorResolution>, String> {
     for edit in hashline_edits {
         if edit.pos.line_num == 0 || edit.pos.line_num > lines.len() {
@@ -251,6 +257,11 @@ pub fn validate_hashline_edits_fuzzy(lines: &[&str], hashline_edits: &[HashlineE
     Ok(resolutions)
 }
 
+/// Apply hashline edits to file content, returning the modified string and any relaxation notes.
+///
+/// # Errors
+///
+/// Returns an error if the file is empty, parsing fails, or anchor resolution fails.
 pub fn apply_hashline_to_content(content: &str, edits_arg: &[serde_json::Value]) -> std::result::Result<(String, Vec<String>), String> {
     let lines: Vec<&str> = content.lines().collect();
     if lines.is_empty() {
@@ -363,18 +374,19 @@ pub fn format_hashline_diff(old: &str, new: &str) -> String {
             if is_changed && i < old_lines.len() {
                 let old_content = old_lines[i];
                 let old_hash = compute_line_hash(old_content, line_num);
-                diff.push_str(&format!("- {line_num:>width$}#{old_hash}:{old_content}\n"));
-                diff.push_str(&format!("+ {line_num:>width$}#{hash}:{line_content}\n"));
+                let _ = std::fmt::write(&mut diff, format_args!("- {line_num:>width$}#{old_hash}:{old_content}\n"));
+                let _ = std::fmt::write(&mut diff, format_args!("+ {line_num:>width$}#{hash}:{line_content}\n"));
             } else if is_changed {
-                diff.push_str(&format!("+ {line_num:>width$}#{hash}:{line_content}\n"));
+                let _ = std::fmt::write(&mut diff, format_args!("+ {line_num:>width$}#{hash}:{line_content}\n"));
             } else {
-                diff.push_str(&format!("  {line_num:>width$}#{hash}:{line_content}\n"));
+                let _ = std::fmt::write(&mut diff, format_args!("  {line_num:>width$}#{hash}:{line_content}\n"));
             }
         }
     }
     diff
 }
 
+/// Build a `<fresh-anchors>` block with newly-hashed lines around edit regions.
 pub fn format_fresh_anchors(old_content: &str, new_content: &str) -> Option<String> {
     let new_lines: Vec<&str> = new_content.lines().collect();
     let old_lines: Vec<&str> = old_content.lines().collect();
@@ -404,8 +416,8 @@ pub fn format_fresh_anchors(old_content: &str, new_content: &str) -> Option<Stri
         return None;
     }
 
-    let first_change = *changed_indices.first().unwrap();
-    let last_change = *changed_indices.last().unwrap();
+    let first_change = changed_indices.first()?;
+    let last_change = changed_indices.last()?;
     let anchor_radius = 5usize;
     let anchor_start = first_change.saturating_sub(anchor_radius);
     let anchor_end = (last_change + anchor_radius).min(new_lines.len() - 1);

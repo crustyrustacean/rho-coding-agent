@@ -1,4 +1,4 @@
-//! File operation tools: ReadFile, WriteFile, BatchRead, and ListDir.
+//! File operation tools: `ReadFile`, `WriteFile`, `BatchRead`, and `ListDir`.
 
 use crate::hashline::compute_line_hash;
 use crate::error::ToolError;
@@ -246,10 +246,10 @@ impl Tool for WriteFile {
             return Ok(ToolOutcome::Immediate(ToolResult::error("cancelled")));
         }
 
-        if let Some(parent) = safe_path.parent() {
-            if let Err(e) = tokio::fs::create_dir_all(parent).await {
-                return Ok(ToolOutcome::Immediate(ToolResult::error(format!("write_file: failed to create directories for `{path_str}`: {e}"))));
-            }
+        if let Some(parent) = safe_path.parent()
+            && let Err(e) = tokio::fs::create_dir_all(parent).await
+        {
+            return Ok(ToolOutcome::Immediate(ToolResult::error(format!("write_file: failed to create directories for `{path_str}`: {e}"))));
         }
 
         debug!(path = %path_str, bytes = content.len(), "writing file");
