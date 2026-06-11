@@ -7,6 +7,7 @@ use rho_core::{
     CancellationToken, RhoError, Tool, ToolName, ToolOutcome, ToolResult as ToolOutcomeResult,
     ToolRisk,
 };
+use tracing::{debug, warn};
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct CratesIoSearchResponse {
@@ -110,7 +111,12 @@ impl CratesIoClient {
     /// the response body cannot be parsed as JSON.
     pub async fn search_crates(&self, query: &str) -> ToolResult<Vec<CrateSummary>> {
         let endpoint = search_url(query);
+        debug!(query = %query, "crates.io: searching crates");
         let response: CratesIoSearchResponse = self.get_json(&endpoint).await?;
+        debug!(
+            results = response.crates.len(),
+            "crates.io: search completed"
+        );
         Ok(response.crates)
     }
 
@@ -123,6 +129,7 @@ impl CratesIoClient {
     /// the response body cannot be parsed as JSON.
     pub async fn info_crate(&self, name: &str) -> ToolResult<CrateDetails> {
         let endpoint = format!("https://crates.io/api/v1/crates/{name}");
+        debug!(name = %name, "crates.io: fetching crate info");
         let response: CratesIoDetailResponse = self.get_json(&endpoint).await?;
         Ok(response.detail)
     }
@@ -175,6 +182,11 @@ impl CratesIoClient {
                 .text()
                 .await
                 .unwrap_or_else(|_| "<unreadable>".to_string());
+            warn!(
+                url = %endpoint,
+                status = %status.as_u16(),
+                "crates.io API returned error"
+            );
             return Err(ToolError::ApiError {
                 status: status.as_u16(),
                 message: text,

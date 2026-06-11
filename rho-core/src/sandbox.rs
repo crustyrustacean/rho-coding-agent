@@ -18,6 +18,7 @@ use crate::error::Result;
 use crate::newtypes::FilePath;
 use std::path::{Component, Path, PathBuf};
 use thiserror::Error;
+use tracing::{debug, warn};
 
 /// Errors that can occur during sandbox operations.
 #[derive(Debug, Error)]
@@ -192,12 +193,13 @@ impl SandboxRoot {
     /// [`SandboxError::PathResolutionFailed`] if `canonicalize` fails (e.g. file does not exist).
     pub fn validate(&self, input: impl AsRef<Path>) -> Result<FilePath> {
         let input = input.as_ref();
-        let canonical = input
-            .canonicalize()
-            .map_err(|e| SandboxError::PathResolutionFailed {
+        let canonical = input.canonicalize().map_err(|e| {
+            debug!(path = %input.display(), error = %e, "sandbox: path resolution failed");
+            SandboxError::PathResolutionFailed {
                 path: input.display().to_string(),
                 source: e,
-            })?;
+            }
+        })?;
         self.assert_within(&canonical)?;
         Ok(FilePath::from(canonical))
     }
@@ -244,6 +246,11 @@ impl SandboxRoot {
     /// Assert that `canonical` is within the sandbox root, returning an error otherwise.
     fn assert_within(&self, canonical: &Path) -> Result<()> {
         if !canonical.starts_with(&self.0) {
+            warn!(
+                path = %canonical.display(),
+                root = %self.0.display(),
+                "sandbox: path escape attempt blocked"
+            );
             return Err(SandboxError::PathEscape {
                 path: canonical.display().to_string(),
             }

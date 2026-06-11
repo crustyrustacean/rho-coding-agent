@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
+use tracing::{debug, warn};
 
 // ── Default scan list ─────────────────────────────────────────────────────────
 
@@ -202,6 +203,7 @@ impl<'a> ContextScanner<'a> {
             }
 
             let Ok(contents) = std::fs::read_to_string(&file_path) else {
+                warn!(name = %name, path = %file_path.display(), "context file exists but could not be read");
                 continue;
             };
 
@@ -239,6 +241,7 @@ impl<'a> ContextScanner<'a> {
             };
 
             if is_trusted {
+                debug!(name = %name, bytes = contents.len(), "context file trusted and loaded");
                 trusted.push(ContextFile {
                     name: name.to_owned(),
                     contents,

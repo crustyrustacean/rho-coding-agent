@@ -6,6 +6,7 @@
 //! [`rho.runCommand()`] ops both use this to reject dangerous commands.
 
 use crate::RhoConfig;
+use tracing::debug;
 
 // ── CommandDenylist ───────────────────────────────────────────────────────────
 
@@ -110,6 +111,8 @@ impl CommandDenylist {
     /// flag combos are appended.
     pub fn from_config(config: &RhoConfig) -> Self {
         let mut base = Self::default_powershell();
+        let config_commands = &config.shell.denied_commands;
+        let config_combos = &config.shell.denied_flag_combos;
         base.denied_commands.extend(
             config
                 .shell
@@ -124,6 +127,12 @@ impl CommandDenylist {
                 .iter()
                 .map(|combo| combo.iter().map(|f| f.to_lowercase()).collect()),
         );
+        debug!(
+            built_in_commands = Self::default_powershell().denied_commands.len(),
+            config_commands = config_commands.len(),
+            config_combos = config_combos.len(),
+            "denylist loaded from config"
+        );
         base
     }
 
@@ -132,6 +141,8 @@ impl CommandDenylist {
     /// Returns `Some(reason)` if the command should be blocked, `None` if it
     /// is allowed.
     pub fn check(&self, command: &str) -> Option<String> {
+        debug!(command = %command, "denylist: checking command");
+
         // Extract the first token (command name).
         let first_token = command
             .split_whitespace()
