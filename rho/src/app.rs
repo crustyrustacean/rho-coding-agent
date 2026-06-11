@@ -19,7 +19,7 @@ use rho_ext::DenoObserver;
 use rho_ext::loader::ExtensionLoader;
 use rho_tools::register_all;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::EnvFilter;
 
@@ -29,6 +29,45 @@ pub(crate) enum TurnResult {
     Reply(String),
     /// Agent loop encountered an error.
     Error(String),
+}
+
+// ── Session construction ─────────────────────────────────────────────────────
+
+/// Configuration for session construction.
+///
+/// Collects all parameters needed to build a [`Session`] from the four
+/// construction modes (continue, resume, ephemeral, persisted).
+struct SessionConfig {
+    /// Model identifier.
+    model: String,
+    /// Composed system prompt.
+    system_prompt: String,
+    /// Tool definitions for the session.
+    tool_schemas: Vec<rho_core::ToolDefinition>,
+    /// Project sandbox root.
+    sandbox: SandboxRoot,
+    /// Token budget (context window + completion reserve).
+    token_budget: TokenBudget,
+    /// Secret redactor.
+    redactor: Redactor,
+    /// Optional reasoning effort level.
+    reasoning_effort: Option<String>,
+    /// Shared session path holder (for `SessionSummary` tool).
+    session_path_holder: rho_tools::SessionPathHolder,
+    /// Construction mode (continue, resume, ephemeral, persisted).
+    mode: SessionMode,
+}
+
+/// Session construction mode.
+enum SessionMode {
+    /// Resume the most recent session for this project.
+    Continue,
+    /// Resume from a specific JSONL file.
+    Resume(PathBuf),
+    /// In-memory session, no disk I/O.
+    Ephemeral,
+    /// New persisted session at `~/.rho/sessions/<project-hash>/`.
+    Persisted,
 }
 
 // ── App ───────────────────────────────────────────────────────────────────────
@@ -83,6 +122,7 @@ impl App {
     ///
     /// Returns an error if any setup phase fails (bad sandbox path, unreachable
     /// model API, external provider consent required, malformed session file).
+    #[allow(clippy::too_many_lines)]
     pub async fn build(cli: Cli) -> Result<Self> {
         // ── 1. Tracing ──────────────────────────────────────────────────
         let _log_guard = Self::init_tracing();
@@ -188,18 +228,29 @@ impl App {
         let token_budget = build_token_budget(&config, &cli);
 
         // ── 14. Session ──────────────────────────────────────────────────
-        let reasoning_effort = config.agent.reasoning_effort.as_deref();
-        let session = build_session(
-            &cli,
-            &model,
-            &system_prompt,
-            &tool_schemas,
-            &sandbox,
+        let session_mode = if cli.r#continue {
+            SessionMode::Continue
+        } else if let Some(ref path) = cli.session {
+            SessionMode::Resume(path.clone())
+        } else if cli.ephemeral {
+            SessionMode::Ephemeral
+        } else {
+            SessionMode::Persisted
+        };
+
+        let session_config = SessionConfig {
+            model,
+            system_prompt,
+            tool_schemas,
+            sandbox,
             token_budget,
             redactor,
-            reasoning_effort,
-            &session_path_holder,
-        )?;
+            reasoning_effort: config.agent.reasoning_effort.clone(),
+            session_path_holder,
+            mode: session_mode,
+        };
+
+        let session = build_session(session_config)?;
 
         // ── 15. Budget diagnostics ───────────────────────────────────────
         log_budget_diagnostics(&session);
@@ -481,87 +532,78 @@ fn build_token_budget(config: &RhoConfig, cli: &Cli) -> TokenBudget {
 
 /// Construct the session.
 ///
-/// Four paths:
-/// - `--continue` / `-c` — resume the most recent session for this project
-/// - `--session <path>` — resume from a specific JSONL file (with stale-CWD detection)
-/// - `--ephemeral` — in-memory session, no disk I/O
-/// - Default — persisted session at `~/.rho/sessions/<project-hash>/`
-#[allow(clippy::too_many_arguments)]
-fn build_session(
-    cli: &Cli,
-    model: &str,
-    system_prompt: &str,
-    tool_schemas: &[rho_core::ToolDefinition],
-    sandbox: &SandboxRoot,
-    token_budget: TokenBudget,
-    redactor: Redactor,
-    reasoning_effort: Option<&str>,
-    session_path_holder: &rho_tools::SessionPathHolder,
-) -> Result<Session> {
-    if cli.r#continue {
-        let path = rho_core::find_latest_session(sandbox.path())
-            .ok_or_else(|| anyhow::anyhow!("no previous sessions found for this project"))?;
-        P::session_resumed(&path);
-        resume_session(
-            &path,
-            model,
-            tool_schemas,
-            sandbox,
-            token_budget,
-            redactor,
-            session_path_holder,
-        )
-    } else if let Some(ref path) = cli.session {
-        P::session_resumed(path);
-        resume_session(
-            path,
-            model,
-            tool_schemas,
-            sandbox,
-            token_budget,
-            redactor,
-            session_path_holder,
-        )
-    } else if cli.ephemeral {
-        let mut s = Session::in_memory(
-            model,
-            Some(system_prompt),
-            tool_schemas.to_vec(),
-            sandbox.path(),
-        )
-        .with_token_budget(token_budget)
-        .with_redactor(redactor);
-        if let Some(effort) = reasoning_effort {
-            s = s.with_reasoning_effort(effort);
+/// Delegates to the appropriate construction path based on [`SessionMode`].
+fn build_session(config: SessionConfig) -> Result<Session> {
+    let SessionConfig {
+        model,
+        system_prompt,
+        tool_schemas,
+        sandbox,
+        token_budget,
+        redactor,
+        reasoning_effort,
+        session_path_holder,
+        mode,
+    } = config;
+
+    match mode {
+        SessionMode::Continue => {
+            let path = rho_core::find_latest_session(sandbox.path())
+                .ok_or_else(|| anyhow::anyhow!("no previous sessions found for this project"))?;
+            P::session_resumed(&path);
+            resume_session(
+                &path,
+                &model,
+                &tool_schemas,
+                &sandbox,
+                token_budget,
+                redactor,
+                &session_path_holder,
+            )
         }
-        Ok(s)
-    } else {
-        let mut s = Session::new(
-            model,
-            Some(system_prompt),
-            tool_schemas.to_vec(),
-            sandbox.path(),
-        )
-        .with_token_budget(token_budget)
-        .with_redactor(redactor);
-        if let Some(effort) = reasoning_effort {
-            s = s.with_reasoning_effort(effort);
+        SessionMode::Resume(path) => {
+            P::session_resumed(&path);
+            resume_session(
+                &path,
+                &model,
+                &tool_schemas,
+                &sandbox,
+                token_budget,
+                redactor,
+                &session_path_holder,
+            )
         }
-        if let Some(path) = s.save_path() {
-            P::session_created(path);
-            rho_tools::SessionSummary::set_path(session_path_holder, path.to_path_buf());
+        SessionMode::Ephemeral => {
+            let mut s =
+                Session::in_memory(&model, Some(&system_prompt), tool_schemas, sandbox.path())
+                    .with_token_budget(token_budget)
+                    .with_redactor(redactor);
+            if let Some(ref effort) = reasoning_effort {
+                s = s.with_reasoning_effort(effort);
+            }
+            Ok(s)
         }
-        let previous = rho_core::list_sessions(sandbox.path());
-        if !previous.is_empty() {
-            P::previous_sessions_hint(previous.len());
+        SessionMode::Persisted => {
+            let mut s = Session::new(&model, Some(&system_prompt), tool_schemas, sandbox.path())
+                .with_token_budget(token_budget)
+                .with_redactor(redactor);
+            if let Some(ref effort) = reasoning_effort {
+                s = s.with_reasoning_effort(effort);
+            }
+            if let Some(path) = s.save_path() {
+                P::session_created(path);
+                rho_tools::SessionSummary::set_path(&session_path_holder, path.to_path_buf());
+            }
+            let previous = rho_core::list_sessions(sandbox.path());
+            if !previous.is_empty() {
+                P::previous_sessions_hint(previous.len());
+            }
+            Ok(s)
         }
-        Ok(s)
     }
 }
 
 /// Resume a session from a JSONL file with stale-CWD detection.
-///
-/// Shared between `--continue` and `--session <path>`.
 fn resume_session(
     path: &Path,
     model: &str,

@@ -1,3 +1,63 @@
+# Changelog
+
+## [0.76.0] - 2026-06-10
+
+### 🚀 Features
+
+- *(instrumentation)* Add structured tracing across rho-ai, rho-core, rho-tools, and rho RPC (~115 log points)
+- *(app)* Extract `SessionConfig`/`SessionMode` from 10-param `build_session`
+- *(tools)* Split `files.rs` god object (2022 lines) into `hashline.rs`, `edit.rs`, `file_ops.rs`
+
+### 🐛 Bug Fixes
+
+- *(tests)* Use epsilon comparison for float assertions in `ApiUsage` tests
+
+### 🚜 Refactor
+
+- Remove unused `client_factory` and `Default` impl from `RhoAiClient`
+- Remove `rho-eval` and `rho-bench` crates
+
+### 📚 Documentation
+
+- Remove rho-eval and rho-bench references from all docs, clean Phase wording
+
+### ⚙️ Miscellaneous Tasks
+
+- Remove `.plans/` directory
+
+## [0.75.0] - 2026-06-10
+
+### 🚀 Features
+
+- *(session)* Add ApiUsage tracking for cumulative token counts
+
+## [0.74.0] - 2026-06-10
+
+### 🚀 Features
+
+- *(tools)* Add batch_read for multi-file reads in a single turn
+
+### ⚙️ Miscellaneous Tasks
+
+- *(release)* Prepare 0.74.0
+
+## [0.73.0] - 2026-06-10
+
+### 🚀 Features
+
+- *(provider)* Config-as-truth model resolution, zero network at startup
+- *(provider)* Add agent.provider for provider-first model selection
+- *(reasoning)* Send reasoning_effort parameter to thinking-capable models
+
+### 📚 Documentation
+
+- Update model resolution docs for config-as-truth
+- Final cleanup — remove stale REPL references, add reasoning_effort
+
+### ⚙️ Miscellaneous Tasks
+
+- *(release)* Prepare 0.73.0
+
 ## [0.72.0] - 2026-06-10
 
 ### 🐛 Bug Fixes

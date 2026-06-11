@@ -4,7 +4,7 @@
 //!
 //! [`ReadFile`], [`WriteFile`], [`ListDir`], [`EditFile`] — sandbox-enforced
 //! file operations with `<context>` framing, `.gitignore`-aware listing, and
-//! exact-match editing.
+//! hashline-anchored editing.
 //!
 //! ## Shell tools (Phase 2)
 //!
@@ -25,7 +25,9 @@
 //! references for reliable file edits.
 
 pub mod crates_io;
+pub mod edit;
 pub mod error;
+pub mod file_ops;
 pub mod files;
 pub mod hashline;
 pub mod rust;
@@ -41,8 +43,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 pub use crate::error::{ToolError, ToolResult};
+pub use crate::edit::EditFile;
 pub use crates_io::CratesIoLookup;
-pub use files::{BatchRead, EditFile, ListDir, ReadFile, WriteFile};
+pub use file_ops::{BatchRead, ListDir, ReadFile, WriteFile};
 pub use hashline::compute_line_hash;
 pub use rust::{CargoCheck, CargoClippy, CargoFix, CargoTest, RustcExplain, RustdocTool};
 pub use shell::{CommandDenylist, PowerShellExecutor, RunCommand};
