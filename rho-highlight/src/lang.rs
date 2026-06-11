@@ -7,21 +7,21 @@
 
 use crate::error::HighlightError;
 
-/// A programming language supported (or planned) by `rho-highlight`.
+/// A programming language supported by `rho-highlight`.
 ///
-/// Variants that are gated behind optional features return
+/// Variants gated behind optional features return
 /// [`HighlightError::GrammarNotAvailable`] when their feature is not enabled.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Language {
-    /// Rust — default feature `rust`. The primary grammar for Phase 3.
+    /// Rust — default feature `rust`.
     Rust,
-    /// PowerShell — planned for Phase 4 evaluation.
+    /// PowerShell — planned.
     PowerShell,
-    /// TOML — planned for Phase 4 evaluation.
+    /// TOML — planned.
     Toml,
-    /// JSON — planned for Phase 4 evaluation.
+    /// JSON — planned.
     Json,
-    /// Markdown — planned for Phase 4 evaluation.
+    /// Markdown — planned.
     Markdown,
 }
 
@@ -84,7 +84,7 @@ mod tests {
             let result = lang.tree_sitter_language();
             assert!(
                 result.is_err(),
-                "{lang} grammar should not be available in Phase 3"
+                "{lang} grammar should not be available without its feature"
             );
             assert!(
                 matches!(result.unwrap_err(), HighlightError::GrammarNotAvailable(_)),

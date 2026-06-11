@@ -21,14 +21,14 @@ workspace = true
 #   - Linux:   gcc or clang (`apt install build-essential` / equivalent)
 
 [features]
-# `rust` is the default grammar and the only one in Phase 3.
-# Additional grammars are opt-in features for Phase 4 evaluation.
+# `rust` is the default grammar and the only one available right now.
+# Additional grammars are opt-in features for the future.
 default = ["rust"]
 
-# Tree-sitter Rust grammar — the primary grammar for Phase 3.
+# Tree-sitter Rust grammar.
 rust = ["dep:tree-sitter-rust"]
 
-# Reserved opt-in grammar features (Phase 4 evaluation).
+# Reserved opt-in grammar features.
 # powershell = ["dep:tree-sitter-powershell"]
 # toml      = ["dep:tree-sitter-toml"]
 # json      = ["dep:tree-sitter-json"]

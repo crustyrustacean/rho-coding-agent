@@ -194,11 +194,9 @@ rho treats model output as untrusted and applies defense-in-depth:
 │    rho-ai        │  ← Unified LLM provider abstraction (streaming, retry, SSE)
 └──────────────────┘
    rho-test-helpers   ← Dev-only: mocks, fixtures, tempdir helpers
-   rho-eval            ← Dev-only: behavioural benchmark suite (10 eval tasks)
-   rho-bench          ← Dev-only: benchmark harness (multi-model comparison)
 ```
 
-**Dependency rule:** crates only depend on layers below them. `rho-ai` is the lowest layer; `rho-core` depends on it for the `LlmService` trait. `rho-tools` and `rho-highlight` depend on `rho-core`. `rho-ext` depends on `rho-core` for trait implementations. The binary assembles everything. `rho-bench` depends on `rho-eval` → `rho-core` + `rho-tools`.
+**Dependency rule:** crates only depend on layers below them. `rho-ai` is the lowest layer; `rho-core` depends on it for the `LlmService` trait. `rho-tools` and `rho-highlight` depend on `rho-core`. `rho-ext` depends on `rho-core` for trait implementations. The binary assembles everything.
 
 ## Development
 
@@ -229,8 +227,6 @@ rho-ext/              # TypeScript extension runtime (V8/deno-core)
 rho-core/             # Agent kernel (loop, types, traits, config)
 rho-tools/            # Built-in tools (files, shell, rust tooling)
 rho-highlight/        # Tree-sitter syntax analysis
-rho-eval/             # Behavioural benchmark suite (10 eval tasks)
-rho-bench/            # Benchmark harness (multi-model comparison)
 rho-test-helpers/     # Shared test utilities (dev-only)
 xtask/                # Dev task runner
 ```

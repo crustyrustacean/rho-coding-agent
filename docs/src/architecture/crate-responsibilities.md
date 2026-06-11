@@ -19,7 +19,7 @@ Key types: `Session`, `AgentConfig`, `AgentObserver`, `NopObserver`, `ContextSta
 
 Tree-sitter-based syntax analysis. Provides `parse()`, `highlight()`, and `node_at()` for Rust source code. Used by `EditFile` for node-splitting validation and by tools that need structural code awareness.
 
-Key types: `Language`, `Highlight`, `NodeInfo`.
+Key types: `Language`, `HighlightSpan`, `HighlightTag`, `NodeInfo`.
 
 
 ## `rho-tools`
@@ -54,14 +54,6 @@ See [Extensions](../extensions.md) for the full extension system documentation.
 Shared test infrastructure (dev-only): `MockChatClient`, `TestProvider`, `MockShellExecutor`, `AutoApproveGate`, `AutoDenyGate`, `FixedResponseTool`, `FailingTool`, `FileTestEnv`, `in_memory_session`, `empty_trust_store`, `detect_shell`, `tempdir_with_sandbox`, `assert_no_orphan_tool_results`. Depends on `rho-core` and `rho-ai`. Never published.
 
 `TestProvider` wraps a `MockChatClient` as a `Provider` impl, enabling integration tests that need a `ProviderRegistry` without a live model server.
-
-## `rho-eval`
-
-Behavioural benchmark suite (dev-only): canonical coding tasks via the `EvalTask` trait, automated pass/fail scoring with `TaskOutcome`, performance metrics (`TaskMetrics`: wall time, token usage, agent iterations), prompt SHA-256 tracking, and regression gating. Used by `rho-bench` to drive end-to-end evaluation against real models.
-
-## `rho-bench`
-
-Benchmark harness binary (dev-only): runs `rho-eval` tasks against one or more local models and produces structured comparison reports. Creates isolated temp Cargo projects per task, drives `run_loop` with a `CountingClient` wrapper for token tracking, and persists results as JSON. Supports multi-model sweeps, repeat runs for statistical reliability, compact prompts for small-context models, and both terminal table and JSON output formats.
 
 ## `xtask`
 

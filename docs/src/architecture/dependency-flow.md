@@ -13,7 +13,6 @@ rho (binary) ──────────────────────�
     │
     └── rho-core ─────────────────────────────────────
             │
-rho-bench ──────── rho-eval ── rho-core ─────────────
 rho-test-helpers ── rho-core, rho-ai ────────────────
 xtask ──────────────────────────────────────────────
 ```
@@ -28,8 +27,6 @@ xtask ────────────────────────�
 | `rho-core` | `rho-ai` | Kernel — the foundation everything else builds on |
 | `rho-ai` | none (external only) | Unified LLM provider abstraction |
 | `rho-test-helpers` | `rho-core`, `rho-ai` | Dev-only — provides mocks and fixtures for testing |
-| `rho-eval` | `rho-core` | Dev-only — benchmark task definitions and scoring |
-| `rho-bench` | `rho-core`, `rho-eval`, `rho-tools` | Dev-only — benchmark harness binary for multi-model evaluation |
 | `xtask` | none (cargo integration) | Dev-only — task runner, no rho crate dependencies |
 
 ## Key external dependencies
@@ -42,11 +39,10 @@ xtask ────────────────────────�
 | `toml` | `rho-core` | Configuration parsing |
 | `tree-sitter` + grammars | `rho-highlight` | Syntax analysis |
 | `ignore` | `rho-tools` | `.gitignore`-aware directory listing |
-| `clap` | `rho`, `rho-bench` | CLI argument parsing |
-| `tracing` | `rho-core`, `rho-ext`, `rho-bench` | Structured logging |
+| `clap` | `rho` | CLI argument parsing |
+| `tracing` | `rho-core`, `rho-ext` | Structured logging |
 | `deno_core` | `rho-ext` | V8 JavaScript runtime |
 | `deno_ast` | `rho-ext` | TypeScript transpilation |
-| `chrono` | `rho-bench`, `rho-eval` | ISO 8601 timestamps in results |
 | `thiserror` | `rho-core`, `rho-ext` | Error type derivation |
 | `futures` | `rho-ai` | Stream traits for SSE |
 ## What this buys you

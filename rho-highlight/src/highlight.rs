@@ -1,20 +1,17 @@
 //! Syntax highlighting: produce classified [`HighlightSpan`]s from source.
 //!
-//! # Phase 3 scope
-//!
 //! This module produces **classified spans** only — each span carries a
 //! [`HighlightTag`] (e.g. `Keyword`, `String`, `Comment`) and the byte range
 //! it covers. Theme and colour mapping (ANSI escape codes, `ratatui` styles)
-//! are a **Phase 4 concern** and are intentionally absent here.
+//! is left to the renderer.
 //!
 //! # Algorithm
 //!
-//! The implementation uses tree-sitter's node-kind strings to classify tokens.
-//! This is simpler and more portable than tree-sitter's highlight query system
-//! (which requires `.scm` query files) and produces classifications accurate
-//! enough for Phase 3's needs (diagnostic context rendering, `EditFile`
-//! node-type identification). A query-based highlighter can be layered on top
-//! in Phase 4.
+//! Uses tree-sitter's node-kind strings to classify tokens. This is simpler
+//! and more portable than tree-sitter's highlight query system (which requires
+//! `.scm` query files) and produces classifications accurate enough for
+//! diagnostic context rendering and edit safety validation. A query-based
+//! highlighter can be layered on top if finer control is needed.
 //!
 //! The walk visits every **named** leaf node in the syntax tree and maps its
 //! `kind` string to a [`HighlightTag`]. Anonymous nodes (punctuation, operators
@@ -41,8 +38,8 @@ use crate::parse::parse;
 /// A semantic classification for a source token.
 ///
 /// These are broad, stable categories suitable for syntax highlighting.
-/// Phase 4 may introduce finer-grained tags (e.g. `FunctionName`,
-/// `TypeName`, `LifetimeName`) when the query-based highlighter lands.
+/// Finer-grained tags (e.g. `FunctionName`, `TypeName`, `LifetimeName`) can
+/// be added when a query-based highlighter replaces the kind-string approach.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum HighlightTag {
     /// Language keyword (`fn`, `let`, `pub`, `use`, `struct`, etc.).

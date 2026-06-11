@@ -2,7 +2,7 @@
 //!
 //! [`node_at`] maps a (line, column) position in a source file to the
 //! smallest tree-sitter node that contains that position. This is the
-//! primary structural-query API used by Phase 3's diagnostic tooling and
+//! primary structural-query API used by diagnostic tooling and
 //! `EditFile` node-splitting validation.
 //!
 //! # Position conventions

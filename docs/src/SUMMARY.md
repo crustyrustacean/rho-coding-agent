@@ -26,6 +26,5 @@
 - [Extensions](./extensions.md)
 - [Development](./development.md)
   - [Testing](./development/testing.md)
-  - [Benchmarking](./development/benchmarking.md)
   - [Dependency Philosophy](./development/dependency-philosophy.md)
   - [Roadmap](./development/roadmap.md)

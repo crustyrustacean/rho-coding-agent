@@ -51,8 +51,8 @@ rho-coding-agent/
 │       ├── lib.rs           # Module declarations, convenience re-exports
 │       ├── agent.rs         # Agent loop state machine, `run_loop`, phase tracking, auto-compact
 │       ├── approval.rs      # `ApprovalPolicy`, `ApprovalGate` traits
-│       ├── client/
-│       │   ├── mod.rs        # `RhoAiClient`, `ProviderRegistry`, `provider_factory`
+│       ├── client.rs        # `RhoAiClient`, `resolve_api_key`, `is_local_endpoint`, `ModelInfo`, `ModelList`
+│       ├── client/          # Module directory
 │       │   └── error.rs      # `ClientError`
 │       ├── config.rs        # `RhoConfig`, `ConfigLoader`, two-tier TOML loading
 │       ├── context.rs       # `ContextManager`, `SlidingWindowContextManager`, `TokenBudget`
@@ -120,18 +120,6 @@ rho-coding-agent/
 │           └── types.rs     # Shared Rust tool types
 ├── rho-test-helpers/        # Shared test infrastructure (dev-only)
 │   └── src/lib.rs           # `MockChatClient`, `TestProvider`, response builders, helpers
-├── rho-bench/               # Benchmark harness for multi-model evaluation
-│   └── src/
-│       ├── main.rs          # CLI: --models, --tasks, --repeats, --output
-│       ├── harness.rs       # Task execution via run_loop, CountingService
-│       ├── comparison.rs    # Terminal table and per-task breakdown display
-│       └── persistence.rs   # JSON result files (latest.json + timestamped)
-├── rho-eval/                # Behavioural benchmarks (dev-only)
-│   └── src/
-│       ├── lib.rs
-│       ├── task.rs          # EvalTask trait, TaskOutcome, TaskMetrics
-│       ├── report.rs        # EvalRun, EvalReport — results + regression gating
-│       └── tasks.rs         # Built-in task definitions
 └── xtask/                   # Dev task runner
     └── src/
         ├── main.rs          # CLI dispatch

@@ -22,11 +22,10 @@
 │                   rho-ai                         │  ← Unified LLM provider abstraction
 └─────────────────────────────────────────────────┘
 
-   ┌──────────────────┐  ┌──────────────────┐
-   │ rho-test-helpers  │  │    rho-eval       │  ← Dev-only: mocks, fixtures, benchmarks
-   └──────────────────┘  └──────────────────┘
+   ┌──────────────────┐
+   │ rho-test-helpers  │  ← Dev-only: mocks, fixtures
+   └──────────────────┘
 
-                  rho-bench → rho-eval → rho-core → rho-ai
                   rho-ext → rho-core
                   rho-tools → rho-highlight → rho-core
                   rho → rho-core, rho-tools, rho-ext, rho-ai
@@ -214,13 +213,9 @@ Sending `approved: false` denies the tool call and lets the agent continue.
 
 `MockChatClient`, `MockShellExecutor`, `TestProvider`, response builders, approval gates, file-system test environment, sandbox/trust helpers. `TestProvider` wraps a `MockChatClient` as a `Provider` impl, enabling integration tests that need a `ProviderRegistry` without a live model server.
 
-### `rho-eval` — Behavioural Benchmarks (dev-only)
+### `rho-test-helpers` — Shared Test Utilities (dev-only)
 
-Canonical coding tasks with known correct outcomes. Defines `EvalTask` trait, scoring logic, and regression detection.
-
-### `rho-bench` — Benchmark Harness (dev-only)
-
-CLI tool that runs eval tasks against models with timing and token metrics.
+`MockChatClient`, `MockShellExecutor`, `TestProvider`, response builders, approval gates, file-system test environment, sandbox/trust helpers. `TestProvider` wraps a `MockChatClient` as a `Provider` impl, enabling integration tests that need a `ProviderRegistry` without a live model server.
 
 ## End-to-End Flow
 
@@ -346,8 +341,8 @@ rho-core/           # Core library
     lib.rs          # Module declarations and convenience re-exports
     agent.rs        # Agent loop state machine, `run_loop`, `AgentObserver`
     approval.rs     # `ApprovalPolicy` and `ApprovalGate` traits
-    client/
-      mod.rs        # `RhoAiClient`, `ProviderRegistry`, `provider_factory`
+    client.rs       # `RhoAiClient`, `resolve_api_key`, `is_local_endpoint`, `ModelInfo`, `ModelList`
+    client/         # Module directory
       error.rs      # `ClientError`
     config.rs       # `RhoConfig`, `ConfigLoader`, config sub-types
     context.rs      # `ContextManager` trait, `SlidingWindowContextManager`, `TokenBudget`
@@ -385,18 +380,7 @@ rho-highlight/      # Tree-sitter syntax analysis
     parse.rs        # Tree-sitter parsing
     highlight.rs    # Token classification and highlighting
     query.rs        # AST node lookup by position
-rho-eval/           # Behavioural benchmark definitions (dev-only)
-  src/
-    lib.rs          # `EvalTask`, `TaskOutcome`, `TaskMetrics`, `EvalRun`
-    task.rs         # `EvalTask` trait, `TaskVerdict`
-    report.rs       # `EvalRun`, `EvalReport`
-    tasks.rs        # 10 built-in eval scenarios
-rho-bench/          # Benchmark harness binary (dev-only)
-  src/
-    main.rs         # CLI (--models, --tasks, --endpoint, --api-key-env)
-    harness.rs      # `run_benchmarks`, `BenchApprovalGate`
-    comparison.rs   # Terminal table display
-    persistence.rs  # JSON result files
+    error.rs        # `HighlightError`
 rho-test-helpers/   # Shared test infrastructure (dev-only)
   src/
     lib.rs          # `MockChatClient`, response builders, helpers
@@ -443,10 +427,10 @@ cliff.toml          # git-cliff configuration
 | `OpenAiService` | `rho-ai/openai.rs` | OpenAI-compatible HTTP client with SSE streaming |
 | `StreamEvent` | `rho-ai/types.rs` | Streaming response event (`Text`, `Reasoning`, `ToolUse*`, `Done`) |
 | `AccumulatedResponse` | `rho-ai/types.rs` | Fully-accumulated response (text + tool calls + usage) |
-| `RhoAiClient` | `client/mod.rs` | Wraps `LlmService` for use in the agent loop |
+| `RhoAiClient` | `client.rs` | Wraps `LlmService` for use in the agent loop |
 | `Provider` | `provider.rs` | Trait: `name`, `is_external`, `list_models`, `clone_boxed_service`, `llm_service` |
 | `ProviderRegistry` | `provider.rs` | Ordered collection of `Box<dyn Provider>` |
-| `ModelInfo` | `client/mod.rs` | A model entry from `/v1/models` |
+| `ModelInfo` | `client.rs` | A model entry from `/v1/models` |
 | `ProviderConfig` | `config.rs` | Provider config: name, preset, endpoint, API key env var, default_model |
 | `rho_ai::ProviderConfig` | `rho-ai/types.rs` | API key and base URL (model is per-request, not per-provider) |
 
@@ -499,16 +483,7 @@ cliff.toml          # git-cliff configuration
 | `ToolCallId` | `newtypes.rs` | Model-issued tool call IDs |
 | `DiagnosticCode` | `newtypes.rs` | Rust compiler diagnostic codes |
 
-### Dev-only (rho-eval / rho-bench)
 
-| Type | Location | Purpose |
-|---|---|---|
-| `EvalTask` | `rho-eval` | Trait: benchmark task with verification |
-| `TaskVerdict` | `rho-eval` | `Pass`, `Fail`, `Error` |
-| `TaskOutcome` | `rho-eval` | Verdict + metrics |
-| `EvalRun` | `rho-eval` | Collection of outcomes with regression detection |
-
-### Extension system (rho-ext)
 
 | Type | Location | Purpose |
 |---|---|---|

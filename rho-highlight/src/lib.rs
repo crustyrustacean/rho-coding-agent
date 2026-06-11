@@ -1,29 +1,25 @@
 //! rho-highlight — tree-sitter parsing, syntax classification, and structural
 //! code queries for the rho coding agent.
 //!
-//! # Purpose
-//!
-//! This crate sits between `rho-core` and the tool/TUI layers, providing two
-//! roles:
+//! Provides two capabilities:
 //!
 //! 1. **Structural understanding** — tools use tree-sitter to reason about code
-//!    (find function boundaries, identify node types at a position, validate
-//!    edit safety). [`node_at`] is the primary entry point for Phase 3.
+//!    (identify node types at a position, validate edit safety). [`node_at`] is
+//!    the primary entry point.
 //!
-//! 2. **Rendering** (Phase 4) — the TUI uses tree-sitter to syntax-highlight code
-//!    blocks by producing [`HighlightSpan`] values that a renderer maps to ANSI
-//!    colours or `ratatui` styles. Theme/colour mapping is out of scope for Phase 3;
-//!    this crate only classifies spans.
+//! 2. **Syntax classification** — produces [`HighlightSpan`] values that a
+//!    renderer maps to ANSI colours or `ratatui` styles. Theme/colour mapping is
+//!    out of scope; this crate only classifies spans.
 //!
 //! # Feature flags
 //!
 //! | Feature | Grammar | Default |
 //! |---|---|---|
 //! | `rust` | [`tree-sitter-rust`](https://crates.io/crates/tree-sitter-rust) | ✅ yes |
-//! | `powershell` | *Phase 4 evaluation* | — |
-//! | `toml` | *Phase 4 evaluation* | — |
-//! | `json` | *Phase 4 evaluation* | — |
-//! | `markdown` | *Phase 4 evaluation* | — |
+//! | `powershell` | *planned* | — |
+//! | `toml` | *planned* | — |
+//! | `json` | *planned* | — |
+//! | `markdown` | *planned* | — |
 //!
 //! # Build requirement
 //!
