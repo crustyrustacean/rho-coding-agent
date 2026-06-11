@@ -14,6 +14,7 @@ use rho_core::{
     Result, SandboxRoot, ToolName, ToolRisk,
     tool::{CancellationToken, Tool, ToolOutcome, ToolResult},
 };
+use tracing::{debug, info, warn};
 
 // ── Hashline Edit Types ───────────────────────────────────────────────────────
 
@@ -136,9 +137,12 @@ impl Tool for ReadFile {
             return Ok(ToolOutcome::Immediate(ToolResult::error("cancelled")));
         }
 
+        debug!(path = %path_str, hashline = hashline, "reading file");
+
         let content = match tokio::fs::read_to_string(&*safe_path).await {
             Ok(c) => c,
             Err(e) => {
+                warn!(path = %path_str, error = %e, "failed to read file");
                 // Return as a tool error so the model can self-correct
                 // (e.g. try a different path) instead of killing the loop.
                 return Ok(ToolOutcome::Immediate(ToolResult::error(format!(
@@ -146,6 +150,8 @@ impl Tool for ReadFile {
                 ))));
             }
         };
+
+        debug!(path = %path_str, lines = content.lines().count(), "file read successfully");
 
         let formatted_content = if hashline {
             // Format with hashline: LINE#HASH:content
@@ -265,6 +271,7 @@ impl Tool for BatchRead {
             let safe_path = match self.root.validate(&candidate) {
                 Ok(p) => p,
                 Err(e) => {
+                    warn!(path = %path_str, error = %e, "batch_read: sandbox validation failed");
                     results.push(format!("[{}] error: {e}", i + 1));
                     continue;
                 }
@@ -273,6 +280,7 @@ impl Tool for BatchRead {
             let content = match tokio::fs::read_to_string(&*safe_path).await {
                 Ok(c) => c,
                 Err(e) => {
+                    warn!(path = %path_str, error = %e, "batch_read: failed to read file");
                     results.push(format!(
                         "[{}] error: failed to read `{path_str}`: {e}",
                         i + 1
@@ -307,6 +315,14 @@ impl Tool for BatchRead {
             };
             results.push(formatted);
         }
+
+        let errors = paths_arg.len() - results.len();
+        info!(
+            requested = paths_arg.len(),
+            succeeded = results.len(),
+            errors = errors,
+            "batch_read completed"
+        );
 
         let header = format!(
             "batch_read: {}/{} files read",
@@ -398,11 +414,16 @@ impl Tool for WriteFile {
             ))));
         }
 
+        debug!(path = %path_str, bytes = content.len(), "writing file");
+
         if let Err(e) = tokio::fs::write(&*safe_path, content).await {
+            warn!(path = %path_str, error = %e, "failed to write file");
             return Ok(ToolOutcome::Immediate(ToolResult::error(format!(
                 "write_file: failed to write `{path_str}`: {e}"
             ))));
         }
+
+        info!(path = %path_str, bytes = content.len(), "file written successfully");
 
         Ok(ToolOutcome::Immediate(ToolResult::success(format!(
             "wrote {} bytes to {path_str}",
@@ -534,6 +555,14 @@ impl Tool for ListDir {
                 }
             }
         }
+
+        debug!(
+            path = %path_str,
+            entries = entries.len(),
+            recursive = recursive,
+            errors = error_count,
+            "directory listing completed"
+        );
 
         let mut output = entries.join("\n");
         if error_count > 0 {
@@ -677,6 +706,15 @@ impl Tool for EditFile {
             return Ok(ToolOutcome::Immediate(ToolResult::error("cancelled")));
         }
 
+        debug!(
+            path = %path_str,
+            edits = edits_arg.len(),
+            format = if has_hashline && has_legacy { "mixed" }
+                      else if has_hashline { "hashline" }
+                      else { "legacy" },
+            "applying edits"
+        );
+
         // Route based on edit format
         if has_hashline && has_legacy {
             return self
@@ -794,10 +832,13 @@ impl Tool for EditFile {
 
         // Write the modified content.
         if let Err(e) = tokio::fs::write(&*safe_path, &modified).await {
+            warn!(path = %path_str, error = %e, "edit_file: failed to write modified file");
             return Ok(ToolOutcome::Immediate(ToolResult::error(format!(
                 "edit_file: failed to write `{path_str}`: {e}"
             ))));
         }
+
+        info!(path = %path_str, edits = edits.len(), "legacy edits applied successfully");
 
         let mut output = format!("applied {} edit(s) to {path_str}", edits.len());
         for warning in &node_split_warnings {
@@ -1103,6 +1144,13 @@ impl EditFile {
                     context_lines.push(format!("{line_num:>width$}#{hash}:{line}"));
                 }
             }
+
+            warn!(
+                line = edit.pos.line_num,
+                expected_hash = %edit.pos.hash,
+                actual_hash = %current_hash,
+                "hashline anchor mismatch, no similar content found nearby"
+            );
 
             return Err(format!(
                 "edit_file: hash mismatch at anchor {}#{} and no similar content found nearby\n\
