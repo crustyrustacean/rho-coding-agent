@@ -144,10 +144,14 @@ fn is_high_information_line(line: &str) -> bool {
 /// # Errors
 ///
 /// Returns an error string if any edit is missing required fields or has an unknown `op`.
-pub fn parse_hashline_edits(edits_arg: &[serde_json::Value]) -> std::result::Result<Vec<HashlineEdit>, String> {
+pub fn parse_hashline_edits(
+    edits_arg: &[serde_json::Value],
+) -> std::result::Result<Vec<HashlineEdit>, String> {
     let mut hashline_edits = Vec::new();
     for (i, edit_val) in edits_arg.iter().enumerate() {
-        let op_str = edit_val["op"].as_str().ok_or_else(|| format!("edit_file: edit {i} missing 'op'"))?;
+        let op_str = edit_val["op"]
+            .as_str()
+            .ok_or_else(|| format!("edit_file: edit {i} missing 'op'"))?;
         let op = match op_str {
             "replace" => HashlineOp::Replace,
             "append" => HashlineOp::Append,
@@ -155,16 +159,28 @@ pub fn parse_hashline_edits(edits_arg: &[serde_json::Value]) -> std::result::Res
             "delete" => HashlineOp::Delete,
             other => return Err(format!("edit_file: invalid op '{other}'")),
         };
-        let pos_str = edit_val["pos"].as_str().ok_or_else(|| format!("edit_file: edit {i} missing 'pos'"))?;
-        let pos = HashlineAnchor::parse(pos_str).ok_or_else(|| format!("edit_file: edit {i} invalid anchor '{pos_str}'"))?;
+        let pos_str = edit_val["pos"]
+            .as_str()
+            .ok_or_else(|| format!("edit_file: edit {i} missing 'pos'"))?;
+        let pos = HashlineAnchor::parse(pos_str)
+            .ok_or_else(|| format!("edit_file: edit {i} invalid anchor '{pos_str}'"))?;
         let end = edit_val["end"].as_str().and_then(HashlineAnchor::parse);
         let edit_lines = if op == HashlineOp::Delete {
             Vec::new()
         } else {
-            edit_val["lines"].as_array().ok_or_else(|| format!("edit_file: edit {i} missing 'lines'"))?
-                .iter().map(|v| v.as_str().unwrap_or_default().to_string()).collect()
+            edit_val["lines"]
+                .as_array()
+                .ok_or_else(|| format!("edit_file: edit {i} missing 'lines'"))?
+                .iter()
+                .map(|v| v.as_str().unwrap_or_default().to_string())
+                .collect()
         };
-        hashline_edits.push(HashlineEdit { op, pos, end, lines: edit_lines });
+        hashline_edits.push(HashlineEdit {
+            op,
+            pos,
+            end,
+            lines: edit_lines,
+        });
     }
     Ok(hashline_edits)
 }
@@ -175,13 +191,27 @@ pub fn parse_hashline_edits(edits_arg: &[serde_json::Value]) -> std::result::Res
 ///
 /// Returns an error string if any anchor line is out of range, or all fuzzy
 /// relaxation attempts fail.
-pub fn validate_hashline_edits_fuzzy(lines: &[&str], hashline_edits: &[HashlineEdit]) -> std::result::Result<Vec<AnchorResolution>, String> {
+#[allow(clippy::too_many_lines)]
+pub fn validate_hashline_edits_fuzzy(
+    lines: &[&str],
+    hashline_edits: &[HashlineEdit],
+) -> std::result::Result<Vec<AnchorResolution>, String> {
     for edit in hashline_edits {
         if edit.pos.line_num == 0 || edit.pos.line_num > lines.len() {
-            return Err(format!("edit_file: anchor line {} is out of range (file has {} lines)", edit.pos.line_num, lines.len()));
+            return Err(format!(
+                "edit_file: anchor line {} is out of range (file has {} lines)",
+                edit.pos.line_num,
+                lines.len()
+            ));
         }
-        if let Some(ref end) = edit.end && (end.line_num == 0 || end.line_num > lines.len()) {
-            return Err(format!("edit_file: end anchor line {} is out of range (file has {} lines)", end.line_num, lines.len()));
+        if let Some(ref end) = edit.end
+            && (end.line_num == 0 || end.line_num > lines.len())
+        {
+            return Err(format!(
+                "edit_file: end anchor line {} is out of range (file has {} lines)",
+                end.line_num,
+                lines.len()
+            ));
         }
     }
 
@@ -192,7 +222,11 @@ pub fn validate_hashline_edits_fuzzy(lines: &[&str], hashline_edits: &[HashlineE
         let current_hash = compute_line_hash(line_content, edit.pos.line_num);
 
         if current_hash == edit.pos.hash {
-            resolutions.push(AnchorResolution { resolved_line: target_idx, exact_match: true, relaxation_note: None });
+            resolutions.push(AnchorResolution {
+                resolved_line: target_idx,
+                exact_match: true,
+                relaxation_note: None,
+            });
             continue;
         }
 
@@ -200,7 +234,10 @@ pub fn validate_hashline_edits_fuzzy(lines: &[&str], hashline_edits: &[HashlineE
             resolutions.push(AnchorResolution {
                 resolved_line: target_idx,
                 exact_match: false,
-                relaxation_note: Some(format!("anchor {}#{} relaxed to {}#{} (hash stale, line number valid)", edit.pos.line_num, edit.pos.hash, edit.pos.line_num, current_hash)),
+                relaxation_note: Some(format!(
+                    "anchor {}#{} relaxed to {}#{} (hash stale, line number valid)",
+                    edit.pos.line_num, edit.pos.hash, edit.pos.line_num, current_hash
+                )),
             });
             continue;
         }
@@ -208,11 +245,21 @@ pub fn validate_hashline_edits_fuzzy(lines: &[&str], hashline_edits: &[HashlineE
         let search_radius = 5usize;
         let mut best_match: Option<(usize, String)> = None;
         for offset in 1..=search_radius {
-            if let Some(candidate_idx) = target_idx.checked_add(offset).filter(|&i| i < lines.len()) {
+            if let Some(candidate_idx) = target_idx.checked_add(offset).filter(|&i| i < lines.len())
+            {
                 let candidate_line = lines[candidate_idx];
                 let candidate_hash = compute_line_hash(candidate_line, candidate_idx + 1);
                 if candidate_hash == edit.pos.hash && is_high_information_line(candidate_line) {
-                    best_match = Some((candidate_idx, format!("anchor {}#{} resolved to {}#{} (neighborhood search, +{offset})", edit.pos.line_num, edit.pos.hash, candidate_idx + 1, candidate_hash)));
+                    best_match = Some((
+                        candidate_idx,
+                        format!(
+                            "anchor {}#{} resolved to {}#{} (neighborhood search, +{offset})",
+                            edit.pos.line_num,
+                            edit.pos.hash,
+                            candidate_idx + 1,
+                            candidate_hash
+                        ),
+                    ));
                     break;
                 }
             }
@@ -220,14 +267,27 @@ pub fn validate_hashline_edits_fuzzy(lines: &[&str], hashline_edits: &[HashlineE
                 let candidate_line = lines[candidate_idx];
                 let candidate_hash = compute_line_hash(candidate_line, candidate_idx + 1);
                 if candidate_hash == edit.pos.hash && is_high_information_line(candidate_line) {
-                    best_match = Some((candidate_idx, format!("anchor {}#{} resolved to {}#{} (neighborhood search, -{offset})", edit.pos.line_num, edit.pos.hash, candidate_idx + 1, candidate_hash)));
+                    best_match = Some((
+                        candidate_idx,
+                        format!(
+                            "anchor {}#{} resolved to {}#{} (neighborhood search, -{offset})",
+                            edit.pos.line_num,
+                            edit.pos.hash,
+                            candidate_idx + 1,
+                            candidate_hash
+                        ),
+                    ));
                     break;
                 }
             }
         }
 
         if let Some((resolved_idx, note)) = best_match {
-            resolutions.push(AnchorResolution { resolved_line: resolved_idx, exact_match: false, relaxation_note: Some(note) });
+            resolutions.push(AnchorResolution {
+                resolved_line: resolved_idx,
+                exact_match: false,
+                relaxation_note: Some(note),
+            });
             continue;
         }
 
@@ -251,7 +311,17 @@ pub fn validate_hashline_edits_fuzzy(lines: &[&str], hashline_edits: &[HashlineE
              {}\n\
              \n\
              Use updated anchor {}#{} to retry.",
-            edit.pos.line_num, edit.pos.hash, edit.pos.line_num, edit.pos.hash, line_content, edit.pos.line_num, current_hash, line_content, context_lines.join("\n                     "), edit.pos.line_num, current_hash
+            edit.pos.line_num,
+            edit.pos.hash,
+            edit.pos.line_num,
+            edit.pos.hash,
+            line_content,
+            edit.pos.line_num,
+            current_hash,
+            line_content,
+            context_lines.join("\n                     "),
+            edit.pos.line_num,
+            current_hash
         ));
     }
     Ok(resolutions)
@@ -262,7 +332,10 @@ pub fn validate_hashline_edits_fuzzy(lines: &[&str], hashline_edits: &[HashlineE
 /// # Errors
 ///
 /// Returns an error if the file is empty, parsing fails, or anchor resolution fails.
-pub fn apply_hashline_to_content(content: &str, edits_arg: &[serde_json::Value]) -> std::result::Result<(String, Vec<String>), String> {
+pub fn apply_hashline_to_content(
+    content: &str,
+    edits_arg: &[serde_json::Value],
+) -> std::result::Result<(String, Vec<String>), String> {
     let lines: Vec<&str> = content.lines().collect();
     if lines.is_empty() {
         return Err("edit_file: cannot edit empty file".to_string());
@@ -270,10 +343,17 @@ pub fn apply_hashline_to_content(content: &str, edits_arg: &[serde_json::Value])
 
     let hashline_edits = parse_hashline_edits(edits_arg)?;
     let resolutions = validate_hashline_edits_fuzzy(&lines, &hashline_edits)?;
-    let relaxation_notes: Vec<String> = resolutions.iter().filter_map(|r| r.relaxation_note.clone()).collect();
+    let relaxation_notes: Vec<String> = resolutions
+        .iter()
+        .filter_map(|r| r.relaxation_note.clone())
+        .collect();
 
     let mut apply_order: Vec<usize> = (0..hashline_edits.len()).collect();
-    apply_order.sort_by(|&a, &b| resolutions[b].resolved_line.cmp(&resolutions[a].resolved_line));
+    apply_order.sort_by(|&a, &b| {
+        resolutions[b]
+            .resolved_line
+            .cmp(&resolutions[a].resolved_line)
+    });
 
     let mut modified: Vec<String> = lines.iter().map(std::string::ToString::to_string).collect();
     for edit_idx in apply_order {
@@ -351,7 +431,9 @@ pub fn format_hashline_diff(old: &str, new: &str) -> String {
     for &idx in &changed_indices {
         let start = idx.saturating_sub(ctx);
         let end = (idx + ctx).min(new_lines.len().saturating_sub(1));
-        if let Some(last) = regions.last_mut() && start <= last.1 + 1 {
+        if let Some(last) = regions.last_mut()
+            && start <= last.1 + 1
+        {
             last.1 = last.1.max(end);
         } else {
             regions.push((start, end));
@@ -374,12 +456,24 @@ pub fn format_hashline_diff(old: &str, new: &str) -> String {
             if is_changed && i < old_lines.len() {
                 let old_content = old_lines[i];
                 let old_hash = compute_line_hash(old_content, line_num);
-                let _ = std::fmt::write(&mut diff, format_args!("- {line_num:>width$}#{old_hash}:{old_content}\n"));
-                let _ = std::fmt::write(&mut diff, format_args!("+ {line_num:>width$}#{hash}:{line_content}\n"));
+                let _ = std::fmt::write(
+                    &mut diff,
+                    format_args!("- {line_num:>width$}#{old_hash}:{old_content}\n"),
+                );
+                let _ = std::fmt::write(
+                    &mut diff,
+                    format_args!("+ {line_num:>width$}#{hash}:{line_content}\n"),
+                );
             } else if is_changed {
-                let _ = std::fmt::write(&mut diff, format_args!("+ {line_num:>width$}#{hash}:{line_content}\n"));
+                let _ = std::fmt::write(
+                    &mut diff,
+                    format_args!("+ {line_num:>width$}#{hash}:{line_content}\n"),
+                );
             } else {
-                let _ = std::fmt::write(&mut diff, format_args!("  {line_num:>width$}#{hash}:{line_content}\n"));
+                let _ = std::fmt::write(
+                    &mut diff,
+                    format_args!("  {line_num:>width$}#{hash}:{line_content}\n"),
+                );
             }
         }
     }
@@ -424,10 +518,18 @@ pub fn format_fresh_anchors(old_content: &str, new_content: &str) -> Option<Stri
 
     let width = new_lines.len().to_string().len();
     let mut fresh_anchors = String::new();
-    for (i, line) in new_lines.iter().enumerate().skip(anchor_start).take(anchor_end - anchor_start + 1) {
+    for (i, line) in new_lines
+        .iter()
+        .enumerate()
+        .skip(anchor_start)
+        .take(anchor_end - anchor_start + 1)
+    {
         let line_num = i + 1;
         let hash = compute_line_hash(line, line_num);
-        let _ = std::fmt::write(&mut fresh_anchors, format_args!("  {line_num:>width$}#{hash}:{line}\n"));
+        let _ = std::fmt::write(
+            &mut fresh_anchors,
+            format_args!("  {line_num:>width$}#{hash}:{line}\n"),
+        );
     }
 
     let mut output = String::new();

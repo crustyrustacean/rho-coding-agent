@@ -42,8 +42,8 @@ pub type SessionPathHolder = Arc<Mutex<Option<PathBuf>>>;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-pub use crate::error::{ToolError, ToolResult};
 pub use crate::edit::EditFile;
+pub use crate::error::{ToolError, ToolResult};
 pub use crates_io::CratesIoLookup;
 pub use file_ops::{BatchRead, ListDir, ReadFile, WriteFile};
 pub use hashline::compute_line_hash;
