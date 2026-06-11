@@ -2,9 +2,7 @@
 members = [
     "rho",
     "rho-ai",
-    "rho-bench",
     "rho-core",
-    "rho-eval",
     "rho-ext",
     "rho-highlight",
     "rho-tools",

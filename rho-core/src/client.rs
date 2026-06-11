@@ -277,10 +277,4 @@ mod tests {
             "https://api.localhost-fake.evil.com/v1/chat/completions"
         ));
     }
-
-    // ── Message conversion ───────────────────────────────────────────────
-
-    // ── Tool conversion ──────────────────────────────────────────────────
-
-    // ── content_into_string ──────────────────────────────────────────────
 }
