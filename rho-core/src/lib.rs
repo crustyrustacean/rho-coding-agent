@@ -97,9 +97,7 @@ pub use agent::{
 pub use approval::{
     ApprovalGate, ApprovalPolicy, AutoApprovePolicy, ConfigApprovalPolicy, DefaultApprovalPolicy,
 };
-pub use client::{
-    ModelInfo, ModelList, RhoAiClient, client_factory, is_local_endpoint, resolve_api_key,
-};
+pub use client::{ModelInfo, ModelList, RhoAiClient, is_local_endpoint, resolve_api_key};
 pub use config::{
     AgentLoopConfig, ApprovalAction, ApprovalConfig, ConfigLoadError, ConfigLoader, ContextConfig,
     ExtensionConfig, ExtensionPermissions, ProviderConfig, ProviderSettings, RedactionConfig,

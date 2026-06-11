@@ -95,12 +95,6 @@ impl RhoAiClient {
     }
 }
 
-impl Default for RhoAiClient {
-    fn default() -> Self {
-        Self::new(DEFAULT_ENDPOINT, None)
-    }
-}
-
 // ── LlmService impl ──────────────────────────────────────────────────────────
 
 #[async_trait]
@@ -114,41 +108,7 @@ impl rho_ai::LlmService for RhoAiClient {
     }
 }
 
-// ── Shared bootstrapping ─────────────────────────────────────────────────────
-
-/// The default endpoint URL when no override or config is set.
-const DEFAULT_ENDPOINT: &str = "http://localhost:1234/v1/chat/completions";
-
-/// Construct a fully-configured [`RhoAiClient`] from [`RhoConfig`].
-///
-/// **Prefer [`provider_factory`](crate::provider_factory) for new code** — it
-/// returns a [`Box<dyn Provider>`](crate::Provider) that encapsulates client
-/// construction, model discovery, and externality checking.
-///
-/// This function remains available for:
-/// - Bench harnesses that need a concrete client
-/// - Tests that bypass the provider abstraction
-/// - Backward compatibility
-///
-/// Reads `provider.endpoint` and `provider.api_key_env` from config.
-/// CLI overrides for endpoint and api-key-env are applied on top.
-///
-/// Priority (endpoint): CLI override → config → default.
-/// Priority (api key): CLI override → config `provider.api_key_env`.
-pub fn client_factory(
-    config: &RhoConfig,
-    endpoint_override: Option<&str>,
-    api_key_env_override: Option<&str>,
-) -> RhoAiClient {
-    let endpoint = endpoint_override
-        .map(String::from)
-        .or_else(|| config.provider.default_endpoint().map(String::from))
-        .unwrap_or_else(|| DEFAULT_ENDPOINT.to_owned());
-
-    let api_key = resolve_api_key(config, api_key_env_override);
-
-    RhoAiClient::new(endpoint, api_key)
-}
+// ── Provider bootstrapping ─────────────────────────────────────────────────────
 
 /// Resolve the API key from provider configuration.
 ///
@@ -228,71 +188,6 @@ mod tests {
             },
             ..Default::default()
         }
-    }
-
-    // ── client_factory ───────────────────────────────────────────────────
-
-    #[test]
-    fn client_factory_defaults_when_no_config_or_override() {
-        let config = RhoConfig::default();
-        let client = client_factory(&config, None, None);
-        assert_eq!(client.endpoint(), DEFAULT_ENDPOINT);
-        assert!(client.api_key().is_none());
-    }
-
-    #[test]
-    fn client_factory_uses_endpoint_override() {
-        let config = RhoConfig::default();
-        let client = client_factory(
-            &config,
-            Some("http://example.com/v1/chat/completions"),
-            None,
-        );
-        assert_eq!(client.endpoint(), "http://example.com/v1/chat/completions");
-    }
-
-    #[test]
-    fn client_factory_override_beats_config() {
-        let config =
-            config_with_provider("endpoint", "http://config.com/v1/chat/completions".into());
-        let client = client_factory(
-            &config,
-            Some("http://override.com/v1/chat/completions"),
-            None,
-        );
-        assert_eq!(client.endpoint(), "http://override.com/v1/chat/completions");
-    }
-
-    #[test]
-    fn client_factory_uses_config_endpoint() {
-        let config =
-            config_with_provider("endpoint", "http://config.com/v1/chat/completions".into());
-        let client = client_factory(&config, None, None);
-        assert_eq!(client.endpoint(), "http://config.com/v1/chat/completions");
-    }
-
-    #[test]
-    fn client_factory_uses_config_api_key() {
-        let config = config_with_provider("api_key_env", "RHO_TEST_API_KEY_12345".into());
-        temp_env::with_var("RHO_TEST_API_KEY_12345", Some("test-key-value"), || {
-            let client = client_factory(&config, None, None);
-            assert_eq!(client.api_key().as_deref(), Some("test-key-value"));
-        });
-    }
-
-    #[test]
-    fn client_factory_api_key_override_beats_config() {
-        let config = config_with_provider("api_key_env", "CONFIG_KEY".into());
-        temp_env::with_vars(
-            [
-                ("CONFIG_KEY", Some("config-key")),
-                ("OVERRIDE_KEY", Some("override-key")),
-            ],
-            || {
-                let client = client_factory(&config, None, Some("OVERRIDE_KEY"));
-                assert_eq!(client.api_key().as_deref(), Some("override-key"));
-            },
-        );
     }
 
     // ── resolve_api_key ──────────────────────────────────────────────────
