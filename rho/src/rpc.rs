@@ -76,6 +76,8 @@ use rho_core::{
 use serde_json::{Value, json};
 use std::io::{self, BufRead, Write};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
+use tracing::{debug, info, warn};
 
 // ── JSON-RPC 2.0 Error codes ───────────────────────────────────────────────────
 
@@ -291,6 +293,7 @@ where
     let inp = make_in(input);
 
     write_jsonrpc(&out, &notification("ready", json!({})));
+    info!("RPC server started, emitting ready notification");
 
     loop {
         let inp_clone = Arc::clone(&inp);
@@ -307,6 +310,7 @@ where
 
         // EOF — shut down cleanly.
         if bytes_read == 0 {
+            debug!("stdin EOF received, shutting down");
             app.session.close("stdin EOF");
             break;
         }
@@ -320,6 +324,7 @@ where
         let request: Value = match serde_json::from_str(&raw) {
             Ok(v) => v,
             Err(e) => {
+                warn!(raw = %raw, error = %e, "JSON-RPC parse error");
                 write_jsonrpc(
                     &out,
                     &error_response(&Value::Null, PARSE_ERROR, &format!("Parse error: {e}")),
@@ -370,6 +375,7 @@ async fn dispatch_request(
     out: &Out,
     inp: &In,
 ) {
+    debug!(method = %method, id = %id, "dispatching RPC request");
     match method {
         "prompt" => handle_prompt(app, params, id, out, inp).await,
         "abort" => {
@@ -392,10 +398,13 @@ async fn dispatch_request(
             // acknowledge it (shouldn't normally happen outside approval flow).
             write_jsonrpc(out, &success_response(id, json!({})));
         }
-        _ => write_jsonrpc(
-            out,
-            &error_response(id, METHOD_NOT_FOUND, &format!("Method not found: {method}")),
-        ),
+        _ => {
+            debug!(method = %method, "unknown RPC method");
+            write_jsonrpc(
+                out,
+                &error_response(id, METHOD_NOT_FOUND, &format!("Method not found: {method}")),
+            );
+        }
     }
 }
 
@@ -419,6 +428,13 @@ async fn handle_prompt(app: &mut App, params: Value, id: &Value, out: &Out, inp:
     };
 
     write_jsonrpc(out, &notification("agent/start", json!({})));
+
+    debug!(
+        message_len = message.len(),
+        model = %app.session.model(),
+        "agent turn started"
+    );
+    let turn_start = Instant::now();
 
     let observer = RpcObserver {
         out: Arc::clone(out),
@@ -453,10 +469,26 @@ async fn handle_prompt(app: &mut App, params: Value, id: &Value, out: &Out, inp:
     };
     match run_agent_turn(&mut app.session, &message, &params).await {
         TurnResult::Reply(reply) => {
+            let elapsed = turn_start.elapsed();
+            info!(
+                message_len = message.len(),
+                reply_len = reply.len(),
+                duration_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+                model = %app.session.model(),
+                "agent turn completed"
+            );
             write_jsonrpc(out, &notification("agent/end", json!({"reply": &reply})));
             write_jsonrpc(out, &success_response(id, json!({"reply": reply})));
         }
         TurnResult::Error(e) => {
+            let elapsed = turn_start.elapsed();
+            info!(
+                message_len = message.len(),
+                duration_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+                model = %app.session.model(),
+                error = %e,
+                "agent turn failed"
+            );
             write_jsonrpc(out, &notification("agent/error", json!({"error": &e})));
             write_jsonrpc(out, &success_response(id, json!({"error": e})));
         }
@@ -491,11 +523,21 @@ fn handle_get_messages(app: &App, id: &Value, out: &Out) {
 
 /// Switch the active model.
 async fn handle_set_model(app: &mut App, params: Value, id: &Value, out: &Out) {
+    let old_model = app.session.model().to_owned();
+    let old_provider = app.active_provider().name().to_owned();
     match params.get("model").and_then(|v| v.as_str()) {
         Some(spec) if !spec.is_empty() => {
             app.set_model(spec).await;
             let provider = app.active_provider().name().to_owned();
             let model = app.session.model().to_owned();
+            info!(
+                old_model = %old_model,
+                old_provider = %old_provider,
+                new_model = %model,
+                new_provider = %provider,
+                spec = %spec,
+                "model switched"
+            );
             write_jsonrpc(
                 out,
                 &success_response(id, json!({"model": model, "provider": provider})),
@@ -557,14 +599,19 @@ fn handle_get_session_stats(app: &App, id: &Value, out: &Out) {
 
 /// Trigger context compaction.
 async fn handle_compact(app: &mut App, id: &Value, out: &Out) {
+    info!("compaction triggered via RPC");
     match app.compact().await {
         Ok(()) => write_jsonrpc(out, &success_response(id, json!({}))),
-        Err(e) => write_jsonrpc(out, &error_response(id, INTERNAL_ERROR, &e.to_string())),
+        Err(e) => {
+            warn!(error = %e, "compaction failed");
+            write_jsonrpc(out, &error_response(id, INTERNAL_ERROR, &e.to_string()));
+        }
     }
 }
 
 /// Clear conversation history by branching back to system message.
 fn handle_clear(app: &mut App, id: &Value, out: &Out) {
+    info!("session cleared");
     let path = app.session.path_to_root();
     if let Some(root_entry) = path.last() {
         let root_id = root_entry.id.clone();
@@ -665,6 +712,13 @@ async fn handle_reload_extensions(app: &mut App, id: &Value, out: &Out) {
 
     match app.ext_loader.reload(&dirs, &mut app.registry).await {
         Ok(report) => {
+            info!(
+                added = report.added.len(),
+                reloaded = report.reloaded.len(),
+                removed = report.removed.len(),
+                failed = report.failed.len(),
+                "extensions reloaded"
+            );
             app.ext_observers = app.ext_loader.build_observers();
             write_jsonrpc(
                 out,
@@ -679,7 +733,10 @@ async fn handle_reload_extensions(app: &mut App, id: &Value, out: &Out) {
                 ),
             );
         }
-        Err(e) => write_jsonrpc(out, &error_response(id, INTERNAL_ERROR, &e.to_string())),
+        Err(e) => {
+            warn!(error = %e, "extension reload failed");
+            write_jsonrpc(out, &error_response(id, INTERNAL_ERROR, &e.to_string()));
+        }
     }
 }
 
