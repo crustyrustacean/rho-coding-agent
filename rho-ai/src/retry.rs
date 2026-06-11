@@ -89,7 +89,7 @@ async fn retry_stream(
                 warn!(attempt = attempt_num, max = config.max_retries, error = %e, "retryable error, backing off");
                 debug!(
                     attempt = attempt_num,
-                    delay_ms = delay.as_millis() as u64,
+                    delay_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
                     "waiting before retry"
                 );
                 tokio::time::sleep(delay).await;

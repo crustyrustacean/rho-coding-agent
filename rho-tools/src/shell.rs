@@ -20,8 +20,10 @@ use rho_core::{
 };
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use std::time::Instant;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
+use tracing::{debug, error, info, warn};
 
 // ── CommandDenylist (re-exported from rho-core) ────────────────────────────
 
@@ -116,9 +118,12 @@ impl ShellExecutor for PowerShellExecutor {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
-            .map_err(|e| ToolError::CommandSpawn {
-                command: self.shell.to_string(),
-                source: e,
+            .map_err(|e| {
+                error!(shell = self.shell, command = %command, error = %e, "failed to spawn shell process");
+                ToolError::CommandSpawn {
+                    command: self.shell.to_string(),
+                    source: e,
+                }
             })?;
 
         // Write the input to the child's stdin, then close it.
@@ -161,6 +166,12 @@ impl ShellExecutor for PowerShellExecutor {
                 res = tokio::time::timeout(dur, run_future) => {
                     if let Ok(inner) = res { inner } else {
                         // Timeout elapsed — kill the process.
+                        warn!(
+                            shell = self.shell,
+                            command = %command,
+                            timeout_ms = u64::try_from(dur.as_millis()).unwrap_or(u64::MAX),
+                            "shell command timed out"
+                        );
                         kill_process(child_id).await;
                         Err(ToolError::Timeout {
                             duration_ms: u64::try_from(dur.as_millis()).unwrap_or(u64::MAX),
@@ -267,6 +278,7 @@ impl Tool for RunCommand {
 
         // 1. Denylist check — refuse dangerous commands before execution.
         if let Some(reason) = self.denylist.check(&command) {
+            warn!(command = %command, reason = %reason, "command denied by denylist");
             return Ok(ToolOutcome::Immediate(ToolResult::error(format!(
                 "command denied: {reason}"
             ))));
@@ -288,10 +300,21 @@ impl Tool for RunCommand {
         };
 
         // 3. Execute the command.
+        let start = Instant::now();
+        debug!(command = %command, cwd = %working_dir.display(), "executing shell command");
         let shell_output = self
             .executor
             .execute(&command, &working_dir, None, cancel, input_arg.as_deref())
             .await?;
+        let elapsed = start.elapsed();
+        info!(
+            command = %command,
+            exit_code = shell_output.exit_code,
+            duration_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+            stdout_len = shell_output.stdout.len(),
+            stderr_len = shell_output.stderr.len(),
+            "shell command completed"
+        );
 
         // 4. Map ShellOutput → ToolResult at the tool boundary.
         let combined = if shell_output.stderr.is_empty() {
