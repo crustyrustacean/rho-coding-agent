@@ -411,8 +411,8 @@ async fn dispatch_request(
 // ── Request handlers ─────────────────────────────────────────────────────────
 
 /// Run one agent turn for the user message.
-async fn handle_prompt(app: &mut App, params: Value, id: &Value, out: &Out, inp: &In) {
-    let message = match params.get("message").and_then(|v| v.as_str()) {
+async fn handle_prompt(app: &mut App, wire_params: Value, id: &Value, out: &Out, inp: &In) {
+    let message = match wire_params.get("message").and_then(|v| v.as_str()) {
         Some(m) if !m.is_empty() => m.to_owned(),
         _ => {
             write_jsonrpc(
@@ -458,7 +458,7 @@ async fn handle_prompt(app: &mut App, params: Value, id: &Value, out: &Out, inp:
     } else {
         None
     };
-    let params = rho_core::LoopParams {
+    let loop_params = rho_core::LoopParams {
         client: client.as_ref(),
         registry: &app.registry,
         config: &app.config,
@@ -467,7 +467,7 @@ async fn handle_prompt(app: &mut App, params: Value, id: &Value, out: &Out, inp:
         observer: &composite,
         compaction_client,
     };
-    match run_agent_turn(&mut app.session, &message, &params).await {
+    match run_agent_turn(&mut app.session, &message, &loop_params).await {
         TurnResult::Reply(reply) => {
             let elapsed = turn_start.elapsed();
             info!(
