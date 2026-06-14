@@ -1,3 +1,23 @@
+## [0.78.0] - 2026-06-14
+
+### 🚜 Refactor
+
+- **Breaking:** Make `AgentObserver` trait async via `#[async_trait]`. All notification methods (`on_state_change`, `on_text_delta`, `on_tool_call`, etc.) now return boxed futures. `on_tool_call_intercept` remains sync — it's a pure policy decision.
+- **Breaking:** Remove `Transport::write_sync()`. The async `AgentObserver` trait eliminates the need for a synchronous write path — `RpcObserver` now uses `Transport::write_message().await` directly.
+- *(rpc)* `RpcObserver` writes JSON-RPC notifications via `write_message().await` instead of the removed `write_sync`.
+- *(ext)* `DenoObserver` calls extension hooks via direct `.await` instead of `tokio::spawn` fire-and-forget, eliminating race conditions during shutdown.
+- *(core)* `classify_call`/`advance_to_next_call`/`classify_first_call` are now async; restructured mutual recursion into a loop to avoid async recursion boxing.
+
+### Migration
+
+If you implement `AgentObserver`:
+- Add `#[async_trait]` to your `impl AgentObserver` blocks
+- Change `fn on_*` to `async fn on_*`
+- Add `.await` at every call site (e.g., `observer.on_text_delta(delta).await`)
+
+If you implement `Transport`:
+- Remove the `write_sync` method (no longer required by the trait)
+
 ## [0.77.2] - 2026-06-14
 
 ### 🚀 Features
@@ -27,6 +47,7 @@
 
 - Update dependencies and refactor rpc variable naming
 - Remove outdated PLAN.md
+
 # Changelog
 
 ## [0.76.0] - 2026-06-10
