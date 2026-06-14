@@ -36,9 +36,19 @@ struct ChatCompletionRequest {
     tools: Vec<WireTool>,
     /// Whether to stream the response.
     stream: bool,
+    /// Request usage stats in the final streaming chunk.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream_options: Option<StreamOptions>,
     /// Reasoning effort for thinking-capable models.
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_effort: Option<String>,
+}
+
+/// `stream_options` to request usage in the final streaming chunk.
+#[derive(Debug, Serialize)]
+struct StreamOptions {
+    /// Whether to include usage in the final chunk.
+    include_usage: bool,
 }
 
 /// A message in the `OpenAI` wire format.
@@ -479,6 +489,9 @@ impl OpenAiService {
             messages: wire_messages,
             tools: wire_tools,
             stream: true,
+            stream_options: Some(StreamOptions {
+                include_usage: true,
+            }),
             reasoning_effort: request.reasoning_effort.clone(),
         };
 
@@ -814,11 +827,15 @@ mod tests {
             }],
             tools: vec![],
             stream: true,
+            stream_options: Some(StreamOptions {
+                include_usage: true,
+            }),
             reasoning_effort: None,
         };
         let json = serde_json::to_value(&req).unwrap();
         assert_eq!(json["model"], "gpt-4o");
         assert_eq!(json["stream"], true);
+        assert_eq!(json["stream_options"]["include_usage"], true);
         assert_eq!(json["messages"][0]["role"], "user");
         assert!(json.get("tools").is_none()); // empty tools omitted
     }
@@ -832,6 +849,9 @@ mod tests {
             messages: vec![],
             tools: vec![],
             stream: true,
+            stream_options: Some(StreamOptions {
+                include_usage: true,
+            }),
             reasoning_effort: Some("medium".into()),
         };
         let json = serde_json::to_value(&req).unwrap();
@@ -845,6 +865,9 @@ mod tests {
             messages: vec![],
             tools: vec![],
             stream: true,
+            stream_options: Some(StreamOptions {
+                include_usage: true,
+            }),
             reasoning_effort: None,
         };
         let json = serde_json::to_value(&req).unwrap();
@@ -1290,6 +1313,48 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn stream_usage_parsed_from_final_chunk() {
+        let sse_data = "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"},\"finish_reason\":null}]}
+\n\
+                       data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":50}}
+\n\
+                       data: [DONE]\n\n";
+
+        let mut stream = OpenAiSseStream::new(Box::pin(futures::stream::empty()));
+        let events = stream.parse_chunk(sse_data);
+
+        let done = events.iter().find_map(|e| match e {
+            StreamEvent::Done { usage, .. } => Some(usage),
+            _ => None,
+        });
+        assert!(done.is_some(), "expected Done event with usage");
+        let usage = done.unwrap();
+        assert_eq!(usage.input_tokens, 100);
+        assert_eq!(usage.output_tokens, 50);
+    }
+
+    #[test]
+    fn stream_usage_defaults_when_absent() {
+        let sse_data =
+            "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}
+\n\
+                       data: [DONE]\n\n";
+
+        let mut stream = OpenAiSseStream::new(Box::pin(futures::stream::empty()));
+        let events = stream.parse_chunk(sse_data);
+
+        let done = events.iter().find_map(|e| match e {
+            StreamEvent::Done { usage, .. } => Some(usage),
+            _ => None,
+        });
+        assert!(done.is_some(), "expected Done event");
+        let usage = done.unwrap();
+        assert_eq!(usage.input_tokens, 0);
+        assert_eq!(usage.output_tokens, 0);
+        assert!(usage.cost.is_none());
     }
 
     #[test]
