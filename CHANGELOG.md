@@ -1,3 +1,21 @@
+## [0.77.0] - 2026-06-13
+
+### 🚀 Features
+
+- *(rpc)* Add resumeSession and listTools JSON-RPC methods
+
+### 🐛 Bug Fixes
+
+- *(tools)* Resolve 31 clippy warnings across hashline, edit, file_ops
+
+### 🎨 Styling
+
+- *(tools)* Run cargo fmt on new modules, suppress too_many_lines
+
+### ⚙️ Miscellaneous Tasks
+
+- Update dependencies and refactor rpc variable naming
+- Remove outdated PLAN.md
 # Changelog
 
 ## [0.76.0] - 2026-06-10
