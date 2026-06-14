@@ -1,3 +1,8 @@
+## [0.77.1] - 2026-06-13
+
+### 🚀 Features
+
+- *(rho-ai)* Request stream usage from providers via stream_options
 ## [0.77.0] - 2026-06-13
 
 ### 🚀 Features
