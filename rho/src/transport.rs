@@ -30,13 +30,6 @@ pub enum ReadResult {
 ///
 /// Each method receives or returns a single JSON-RPC message. The transport
 /// handles framing; callers just pass/receive [`Value`].
-///
-/// The trait provides both async ([`write_message`]) and synchronous
-/// ([`write_sync`]) write paths. The async path is used by the RPC loop and
-/// approval gate (which are already async). The sync path is used by
-/// [`AgentObserver`] callbacks, which are invoked synchronously by the agent
-/// loop and cannot spawn async tasks without risking race conditions with
-/// downstream consumers (e.g., tests that inspect the output buffer).
 #[async_trait]
 pub trait Transport: Send + Sync {
     /// Read one JSON-RPC message from the transport.
@@ -48,21 +41,8 @@ pub trait Transport: Send + Sync {
 
     /// Write one JSON-RPC message asynchronously.
     ///
-    /// Used by the RPC dispatch loop and approval gate, which operate in
-    /// async contexts. Returns an error on I/O failure.
+    /// Returns an error on I/O failure.
     async fn write_message(&self, value: &Value) -> Result<()>;
-
-    /// Write one JSON-RPC message synchronously.
-    ///
-    /// Used by [`AgentObserver`] callbacks, which are invoked synchronously
-    /// from within the agent loop and must not defer writes to a later
-    /// poll cycle.
-    ///
-    /// The default implementation is a no-op; transports that support
-    /// synchronous writes should override this.
-    fn write_sync(&self, _value: &Value) {
-        // Default: no-op. Transports that support sync writes should override.
-    }
 }
 
 // ── Stdio implementation ─────────────────────────────────────────────────────
@@ -128,14 +108,5 @@ impl Transport for StdioTransport {
         })
         .await
         .map_err(|e| anyhow::anyhow!("write task panicked: {e}"))?
-    }
-
-    fn write_sync(&self, value: &Value) {
-        let mut guard = self
-            .writer
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let _ = writeln!(guard, "{value}");
-        let _ = guard.flush();
     }
 }

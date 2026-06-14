@@ -28,6 +28,7 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use rho_core::agent::AgentObserver;
 use rho_core::tool::ToolResult;
 use tokio::sync::Mutex;
@@ -66,79 +67,51 @@ impl DenoObserver {
     }
 }
 
+#[async_trait]
 impl AgentObserver for DenoObserver {
-    fn on_tool_call(&self, name: &str, arguments: &str) {
-        // Synchronous trait — can't await. Use tokio::spawn to drive the async call.
-        let has_hook = {
-            // We need to check if the hook exists. Since we can't hold the mutex
-            // across an await in a sync context, we use try_lock as a best-effort
-            // check. If we can't check, we skip — hooks are best-effort.
-            let Ok(rt) = self.runtime.try_lock() else {
-                return;
-            };
-            rt.manifest().hooks.on_tool_call.is_some()
-        };
-
-        if !has_hook {
+    async fn on_tool_call(&self, name: &str, arguments: &str) {
+        let rt = self.runtime.lock().await;
+        if rt.manifest().hooks.on_tool_call.is_none() {
             return;
         }
 
-        let rt = self.runtime.clone();
-        let tool_name = name.to_string();
-        let args = arguments.to_string();
-        tokio::spawn(async move {
-            let rt = rt.lock().await;
-            let payload = serde_json::json!({
-                "toolName": tool_name,
-                "arguments": args,
-            })
-            .to_string();
+        let payload = serde_json::json!({
+            "toolName": name,
+            "arguments": arguments,
+        })
+        .to_string();
 
-            if let Err(e) = rt.call_hook("onToolCall", &payload).await {
-                warn!(
-                    extension = %rt.manifest().name,
-                    hook = "onToolCall",
-                    error = %e,
-                    "hook failed"
-                );
-            }
-        });
+        if let Err(e) = rt.call_hook("onToolCall", &payload).await {
+            warn!(
+                extension = %rt.manifest().name,
+                hook = "onToolCall",
+                error = %e,
+                "hook failed"
+            );
+        }
     }
 
-    fn on_tool_result(&self, name: &str, result: &ToolResult) {
-        let has_hook = {
-            let Ok(rt) = self.runtime.try_lock() else {
-                return;
-            };
-            rt.manifest().hooks.on_tool_result.is_some()
-        };
-
-        if !has_hook {
+    async fn on_tool_result(&self, name: &str, result: &ToolResult) {
+        let rt = self.runtime.lock().await;
+        if rt.manifest().hooks.on_tool_result.is_none() {
             return;
         }
 
-        let rt = self.runtime.clone();
-        let tool_name = name.to_string();
-        let output = result.output.clone();
-        let is_error = result.is_error;
-        tokio::spawn(async move {
-            let rt = rt.lock().await;
-            let payload = serde_json::json!({
-                "toolName": tool_name,
-                "output": output,
-                "isError": is_error,
-            })
-            .to_string();
+        let payload = serde_json::json!({
+            "toolName": name,
+            "output": result.output,
+            "isError": result.is_error,
+        })
+        .to_string();
 
-            if let Err(e) = rt.call_hook("onToolResult", &payload).await {
-                warn!(
-                    extension = %rt.manifest().name,
-                    hook = "onToolResult",
-                    error = %e,
-                    "hook failed"
-                );
-            }
-        });
+        if let Err(e) = rt.call_hook("onToolResult", &payload).await {
+            warn!(
+                extension = %rt.manifest().name,
+                hook = "onToolResult",
+                error = %e,
+                "hook failed"
+            );
+        }
     }
 }
 
@@ -190,11 +163,10 @@ mod tests {
 
         let observer = DenoObserver::new(rt.clone());
 
-        // Fire on_tool_call synchronously (it spawns internally)
-        observer.on_tool_call("search", r#"{"query":"hello"}"#);
-
-        // Give the spawned task time to complete
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        // Fire on_tool_call — now awaited directly
+        observer
+            .on_tool_call("search", r#"{"query":"hello"}"#)
+            .await;
 
         // Verify the hook recorded the tool name by calling the extension's tool
         let result = rt.lock().await.call_tool("ping", "").await.unwrap();
@@ -220,10 +192,8 @@ mod tests {
 
         let observer = DenoObserver::new(rt.clone());
 
-        // Should not panic or spawn anything meaningful
-        observer.on_tool_call("search", "{}");
-
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        // Should not panic or do anything meaningful
+        observer.on_tool_call("search", "{}").await;
 
         // Tool still works — hook didn't interfere
         let result = rt.lock().await.call_tool("ping", "").await.unwrap();
@@ -260,9 +230,9 @@ mod tests {
 
         let observer = DenoObserver::new(rt.clone());
 
-        observer.on_tool_result("search", &ToolResult::success("found 3 items"));
-
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        observer
+            .on_tool_result("search", &ToolResult::success("found 3 items"))
+            .await;
 
         // Verify hook captured the result
         let result = rt.lock().await.call_tool("ping", "").await.unwrap();
@@ -295,9 +265,9 @@ mod tests {
 
         let observer = DenoObserver::new(rt.clone());
 
-        observer.on_tool_result("boom", &ToolResult::error("kaboom"));
-
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        observer
+            .on_tool_result("boom", &ToolResult::error("kaboom"))
+            .await;
 
         let result = rt.lock().await.call_tool("ping", "").await.unwrap();
         assert_eq!(result, "true");
@@ -372,9 +342,7 @@ mod tests {
         // Shutdown the runtime
         rt.lock().await.shutdown().unwrap();
 
-        // This should not panic — the spawned task will log a warning
-        observer.on_tool_call("test", "{}");
-
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        // This should not panic — the hook call will log a warning
+        observer.on_tool_call("test", "{}").await;
     }
 }

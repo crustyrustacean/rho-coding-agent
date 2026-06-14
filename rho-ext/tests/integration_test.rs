@@ -7,7 +7,6 @@
 //! Unlike the unit tests in `src/`, these tests use the public API only.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use rho_core::AgentObserver;
 use rho_core::config::ExtensionPermissions;
@@ -212,11 +211,12 @@ async fn full_pipeline_discover_load_execute() {
     }
 
     // 5. Verify observer hooks fire without panic
-    observers[0].on_tool_call("greet", r#"{"name":"world"}"#);
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    observers[0].on_tool_result("greet", &ToolResult::success("Hello, world!"));
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    observers[0]
+        .on_tool_call("greet", r#"{"name":"world"}"#)
+        .await;
+    observers[0]
+        .on_tool_result("greet", &ToolResult::success("Hello, world!"))
+        .await;
 
     // 6. Verify tool definitions are included in tool_definitions()
     let defs = registry.tool_definitions();

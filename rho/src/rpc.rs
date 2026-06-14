@@ -146,53 +146,69 @@ fn notification(method: &str, params: Value) -> Value {
 
 /// Forwards agent-loop events to the RPC client as JSON-RPC notifications.
 ///
-/// Uses [`Transport::write_sync`] to write notifications without spawning
-/// async tasks, since observer callbacks are invoked synchronously by the
-/// agent loop.
+/// Now that [`AgentObserver`] is async, the observer can write notifications
+/// directly via [`Transport::write_message`], eliminating the `write_sync`
+/// hack and `tokio::spawn` workarounds.
 struct RpcObserver {
     /// Shared transport handle.
     transport: Arc<dyn Transport>,
 }
 
+#[async_trait]
 impl AgentObserver for RpcObserver {
-    fn on_state_change(&self, state: AgentState) {
-        self.transport.write_sync(&notification(
-            "state/change",
-            json!({"state": state_name(&state)}),
-        ));
+    async fn on_state_change(&self, state: AgentState) {
+        let _ = self
+            .transport
+            .write_message(&notification(
+                "state/change",
+                json!({"state": state_name(&state)}),
+            ))
+            .await;
     }
 
-    fn on_text_delta(&self, delta: &str) {
-        self.transport
-            .write_sync(&notification("message/delta", json!({"delta": delta})));
+    async fn on_text_delta(&self, delta: &str) {
+        let _ = self
+            .transport
+            .write_message(&notification("message/delta", json!({"delta": delta})))
+            .await;
     }
 
-    fn on_reasoning_delta(&self, delta: &str) {
-        self.transport
-            .write_sync(&notification("reasoning/delta", json!({"delta": delta})));
+    async fn on_reasoning_delta(&self, delta: &str) {
+        let _ = self
+            .transport
+            .write_message(&notification("reasoning/delta", json!({"delta": delta})))
+            .await;
     }
 
-    fn on_tool_call(&self, name: &str, arguments: &str) {
-        self.transport.write_sync(&notification(
-            "tool/call",
-            json!({"name": name, "arguments": arguments}),
-        ));
+    async fn on_tool_call(&self, name: &str, arguments: &str) {
+        let _ = self
+            .transport
+            .write_message(&notification(
+                "tool/call",
+                json!({"name": name, "arguments": arguments}),
+            ))
+            .await;
     }
 
-    fn on_tool_result(&self, name: &str, result: &ToolResult) {
-        self.transport.write_sync(&notification(
-            "tool/result",
-            json!({
-                "name": name,
-                "is_error": result.is_error,
-                "output": result.output,
-            }),
-        ));
+    async fn on_tool_result(&self, name: &str, result: &ToolResult) {
+        let _ = self
+            .transport
+            .write_message(&notification(
+                "tool/result",
+                json!({
+                    "name": name,
+                    "is_error": result.is_error,
+                    "output": result.output,
+                }),
+            ))
+            .await;
     }
 
-    fn on_tool_denied(&self, name: &str) {
-        self.transport
-            .write_sync(&notification("tool/denied", json!({"name": name})));
+    async fn on_tool_denied(&self, name: &str) {
+        let _ = self
+            .transport
+            .write_message(&notification("tool/denied", json!({"name": name})))
+            .await;
     }
 }
 

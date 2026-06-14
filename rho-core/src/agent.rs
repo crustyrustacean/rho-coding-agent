@@ -54,6 +54,7 @@ use crate::message::{ModelToolCall, ToolCallFunction};
 use crate::newtypes::{ToolCallId, ToolName};
 use crate::session::Session;
 use crate::tool::{CancellationToken, Tool, ToolRegistry, ToolResult, ToolRisk};
+use async_trait::async_trait;
 use futures::StreamExt;
 use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
@@ -131,33 +132,38 @@ pub enum InterceptResult {
 /// The agent loop calls these methods at every state transition and as
 /// stream deltas arrive from the model.
 ///
+/// Notification methods are `async` so implementations can perform I/O
+/// (e.g., writing to a transport, calling an extension hook) without
+/// resorting to `tokio::spawn` fire-and-forget workarounds.
+///
 /// All methods receive `&str` references (not owned values) so observers
 /// can be zero-allocation when they choose to ignore events.
+#[async_trait]
 pub trait AgentObserver: Send + Sync {
     /// The agent entered a new [`AgentState`].
-    fn on_state_change(&self, _state: AgentState) {}
+    async fn on_state_change(&self, _state: AgentState) {}
 
     /// Incremental text content from the model's streaming response.
     ///
     /// May be called many times per loop iteration as deltas arrive.
-    fn on_text_delta(&self, _delta: &str) {}
+    async fn on_text_delta(&self, _delta: &str) {}
 
     /// Incremental reasoning / chain-of-thought content from the model.
     ///
     /// May be called many times per loop iteration as deltas arrive.
-    fn on_reasoning_delta(&self, _delta: &str) {}
+    async fn on_reasoning_delta(&self, _delta: &str) {}
 
     /// The model requested a tool call with the given name and arguments.
-    fn on_tool_call(&self, _name: &str, _arguments: &str) {}
+    async fn on_tool_call(&self, _name: &str, _arguments: &str) {}
 
     /// A tool finished executing and produced this result.
-    fn on_tool_result(&self, _name: &str, _result: &ToolResult) {}
+    async fn on_tool_result(&self, _name: &str, _result: &ToolResult) {}
 
     /// A tool call was denied by the approval gate.
-    fn on_tool_denied(&self, _name: &str) {}
+    async fn on_tool_denied(&self, _name: &str) {}
 
     /// A tool call requires human approval with the given risk level.
-    fn on_approval_requested(&self, _tool_name: &str, _risk: ToolRisk) {}
+    async fn on_approval_requested(&self, _tool_name: &str, _risk: ToolRisk) {}
 
     /// Intercept a tool call before it reaches the approval gate or execution.
     ///
@@ -167,6 +173,9 @@ pub trait AgentObserver: Send + Sync {
     ///
     /// Return `None` (the default) to indicate no opinion (allow). If multiple
     /// observers exist, the first `Block` wins.
+    ///
+    /// This method is synchronous because it is a pure policy decision;
+    /// no implementation should need to perform I/O here.
     fn on_tool_call_intercept(&self, _name: &str, _arguments: &str) -> Option<InterceptResult> {
         None
     }
@@ -531,7 +540,7 @@ impl LoopContext<'_> {
                     );
                 }
                 self.phase = crate::session::phase::SessionPhase::Conclusion;
-                self.params.observer.on_state_change(AgentState::Idle);
+                self.params.observer.on_state_change(AgentState::Idle).await;
                 let reply = self.format_reply(text, &reasoning_content);
                 Ok(State::Done(reply))
             }
@@ -552,7 +561,7 @@ impl LoopContext<'_> {
                 }
                 // Model produced tool calls — reset empty counter.
                 self.consecutive_empty_count = 0;
-                Ok(self.classify_first_call(calls))
+                Ok(self.classify_first_call(calls).await)
             }
         }
     }
@@ -575,18 +584,22 @@ impl LoopContext<'_> {
 
         if !approved {
             debug!(tool_name = %call.function.name, action = "denied");
-            self.params.observer.on_tool_denied(&call.function.name);
+            self.params
+                .observer
+                .on_tool_denied(&call.function.name)
+                .await;
             let call_id = ToolCallId::new(call.id.to_string());
             let _ = self
                 .session
                 .append_tool_result(call_id, &ToolResult::error("Tool call denied by user."));
-            return Ok(self.advance_to_next_call(remaining));
+            return Ok(self.advance_to_next_call(remaining).await);
         }
 
         // Approved — transition to executing.
         self.params
             .observer
-            .on_state_change(AgentState::ExecutingTool);
+            .on_state_change(AgentState::ExecutingTool)
+            .await;
         Ok(State::ExecutingTool { call, remaining })
     }
 
@@ -625,7 +638,7 @@ impl LoopContext<'_> {
                 let _ = self
                     .session
                     .append_tool_result(call_id, &ToolResult::error(msg));
-                return Ok(self.advance_to_next_call(remaining));
+                return Ok(self.advance_to_next_call(remaining).await);
             }
         };
 
@@ -634,12 +647,13 @@ impl LoopContext<'_> {
             && let Some(nudge) = self.check_stuck_loop(&call, &result)
         {
             let _ = self.session.append_tool_result(call_id, &nudge);
-            return Ok(self.advance_to_next_call(remaining));
+            return Ok(self.advance_to_next_call(remaining).await);
         }
 
         self.params
             .observer
-            .on_tool_result(&call.function.name, &result);
+            .on_tool_result(&call.function.name, &result)
+            .await;
         let _ = self.session.append_tool_result(call_id, &result);
 
         // Phase detection: update session phase based on tool name.
@@ -689,7 +703,7 @@ impl LoopContext<'_> {
             }
         }
 
-        Ok(self.advance_to_next_call(remaining))
+        Ok(self.advance_to_next_call(remaining).await)
     }
 
     // ── Truncation handling ──────────────────────────────────────────────
@@ -720,7 +734,7 @@ impl LoopContext<'_> {
                     count,
                     max, "aborting: model produced {count} consecutive empty responses"
                 );
-                self.params.observer.on_state_change(AgentState::Idle);
+                self.params.observer.on_state_change(AgentState::Idle).await;
                 return Ok(State::Done(
                     "The model returned empty responses \
                         consecutively and was unable to continue. \
@@ -761,7 +775,7 @@ impl LoopContext<'_> {
             Err(e) => {
                 warn!(error = %e, "compaction failed after length truncation");
                 let explanation = Self::format_truncation_explanation(&content, &reasoning_content);
-                self.params.observer.on_state_change(AgentState::Idle);
+                self.params.observer.on_state_change(AgentState::Idle).await;
                 Ok(State::Done(explanation))
             }
         }
@@ -771,32 +785,43 @@ impl LoopContext<'_> {
 
     /// From a batch of tool calls, classify the first one (approval or
     /// execute) and stash the rest.
-    fn classify_first_call(&mut self, calls: Vec<ModelToolCall>) -> State {
-        let mut iter = calls.into_iter();
+    async fn classify_first_call(&mut self, calls: Vec<ModelToolCall>) -> State {
         // SAFETY: callers check `calls.is_empty()` before calling this.
-        let first = iter.next().expect("calls is non-empty");
-        let remaining: Vec<_> = iter.collect();
-        self.classify_call(first, remaining)
+        assert!(!calls.is_empty(), "calls is non-empty");
+        self.advance_to_next_call(calls).await
     }
 
     /// After processing one tool call, determine the state for the next one
     /// (or go back to [`State::Thinking`] if none remain).
-    fn advance_to_next_call(&mut self, remaining: Vec<ModelToolCall>) -> State {
-        let mut iter = remaining.into_iter();
-        if let Some(next) = iter.next() {
-            self.classify_call(next, iter.collect())
-        } else {
-            self.params.observer.on_state_change(AgentState::Thinking);
-            State::Thinking
+    ///
+    /// Loops internally so that blocked tool calls (intercepted by an
+    /// observer) are skipped without recursion.
+    async fn advance_to_next_call(&mut self, mut remaining: Vec<ModelToolCall>) -> State {
+        while let Some(next) = remaining.first().cloned() {
+            remaining.remove(0);
+            let state = self.classify_call_inner(next, &mut remaining).await;
+            // classify_call_inner returns None when the call was blocked
+            // (already handled) and we should try the next one.
+            if let Some(state) = state {
+                return state;
+            }
         }
+        self.params
+            .observer
+            .on_state_change(AgentState::Thinking)
+            .await;
+        State::Thinking
     }
 
-    /// Classify a single tool call: does it need approval, or can it be
-    /// executed directly?
+    /// Inner classification logic for a single tool call.
     ///
-    /// Checks observers for interception first. If any observer blocks the
-    /// call, it is denied immediately — the approval gate is never consulted.
-    fn classify_call(&mut self, call: ModelToolCall, remaining: Vec<ModelToolCall>) -> State {
+    /// Returns `None` if the call was blocked by an observer (caller should
+    /// advance to the next call), or `Some(state)` for actionable states.
+    async fn classify_call_inner(
+        &mut self,
+        call: ModelToolCall,
+        remaining: &mut Vec<ModelToolCall>,
+    ) -> Option<State> {
         // Check observers for interception.
         if let Some(InterceptResult::Block { reason }) = self
             .params
@@ -804,13 +829,16 @@ impl LoopContext<'_> {
             .on_tool_call_intercept(&call.function.name, &call.function.arguments)
         {
             debug!(tool_name = %call.function.name, %reason, "tool call blocked by observer");
-            self.params.observer.on_tool_denied(&call.function.name);
+            self.params
+                .observer
+                .on_tool_denied(&call.function.name)
+                .await;
             let call_id = ToolCallId::new(call.id.to_string());
             let _ = self.session.append_tool_result(
                 call_id,
                 &ToolResult::error(format!("Tool call blocked: {reason}")),
             );
-            return self.advance_to_next_call(remaining);
+            return None;
         }
 
         let risk = self
@@ -821,7 +849,8 @@ impl LoopContext<'_> {
 
         self.params
             .observer
-            .on_tool_call(&call.function.name, &call.function.arguments);
+            .on_tool_call(&call.function.name, &call.function.arguments)
+            .await;
 
         if self
             .params
@@ -831,16 +860,21 @@ impl LoopContext<'_> {
         {
             self.params
                 .observer
-                .on_state_change(AgentState::AwaitingApproval);
+                .on_state_change(AgentState::AwaitingApproval)
+                .await;
             self.params
                 .observer
-                .on_approval_requested(&call.function.name, risk);
-            State::AwaitingApproval { call, remaining }
+                .on_approval_requested(&call.function.name, risk)
+                .await;
+            let remaining = std::mem::take(remaining);
+            Some(State::AwaitingApproval { call, remaining })
         } else {
             self.params
                 .observer
-                .on_state_change(AgentState::ExecutingTool);
-            State::ExecutingTool { call, remaining }
+                .on_state_change(AgentState::ExecutingTool)
+                .await;
+            let remaining = std::mem::take(remaining);
+            Some(State::ExecutingTool { call, remaining })
         }
     }
 
@@ -1087,7 +1121,7 @@ pub async fn run_loop(
     };
 
     let mut state = State::Thinking;
-    params.observer.on_state_change(AgentState::Thinking);
+    params.observer.on_state_change(AgentState::Thinking).await;
 
     loop {
         let _iter_span =
@@ -1165,9 +1199,9 @@ pub(crate) async fn consume_stream(
         match result {
             Ok(event) => {
                 match &event {
-                    rho_ai::StreamEvent::Text(delta) => observer.on_text_delta(delta),
+                    rho_ai::StreamEvent::Text(delta) => observer.on_text_delta(delta).await,
                     rho_ai::StreamEvent::Reasoning(delta) => {
-                        observer.on_reasoning_delta(delta);
+                        observer.on_reasoning_delta(delta).await;
                     }
                     _ => {}
                 }
@@ -1434,11 +1468,12 @@ mod tests {
         reasoning_deltas: Arc<Mutex<Vec<String>>>,
     }
 
+    #[async_trait::async_trait]
     impl AgentObserver for RecordingObserver {
-        fn on_text_delta(&self, delta: &str) {
+        async fn on_text_delta(&self, delta: &str) {
             self.text_deltas.lock().unwrap().push(delta.to_owned());
         }
-        fn on_reasoning_delta(&self, delta: &str) {
+        async fn on_reasoning_delta(&self, delta: &str) {
             self.reasoning_deltas.lock().unwrap().push(delta.to_owned());
         }
     }

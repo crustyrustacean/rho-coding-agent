@@ -5,6 +5,7 @@
 //! and any extension observers. [`CompositeObserver`] holds a list of
 //! observers and fans out every call.
 
+use async_trait::async_trait;
 use rho_core::AgentObserver;
 use rho_core::agent::{AgentState, InterceptResult};
 use rho_core::tool::{ToolResult, ToolRisk};
@@ -25,46 +26,47 @@ impl<'a> CompositeObserver<'a> {
     }
 }
 
+#[async_trait]
 impl AgentObserver for CompositeObserver<'_> {
-    fn on_state_change(&self, state: AgentState) {
+    async fn on_state_change(&self, state: AgentState) {
         for obs in &self.observers {
-            obs.on_state_change(state.clone());
+            obs.on_state_change(state.clone()).await;
         }
     }
 
-    fn on_text_delta(&self, delta: &str) {
+    async fn on_text_delta(&self, delta: &str) {
         for obs in &self.observers {
-            obs.on_text_delta(delta);
+            obs.on_text_delta(delta).await;
         }
     }
 
-    fn on_reasoning_delta(&self, delta: &str) {
+    async fn on_reasoning_delta(&self, delta: &str) {
         for obs in &self.observers {
-            obs.on_reasoning_delta(delta);
+            obs.on_reasoning_delta(delta).await;
         }
     }
 
-    fn on_tool_call(&self, name: &str, arguments: &str) {
+    async fn on_tool_call(&self, name: &str, arguments: &str) {
         for obs in &self.observers {
-            obs.on_tool_call(name, arguments);
+            obs.on_tool_call(name, arguments).await;
         }
     }
 
-    fn on_tool_result(&self, name: &str, result: &ToolResult) {
+    async fn on_tool_result(&self, name: &str, result: &ToolResult) {
         for obs in &self.observers {
-            obs.on_tool_result(name, result);
+            obs.on_tool_result(name, result).await;
         }
     }
 
-    fn on_tool_denied(&self, name: &str) {
+    async fn on_tool_denied(&self, name: &str) {
         for obs in &self.observers {
-            obs.on_tool_denied(name);
+            obs.on_tool_denied(name).await;
         }
     }
 
-    fn on_approval_requested(&self, tool_name: &str, risk: ToolRisk) {
+    async fn on_approval_requested(&self, tool_name: &str, risk: ToolRisk) {
         for obs in &self.observers {
-            obs.on_approval_requested(tool_name, risk);
+            obs.on_approval_requested(tool_name, risk).await;
         }
     }
 
@@ -86,11 +88,12 @@ mod tests {
     use super::*;
     use rho_core::agent::NopObserver;
 
-    #[test]
-    fn composite_delegates_state_change() {
+    #[tokio::test]
+    async fn composite_delegates_state_change() {
         struct Recording(std::sync::Mutex<Vec<String>>);
+        #[async_trait]
         impl AgentObserver for Recording {
-            fn on_state_change(&self, state: AgentState) {
+            async fn on_state_change(&self, state: AgentState) {
                 self.0.lock().unwrap().push(format!("{state:?}"));
             }
         }
@@ -98,7 +101,7 @@ mod tests {
         let r1 = Recording(std::sync::Mutex::new(vec![]));
         let r2 = Recording(std::sync::Mutex::new(vec![]));
         let composite = CompositeObserver::new(vec![&r1, &r2]);
-        composite.on_state_change(AgentState::Thinking);
+        composite.on_state_change(AgentState::Thinking).await;
 
         assert_eq!(*r1.0.lock().unwrap(), vec!["Thinking"]);
         assert_eq!(*r2.0.lock().unwrap(), vec!["Thinking"]);
