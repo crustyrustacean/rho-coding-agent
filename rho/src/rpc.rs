@@ -25,6 +25,8 @@
 //! | `listExtensions`   | —                           | List loaded extensions and tools   |
 //! | `reloadExtensions` | —                           | Reload extensions from disk        |
 //! | `compact`          | —                           | Trigger context compaction         |
+//! | `resumeSession`    | `{path: string}`            | Resume a previous session from JSONL |
+//! | `listTools`        | —                           | List registered tools with schemas |
 //!
 //! ## Notifications (rho → stdout)
 //!
@@ -393,6 +395,8 @@ async fn dispatch_request(
         "listExtensions" => handle_list_extensions(app, id, out),
         "reloadExtensions" => handle_reload_extensions(app, id, out).await,
         "compact" => handle_compact(app, id, out).await,
+        "resumeSession" => handle_resume_session(app, params, id, out),
+        "listTools" => handle_list_tools(app, id, out),
         "approvalResponse" => {
             // Handled synchronously during approval flow, but if we see it here,
             // acknowledge it (shouldn't normally happen outside approval flow).
@@ -701,6 +705,96 @@ fn handle_list_extensions(app: &App, id: &Value, out: &Out) {
         out,
         &success_response(id, json!({"extensions": extensions})),
     );
+}
+
+/// Resume a previous session from a JSONL file path.
+///
+/// Replaces the current session with the loaded one, restoring the
+/// model, tools, and token budget from the current app configuration.
+/// The opened session continues appending to the same JSONL file.
+fn handle_resume_session(app: &mut App, params: Value, id: &Value, out: &Out) {
+    let path_str = match params.get("path").and_then(|v| v.as_str()) {
+        Some(p) if !p.is_empty() => p,
+        _ => {
+            write_jsonrpc(
+                out,
+                &error_response(
+                    id,
+                    INVALID_PARAMS,
+                    "resumeSession requires a non-empty 'path' param",
+                ),
+            );
+            return;
+        }
+    };
+
+    let path = std::path::PathBuf::from(path_str);
+    match rho_core::Session::open(&path) {
+        Ok(mut session) => {
+            let old_model = app.session.model().to_owned();
+
+            // Restore model, tools, budget, and redactor from current app state.
+            session.set_model(&old_model);
+            session.set_tools(app.registry.tool_definitions());
+            session.set_token_budget(app.session.token_budget().clone());
+
+            let session_cwd = session.header().cwd.clone();
+            let current_cwd = app.session.header().cwd.clone();
+            if session_cwd != current_cwd {
+                warn!(
+                    session_cwd = %session_cwd.display(),
+                    current_cwd = %current_cwd.display(),
+                    "resumed session CWD differs from current working directory"
+                );
+            }
+
+            app.session = session;
+
+            info!(
+                path = %path.display(),
+                model = %old_model,
+                "session resumed via RPC"
+            );
+            write_jsonrpc(
+                out,
+                &success_response(
+                    id,
+                    json!({
+                        "path": path_str,
+                        "model": old_model,
+                        "cwd": app.session.header().cwd.to_string_lossy(),
+                        "entryCount": app.session.entry_count(),
+                    }),
+                ),
+            );
+        }
+        Err(e) => {
+            warn!(path = %path.display(), error = %e, "failed to resume session");
+            write_jsonrpc(
+                out,
+                &error_response(id, INTERNAL_ERROR, &format!("failed to open session: {e}")),
+            );
+        }
+    }
+}
+
+/// List all registered tools with their names, descriptions, risk levels,
+/// and parameter schemas.
+fn handle_list_tools(app: &App, id: &Value, out: &Out) {
+    let tools: Vec<Value> = app
+        .registry
+        .list()
+        .iter()
+        .map(|t| {
+            json!({
+                "name": t.name().to_string(),
+                "description": t.description(),
+                "risk": risk_label(t.risk()),
+                "parameters": t.parameters_schema(),
+            })
+        })
+        .collect();
+    write_jsonrpc(out, &success_response(id, json!({"tools": tools})));
 }
 
 /// Reload extensions from disk.
@@ -1501,6 +1595,108 @@ mod tests {
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0]["id"], "c1");
         assert_eq!(calls[0]["name"], "read_file");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 9. listTools
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn list_tools_returns_registered_tools() {
+        let events = rpc_run(
+            MockChatClient::new(vec![]),
+            echo_registry(),
+            &[r#"{"jsonrpc":"2.0","method":"listTools","id":1}"#],
+        )
+        .await;
+
+        let resp = &responses(&events)[0];
+        assert_eq!(resp["error"], Value::Null, "no error: {resp}");
+        let tools = resp["result"]["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["name"], "echo_tool");
+        assert_eq!(tools[0]["risk"], "read");
+        assert!(tools[0]["parameters"].is_object());
+    }
+
+    #[tokio::test]
+    async fn list_tools_destructive_shows_risk() {
+        let events = rpc_run(
+            MockChatClient::new(vec![]),
+            destructive_registry(),
+            &[r#"{"jsonrpc":"2.0","method":"listTools","id":1}"#],
+        )
+        .await;
+
+        let resp = &responses(&events)[0];
+        let tools = resp["result"]["tools"].as_array().unwrap();
+        assert_eq!(tools[0]["name"], "destroy_tool");
+        assert_eq!(tools[0]["risk"], "destructive");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 10. resumeSession
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn resume_session_missing_path_returns_error() {
+        let events = rpc_run(
+            MockChatClient::new(vec![]),
+            echo_registry(),
+            &[r#"{"jsonrpc":"2.0","method":"resumeSession","id":1}"#],
+        )
+        .await;
+
+        let resp = &responses(&events)[0];
+        assert_eq!(resp["error"]["code"], INVALID_PARAMS);
+    }
+
+    #[tokio::test]
+    async fn resume_session_nonexistent_file_returns_error() {
+        let events = rpc_run(
+            MockChatClient::new(vec![]),
+            echo_registry(),
+            &[r#"{"jsonrpc":"2.0","method":"resumeSession","params":{"path":"/tmp/nonexistent_rho_session.jsonl"},"id":1}"#],
+        )
+        .await;
+
+        let resp = &responses(&events)[0];
+        assert_eq!(resp["error"]["code"], INTERNAL_ERROR);
+        assert!(resp["error"]["message"].as_str().unwrap().contains("failed to open session"));
+    }
+
+    #[tokio::test]
+    async fn resume_session_valid_file_returns_session_info() {
+        // Create a real persisted session, then resume it via RPC.
+        let dir = std::env::temp_dir().join(format!("rho_test_resume_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Create a session that writes to disk. Use Session::new with a
+        // known cwd so the save path lands in our temp dir.
+        let mut session = Session::new(
+            "test-model",
+            Some("system prompt"),
+            vec![],
+            &dir,
+        );
+        session.flush().unwrap();
+        let save_path = session.save_path().unwrap().to_path_buf();
+
+        let events = rpc_run(
+            MockChatClient::new(vec![]),
+            echo_registry(),
+            &[&format!(
+                r#"{{"jsonrpc":"2.0","method":"resumeSession","params":{{"path":"{}"}},"id":1}}"#,
+                save_path.display()
+            )],
+        )
+        .await;
+
+        let resp = &responses(&events)[0];
+        assert_eq!(resp["error"], Value::Null, "no error: {resp}");
+        assert_eq!(resp["result"]["entryCount"], 1); // system prompt entry
+        assert_eq!(resp["result"]["model"], "test-model");
+        assert!(resp["result"]["path"].as_str().unwrap().contains(".jsonl"));
     }
 
     #[test]
