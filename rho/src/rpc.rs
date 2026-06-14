@@ -1662,7 +1662,12 @@ mod tests {
 
         let resp = &responses(&events)[0];
         assert_eq!(resp["error"]["code"], INTERNAL_ERROR);
-        assert!(resp["error"]["message"].as_str().unwrap().contains("failed to open session"));
+        assert!(
+            resp["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("failed to open session")
+        );
     }
 
     #[tokio::test]
@@ -1673,12 +1678,7 @@ mod tests {
 
         // Create a session that writes to disk. Use Session::new with a
         // known cwd so the save path lands in our temp dir.
-        let mut session = Session::new(
-            "test-model",
-            Some("system prompt"),
-            vec![],
-            &dir,
-        );
+        let mut session = Session::new("test-model", Some("system prompt"), vec![], &dir);
         session.flush().unwrap();
         let save_path = session.save_path().unwrap().to_path_buf();
 
