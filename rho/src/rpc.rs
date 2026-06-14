@@ -145,6 +145,10 @@ fn notification(method: &str, params: Value) -> Value {
 // ── RpcObserver ───────────────────────────────────────────────────────────────
 
 /// Forwards agent-loop events to the RPC client as JSON-RPC notifications.
+///
+/// Uses [`Transport::write_sync`] to write notifications without spawning
+/// async tasks, since observer callbacks are invoked synchronously by the
+/// agent loop.
 struct RpcObserver {
     /// Shared transport handle.
     transport: Arc<dyn Transport>,
@@ -152,85 +156,43 @@ struct RpcObserver {
 
 impl AgentObserver for RpcObserver {
     fn on_state_change(&self, state: AgentState) {
-        let transport = Arc::clone(&self.transport);
-        let label = state_name(&state).to_owned();
-        tokio::spawn(async move {
-            send(
-                &*transport,
-                &notification("state/change", json!({"state": label})),
-            )
-            .await;
-        });
+        self.transport.write_sync(&notification(
+            "state/change",
+            json!({"state": state_name(&state)}),
+        ));
     }
 
     fn on_text_delta(&self, delta: &str) {
-        let transport = Arc::clone(&self.transport);
-        let owned = delta.to_owned();
-        tokio::spawn(async move {
-            send(
-                &*transport,
-                &notification("message/delta", json!({"delta": owned})),
-            )
-            .await;
-        });
+        self.transport
+            .write_sync(&notification("message/delta", json!({"delta": delta})));
     }
 
     fn on_reasoning_delta(&self, delta: &str) {
-        let transport = Arc::clone(&self.transport);
-        let owned = delta.to_owned();
-        tokio::spawn(async move {
-            send(
-                &*transport,
-                &notification("reasoning/delta", json!({"delta": owned})),
-            )
-            .await;
-        });
+        self.transport
+            .write_sync(&notification("reasoning/delta", json!({"delta": delta})));
     }
 
     fn on_tool_call(&self, name: &str, arguments: &str) {
-        let transport = Arc::clone(&self.transport);
-        let name = name.to_owned();
-        let arguments = arguments.to_owned();
-        tokio::spawn(async move {
-            send(
-                &*transport,
-                &notification("tool/call", json!({"name": name, "arguments": arguments})),
-            )
-            .await;
-        });
+        self.transport.write_sync(&notification(
+            "tool/call",
+            json!({"name": name, "arguments": arguments}),
+        ));
     }
 
     fn on_tool_result(&self, name: &str, result: &ToolResult) {
-        let transport = Arc::clone(&self.transport);
-        let name = name.to_owned();
-        let is_error = result.is_error;
-        let output = result.output.clone();
-        tokio::spawn(async move {
-            send(
-                &*transport,
-                &notification(
-                    "tool/result",
-                    json!({
-                        "name": name,
-                        "is_error": is_error,
-                        "output": output,
-                    }),
-                ),
-            )
-            .await;
-        });
+        self.transport.write_sync(&notification(
+            "tool/result",
+            json!({
+                "name": name,
+                "is_error": result.is_error,
+                "output": result.output,
+            }),
+        ));
     }
 
     fn on_tool_denied(&self, name: &str) {
-        let transport = Arc::clone(&self.transport);
-        let name = name.to_owned();
-        tokio::spawn(async move {
-            send(
-                &*transport,
-                &notification("tool/denied", json!({"name": name})),
-            )
-            .await;
-        });
+        self.transport
+            .write_sync(&notification("tool/denied", json!({"name": name})));
     }
 }
 
