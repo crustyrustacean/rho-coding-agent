@@ -395,7 +395,7 @@ async fn dispatch_request(
         "listExtensions" => handle_list_extensions(app, id, out),
         "reloadExtensions" => handle_reload_extensions(app, id, out).await,
         "compact" => handle_compact(app, id, out).await,
-        "resumeSession" => handle_resume_session(app, params, id, out),
+        "resumeSession" => handle_resume_session(app, &params, id, out),
         "listTools" => handle_list_tools(app, id, out),
         "approvalResponse" => {
             // Handled synchronously during approval flow, but if we see it here,
@@ -712,7 +712,7 @@ fn handle_list_extensions(app: &App, id: &Value, out: &Out) {
 /// Replaces the current session with the loaded one, restoring the
 /// model, tools, and token budget from the current app configuration.
 /// The opened session continues appending to the same JSONL file.
-fn handle_resume_session(app: &mut App, params: Value, id: &Value, out: &Out) {
+fn handle_resume_session(app: &mut App, params: &Value, id: &Value, out: &Out) {
     let path_str = match params.get("path").and_then(|v| v.as_str()) {
         Some(p) if !p.is_empty() => p,
         _ => {
@@ -736,7 +736,7 @@ fn handle_resume_session(app: &mut App, params: Value, id: &Value, out: &Out) {
             // Restore model, tools, budget, and redactor from current app state.
             session.set_model(&old_model);
             session.set_tools(app.registry.tool_definitions());
-            session.set_token_budget(app.session.token_budget().clone());
+            session.set_token_budget(app.session.token_budget());
 
             let session_cwd = session.header().cwd.clone();
             let current_cwd = app.session.header().cwd.clone();
