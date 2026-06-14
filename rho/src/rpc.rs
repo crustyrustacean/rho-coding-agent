@@ -1,15 +1,20 @@
-//! Headless JSON-RPC 2.0 mode — JSONL over stdin/stdout.
+//! Headless JSON-RPC 2.0 mode — transport-agnostic.
 //!
-//! In RPC mode rho reads newline-delimited JSON-RPC 2.0 requests from stdin and
-//! writes JSON-RPC 2.0 responses to stdout. Streaming events are delivered as
+//! In RPC mode rho reads JSON-RPC 2.0 requests from a [`Transport`] and
+//! writes JSON-RPC 2.0 responses back. Streaming events are delivered as
 //! JSON-RPC notifications (no `id` field).
+//!
+//! The transport is pluggable: [`StdioTransport`] (newline-delimited JSON
+//! over stdin/stdout) is the default, but any implementation of the
+//! [`Transport`] trait works (WebSocket, Unix socket, TCP, etc.) without
+//! changes to the dispatch logic.
 //!
 //! # Protocol
 //!
 //! Every request must be a JSON object with `jsonrpc: "2.0"`, a `method` field,
 //! optional `params`, and a numeric or string `id` for response correlation.
 //!
-//! ## Methods (stdin → rho)
+//! ## Methods (client → rho)
 //!
 //! | Method             | Params                      | Description                        |
 //! |--------------------|-----------------------------|------------------------------------|
@@ -28,7 +33,7 @@
 //! | `resumeSession`    | `{path: string}`            | Resume a previous session from JSONL |
 //! | `listTools`        | —                           | List registered tools with schemas |
 //!
-//! ## Notifications (rho → stdout)
+//! ## Notifications (rho → client)
 //!
 //! | Method              | Params                              | Description                         |
 //! |---------------------|-------------------------------------|-------------------------------------|
@@ -47,7 +52,7 @@
 //! ## Approval flow
 //!
 //! When rho emits an `approval/request` notification it blocks until it reads
-//! an `approvalResponse` method from stdin:
+//! an `approvalResponse` method from the transport:
 //!
 //! ```json
 //! {"jsonrpc": "2.0", "method": "approvalResponse", "params": {"approved": true}, "id": 2}
@@ -69,6 +74,7 @@
 
 use crate::app::{App, TurnResult, run_agent_turn};
 use crate::ext_observer::CompositeObserver;
+use crate::transport::{ReadResult, StdioTransport, Transport};
 use anyhow::Result;
 use async_trait::async_trait;
 use rho_core::{
@@ -76,14 +82,15 @@ use rho_core::{
     ToolRisk,
 };
 use serde_json::{Value, json};
-use std::io::{self, BufRead, Write};
-use std::sync::{Arc, Mutex};
+use std::io;
+use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, info, warn};
 
 // ── JSON-RPC 2.0 Error codes ───────────────────────────────────────────────────
 
 /// Parse error: Invalid JSON was received.
+#[allow(dead_code)]
 const PARSE_ERROR: i32 = -32700;
 /// Invalid request: The JSON sent is not a valid Request object.
 const INVALID_REQUEST: i32 = -32600;
@@ -94,38 +101,11 @@ const INVALID_PARAMS: i32 = -32602;
 /// Internal error: Internal JSON-RPC error.
 const INTERNAL_ERROR: i32 = -32603;
 
-// ── Shared I/O types ──────────────────────────────────────────────────────────
+// ── Transport helper ────────────────────────────────────────────────────────────
 
-/// Shared, mutex-protected writer used by the command loop, observer,
-/// and approval gate to write JSONL events without interleaving.
-type Out = Arc<Mutex<Box<dyn Write + Send + Sync>>>;
-
-/// Shared, mutex-protected reader for stdin, shared between the command loop
-/// and the approval gate (which reads approval responses during `run_loop`).
-type In = Arc<Mutex<Box<dyn BufRead + Send>>>;
-
-/// Wrap any [`Write`] + [`Send`] + [`Sync`] sink as an [`Out`].
-fn make_out<W: Write + Send + Sync + 'static>(w: W) -> Out {
-    Arc::new(Mutex::new(Box::new(w)))
-}
-
-/// Wrap any [`BufRead`] + [`Send`] reader as an [`In`].
-fn make_in<R: BufRead + Send + 'static>(r: R) -> In {
-    Arc::new(Mutex::new(Box::new(r)))
-}
-
-/// Write a single JSON-RPC message to `out`.
-fn write_jsonrpc(out: &Out, value: &Value) {
-    let mut guard = out
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    write_value_to(&mut *guard, value);
-}
-
-/// Write a JSON value to any [`Write`] sink.
-fn write_value_to(sink: &mut dyn Write, value: &Value) {
-    let _ = writeln!(sink, "{value}");
-    let _ = sink.flush();
+/// Send a single JSON-RPC message via the transport, discarding I/O errors.
+async fn send(transport: &dyn Transport, value: &Value) {
+    let _ = transport.write_message(value).await;
 }
 
 // ── JSON-RPC response builders ────────────────────────────────────────────────
@@ -166,101 +146,120 @@ fn notification(method: &str, params: Value) -> Value {
 
 /// Forwards agent-loop events to the RPC client as JSON-RPC notifications.
 struct RpcObserver {
-    /// Shared writer handle.
-    out: Out,
+    /// Shared transport handle.
+    transport: Arc<dyn Transport>,
 }
 
 impl AgentObserver for RpcObserver {
     fn on_state_change(&self, state: AgentState) {
-        write_jsonrpc(
-            &self.out,
-            &notification("state/change", json!({"state": state_name(&state)})),
-        );
+        let transport = Arc::clone(&self.transport);
+        let label = state_name(&state).to_owned();
+        tokio::spawn(async move {
+            send(
+                &*transport,
+                &notification("state/change", json!({"state": label})),
+            )
+            .await;
+        });
     }
 
     fn on_text_delta(&self, delta: &str) {
-        write_jsonrpc(
-            &self.out,
-            &notification("message/delta", json!({"delta": delta})),
-        );
+        let transport = Arc::clone(&self.transport);
+        let owned = delta.to_owned();
+        tokio::spawn(async move {
+            send(
+                &*transport,
+                &notification("message/delta", json!({"delta": owned})),
+            )
+            .await;
+        });
     }
 
     fn on_reasoning_delta(&self, delta: &str) {
-        write_jsonrpc(
-            &self.out,
-            &notification("reasoning/delta", json!({"delta": delta})),
-        );
+        let transport = Arc::clone(&self.transport);
+        let owned = delta.to_owned();
+        tokio::spawn(async move {
+            send(
+                &*transport,
+                &notification("reasoning/delta", json!({"delta": owned})),
+            )
+            .await;
+        });
     }
 
     fn on_tool_call(&self, name: &str, arguments: &str) {
-        write_jsonrpc(
-            &self.out,
-            &notification("tool/call", json!({"name": name, "arguments": arguments})),
-        );
+        let transport = Arc::clone(&self.transport);
+        let name = name.to_owned();
+        let arguments = arguments.to_owned();
+        tokio::spawn(async move {
+            send(
+                &*transport,
+                &notification("tool/call", json!({"name": name, "arguments": arguments})),
+            )
+            .await;
+        });
     }
 
     fn on_tool_result(&self, name: &str, result: &ToolResult) {
-        write_jsonrpc(
-            &self.out,
-            &notification(
-                "tool/result",
-                json!({
-                    "name": name,
-                    "is_error": result.is_error,
-                    "output": result.output,
-                }),
-            ),
-        );
+        let transport = Arc::clone(&self.transport);
+        let name = name.to_owned();
+        let is_error = result.is_error;
+        let output = result.output.clone();
+        tokio::spawn(async move {
+            send(
+                &*transport,
+                &notification(
+                    "tool/result",
+                    json!({
+                        "name": name,
+                        "is_error": is_error,
+                        "output": output,
+                    }),
+                ),
+            )
+            .await;
+        });
     }
 
     fn on_tool_denied(&self, name: &str) {
-        write_jsonrpc(
-            &self.out,
-            &notification("tool/denied", json!({"name": name})),
-        );
+        let transport = Arc::clone(&self.transport);
+        let name = name.to_owned();
+        tokio::spawn(async move {
+            send(
+                &*transport,
+                &notification("tool/denied", json!({"name": name})),
+            )
+            .await;
+        });
     }
 }
 
 // ── RpcApprovalGate ───────────────────────────────────────────────────────────
 
 /// Writes an `approval/request` notification and reads an `approvalResponse`
-/// request from the shared reader.
+/// request from the transport.
 struct RpcApprovalGate {
-    /// Shared writer handle.
-    out: Out,
-    /// Shared reader handle.
-    input: In,
+    /// Shared transport handle.
+    transport: Arc<dyn Transport>,
 }
 
 #[async_trait]
 impl ApprovalGate for RpcApprovalGate {
     async fn request_approval(&self, call: &ModelToolCall, risk: ToolRisk) -> bool {
-        write_jsonrpc(
-            &self.out,
-            &notification(
+        let _ = self
+            .transport
+            .write_message(&notification(
                 "approval/request",
                 json!({
                     "tool": &*call.function.name,
                     "arguments": call.function.arguments,
                     "risk": risk_label(risk),
                 }),
-            ),
-        );
+            ))
+            .await;
 
-        // Read the approvalResponse request from the shared reader.
-        let input = Arc::clone(&self.input);
-        let response = tokio::task::spawn_blocking(move || {
-            let mut guard = input
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let mut line = String::new();
-            guard.read_line(&mut line).ok()?;
-            serde_json::from_str::<Value>(line.trim()).ok()
-        })
-        .await;
-
-        match response {
-            Ok(Some(v)) => v["params"]["approved"].as_bool().unwrap_or(false),
+        match self.transport.read_message().await {
+            ReadResult::Message(v) => v["params"]["approved"].as_bool().unwrap_or(false),
             _ => false,
         }
     }
@@ -272,66 +271,44 @@ impl ApprovalGate for RpcApprovalGate {
 ///
 /// # Errors
 ///
-/// Returns an error if the stdin background task fails unexpectedly.
+/// Returns an error if the transport fails unexpectedly.
 pub async fn run_rpc(app: App) -> Result<()> {
-    run_rpc_on(app, io::BufReader::new(io::stdin()), io::stdout()).await
+    let transport: Arc<dyn Transport> = Arc::new(StdioTransport::new(
+        io::BufReader::new(io::stdin()),
+        io::stdout(),
+    ));
+    run_rpc_on(app, transport).await
 }
 
-/// Core JSON-RPC loop — generic over I/O for testability.
+/// Core JSON-RPC loop — transport-agnostic.
 ///
-/// Emits a `ready` notification, then reads JSON-RPC requests from `input`
-/// one line at a time. Each request is dispatched to the appropriate handler.
-/// Exits cleanly on input EOF.
+/// Emits a `ready` notification, then reads JSON-RPC requests from the
+/// transport one message at a time. Each request is dispatched to the
+/// appropriate handler. Exits cleanly on transport disconnect.
 ///
 /// # Errors
 ///
-/// Returns an error if the input background task fails unexpectedly.
-pub(crate) async fn run_rpc_on<R, W>(mut app: App, input: R, output: W) -> Result<()>
-where
-    R: BufRead + Send + 'static,
-    W: Write + Send + Sync + 'static,
-{
-    let out = make_out(output);
-    let inp = make_in(input);
-
-    write_jsonrpc(&out, &notification("ready", json!({})));
+/// Returns an error if the transport fails unexpectedly.
+pub(crate) async fn run_rpc_on(mut app: App, transport: Arc<dyn Transport>) -> Result<()> {
+    send(&*transport, &notification("ready", json!({}))).await;
     info!("RPC server started, emitting ready notification");
 
     loop {
-        let inp_clone = Arc::clone(&inp);
-        let (buf, bytes_read) = tokio::task::spawn_blocking(move || {
-            let mut guard = inp_clone
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let mut buf = String::new();
-            let n = guard.read_line(&mut buf).unwrap_or(0);
-            (buf, n)
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("stdin task failed: {e}"))?;
-
-        // EOF — shut down cleanly.
-        if bytes_read == 0 {
-            debug!("stdin EOF received, shutting down");
-            app.session.close("stdin EOF");
-            break;
-        }
-
-        let raw = buf.trim().to_owned();
-        if raw.is_empty() {
-            continue;
-        }
-
-        // Parse and validate JSON-RPC request.
-        let request: Value = match serde_json::from_str(&raw) {
-            Ok(v) => v,
-            Err(e) => {
-                warn!(raw = %raw, error = %e, "JSON-RPC parse error");
-                write_jsonrpc(
-                    &out,
+        let request = match transport.read_message().await {
+            ReadResult::Message(v) => v,
+            ReadResult::ParseError(e) => {
+                warn!(error = %e, "JSON-RPC parse error");
+                send(
+                    &*transport,
                     &error_response(&Value::Null, PARSE_ERROR, &format!("Parse error: {e}")),
-                );
+                )
+                .await;
                 continue;
+            }
+            ReadResult::Eof => {
+                debug!("transport EOF received, shutting down");
+                app.session.close("transport EOF");
+                break;
             }
         };
 
@@ -343,24 +320,26 @@ where
 
         // Validate jsonrpc version.
         if jsonrpc != Some("2.0") {
-            write_jsonrpc(
-                &out,
+            send(
+                &*transport,
                 &error_response(&id, INVALID_REQUEST, "Invalid JSON-RPC version"),
-            );
+            )
+            .await;
             continue;
         }
 
         // Validate method.
         let Some(method) = method else {
-            write_jsonrpc(
-                &out,
+            send(
+                &*transport,
                 &error_response(&id, INVALID_REQUEST, "Missing method field"),
-            );
+            )
+            .await;
             continue;
         };
 
         // Dispatch.
-        dispatch_request(&mut app, method, params, &id, &out, &inp).await;
+        dispatch_request(&mut app, method, params, &id, Arc::clone(&transport)).await;
     }
 
     Ok(())
@@ -374,40 +353,40 @@ async fn dispatch_request(
     method: &str,
     params: Value,
     id: &Value,
-    out: &Out,
-    inp: &In,
+    transport: Arc<dyn Transport>,
 ) {
     debug!(method = %method, id = %id, "dispatching RPC request");
     match method {
-        "prompt" => handle_prompt(app, params, id, out, inp).await,
+        "prompt" => handle_prompt(app, params, id, Arc::clone(&transport)).await,
         "abort" => {
             app.cancel.cancel();
-            write_jsonrpc(out, &success_response(id, json!({})));
+            send(&*transport, &success_response(id, json!({}))).await;
         }
-        "clear" => handle_clear(app, id, out),
-        "getState" => handle_get_state(app, id, out),
-        "getMessages" => handle_get_messages(app, id, out),
-        "setModel" => handle_set_model(app, params, id, out).await,
-        "listModels" => handle_list_models(app, id, out).await,
-        "listProviders" => handle_list_providers(app, id, out).await,
-        "getSessionStats" => handle_get_session_stats(app, id, out),
-        "listSessions" => handle_list_sessions(app, id, out),
-        "listExtensions" => handle_list_extensions(app, id, out),
-        "reloadExtensions" => handle_reload_extensions(app, id, out).await,
-        "compact" => handle_compact(app, id, out).await,
-        "resumeSession" => handle_resume_session(app, &params, id, out),
-        "listTools" => handle_list_tools(app, id, out),
+        "clear" => handle_clear(app, id, &*transport).await,
+        "getState" => handle_get_state(app, id, &*transport).await,
+        "getMessages" => handle_get_messages(app, id, &*transport).await,
+        "setModel" => handle_set_model(app, params, id, &*transport).await,
+        "listModels" => handle_list_models(app, id, &*transport).await,
+        "listProviders" => handle_list_providers(app, id, &*transport).await,
+        "getSessionStats" => handle_get_session_stats(app, id, &*transport).await,
+        "listSessions" => handle_list_sessions(app, id, &*transport).await,
+        "listExtensions" => handle_list_extensions(app, id, &*transport).await,
+        "reloadExtensions" => handle_reload_extensions(app, id, &*transport).await,
+        "compact" => handle_compact(app, id, &*transport).await,
+        "resumeSession" => handle_resume_session(app, &params, id, &*transport).await,
+        "listTools" => handle_list_tools(app, id, &*transport).await,
         "approvalResponse" => {
             // Handled synchronously during approval flow, but if we see it here,
             // acknowledge it (shouldn't normally happen outside approval flow).
-            write_jsonrpc(out, &success_response(id, json!({})));
+            send(&*transport, &success_response(id, json!({}))).await;
         }
         _ => {
             debug!(method = %method, "unknown RPC method");
-            write_jsonrpc(
-                out,
+            send(
+                &*transport,
                 &error_response(id, METHOD_NOT_FOUND, &format!("Method not found: {method}")),
-            );
+            )
+            .await;
         }
     }
 }
@@ -415,23 +394,29 @@ async fn dispatch_request(
 // ── Request handlers ─────────────────────────────────────────────────────────
 
 /// Run one agent turn for the user message.
-async fn handle_prompt(app: &mut App, wire_params: Value, id: &Value, out: &Out, inp: &In) {
+async fn handle_prompt(
+    app: &mut App,
+    wire_params: Value,
+    id: &Value,
+    transport: Arc<dyn Transport>,
+) {
     let message = match wire_params.get("message").and_then(|v| v.as_str()) {
         Some(m) if !m.is_empty() => m.to_owned(),
         _ => {
-            write_jsonrpc(
-                out,
+            send(
+                &*transport,
                 &error_response(
                     id,
                     INVALID_PARAMS,
                     "prompt requires a non-empty 'message' param",
                 ),
-            );
+            )
+            .await;
             return;
         }
     };
 
-    write_jsonrpc(out, &notification("agent/start", json!({})));
+    send(&*transport, &notification("agent/start", json!({}))).await;
 
     debug!(
         message_len = message.len(),
@@ -441,7 +426,7 @@ async fn handle_prompt(app: &mut App, wire_params: Value, id: &Value, out: &Out,
     let turn_start = Instant::now();
 
     let observer = RpcObserver {
-        out: Arc::clone(out),
+        transport: Arc::clone(&transport),
     };
     let composite = CompositeObserver::new({
         let mut obs: Vec<&dyn AgentObserver> = vec![&observer];
@@ -451,8 +436,7 @@ async fn handle_prompt(app: &mut App, wire_params: Value, id: &Value, out: &Out,
         obs
     });
     let gate = RpcApprovalGate {
-        out: Arc::clone(out),
-        input: Arc::clone(inp),
+        transport: Arc::clone(&transport),
     };
     let client = app.active_provider().clone_boxed_service();
     let compaction_client = if app.config.compaction_mode == "llm" {
@@ -481,8 +465,12 @@ async fn handle_prompt(app: &mut App, wire_params: Value, id: &Value, out: &Out,
                 model = %app.session.model(),
                 "agent turn completed"
             );
-            write_jsonrpc(out, &notification("agent/end", json!({"reply": &reply})));
-            write_jsonrpc(out, &success_response(id, json!({"reply": reply})));
+            send(
+                &*transport,
+                &notification("agent/end", json!({"reply": &reply})),
+            )
+            .await;
+            send(&*transport, &success_response(id, json!({"reply": reply}))).await;
         }
         TurnResult::Error(e) => {
             let elapsed = turn_start.elapsed();
@@ -493,16 +481,20 @@ async fn handle_prompt(app: &mut App, wire_params: Value, id: &Value, out: &Out,
                 error = %e,
                 "agent turn failed"
             );
-            write_jsonrpc(out, &notification("agent/error", json!({"error": &e})));
-            write_jsonrpc(out, &success_response(id, json!({"error": e})));
+            send(
+                &*transport,
+                &notification("agent/error", json!({"error": &e})),
+            )
+            .await;
+            send(&*transport, &success_response(id, json!({"error": e}))).await;
         }
     }
 }
 
 /// Return the current model, provider, and working directory.
-fn handle_get_state(app: &App, id: &Value, out: &Out) {
-    write_jsonrpc(
-        out,
+async fn handle_get_state(app: &App, id: &Value, transport: &dyn Transport) {
+    send(
+        transport,
         &success_response(
             id,
             json!({
@@ -511,22 +503,27 @@ fn handle_get_state(app: &App, id: &Value, out: &Out) {
                 "cwd": app.session.header().cwd.to_string_lossy(),
             }),
         ),
-    );
+    )
+    .await;
 }
 
 /// Return all messages on the current session path.
-fn handle_get_messages(app: &App, id: &Value, out: &Out) {
+async fn handle_get_messages(app: &App, id: &Value, transport: &dyn Transport) {
     let messages: Vec<Value> = app
         .session
         .path_messages()
         .iter()
         .map(message_to_json)
         .collect();
-    write_jsonrpc(out, &success_response(id, json!({"messages": messages})));
+    send(
+        transport,
+        &success_response(id, json!({"messages": messages})),
+    )
+    .await;
 }
 
 /// Switch the active model.
-async fn handle_set_model(app: &mut App, params: Value, id: &Value, out: &Out) {
+async fn handle_set_model(app: &mut App, params: Value, id: &Value, transport: &dyn Transport) {
     let old_model = app.session.model().to_owned();
     let old_provider = app.active_provider().name().to_owned();
     match params.get("model").and_then(|v| v.as_str()) {
@@ -542,28 +539,32 @@ async fn handle_set_model(app: &mut App, params: Value, id: &Value, out: &Out) {
                 spec = %spec,
                 "model switched"
             );
-            write_jsonrpc(
-                out,
+            send(
+                transport,
                 &success_response(id, json!({"model": model, "provider": provider})),
-            );
+            )
+            .await;
         }
-        _ => write_jsonrpc(
-            out,
-            &error_response(
-                id,
-                INVALID_PARAMS,
-                "setModel requires a non-empty 'model' param",
-            ),
-        ),
+        _ => {
+            send(
+                transport,
+                &error_response(
+                    id,
+                    INVALID_PARAMS,
+                    "setModel requires a non-empty 'model' param",
+                ),
+            )
+            .await;
+        }
     }
 }
 
 /// Return token budget and context-window usage statistics.
-fn handle_get_session_stats(app: &App, id: &Value, out: &Out) {
+async fn handle_get_session_stats(app: &App, id: &Value, transport: &dyn Transport) {
     let stats = app.session.context_stats();
     let usage = app.session.api_usage();
-    write_jsonrpc(
-        out,
+    send(
+        transport,
         &success_response(
             id,
             json!({
@@ -598,39 +599,45 @@ fn handle_get_session_stats(app: &App, id: &Value, out: &Out) {
                 },
             }),
         ),
-    );
+    )
+    .await;
 }
 
 /// Trigger context compaction.
-async fn handle_compact(app: &mut App, id: &Value, out: &Out) {
+async fn handle_compact(app: &mut App, id: &Value, transport: &dyn Transport) {
     info!("compaction triggered via RPC");
     match app.compact().await {
-        Ok(()) => write_jsonrpc(out, &success_response(id, json!({}))),
+        Ok(()) => send(transport, &success_response(id, json!({}))).await,
         Err(e) => {
             warn!(error = %e, "compaction failed");
-            write_jsonrpc(out, &error_response(id, INTERNAL_ERROR, &e.to_string()));
+            send(
+                transport,
+                &error_response(id, INTERNAL_ERROR, &e.to_string()),
+            )
+            .await;
         }
     }
 }
 
 /// Clear conversation history by branching back to system message.
-fn handle_clear(app: &mut App, id: &Value, out: &Out) {
+async fn handle_clear(app: &mut App, id: &Value, transport: &dyn Transport) {
     info!("session cleared");
     let path = app.session.path_to_root();
     if let Some(root_entry) = path.last() {
         let root_id = root_entry.id.clone();
         let _ = app.session.branch_to(&root_id);
-        write_jsonrpc(out, &success_response(id, json!({})));
+        send(transport, &success_response(id, json!({}))).await;
     } else {
-        write_jsonrpc(
-            out,
+        send(
+            transport,
             &error_response(id, INTERNAL_ERROR, "No root entry to clear to"),
-        );
+        )
+        .await;
     }
 }
 
 /// List available models from all providers.
-async fn handle_list_models(app: &App, id: &Value, out: &Out) {
+async fn handle_list_models(app: &App, id: &Value, transport: &dyn Transport) {
     let all = app.providers.list_all_models().await;
     let models: Vec<Value> = all
         .iter()
@@ -641,11 +648,11 @@ async fn handle_list_models(app: &App, id: &Value, out: &Out) {
             })
         })
         .collect();
-    write_jsonrpc(out, &success_response(id, json!({"models": models})));
+    send(transport, &success_response(id, json!({"models": models}))).await;
 }
 
 /// List configured providers with reachability status.
-async fn handle_list_providers(app: &App, id: &Value, out: &Out) {
+async fn handle_list_providers(app: &App, id: &Value, transport: &dyn Transport) {
     let providers = app.providers.list_providers().await;
     let active = app.active_provider().name();
     let list: Vec<Value> = providers
@@ -659,11 +666,11 @@ async fn handle_list_providers(app: &App, id: &Value, out: &Out) {
             })
         })
         .collect();
-    write_jsonrpc(out, &success_response(id, json!({"providers": list})));
+    send(transport, &success_response(id, json!({"providers": list}))).await;
 }
 
 /// List previous sessions for this project.
-fn handle_list_sessions(app: &App, id: &Value, out: &Out) {
+async fn handle_list_sessions(app: &App, id: &Value, transport: &dyn Transport) {
     let cwd = app.session.header().cwd.clone();
     let sessions = rho_core::list_sessions(&cwd);
 
@@ -684,11 +691,11 @@ fn handle_list_sessions(app: &App, id: &Value, out: &Out) {
         })
         .collect();
 
-    write_jsonrpc(out, &success_response(id, json!({"sessions": list})));
+    send(transport, &success_response(id, json!({"sessions": list}))).await;
 }
 
 /// List loaded extensions and their tools.
-fn handle_list_extensions(app: &App, id: &Value, out: &Out) {
+async fn handle_list_extensions(app: &App, id: &Value, transport: &dyn Transport) {
     let extensions: Vec<Value> = app
         .ext_loader
         .extension_tools()
@@ -701,10 +708,11 @@ fn handle_list_extensions(app: &App, id: &Value, out: &Out) {
         })
         .collect();
 
-    write_jsonrpc(
-        out,
+    send(
+        transport,
         &success_response(id, json!({"extensions": extensions})),
-    );
+    )
+    .await;
 }
 
 /// Resume a previous session from a JSONL file path.
@@ -712,18 +720,24 @@ fn handle_list_extensions(app: &App, id: &Value, out: &Out) {
 /// Replaces the current session with the loaded one, restoring the
 /// model, tools, and token budget from the current app configuration.
 /// The opened session continues appending to the same JSONL file.
-fn handle_resume_session(app: &mut App, params: &Value, id: &Value, out: &Out) {
+async fn handle_resume_session(
+    app: &mut App,
+    params: &Value,
+    id: &Value,
+    transport: &dyn Transport,
+) {
     let path_str = match params.get("path").and_then(|v| v.as_str()) {
         Some(p) if !p.is_empty() => p,
         _ => {
-            write_jsonrpc(
-                out,
+            send(
+                transport,
                 &error_response(
                     id,
                     INVALID_PARAMS,
                     "resumeSession requires a non-empty 'path' param",
                 ),
-            );
+            )
+            .await;
             return;
         }
     };
@@ -755,8 +769,8 @@ fn handle_resume_session(app: &mut App, params: &Value, id: &Value, out: &Out) {
                 model = %old_model,
                 "session resumed via RPC"
             );
-            write_jsonrpc(
-                out,
+            send(
+                transport,
                 &success_response(
                     id,
                     json!({
@@ -766,21 +780,23 @@ fn handle_resume_session(app: &mut App, params: &Value, id: &Value, out: &Out) {
                         "entryCount": app.session.entry_count(),
                     }),
                 ),
-            );
+            )
+            .await;
         }
         Err(e) => {
             warn!(path = %path.display(), error = %e, "failed to resume session");
-            write_jsonrpc(
-                out,
+            send(
+                transport,
                 &error_response(id, INTERNAL_ERROR, &format!("failed to open session: {e}")),
-            );
+            )
+            .await;
         }
     }
 }
 
 /// List all registered tools with their names, descriptions, risk levels,
 /// and parameter schemas.
-fn handle_list_tools(app: &App, id: &Value, out: &Out) {
+async fn handle_list_tools(app: &App, id: &Value, transport: &dyn Transport) {
     let tools: Vec<Value> = app
         .registry
         .list()
@@ -794,11 +810,11 @@ fn handle_list_tools(app: &App, id: &Value, out: &Out) {
             })
         })
         .collect();
-    write_jsonrpc(out, &success_response(id, json!({"tools": tools})));
+    send(transport, &success_response(id, json!({"tools": tools}))).await;
 }
 
 /// Reload extensions from disk.
-async fn handle_reload_extensions(app: &mut App, id: &Value, out: &Out) {
+async fn handle_reload_extensions(app: &mut App, id: &Value, transport: &dyn Transport) {
     let dirs = crate::app::extension_dirs(&app.session.header().cwd);
 
     let fresh_config = rho_core::ConfigLoader::load(&app.session.header().cwd).unwrap_or_default();
@@ -814,8 +830,8 @@ async fn handle_reload_extensions(app: &mut App, id: &Value, out: &Out) {
                 "extensions reloaded"
             );
             app.ext_observers = app.ext_loader.build_observers();
-            write_jsonrpc(
-                out,
+            send(
+                transport,
                 &success_response(
                     id,
                     json!({
@@ -825,11 +841,16 @@ async fn handle_reload_extensions(app: &mut App, id: &Value, out: &Out) {
                         "failed": report.failed.len(),
                     }),
                 ),
-            );
+            )
+            .await;
         }
         Err(e) => {
             warn!(error = %e, "extension reload failed");
-            write_jsonrpc(out, &error_response(id, INTERNAL_ERROR, &e.to_string()));
+            send(
+                transport,
+                &error_response(id, INTERNAL_ERROR, &e.to_string()),
+            )
+            .await;
         }
     }
 }
@@ -923,7 +944,7 @@ mod tests {
     use rho_test_helpers::{
         FixedResponseTool, MockChatClient, TestProvider, text_events, tool_call_events,
     };
-    use std::io::Cursor;
+    use std::io::{Cursor, Write};
 
     // ═══════════════════════════════════════════════════════════════════════
     // Test infrastructure
@@ -1003,10 +1024,10 @@ mod tests {
         let reader = Cursor::new(stdin_data.as_bytes().to_vec());
         let writer = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let writer_clone = std::sync::Arc::clone(&writer);
+        let transport: Arc<dyn Transport> =
+            Arc::new(StdioTransport::new(reader, WriterWrapper(writer_clone)));
 
-        run_rpc_on(app, reader, WriterWrapper(writer_clone))
-            .await
-            .expect("should not panic");
+        run_rpc_on(app, transport).await.expect("should not panic");
 
         let output = std::sync::Arc::try_unwrap(writer)
             .unwrap()
@@ -1414,10 +1435,10 @@ mod tests {
         let reader = Cursor::new(stdin_data.as_bytes().to_vec());
         let writer = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let writer_clone = std::sync::Arc::clone(&writer);
+        let transport: Arc<dyn Transport> =
+            Arc::new(StdioTransport::new(reader, WriterWrapper(writer_clone)));
 
-        run_rpc_on(app, reader, WriterWrapper(writer_clone))
-            .await
-            .expect("should not panic");
+        run_rpc_on(app, transport).await.expect("should not panic");
 
         let output = std::sync::Arc::try_unwrap(writer)
             .unwrap()

@@ -1,3 +1,9 @@
+## [0.77.2] - 2026-06-14
+
+### 🚀 Features
+
+- *(rpc)* Extract pluggable `Transport` trait with `StdioTransport` implementation, decoupling the JSON-RPC loop from stdin/stdout. Enables future WebSocket, Unix socket, and TCP transports without modifying dispatch logic.
+
 ## [0.77.1] - 2026-06-13
 
 ### 🚀 Features
