@@ -1,3 +1,15 @@
+## [0.81.0] - 2026-06-15
+
+### 🚀 Features
+
+- **(rpc)** `agent/end` notification now includes full `AgentResult` fields: `iterations`, `usage` (token counts + cost), `toolCalls` (name, arguments, outcome, duration per call), `durationMs`, and `finishReason`. Frontends can display cost, timing, and tool history without a separate `getSessionStats` call.
+
+### 🏗️ Internal
+
+- `TurnResult::Reply(String)` → `TurnResult::Done(Box<AgentResult>)` to carry the full result through the RPC layer.
+- Added `Default` derive to `ContextStats`.
+- Added wire-format types: `TokenUsageWire`, `ToolCallOutcomeWire`, `ToolCallRecordWire` with `From` impls from kernel types.
+
 ## [0.80.0] - 2026-06-15
 
 ### 🚀 Features

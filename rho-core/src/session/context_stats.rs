@@ -115,7 +115,7 @@ impl ApiUsage {
 /// Returned by [`Session::context_stats`](super::Session::context_stats) so
 /// the REPL and TUI can display how full the context window is, how many
 /// entries are in the active leaf-to-root path, and how much budget remains.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct ContextStats {
     /// Total context window size (tokens).
     pub context_window: usize,

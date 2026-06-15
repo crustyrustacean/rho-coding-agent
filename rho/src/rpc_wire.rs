@@ -248,11 +248,47 @@ pub struct EmptyResult {}
 #[serde(rename_all = "camelCase")]
 pub struct AgentStartParams {}
 
+/// Wire-format token usage (delta for a single `run_loop` call).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenUsageWire {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub total_tokens: u64,
+    pub total_cost: f64,
+    pub request_count: u32,
+}
+
+/// Wire-format tool call outcome.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolCallOutcomeWire {
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
+}
+
+/// Wire-format tool call record.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolCallRecordWire {
+    pub name: String,
+    pub arguments: String,
+    pub outcome: ToolCallOutcomeWire,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+}
+
 /// Params for the `agent/end` notification.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentEndParams {
     pub reply: String,
+    pub iterations: u32,
+    pub usage: TokenUsageWire,
+    pub tool_calls: Vec<ToolCallRecordWire>,
+    pub duration_ms: u64,
+    pub finish_reason: String,
 }
 
 /// Params for the `agent/error` notification.
@@ -371,6 +407,73 @@ impl GetSessionStatsResult {
 }
 
 use rho_core::ToolRisk;
+
+use rho_core::{AgentResult, LoopFinishReason, ToolCallOutcome};
+
+impl From<Box<AgentResult>> for AgentEndParams {
+    fn from(r: Box<AgentResult>) -> Self {
+        Self {
+            reply: r.reply,
+            iterations: r.iterations,
+            usage: TokenUsageWire {
+                input_tokens: r.usage.input_tokens,
+                output_tokens: r.usage.output_tokens,
+                total_tokens: r.usage.total_tokens(),
+                total_cost: r.usage.total_cost,
+                request_count: r.usage.request_count,
+            },
+            tool_calls: r.tool_calls.into_iter().map(Into::into).collect(),
+            duration_ms: u64::try_from(r.duration.as_millis()).unwrap_or(u64::MAX),
+            finish_reason: finish_reason_label(&r.finish_reason),
+        }
+    }
+}
+
+impl From<ToolCallOutcome> for ToolCallOutcomeWire {
+    fn from(o: ToolCallOutcome) -> Self {
+        match o {
+            ToolCallOutcome::Success => Self {
+                kind: "success".into(),
+                output: None,
+            },
+            ToolCallOutcome::Error { output } => Self {
+                kind: "error".into(),
+                output: Some(output),
+            },
+            ToolCallOutcome::Denied => Self {
+                kind: "denied".into(),
+                output: None,
+            },
+            ToolCallOutcome::Blocked { reason } => Self {
+                kind: "blocked".into(),
+                output: Some(reason),
+            },
+        }
+    }
+}
+
+impl From<rho_core::ToolCallRecord> for ToolCallRecordWire {
+    fn from(r: rho_core::ToolCallRecord) -> Self {
+        Self {
+            name: r.name,
+            arguments: r.arguments,
+            outcome: r.outcome.into(),
+            duration_ms: r
+                .duration
+                .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
+        }
+    }
+}
+
+fn finish_reason_label(reason: &LoopFinishReason) -> String {
+    match reason {
+        LoopFinishReason::Stop => "stop".into(),
+        LoopFinishReason::MaxIterations => "max_iterations".into(),
+        LoopFinishReason::Cancelled => "cancelled".into(),
+        LoopFinishReason::RetryBudgetExhausted => "retry_budget_exhausted".into(),
+        LoopFinishReason::ConsecutiveEmptyResponses => "consecutive_empty_responses".into(),
+    }
+}
 
 /// Map a [`ToolRisk`] to its JSON string label.
 pub fn risk_label(risk: ToolRisk) -> &'static str {

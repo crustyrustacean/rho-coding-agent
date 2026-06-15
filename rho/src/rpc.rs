@@ -479,25 +479,18 @@ async fn handle_prompt(
         compaction_client,
     };
     match run_agent_turn(&mut app.session, &message, &loop_params).await {
-        TurnResult::Reply(reply) => {
-            let elapsed = turn_start.elapsed();
+        TurnResult::Done(result) => {
+            let reply = result.reply.clone();
+            let end_params = AgentEndParams::from(result);
             info!(
                 message_len = message.len(),
                 reply_len = reply.len(),
-                duration_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+                duration_ms = end_params.duration_ms,
+                iterations = end_params.iterations,
                 model = %app.session.model(),
                 "agent turn completed"
             );
-            send(
-                &*transport,
-                &notification(
-                    "agent/end",
-                    &AgentEndParams {
-                        reply: reply.clone(),
-                    },
-                ),
-            )
-            .await;
+            send(&*transport, &notification("agent/end", &end_params)).await;
             send(&*transport, &success_response(id, PromptResult { reply })).await;
         }
         TurnResult::Error(e) => {

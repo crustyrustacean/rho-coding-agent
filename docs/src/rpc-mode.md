@@ -50,7 +50,7 @@ echo '{"jsonrpc":"2.0","method":"prompt","params":{"message":"explain this funct
 |---|---|---|
 | `ready` | — | Emitted once on startup |
 | `agent/start` | — | Agent began processing a prompt |
-| `agent/end` | `{reply: string}` | Agent finished; full text reply |
+| `agent/end` | `{reply, iterations, usage, toolCalls, durationMs, finishReason}` | Agent finished with full result
 | `agent/error` | `{error: string}` | Agent loop encountered an error |
 | `state/change` | `{state: string}` | Loop state transition (`thinking`, `executing_tool`, `awaiting_approval`, `idle`) |
 | `message/delta` | `{delta: string}` | Streaming text chunk |

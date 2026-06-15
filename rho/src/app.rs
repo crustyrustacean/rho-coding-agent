@@ -25,8 +25,8 @@ use tracing_subscriber::EnvFilter;
 
 /// The outcome of a single agent turn.
 pub(crate) enum TurnResult {
-    /// Agent produced a text reply.
-    Reply(String),
+    /// Agent produced a structured result.
+    Done(Box<rho_core::AgentResult>),
     /// Agent loop encountered an error.
     Error(String),
 }
@@ -403,7 +403,7 @@ pub(crate) async fn run_agent_turn(
     params: &LoopParams<'_>,
 ) -> TurnResult {
     match rho_core::run_loop(session, message, params).await {
-        Ok(result) => TurnResult::Reply(result.reply),
+        Ok(result) => TurnResult::Done(Box::new(result)),
         Err(e) => TurnResult::Error(e.to_string()),
     }
 }
@@ -696,8 +696,17 @@ mod tests {
 
     #[test]
     fn turn_result_variants() {
-        let reply = TurnResult::Reply("ok".into());
-        assert!(matches!(reply, TurnResult::Reply(_)));
+        let result = rho_core::AgentResult {
+            reply: "ok".into(),
+            iterations: 1,
+            usage: rho_core::TokenUsage::default(),
+            tool_calls: vec![],
+            duration: std::time::Duration::ZERO,
+            finish_reason: rho_core::LoopFinishReason::Stop,
+            context_stats: rho_core::ContextStats::default(),
+        };
+        let done = TurnResult::Done(Box::new(result));
+        assert!(matches!(done, TurnResult::Done(_)));
 
         let err = TurnResult::Error("fail".into());
         assert!(matches!(err, TurnResult::Error(_)));
