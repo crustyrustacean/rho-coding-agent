@@ -1,0 +1,395 @@
+{
+  "openrpc": "1.3.1",
+  "info": {
+    "title": "rho",
+    "version": "0.79.0",
+    "description": "Headless coding agent — JSON-RPC 2.0 protocol over stdin/stdout. Diagnostic output goes to stderr."
+  },
+  "methods": [
+    {
+      "name": "prompt",
+      "description": "Send a user message to the agent. The agent runs its loop (send to model → tool calls → approval → execution → repeat) until it produces a text reply or exhausts a budget.",
+      "params": [
+        {
+          "name": "message",
+          "description": "The user's message to the agent.",
+          "schema": { "type": "string" },
+          "required": true
+        }
+      ],
+      "result": {
+        "name": "result",
+        "description": "The agent's reply on success, or an error object on failure.",
+        "schema": {
+          "oneOf": [
+            {
+              "type": "object",
+              "description": "Success: the agent's text reply.",
+              "properties": {
+                "reply": { "type": "string" }
+              },
+              "required": ["reply"]
+            },
+            {
+              "type": "object",
+              "description": "Error: the agent loop failed.",
+              "properties": {
+                "error": { "type": "string" }
+              },
+              "required": ["error"]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "abort",
+      "description": "Cancel the current operation. If the agent is running, the current model request is cancelled at the next checkpoint.",
+      "params": [],
+      "result": {
+        "name": "result",
+        "description": "Empty acknowledgement.",
+        "schema": { "type": "object", "properties": {} }
+      }
+    },
+    {
+      "name": "clear",
+      "description": "Clear conversation history by branching back to the system message.",
+      "params": [],
+      "result": {
+        "name": "result",
+        "description": "Empty acknowledgement.",
+        "schema": { "type": "object", "properties": {} }
+      }
+    },
+    {
+      "name": "compact",
+      "description": "Trigger context compaction to free space in the context window.",
+      "params": [],
+      "result": {
+        "name": "result",
+        "description": "Empty acknowledgement.",
+        "schema": { "type": "object", "properties": {} }
+      }
+    },
+    {
+      "name": "getState",
+      "description": "Return the current model, provider name, and working directory.",
+      "params": [],
+      "result": {
+        "name": "result",
+        "description": "Current agent state.",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "model": { "type": "string", "description": "Active model identifier." },
+            "provider": { "type": "string", "description": "Active provider name." },
+            "cwd": { "type": "string", "description": "Current working directory." }
+          },
+          "required": ["model", "provider", "cwd"]
+        }
+      }
+    },
+    {
+      "name": "getMessages",
+      "description": "Return all messages on the active conversation path.",
+      "params": [],
+      "result": {
+        "name": "result",
+        "description": "Serialized conversation messages.",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "messages": {
+              "type": "array",
+              "description": "Array of ChatMessage objects with role-specific shapes.",
+              "items": { "type": "object" }
+            }
+          },
+          "required": ["messages"]
+        }
+      }
+    },
+    {
+      "name": "setModel",
+      "description": "Switch the active model (and its provider). Accepts a bare model ID or a 'provider:id' specifier.",
+      "params": [
+        {
+          "name": "model",
+          "description": "Model identifier (bare ID or provider:id).",
+          "schema": { "type": "string" },
+          "required": true
+        }
+      ],
+      "result": {
+        "name": "result",
+        "description": "The new active model and provider.",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "model": { "type": "string" },
+            "provider": { "type": "string" }
+          },
+          "required": ["model", "provider"]
+        }
+      }
+    },
+    {
+      "name": "listModels",
+      "description": "List available models from all configured providers.",
+      "params": [],
+      "result": {
+        "name": "result",
+        "description": "Available models.",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "models": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": { "type": "string" },
+                  "provider": { "type": "string" }
+                },
+                "required": ["id", "provider"]
+              }
+            }
+          },
+          "required": ["models"]
+        }
+      }
+    },
+    {
+      "name": "listProviders",
+      "description": "List configured providers with reachability status.",
+      "params": [],
+      "result": {
+        "name": "result",
+        "description": "Configured providers.",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "providers": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "isExternal": { "type": "boolean", "description": "Whether the provider is an external (non-local) endpoint." },
+                  "reachable": { "type": "boolean", "description": "Whether the provider endpoint is reachable." },
+                  "active": { "type": "boolean", "description": "Whether this is the currently active provider." }
+                },
+                "required": ["name", "isExternal", "reachable", "active"]
+              }
+            }
+          },
+          "required": ["providers"]
+        }
+      }
+    },
+    {
+      "name": "getSessionStats",
+      "description": "Return token budget, context window usage, and API cost statistics.",
+      "params": [],
+      "result": {
+        "name": "result",
+        "description": "Session statistics.",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "contextWindow": { "type": "integer", "description": "Total context window size in tokens." },
+            "completionReserve": { "type": "integer", "description": "Tokens reserved for model completion output." },
+            "estimatedUsed": { "type": "integer", "description": "Estimated tokens used in the context." },
+            "estimatedRemaining": { "type": "integer", "description": "Estimated tokens remaining before compaction." },
+            "utilizationPercent": { "type": "integer", "description": "Context utilization as a percentage (0-100)." },
+            "messageCount": { "type": "integer", "description": "Number of messages in the context." },
+            "entryCount": { "type": "integer", "description": "Total session entries." },
+            "pathEntryCount": { "type": "integer", "description": "Entries on the active path." },
+            "compactedEntryCount": { "type": "integer", "description": "Entries that have been compacted." },
+            "compactionTokens": { "type": "integer", "description": "Tokens used by compacted summaries." },
+            "roleTokens": {
+              "type": "object",
+              "description": "Token counts by message role.",
+              "properties": {
+                "system": { "type": "integer" },
+                "user": { "type": "integer" },
+                "assistant": { "type": "integer" },
+                "tool": { "type": "integer" }
+              },
+              "required": ["system", "user", "assistant", "tool"]
+            },
+            "resolutionTokens": {
+              "type": "object",
+              "description": "Token counts by entry resolution level.",
+              "properties": {
+                "full": { "type": "integer" },
+                "outlined": { "type": "integer" },
+                "summarized": { "type": "integer" },
+                "pinned": { "type": "integer" }
+              },
+              "required": ["full", "outlined", "summarized", "pinned"]
+            },
+            "apiUsage": {
+              "type": "object",
+              "description": "Cumulative API usage across all requests.",
+              "properties": {
+                "totalInputTokens": { "type": "integer" },
+                "totalOutputTokens": { "type": "integer" },
+                "totalTokens": { "type": "integer" },
+                "totalCost": { "type": "number", "description": "Cumulative cost in USD." },
+                "requestCount": { "type": "integer" }
+              },
+              "required": ["totalInputTokens", "totalOutputTokens", "totalTokens", "totalCost", "requestCount"]
+            }
+          },
+          "required": ["contextWindow", "completionReserve", "estimatedUsed", "estimatedRemaining", "utilizationPercent", "messageCount", "entryCount", "pathEntryCount", "compactedEntryCount", "compactionTokens", "roleTokens", "resolutionTokens", "apiUsage"]
+        }
+      }
+    },
+    {
+      "name": "listSessions",
+      "description": "List previous sessions for the current project.",
+      "params": [],
+      "result": {
+        "name": "result",
+        "description": "Available sessions.",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "sessions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "path": { "type": "string", "description": "File path to the session JSONL." },
+                  "mtimeSecs": { "type": "integer", "description": "Modification time as Unix epoch seconds." },
+                  "sizeKb": { "type": "integer", "description": "File size in kilobytes." },
+                  "entryCount": { "type": "integer", "description": "Number of entries in the session." }
+                },
+                "required": ["path", "mtimeSecs", "sizeKb", "entryCount"]
+              }
+            }
+          },
+          "required": ["sessions"]
+        }
+      }
+    },
+    {
+      "name": "listExtensions",
+      "description": "List loaded extensions and their registered tools.",
+      "params": [],
+      "result": {
+        "name": "result",
+        "description": "Loaded extensions.",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "extensions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "tools": { "type": "array", "items": { "type": "string" } }
+                },
+                "required": ["name", "tools"]
+              }
+            }
+          },
+          "required": ["extensions"]
+        }
+      }
+    },
+    {
+      "name": "reloadExtensions",
+      "description": "Reload extensions from disk (mtime-based change detection).",
+      "params": [],
+      "result": {
+        "name": "result",
+        "description": "Reload report.",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "added": { "type": "integer", "description": "Number of extensions added." },
+            "reloaded": { "type": "integer", "description": "Number of extensions reloaded." },
+            "removed": { "type": "integer", "description": "Number of extensions removed." },
+            "failed": { "type": "integer", "description": "Number of extensions that failed to reload." }
+          },
+          "required": ["added", "reloaded", "removed", "failed"]
+        }
+      }
+    },
+    {
+      "name": "resumeSession",
+      "description": "Resume a previous session from a JSONL file path. Replaces the current session, restoring model, tools, and token budget from the current app configuration.",
+      "params": [
+        {
+          "name": "path",
+          "description": "Path to the session JSONL file.",
+          "schema": { "type": "string" },
+          "required": true
+        }
+      ],
+      "result": {
+        "name": "result",
+        "description": "Resumed session info.",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "path": { "type": "string" },
+            "model": { "type": "string" },
+            "cwd": { "type": "string" },
+            "entryCount": { "type": "integer" }
+          },
+          "required": ["path", "model", "cwd", "entryCount"]
+        }
+      }
+    },
+    {
+      "name": "listTools",
+      "description": "List all registered tools with their names, descriptions, risk levels, and parameter schemas.",
+      "params": [],
+      "result": {
+        "name": "result",
+        "description": "Registered tools.",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "tools": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "description": { "type": "string" },
+                  "risk": { "type": "string", "description": "Risk level: read, write, destructive, or network." },
+                  "parameters": { "type": "object", "description": "JSON Schema object for tool parameters." }
+                },
+                "required": ["name", "description", "risk", "parameters"]
+              }
+            }
+          },
+          "required": ["tools"]
+        }
+      }
+    },
+    {
+      "name": "approvalResponse",
+      "description": "Respond to an approval/request notification. Handled synchronously during the approval flow; if received outside the flow, acknowledged as a no-op.",
+      "params": [
+        {
+          "name": "approved",
+          "description": "Whether to approve the tool call.",
+          "schema": { "type": "boolean" },
+          "required": true
+        }
+      ],
+      "result": {
+        "name": "result",
+        "description": "Empty acknowledgement.",
+        "schema": { "type": "object", "properties": {} }
+      }
+    }
+  ]
+}

@@ -76,6 +76,9 @@ enum Xtask {
 
     /// Show workspace status summary.
     Status,
+
+    /// Generate/update the `OpenRPC` schema in `docs/rpc-schema/openrpc.json`.
+    Schema,
 }
 
 fn main() -> Result<()> {
@@ -91,5 +94,6 @@ fn main() -> Result<()> {
         Xtask::Changelog => tasks::changelog(),
         Xtask::Release { version, skip_ci } => tasks::release(&version, skip_ci),
         Xtask::Status => tasks::status(),
+        Xtask::Schema => tasks::schema(),
     }
 }

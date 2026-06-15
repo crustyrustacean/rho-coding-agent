@@ -4,6 +4,8 @@
 
 Diagnostic output (warnings, budget info, session status) is written to **stderr**, keeping **stdout** exclusively for the protocol.
 
+> **Machine-readable schema.** An [`OpenRPC 1.3.1` schema](../rpc-schema/openrpc.json) documents every method, its params, and result types. Use it with any `OpenRPC`-compatible code generator to produce type-safe client stubs in your language of choice.
+
 ## Usage
 
 ```sh
@@ -117,6 +119,8 @@ Use `getSessionStats` to monitor context usage and `compact` to free space when 
 
 The RPC core loop is generic over I/O (`run_rpc_on<R, W>`), enabling in-process integration tests that inject canned stdin via `Cursor<Vec<u8>>` and capture stdout without touching real file descriptors. Tests use `TestProvider` (from `rho-test-helpers`) to wrap a `MockChatClient` as a `Provider` and construct `App` directly, bypassing CLI startup. See [Testing](./development/testing.md) for details.
 
+Run `cargo xtask schema` to update the version in the `OpenRPC` schema after a release.
+
 ### Example test session
 
 ```text
@@ -129,3 +133,7 @@ stdout: {"jsonrpc":"2.0","method":"state/change","params":{"state":"idle"}}
 stdout: {"jsonrpc":"2.0","method":"agent/end","params":{"reply":"hello"}}
 stdout: {"jsonrpc":"2.0","result":{"reply":"hello"},"id":1}
 ```
+
+## Wire-format types
+
+All wire-format structs live in `rho/src/rpc_wire.rs`. Every method param, result, and notification has a typed Rust struct with `Serialize` and (where applicable) `Deserialize`, so the dispatch layer catches malformed requests early and produces well-formed responses. The mdBook source for this page (`docs/src/rpc-mode.md`) duplicates the information in prose form; the single source of truth is the `OpenRPC` schema.

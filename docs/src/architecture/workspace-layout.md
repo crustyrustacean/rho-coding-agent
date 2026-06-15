@@ -16,6 +16,7 @@ rho-coding-agent/
 │       ├── model.rs          # Model resolution (config-as-truth, provider-first)
 │       ├── ext_observer.rs   # `CompositeObserver` — fans out to RPC observer + extension observers
 │       ├── rpc.rs            # JSON-RPC 2.0: `run_rpc`, `run_rpc_on`, observer, approval gate
+│       ├── rpc_wire.rs        # Typed wire-format structs (params, results, notifications)
 │       └── presenter/
 │           └── rpc.rs        # `RpcPresenter` — diagnostic output to stderr
 ├── rho-ai/                 # Unified LLM provider abstraction

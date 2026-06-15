@@ -28,7 +28,7 @@ tracing = "0.1.44"
 bytes = "1"
 
 [workspace.package]
-version = "0.79.0"
+version = "0.80.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/crustyrustacean/rho-coding-agent"

@@ -1,3 +1,15 @@
+## [0.80.0] - 2026-06-15
+
+### 🚀 Features
+
+- **(rpc)** Typed wire-format layer (`rho/src/rpc_wire.rs`) — every JSON-RPC method param, result, and notification now has a typed Rust struct with `Serialize`/`Deserialize`. Dispatch deserializes inbound params early and serializes outbound results through structs, replacing hand-built `json!({...})` calls.
+- **(rpc)** `OpenRPC 1.3.1` schema shipped at `docs/rpc-schema/openrpc.json`, documenting all 16 methods with param and result types for machine-readable client discovery.
+- **(xtask)** New `cargo xtask schema` command injects the workspace version into the `OpenRPC` schema.
+
+### 📝 Documentation
+
+- Updated `README.md`, `ARCHITECTURE.md`, `docs/src/rpc-mode.md`, `crate-responsibilities.md`, and `workspace-layout.md` to reference the typed wire layer, `OpenRPC` schema, and `cargo xtask schema`.
+
 ## [0.79.0] - 2026-06-15
 
 ### 🚀 Features

@@ -15,7 +15,7 @@ A local coding agent written in Rust. `rho` runs as a headless process communica
 - 📂 **Project-aware** — auto-detects project root, loads context files (`AGENTS.md`, `CLAUDE.md`, `.cursorrules`, etc.) with hash-verified trust
 - ⚙️ **Configurable** — two-tier TOML config (user-level `~/.rho/config.toml` + project-level `.rho/config.toml`), per-tool approval policies, command denylist
 - 🧠 **Local and remote models** — targets OpenAI-compatible endpoints (LM Studio, Ollama, OpenAI, Groq, OpenRouter, DeepInfra, and more) with named presets (`lm-studio`, `openrouter`, `openai`, `groq`, `ollama`, `zai`) and multi-provider support
-- 🔌 **JSON-RPC 2.0** — headless protocol over stdin/stdout for embedding in editors, bots, and custom UIs
+- 🔌 **JSON-RPC 2.0** — headless protocol over stdin/stdout for embedding in editors, bots, and custom UIs. [OpenRPC schema](docs/rpc-schema/openrpc.json) available for client generation.
 
 ## Quick Start
 
@@ -110,7 +110,7 @@ echo '{"jsonrpc":"2.0","method":"prompt","params":{"message":"list the source fi
     --model my-model
 ```
 
-Output is a stream of JSON-RPC responses and notifications (`ready`, `agent/start`, `message/delta`, `tool/call`, `tool/result`, `agent/end`, etc.). See [ARCHITECTURE.md](ARCHITECTURE.md) for the full protocol reference.
+Output is a stream of JSON-RPC responses and notifications (`ready`, `agent/start`, `message/delta`, `tool/call`, `tool/result`, `agent/end`, etc.). See [ARCHITECTURE.md](ARCHITECTURE.md) for the full protocol reference, or [docs/rpc-schema/openrpc.json](docs/rpc-schema/openrpc.json) for the machine-readable `OpenRPC` schema.
 
 ## Configuration
 
@@ -219,6 +219,7 @@ rho/                  # Headless JSON-RPC 2.0 agent
     model.rs          # Model resolution
     ext_observer.rs   # CompositeObserver — fans out to RPC + extension observers
     rpc.rs            # JSON-RPC 2.0 protocol (methods, notifications, approval gate)
+    rpc_wire.rs        # Typed wire-format structs (params, results, notifications)
     presenter.rs      # Presenter module root
     presenter/
       rpc.rs          # RpcPresenter — diagnostic output to stderr

@@ -114,7 +114,7 @@ Extension directories: `~/.rho/extensions/` (user-level) and `.rho/extensions/` 
 
 ### `rho` — Headless JSON-RPC 2.0 Agent
 
-Assembles all layers and runs the headless JSON-RPC 2.0 protocol over stdin/stdout.
+Assembles all layers and runs the headless JSON-RPC 2.0 protocol over stdin/stdout. Wire-format types live in `rpc_wire.rs` (typed structs for every method param, result, and notification), and the dispatch loop in `rpc.rs` deserializes params and serializes results through them. An [`OpenRPC` schema](../docs/rpc-schema/openrpc.json) documents the protocol for client generation.
 
 **Startup sequence (`App::build`):**
 1. Parse CLI arguments (`Cli` — `--model`, `--endpoint`, `--api-key-env`, session flags, etc.)
@@ -137,6 +137,8 @@ Assembles all layers and runs the headless JSON-RPC 2.0 protocol over stdin/stdo
 `rho` runs as a headless agent communicating via **JSON-RPC 2.0** over stdin/stdout. All requests must include `"jsonrpc": "2.0"`, a `method` field, optional `params`, and a numeric or string `id` for response correlation. Streaming events are delivered as JSON-RPC notifications (no `id` field).
 
 Diagnostic output (warnings, budget info, session status) is written to **stderr**, keeping **stdout** exclusively for the protocol.
+
+The protocol is fully typed in `rho/src/rpc_wire.rs` — every method param, result, and notification has a Rust struct with `Serialize`/`Deserialize`. An [`OpenRPC 1.3.1` schema](../docs/rpc-schema/openrpc.json) is shipped in `docs/rpc-schema/` for client generation in any language. Run `cargo xtask schema` to update the version in the schema.
 
 ```
 # Example session
@@ -319,6 +321,7 @@ rho/                # Headless JSON-RPC 2.0 agent
     model.rs        # Model resolution
     ext_observer.rs # `CompositeObserver` — fans out to RPC observer + extension observers
     rpc.rs          # JSON-RPC 2.0 protocol: `run_rpc`, `run_rpc_on`, `RpcObserver`, `RpcApprovalGate`
+    rpc_wire.rs      # Typed wire-format structs: params, results, notifications, `OpenRPC` schema types
     presenter.rs    # Presenter module root
     presenter/
       rpc.rs        # `RpcPresenter` — diagnostic output to stderr

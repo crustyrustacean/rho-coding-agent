@@ -20,6 +20,7 @@ clap = { version = "4.5", features = ["derive"] }
 rho-core = { path = "../rho-core" }
 rho-ext = { path = "../rho-ext" }
 rho-tools = { path = "../rho-tools" }
+serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 tokio.workspace = true
 tracing = "0.1"

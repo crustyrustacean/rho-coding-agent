@@ -74,13 +74,19 @@
 
 use crate::app::{App, TurnResult, run_agent_turn};
 use crate::ext_observer::CompositeObserver;
+use crate::rpc_wire::{
+    AgentEndParams, AgentErrorParams, AgentStartParams, ApprovalRequestParams, EmptyResult,
+    ExtensionEntry, GetMessagesResult, GetSessionStatsResult, GetStateResult, ListExtensionsResult,
+    ListModelsResult, ListProvidersResult, ListSessionsResult, ListToolsResult, MessageDeltaParams,
+    ModelEntry, PromptErrorResult, PromptParams, PromptResult, ProviderEntry, ReadyParams,
+    ReasoningDeltaParams, ResumeSessionParams, ResumeSessionResult, SessionEntry, SetModelParams,
+    SetModelResult, StateChangeParams, ToolCallParams, ToolDeniedParams, ToolEntry,
+    ToolResultParams, notification, risk_label, state_name,
+};
 use crate::transport::{ReadResult, StdioTransport, Transport};
 use anyhow::Result;
 use async_trait::async_trait;
-use rho_core::{
-    AgentObserver, AgentState, ApprovalGate, ChatMessage, ContentBlock, ModelToolCall, ToolResult,
-    ToolRisk,
-};
+use rho_core::{AgentObserver, ChatMessage, ContentBlock, ModelToolCall, ToolResult};
 use serde_json::{Value, json};
 use std::io;
 use std::sync::Arc;
@@ -112,10 +118,10 @@ async fn send(transport: &dyn Transport, value: &Value) {
 
 /// Build a successful JSON-RPC response.
 #[allow(clippy::needless_pass_by_value)]
-fn success_response(id: &Value, result: Value) -> Value {
+fn success_response(id: &Value, result: impl serde::Serialize) -> Value {
     json!({
         "jsonrpc": "2.0",
-        "result": result,
+        "result": serde_json::to_value(result).unwrap_or_default(),
         "id": id
     })
 }
@@ -129,16 +135,6 @@ fn error_response(id: &Value, code: i32, message: &str) -> Value {
             "message": message
         },
         "id": id
-    })
-}
-
-/// Build a JSON-RPC notification (no id).
-#[allow(clippy::needless_pass_by_value)]
-fn notification(method: &str, params: Value) -> Value {
-    json!({
-        "jsonrpc": "2.0",
-        "method": method,
-        "params": params
     })
 }
 
@@ -156,12 +152,14 @@ struct RpcObserver {
 
 #[async_trait]
 impl AgentObserver for RpcObserver {
-    async fn on_state_change(&self, state: AgentState) {
+    async fn on_state_change(&self, state: rho_core::AgentState) {
         let _ = self
             .transport
             .write_message(&notification(
                 "state/change",
-                json!({"state": state_name(&state)}),
+                &StateChangeParams {
+                    state: state_name(&state).into(),
+                },
             ))
             .await;
     }
@@ -169,14 +167,24 @@ impl AgentObserver for RpcObserver {
     async fn on_text_delta(&self, delta: &str) {
         let _ = self
             .transport
-            .write_message(&notification("message/delta", json!({"delta": delta})))
+            .write_message(&notification(
+                "message/delta",
+                &MessageDeltaParams {
+                    delta: delta.into(),
+                },
+            ))
             .await;
     }
 
     async fn on_reasoning_delta(&self, delta: &str) {
         let _ = self
             .transport
-            .write_message(&notification("reasoning/delta", json!({"delta": delta})))
+            .write_message(&notification(
+                "reasoning/delta",
+                &ReasoningDeltaParams {
+                    delta: delta.into(),
+                },
+            ))
             .await;
     }
 
@@ -185,7 +193,10 @@ impl AgentObserver for RpcObserver {
             .transport
             .write_message(&notification(
                 "tool/call",
-                json!({"name": name, "arguments": arguments}),
+                &ToolCallParams {
+                    name: name.into(),
+                    arguments: arguments.into(),
+                },
             ))
             .await;
     }
@@ -195,11 +206,11 @@ impl AgentObserver for RpcObserver {
             .transport
             .write_message(&notification(
                 "tool/result",
-                json!({
-                    "name": name,
-                    "is_error": result.is_error,
-                    "output": result.output,
-                }),
+                &ToolResultParams {
+                    name: name.into(),
+                    is_error: result.is_error,
+                    output: result.output.clone(),
+                },
             ))
             .await;
     }
@@ -207,7 +218,10 @@ impl AgentObserver for RpcObserver {
     async fn on_tool_denied(&self, name: &str) {
         let _ = self
             .transport
-            .write_message(&notification("tool/denied", json!({"name": name})))
+            .write_message(&notification(
+                "tool/denied",
+                &ToolDeniedParams { name: name.into() },
+            ))
             .await;
     }
 }
@@ -222,17 +236,17 @@ struct RpcApprovalGate {
 }
 
 #[async_trait]
-impl ApprovalGate for RpcApprovalGate {
-    async fn request_approval(&self, call: &ModelToolCall, risk: ToolRisk) -> bool {
+impl rho_core::ApprovalGate for RpcApprovalGate {
+    async fn request_approval(&self, call: &ModelToolCall, risk: rho_core::ToolRisk) -> bool {
         let _ = self
             .transport
             .write_message(&notification(
                 "approval/request",
-                json!({
-                    "tool": &*call.function.name,
-                    "arguments": call.function.arguments,
-                    "risk": risk_label(risk),
-                }),
+                &ApprovalRequestParams {
+                    tool: call.function.name.to_string(),
+                    arguments: call.function.arguments.clone(),
+                    risk: risk_label(risk).into(),
+                },
             ))
             .await;
 
@@ -268,7 +282,7 @@ pub async fn run_rpc(app: App) -> Result<()> {
 ///
 /// Returns an error if the transport fails unexpectedly.
 pub(crate) async fn run_rpc_on(mut app: App, transport: Arc<dyn Transport>) -> Result<()> {
-    send(&*transport, &notification("ready", json!({}))).await;
+    send(&*transport, &notification("ready", &ReadyParams {})).await;
     info!("RPC server started, emitting ready notification");
 
     loop {
@@ -335,15 +349,43 @@ async fn dispatch_request(
 ) {
     debug!(method = %method, id = %id, "dispatching RPC request");
     match method {
-        "prompt" => handle_prompt(app, params, id, Arc::clone(&transport)).await,
+        "prompt" => match serde_json::from_value::<PromptParams>(params) {
+            Ok(p) if !p.message.is_empty() => {
+                handle_prompt(app, p, id, Arc::clone(&transport)).await;
+            }
+            _ => {
+                send(
+                    &*transport,
+                    &error_response(
+                        id,
+                        INVALID_PARAMS,
+                        "prompt requires a non-empty 'message' param",
+                    ),
+                )
+                .await;
+            }
+        },
         "abort" => {
             app.cancel.cancel();
-            send(&*transport, &success_response(id, json!({}))).await;
+            send(&*transport, &success_response(id, EmptyResult {})).await;
         }
         "clear" => handle_clear(app, id, &*transport).await,
         "getState" => handle_get_state(app, id, &*transport).await,
         "getMessages" => handle_get_messages(app, id, &*transport).await,
-        "setModel" => handle_set_model(app, params, id, &*transport).await,
+        "setModel" => match serde_json::from_value::<SetModelParams>(params) {
+            Ok(p) if !p.model.is_empty() => handle_set_model(app, p, id, &*transport).await,
+            _ => {
+                send(
+                    &*transport,
+                    &error_response(
+                        id,
+                        INVALID_PARAMS,
+                        "setModel requires a non-empty 'model' param",
+                    ),
+                )
+                .await;
+            }
+        },
         "listModels" => handle_list_models(app, id, &*transport).await,
         "listProviders" => handle_list_providers(app, id, &*transport).await,
         "getSessionStats" => handle_get_session_stats(app, id, &*transport).await,
@@ -351,12 +393,25 @@ async fn dispatch_request(
         "listExtensions" => handle_list_extensions(app, id, &*transport).await,
         "reloadExtensions" => handle_reload_extensions(app, id, &*transport).await,
         "compact" => handle_compact(app, id, &*transport).await,
-        "resumeSession" => handle_resume_session(app, &params, id, &*transport).await,
+        "resumeSession" => match serde_json::from_value::<ResumeSessionParams>(params) {
+            Ok(p) if !p.path.is_empty() => handle_resume_session(app, p, id, &*transport).await,
+            _ => {
+                send(
+                    &*transport,
+                    &error_response(
+                        id,
+                        INVALID_PARAMS,
+                        "resumeSession requires a non-empty 'path' param",
+                    ),
+                )
+                .await;
+            }
+        },
         "listTools" => handle_list_tools(app, id, &*transport).await,
         "approvalResponse" => {
             // Handled synchronously during approval flow, but if we see it here,
             // acknowledge it (shouldn't normally happen outside approval flow).
-            send(&*transport, &success_response(id, json!({}))).await;
+            send(&*transport, &success_response(id, EmptyResult {})).await;
         }
         _ => {
             debug!(method = %method, "unknown RPC method");
@@ -374,27 +429,17 @@ async fn dispatch_request(
 /// Run one agent turn for the user message.
 async fn handle_prompt(
     app: &mut App,
-    wire_params: Value,
+    params: PromptParams,
     id: &Value,
     transport: Arc<dyn Transport>,
 ) {
-    let message = match wire_params.get("message").and_then(|v| v.as_str()) {
-        Some(m) if !m.is_empty() => m.to_owned(),
-        _ => {
-            send(
-                &*transport,
-                &error_response(
-                    id,
-                    INVALID_PARAMS,
-                    "prompt requires a non-empty 'message' param",
-                ),
-            )
-            .await;
-            return;
-        }
-    };
+    let message = params.message;
 
-    send(&*transport, &notification("agent/start", json!({}))).await;
+    send(
+        &*transport,
+        &notification("agent/start", &AgentStartParams {}),
+    )
+    .await;
 
     debug!(
         message_len = message.len(),
@@ -445,10 +490,15 @@ async fn handle_prompt(
             );
             send(
                 &*transport,
-                &notification("agent/end", json!({"reply": &reply})),
+                &notification(
+                    "agent/end",
+                    &AgentEndParams {
+                        reply: reply.clone(),
+                    },
+                ),
             )
             .await;
-            send(&*transport, &success_response(id, json!({"reply": reply}))).await;
+            send(&*transport, &success_response(id, PromptResult { reply })).await;
         }
         TurnResult::Error(e) => {
             let elapsed = turn_start.elapsed();
@@ -461,10 +511,14 @@ async fn handle_prompt(
             );
             send(
                 &*transport,
-                &notification("agent/error", json!({"error": &e})),
+                &notification("agent/error", &AgentErrorParams { error: e.clone() }),
             )
             .await;
-            send(&*transport, &success_response(id, json!({"error": e}))).await;
+            send(
+                &*transport,
+                &success_response(id, PromptErrorResult { error: e }),
+            )
+            .await;
         }
     }
 }
@@ -475,11 +529,11 @@ async fn handle_get_state(app: &App, id: &Value, transport: &dyn Transport) {
         transport,
         &success_response(
             id,
-            json!({
-                "model": app.session.model(),
-                "provider": app.active_provider().name(),
-                "cwd": app.session.header().cwd.to_string_lossy(),
-            }),
+            GetStateResult {
+                model: app.session.model().to_owned(),
+                provider: app.active_provider().name().to_owned(),
+                cwd: app.session.header().cwd.to_string_lossy().into_owned(),
+            },
         ),
     )
     .await;
@@ -495,97 +549,54 @@ async fn handle_get_messages(app: &App, id: &Value, transport: &dyn Transport) {
         .collect();
     send(
         transport,
-        &success_response(id, json!({"messages": messages})),
+        &success_response(id, GetMessagesResult { messages }),
     )
     .await;
 }
 
 /// Switch the active model.
-async fn handle_set_model(app: &mut App, params: Value, id: &Value, transport: &dyn Transport) {
+/// Switch the active model.
+async fn handle_set_model(
+    app: &mut App,
+    params: SetModelParams,
+    id: &Value,
+    transport: &dyn Transport,
+) {
     let old_model = app.session.model().to_owned();
     let old_provider = app.active_provider().name().to_owned();
-    match params.get("model").and_then(|v| v.as_str()) {
-        Some(spec) if !spec.is_empty() => {
-            app.set_model(spec).await;
-            let provider = app.active_provider().name().to_owned();
-            let model = app.session.model().to_owned();
-            info!(
-                old_model = %old_model,
-                old_provider = %old_provider,
-                new_model = %model,
-                new_provider = %provider,
-                spec = %spec,
-                "model switched"
-            );
-            send(
-                transport,
-                &success_response(id, json!({"model": model, "provider": provider})),
-            )
-            .await;
-        }
-        _ => {
-            send(
-                transport,
-                &error_response(
-                    id,
-                    INVALID_PARAMS,
-                    "setModel requires a non-empty 'model' param",
-                ),
-            )
-            .await;
-        }
-    }
+    let spec = &params.model;
+    app.set_model(spec).await;
+    let provider = app.active_provider().name().to_owned();
+    let model = app.session.model().to_owned();
+    info!(
+        old_model = %old_model,
+        old_provider = %old_provider,
+        new_model = %model,
+        new_provider = %provider,
+        spec = %spec,
+        "model switched"
+    );
+    send(
+        transport,
+        &success_response(id, SetModelResult { model, provider }),
+    )
+    .await;
 }
 
 /// Return token budget and context-window usage statistics.
 async fn handle_get_session_stats(app: &App, id: &Value, transport: &dyn Transport) {
     let stats = app.session.context_stats();
     let usage = app.session.api_usage();
-    send(
-        transport,
-        &success_response(
-            id,
-            json!({
-                "contextWindow": stats.context_window,
-                "completionReserve": stats.completion_reserve,
-                "estimatedUsed": stats.estimated_used,
-                "estimatedRemaining": stats.estimated_remaining(),
-                "utilizationPercent": stats.utilization_percent(),
-                "messageCount": stats.message_count,
-                "entryCount": stats.entry_count,
-                "pathEntryCount": stats.path_entry_count,
-                "compactedEntryCount": stats.compacted_entry_count,
-                "compactionTokens": stats.compaction_tokens,
-                "roleTokens": {
-                    "system": stats.role_tokens.system,
-                    "user": stats.role_tokens.user,
-                    "assistant": stats.role_tokens.assistant,
-                    "tool": stats.role_tokens.tool,
-                },
-                "resolutionTokens": {
-                    "full": stats.resolution_tokens.full,
-                    "outlined": stats.resolution_tokens.outlined,
-                    "summarized": stats.resolution_tokens.summarized,
-                    "pinned": stats.resolution_tokens.pinned,
-                },
-                "apiUsage": {
-                    "totalInputTokens": usage.total_input_tokens,
-                    "totalOutputTokens": usage.total_output_tokens,
-                    "totalTokens": usage.total_tokens(),
-                    "totalCost": usage.total_cost,
-                    "requestCount": usage.request_count,
-                },
-            }),
-        ),
-    )
-    .await;
+    let result = GetSessionStatsResult::from(&stats).with_api_usage(usage);
+    send(transport, &success_response(id, result)).await;
 }
 
+/// Trigger context compaction.
 /// Trigger context compaction.
 async fn handle_compact(app: &mut App, id: &Value, transport: &dyn Transport) {
     info!("compaction triggered via RPC");
     match app.compact().await {
-        Ok(()) => send(transport, &success_response(id, json!({}))).await,
+        Ok(()) => send(transport, &success_response(id, EmptyResult {})).await,
         Err(e) => {
             warn!(error = %e, "compaction failed");
             send(
@@ -604,7 +615,7 @@ async fn handle_clear(app: &mut App, id: &Value, transport: &dyn Transport) {
     if let Some(root_entry) = path.last() {
         let root_id = root_entry.id.clone();
         let _ = app.session.branch_to(&root_id);
-        send(transport, &success_response(id, json!({}))).await;
+        send(transport, &success_response(id, EmptyResult {})).await;
     } else {
         send(
             transport,
@@ -617,42 +628,45 @@ async fn handle_clear(app: &mut App, id: &Value, transport: &dyn Transport) {
 /// List available models from all providers.
 async fn handle_list_models(app: &App, id: &Value, transport: &dyn Transport) {
     let all = app.providers.list_all_models().await;
-    let models: Vec<Value> = all
+    let models: Vec<ModelEntry> = all
         .iter()
-        .map(|(provider, info)| {
-            json!({
-                "id": info.id,
-                "provider": provider,
-            })
+        .map(|(provider, info)| ModelEntry {
+            id: info.id.clone(),
+            provider: provider.to_string(),
         })
         .collect();
-    send(transport, &success_response(id, json!({"models": models}))).await;
+    send(
+        transport,
+        &success_response(id, ListModelsResult { models }),
+    )
+    .await;
 }
 
 /// List configured providers with reachability status.
 async fn handle_list_providers(app: &App, id: &Value, transport: &dyn Transport) {
     let providers = app.providers.list_providers().await;
     let active = app.active_provider().name();
-    let list: Vec<Value> = providers
+    let list: Vec<ProviderEntry> = providers
         .iter()
-        .map(|p| {
-            json!({
-                "name": p.name,
-                "isExternal": p.is_external,
-                "reachable": p.reachable,
-                "active": p.name == active,
-            })
+        .map(|p| ProviderEntry {
+            name: p.name.clone(),
+            is_external: p.is_external,
+            reachable: p.reachable,
+            active: p.name == active,
         })
         .collect();
-    send(transport, &success_response(id, json!({"providers": list}))).await;
+    send(
+        transport,
+        &success_response(id, ListProvidersResult { providers: list }),
+    )
+    .await;
 }
 
 /// List previous sessions for this project.
 async fn handle_list_sessions(app: &App, id: &Value, transport: &dyn Transport) {
     let cwd = app.session.header().cwd.clone();
     let sessions = rho_core::list_sessions(&cwd);
-
-    let list: Vec<Value> = sessions
+    let list: Vec<SessionEntry> = sessions
         .iter()
         .map(|meta| {
             let mtime = meta
@@ -660,35 +674,32 @@ async fn handle_list_sessions(app: &App, id: &Value, transport: &dyn Transport) 
                 .duration_since(std::time::SystemTime::UNIX_EPOCH)
                 .map_or(0, |d| d.as_secs());
             let size_kb = std::fs::metadata(&meta.path).map_or(0, |m| m.len() / 1024);
-            json!({
-                "path": meta.path,
-                "mtimeSecs": mtime,
-                "sizeKb": size_kb,
-                "entryCount": meta.entry_count,
-            })
+            SessionEntry {
+                path: meta.path.to_string_lossy().into_owned(),
+                mtime_secs: mtime,
+                size_kb,
+                entry_count: meta.entry_count as u64,
+            }
         })
         .collect();
-
-    send(transport, &success_response(id, json!({"sessions": list}))).await;
+    send(
+        transport,
+        &success_response(id, ListSessionsResult { sessions: list }),
+    )
+    .await;
 }
 
 /// List loaded extensions and their tools.
 async fn handle_list_extensions(app: &App, id: &Value, transport: &dyn Transport) {
-    let extensions: Vec<Value> = app
+    let extensions: Vec<ExtensionEntry> = app
         .ext_loader
         .extension_tools()
         .into_iter()
-        .map(|(name, tools)| {
-            json!({
-                "name": name,
-                "tools": tools,
-            })
-        })
+        .map(|(name, tools)| ExtensionEntry { name, tools })
         .collect();
-
     send(
         transport,
-        &success_response(id, json!({"extensions": extensions})),
+        &success_response(id, ListExtensionsResult { extensions }),
     )
     .await;
 }
@@ -700,36 +711,17 @@ async fn handle_list_extensions(app: &App, id: &Value, transport: &dyn Transport
 /// The opened session continues appending to the same JSONL file.
 async fn handle_resume_session(
     app: &mut App,
-    params: &Value,
+    params: ResumeSessionParams,
     id: &Value,
     transport: &dyn Transport,
 ) {
-    let path_str = match params.get("path").and_then(|v| v.as_str()) {
-        Some(p) if !p.is_empty() => p,
-        _ => {
-            send(
-                transport,
-                &error_response(
-                    id,
-                    INVALID_PARAMS,
-                    "resumeSession requires a non-empty 'path' param",
-                ),
-            )
-            .await;
-            return;
-        }
-    };
-
-    let path = std::path::PathBuf::from(path_str);
+    let path = std::path::PathBuf::from(&params.path);
     match rho_core::Session::open(&path) {
         Ok(mut session) => {
             let old_model = app.session.model().to_owned();
-
-            // Restore model, tools, budget, and redactor from current app state.
             session.set_model(&old_model);
             session.set_tools(app.registry.tool_definitions());
             session.set_token_budget(app.session.token_budget());
-
             let session_cwd = session.header().cwd.clone();
             let current_cwd = app.session.header().cwd.clone();
             if session_cwd != current_cwd {
@@ -739,9 +731,7 @@ async fn handle_resume_session(
                     "resumed session CWD differs from current working directory"
                 );
             }
-
             app.session = session;
-
             info!(
                 path = %path.display(),
                 model = %old_model,
@@ -751,12 +741,12 @@ async fn handle_resume_session(
                 transport,
                 &success_response(
                     id,
-                    json!({
-                        "path": path_str,
-                        "model": old_model,
-                        "cwd": app.session.header().cwd.to_string_lossy(),
-                        "entryCount": app.session.entry_count(),
-                    }),
+                    ResumeSessionResult {
+                        path: params.path,
+                        model: old_model,
+                        cwd: app.session.header().cwd.to_string_lossy().into_owned(),
+                        entry_count: app.session.entry_count() as u64,
+                    },
                 ),
             )
             .await;
@@ -775,29 +765,25 @@ async fn handle_resume_session(
 /// List all registered tools with their names, descriptions, risk levels,
 /// and parameter schemas.
 async fn handle_list_tools(app: &App, id: &Value, transport: &dyn Transport) {
-    let tools: Vec<Value> = app
+    let tools: Vec<ToolEntry> = app
         .registry
         .list()
         .iter()
-        .map(|t| {
-            json!({
-                "name": t.name().to_string(),
-                "description": t.description(),
-                "risk": risk_label(t.risk()),
-                "parameters": t.parameters_schema(),
-            })
+        .map(|t| ToolEntry {
+            name: t.name().to_string(),
+            description: t.description().to_owned(),
+            risk: risk_label(t.risk()).to_owned(),
+            parameters: t.parameters_schema(),
         })
         .collect();
-    send(transport, &success_response(id, json!({"tools": tools}))).await;
+    send(transport, &success_response(id, ListToolsResult { tools })).await;
 }
 
 /// Reload extensions from disk.
 async fn handle_reload_extensions(app: &mut App, id: &Value, transport: &dyn Transport) {
     let dirs = crate::app::extension_dirs(&app.session.header().cwd);
-
     let fresh_config = rho_core::ConfigLoader::load(&app.session.header().cwd).unwrap_or_default();
     app.ext_loader.set_config(fresh_config.extensions);
-
     match app.ext_loader.reload(&dirs, &mut app.registry).await {
         Ok(report) => {
             info!(
@@ -833,30 +819,14 @@ async fn handle_reload_extensions(app: &mut App, id: &Value, transport: &dyn Tra
     }
 }
 
-// ── Pure helpers ──────────────────────────────────────────────────────────────
-
-/// Map an [`AgentState`] to its JSON string label.
-fn state_name(state: &AgentState) -> &'static str {
-    match state {
-        AgentState::Idle => "idle",
-        AgentState::Thinking => "thinking",
-        AgentState::AwaitingApproval => "awaiting_approval",
-        AgentState::ExecutingTool => "executing_tool",
-    }
-}
-
-/// Map a [`ToolRisk`] to its JSON string label.
-fn risk_label(risk: ToolRisk) -> &'static str {
-    match risk {
-        ToolRisk::Read => "read",
-        ToolRisk::Write => "write",
-        ToolRisk::Destructive => "destructive",
-        ToolRisk::Network => "network",
-    }
-}
+// ── Message serialization ─────────────────────────────────────────────────
 
 /// Serialize a [`ChatMessage`] to a JSON value.
-fn message_to_json(msg: &ChatMessage) -> Value {
+///
+/// Kept as a custom serializer (option (b)) because the per-role shapes
+/// are complex and don't map to a single struct without coupling `rho-core`
+/// to the wire format.
+pub(crate) fn message_to_json(msg: &ChatMessage) -> Value {
     match msg {
         ChatMessage::System { content } => {
             json!({"role": "system", "content": blocks_to_text(content)})
@@ -916,8 +886,9 @@ fn blocks_to_text(blocks: &[ContentBlock]) -> String {
 mod tests {
     use super::*;
     use rho_core::{
-        AgentConfig, ChatMessage, ContentBlock, ModelToolCall, ProviderRegistry, Session,
-        ToolCallFunction, ToolCallId, ToolName, ToolRegistry, ToolRisk, tool::CancellationToken,
+        AgentConfig, AgentState, ChatMessage, ContentBlock, ModelToolCall, ProviderRegistry,
+        Session, ToolCallFunction, ToolCallId, ToolName, ToolRegistry, ToolRisk,
+        tool::CancellationToken,
     };
     use rho_test_helpers::{
         FixedResponseTool, MockChatClient, TestProvider, text_events, tool_call_events,
@@ -1095,7 +1066,8 @@ mod tests {
 
     #[test]
     fn notification_shape() {
-        let notif = notification("agent/start", json!({}));
+        let notif =
+            crate::rpc_wire::notification("agent/start", &crate::rpc_wire::AgentStartParams {});
         assert_eq!(notif["jsonrpc"], "2.0");
         assert_eq!(notif["method"], "agent/start");
         assert!(!notif.as_object().unwrap().contains_key("id"));

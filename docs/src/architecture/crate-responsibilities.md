@@ -6,7 +6,7 @@ The headless JSON-RPC 2.0 agent: CLI argument parsing, tool wiring, extension lo
 
 Constructs a `Session`, connects to the model via a `Provider`, and drives the agent loop. Handles provider consent checks, model resolution, startup budget diagnostics, shell-specific prompt extensions, session discovery, extension loading, and live observer output via `RpcObserver`.
 
-The RPC implementation is generic over I/O (`run_rpc_on<R, W>`) so the in-process integration tests can inject canned stdin and capture stdout without touching real file descriptors. See [RPC Mode](../rpc-mode.md) for the full protocol reference.
+The RPC implementation is generic over I/O (`run_rpc_on<R, W>`) so the in-process integration tests can inject canned stdin and capture stdout without touching real file descriptors. Wire-format types in `rpc_wire.rs` give every method param, result, and notification a typed Rust struct. See [RPC Mode](../rpc-mode.md) for the full protocol reference and [`OpenRPC` schema](../../rpc-schema/openrpc.json) for machine-readable API discovery.
 
 ## `rho-core`
 
