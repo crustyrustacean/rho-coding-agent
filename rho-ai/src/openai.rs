@@ -200,6 +200,9 @@ struct SseUsage {
     /// Tokens in the completion.
     #[serde(default)]
     completion_tokens: u64,
+    /// Cost in USD (sent by OpenRouter and some providers).
+    #[serde(default)]
+    cost: Option<f64>,
 }
 
 // ── Request builder ───────────────────────────────────────────────────────────
@@ -424,7 +427,13 @@ fn parse_sse_chunk(chunk: &SseChunk, tool_acc: &mut ToolCallAccumulator) -> Vec<
         let usage = chunk
             .usage
             .as_ref()
-            .map(|u| StreamUsage::new(u.prompt_tokens, u.completion_tokens))
+            .map(|u| {
+                let su = StreamUsage::new(u.prompt_tokens, u.completion_tokens);
+                match u.cost {
+                    Some(c) if c > 0.0 => su.with_cost(c),
+                    _ => su,
+                }
+            })
             .unwrap_or_default();
 
         events.push(StreamEvent::Done {
@@ -955,6 +964,7 @@ mod tests {
             usage: Some(SseUsage {
                 prompt_tokens: 100,
                 completion_tokens: 50,
+                cost: None,
             }),
         };
         let mut acc = ToolCallAccumulator::default();
