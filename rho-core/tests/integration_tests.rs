@@ -47,7 +47,7 @@ async fn assistant_tool_call_message_persisted_before_tool_result() {
         .await
         .unwrap();
 
-    assert_eq!(result, "all done");
+    assert_eq!(result.reply, "all done");
 
     // The second request sent to the mock must contain:
     //   [user, assistant(tool_calls), tool(result)]
@@ -100,7 +100,7 @@ async fn multiple_tool_calls_executed_sequentially() {
         .await
         .unwrap();
 
-    assert_eq!(result, "all done");
+    assert_eq!(result.reply, "all done");
 
     // The second request must contain both tool results after the assistant message.
     let requests = client.requests();
@@ -218,7 +218,7 @@ async fn mixed_approval_with_multi_tool_call() {
         .await
         .unwrap();
 
-    assert_eq!(result, "understood");
+    assert_eq!(result.reply, "understood");
 
     // The second request must have both tool results:
     // call_1 (read, auto-approved) → "read_result"
@@ -305,7 +305,7 @@ async fn all_tool_calls_denied_still_feeds_results_and_resends() {
         .await
         .unwrap();
 
-    assert_eq!(result, "okay, won't write");
+    assert_eq!(result.reply, "okay, won't write");
 
     // Both tool results must be denial messages.
     let requests = client.requests();
@@ -532,11 +532,11 @@ async fn stuck_loop_injects_nudge_after_threshold() {
         observer: &NopObserver,
         compaction_client: None,
     };
-    let reply = run_loop(&mut session, "do something", &params)
+    let result = run_loop(&mut session, "do something", &params)
         .await
         .unwrap();
 
-    assert_eq!(reply, "I see the nudge, stopping.");
+    assert_eq!(result.reply, "I see the nudge, stopping.");
 
     // The path should contain at least one tool result with "STUCK LOOP DETECTED".
     let path = session.path_to_root();
@@ -751,7 +751,7 @@ async fn retry_succeeds_after_transient_error() {
     let result = run_loop(&mut session, "hello", &params).await.unwrap();
 
     assert_eq!(
-        result, "recovered",
+        result.reply, "recovered",
         "expected the successful response after retry"
     );
 
@@ -1144,18 +1144,18 @@ async fn length_truncated_empty_content_returns_explanation() {
 
     // Must NOT be empty — the old bug returned Ok("").
     assert!(
-        !result.is_empty(),
+        !result.reply.is_empty(),
         "expected a non-empty explanation, got empty string (the bug!)"
     );
     // Must mention the core problem.
     assert!(
-        result.contains("ran out of tokens"),
-        "expected 'ran out of tokens' in explanation, got: {result}"
+        result.reply.contains("ran out of tokens"),
+        "expected 'ran out of tokens' in explanation, got: {result:?}"
     );
     // Must mention reasoning/thinking since reasoning_content was non-empty.
     assert!(
-        result.contains("thinking"),
-        "expected 'thinking' in explanation (reasoning_content was non-empty), got: {result}"
+        result.reply.contains("thinking"),
+        "expected 'thinking' in explanation (reasoning_content was non-empty), got: {result:?}"
     );
 }
 
@@ -1186,20 +1186,22 @@ async fn length_truncated_with_partial_content_shows_it() {
         .unwrap();
 
     assert!(
-        !result.is_empty(),
+        !result.reply.is_empty(),
         "expected a non-empty explanation, got empty string"
     );
     assert!(
-        result.contains("ran out of tokens"),
-        "expected 'ran out of tokens' in explanation, got: {result}"
+        result.reply.contains("ran out of tokens"),
+        "expected 'ran out of tokens' in explanation, got: {result:?}"
     );
     assert!(
-        result.contains("Partial output (truncated)"),
-        "expected 'Partial output (truncated)' in explanation, got: {result}"
+        result.reply.contains("Partial output (truncated)"),
+        "expected 'Partial output (truncated)' in explanation, got: {result:?}"
     );
     assert!(
-        result.contains("The implementation involves several steps"),
-        "expected the partial content in the explanation, got: {result}"
+        result
+            .reply
+            .contains("The implementation involves several steps"),
+        "expected the partial content in the explanation, got: {result:?}"
     );
 }
 
@@ -1231,8 +1233,8 @@ async fn length_truncated_empty_everything_shows_no_output() {
     let result = run_loop(&mut session, "hello", &params).await.unwrap();
 
     assert!(
-        result.contains("actual response"),
-        "expected model to recover after nudge, got: {result}"
+        result.reply.contains("actual response"),
+        "expected model to recover after nudge, got: {result:?}"
     );
 }
 
@@ -1320,7 +1322,7 @@ async fn length_truncated_compacts_and_retries() {
 
     // After compaction + retry, the model should have produced its answer.
     assert_eq!(
-        result, "Here is the full answer you asked for.",
+        result.reply, "Here is the full answer you asked for.",
         "expected the model's successful response after compaction + retry"
     );
 

@@ -69,7 +69,7 @@ async fn denied_tool_gets_denial_message_fed_back() {
         .await
         .unwrap();
 
-    assert_eq!(result, "understood, skipping");
+    assert_eq!(result.reply, "understood, skipping");
 
     // The second request must include a Tool message with a denial text.
     let requests = client.requests();
@@ -120,7 +120,7 @@ async fn approved_tool_executes() {
     };
     let result = run_loop(&mut session, "do it", &params).await.unwrap();
 
-    assert_eq!(result, "done");
+    assert_eq!(result.reply, "done");
 
     // Verify the tool result (not a denial) is in history.
     let requests = client.requests();

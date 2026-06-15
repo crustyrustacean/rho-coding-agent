@@ -215,7 +215,7 @@ rho/                  # Headless JSON-RPC 2.0 agent
     main.rs           # Thin: parse CLI, build App, run
     lib.rs            # Module declarations
     cli.rs            # CLI argument parsing
-    app.rs            # App struct — startup orchestration, extension loading
+    app.rs            # App struct — startup orchestration, extension loading, AgentResult extraction
     model.rs          # Model resolution
     ext_observer.rs   # CompositeObserver — fans out to RPC + extension observers
     rpc.rs            # JSON-RPC 2.0 protocol (methods, notifications, approval gate)

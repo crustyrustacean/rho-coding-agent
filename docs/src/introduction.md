@@ -28,6 +28,7 @@ rho runs on Windows, macOS, and Linux. PowerShell 7+ (`pwsh`) is the primary she
 - Detect syntax node splits during edits via tree-sitter
 - Manage conversation state across sessions with tree-structured persistence and session discovery
 - Observe agent activity in real time (reasoning, tool calls, errors) via the `AgentObserver` trait
+- Get structured results from `run_loop` via `AgentResult` (reply, iterations, token usage, tool call history, duration, finish reason) without custom observers
 - Extend rho with TypeScript extensions that add tools, hooks, and commands — hot-reloadable at runtime
 - Compact old conversation turns to stay within context limits
 - Monitor context window usage with a live status bar, `getSessionStats` RPC method, and enhanced token distribution stats

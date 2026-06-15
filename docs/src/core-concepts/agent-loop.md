@@ -25,21 +25,30 @@ Idle (done)
 pub async fn run_loop(
     session: &mut Session,
     message: &str,
-    client: &dyn LlmService,
-    registry: &ToolRegistry,
-    config: &AgentConfig,
-    cancel: CancellationToken,
-    gate: &dyn ApprovalGate,
-    observer: &dyn AgentObserver,
-) -> Result<String>
+    params: &LoopParams<'_>,
+) -> Result<AgentResult>
 ```
 
-`run_loop` takes a `Session` and an `LlmService` (from `rho-ai`). It:
+`run_loop` takes a `Session` and a `LoopParams` (bundle of LLM service, tool registry, config, cancellation token, approval gate, observer, and optional compaction client). A `CollectingObserver` is always active internally — it records tool call events into `AgentResult.tool_calls` automatically, so consumers don't need custom observers for structured output.
+
+It returns `Result<AgentResult>`, which captures:
+
+| Field | Type | Description |
+|---|---|---|
+| `reply` | `String` | The model's final text reply |
+| `iterations` | `u32` | Number of LLM round-trips |
+| `usage` | `TokenUsage` | Per-call token delta (input, output, cost, request count) |
+| `tool_calls` | `Vec<ToolCallRecord>` | Ordered tool call history with name, arguments, outcome, duration |
+| `duration` | `Duration` | Wall-clock time for the entire run_loop |
+| `finish_reason` | `LoopFinishReason` | Why the loop ended |
+| `context_stats` | `ContextStats` | Context window utilization snapshot |
+
+The loop:
 
 1. Appends `message` as a user turn via `session.append_user_message()`.
 2. Enters the Thinking state and sends the session to the model via `session.send_current()`.
 3. Processes the model's response:
-   - **Text reply** → record phase as Conclusion, return it (Idle).
+   - **Text reply** → record phase as Conclusion, populate `AgentResult` and return it (Idle).
    - **Tool calls** → for each call, check approval, execute, record phase transition, append the result, then loop back to Thinking.
 
 All tool calls in a single model response are executed **sequentially**. Each result is appended before the session is re-sent to the model. Parallel execution is a future optimisation.
@@ -88,6 +97,10 @@ pub trait AgentObserver: Send + Sync {
 
 All methods have default no-op implementations, so observers only need to override the events they care about. The RPC observer streams reasoning deltas and tool activity as notifications. For tests, benchmarks, and headless use, `NopObserver` discards all events.
 
+### CollectingObserver
+
+`run_loop` always creates a `CollectingObserver` internally — it records tool call events (name, arguments, outcome, duration) into `ToolCallRecord`s that populate `AgentResult.tool_calls`. This is independent of the `observer` in `LoopParams` and requires no action from consumers. Any observer passed via `LoopParams` still receives all callbacks as before; the `CollectingObserver` runs alongside it.
+
 When extensions are loaded, the `CompositeObserver` fans out every call to both the RPC observer and the extension `DenoObserver`s. For `on_tool_call_intercept`, the **first `Block` wins** — if any extension blocks a tool call, execution is denied immediately.
 
 The observer is called:
@@ -98,15 +111,15 @@ The observer is called:
 
 ## Retry with backoff
 
-Transient HTTP errors (503, 429, connection refused) are retried with exponential backoff. The retry budget is configurable via `AgentConfig`. If the budget is exhausted, `run_loop` returns `RhoError::RetryBudgetExhausted`.
+Transient HTTP errors (503, 429, connection refused) are retried with exponential backoff. The retry budget is configurable via `AgentConfig`. If the budget is exhausted, the loop terminates with `AgentResult.finish_reason = LoopFinishReason::RetryBudgetExhausted`.
 
 ## Cancellation
 
-A `CancellationToken` is checked at the top of each loop iteration and between tool calls in a batch. When cancelled, `run_loop` returns `RhoError::Cancelled` immediately — no pending tool execution is aborted mid-flight, but no new ones are started.
+A `CancellationToken` is checked at the top of each loop iteration and between tool calls in a batch. When cancelled, the loop terminates with `AgentResult.finish_reason = LoopFinishReason::Cancelled` immediately — no pending tool execution is aborted mid-flight, but no new ones are started.
 
 ## Iteration guard
 
-The loop terminates after `config.max_iterations` tool-call rounds (default: 32). This prevents infinite loops from misbehaving models. Returns `AgentError::MaxIterationsExceeded`.
+The loop terminates after `config.max_iterations` tool-call rounds (default: 32). This prevents infinite loops from misbehaving models. Terminates with `AgentResult.finish_reason = LoopFinishReason::MaxIterations`.
 
 ## Stuck-loop detection
 

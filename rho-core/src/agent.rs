@@ -93,11 +93,196 @@ impl AgentError {
 }
 
 /// A specialised `Result` type for agent operations.
-pub type AgentResult<T> = std::result::Result<T, AgentError>;
+pub type AgentResultType<T> = std::result::Result<T, AgentError>;
 
 impl From<AgentError> for crate::error::RhoError {
     fn from(error: AgentError) -> Self {
         crate::error::RhoError::Agent(error)
+    }
+}
+
+// ── AgentResult (structured run_loop output) ────────────────────────────────
+
+/// Structured result from a single [`run_loop`] invocation.
+///
+/// Captures everything a consumer (REPL, TUI, bench, headless) needs to
+/// understand what the agent did — without implementing custom observers
+/// or stream interceptors.
+#[derive(Debug, Clone)]
+pub struct AgentResult {
+    /// The model's final text reply (formatted, with optional reasoning summary).
+    pub reply: String,
+    /// How many LLM round-trips (iterations) this `run_loop` used.
+    pub iterations: u32,
+    /// Cumulative token usage for this call (delta, not session-lifetime totals).
+    pub usage: TokenUsage,
+    /// Every tool call the model requested and what happened, in order.
+    pub tool_calls: Vec<ToolCallRecord>,
+    /// Wall-clock duration of the entire `run_loop` call.
+    pub duration: std::time::Duration,
+    /// Why the loop ended.
+    pub finish_reason: LoopFinishReason,
+    /// Context window stats snapshot taken at the end of the run.
+    pub context_stats: crate::session::ContextStats,
+}
+
+/// Token usage for a single [`run_loop`] invocation (delta, not session-lifetime).
+#[derive(Debug, Clone, Default)]
+pub struct TokenUsage {
+    /// Prompt tokens consumed in this call.
+    pub input_tokens: u64,
+    /// Completion tokens generated in this call.
+    pub output_tokens: u64,
+    /// Cumulative cost in USD for this call.
+    pub total_cost: f64,
+    /// Number of LLM requests in this call.
+    pub request_count: u32,
+}
+
+impl TokenUsage {
+    /// Total tokens (input + output).
+    #[must_use]
+    pub fn total_tokens(&self) -> u64 {
+        self.input_tokens + self.output_tokens
+    }
+}
+
+/// A single tool call's record: what was called, what happened, how long it took.
+#[derive(Debug, Clone)]
+pub struct ToolCallRecord {
+    /// Tool name (e.g. `"read_file"`, `"run_command"`).
+    pub name: String,
+    /// Raw arguments JSON string.
+    pub arguments: String,
+    /// What happened to this tool call.
+    pub outcome: ToolCallOutcome,
+    /// Wall-clock duration of the tool execution phase.
+    ///
+    /// `None` for denied/blocked calls (no execution occurred).
+    pub duration: Option<std::time::Duration>,
+}
+
+/// What happened to a tool call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToolCallOutcome {
+    /// Tool executed successfully.
+    Success,
+    /// Tool returned an error (`non-zero exit`, parse failure, sandbox rejection, etc.).
+    Error {
+        /// The error output text.
+        output: String,
+    },
+    /// Tool call was denied by the approval gate.
+    Denied,
+    /// Tool call was blocked by an observer (intercept).
+    Blocked {
+        /// Why the tool call was blocked.
+        reason: String,
+    },
+}
+
+/// Why [`run_loop`] terminated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoopFinishReason {
+    /// Model produced a normal text reply (`stop` / `end_turn`).
+    Stop,
+    /// Max iterations exceeded.
+    MaxIterations,
+    /// User cancelled via `CancellationToken`.
+    Cancelled,
+    /// Retry budget exhausted on transient errors.
+    RetryBudgetExhausted,
+    /// The model produced too many consecutive empty responses.
+    ConsecutiveEmptyResponses,
+}
+
+/// Tagged exit from the agent loop, used internally by [`run_loop`]
+/// to classify terminal states before building [`AgentResult`].
+enum LoopOutcome {
+    /// The loop completed normally.
+    Done {
+        /// The model's final text reply.
+        reply: String,
+        /// Why the loop terminated.
+        finish_reason: LoopFinishReason,
+    },
+    /// The loop exited via an error.
+    Err(RhoError),
+}
+
+// ── CollectingObserver ───────────────────────────────────────────────────────
+
+/// An observer that records tool call events into structured [`ToolCallRecord`]s.
+///
+/// Always present in [`run_loop`]. Used to populate [`AgentResult::tool_calls`]
+/// without requiring consumers to build custom observers.
+pub struct CollectingObserver {
+    /// Recorded tool call events.
+    records: std::sync::Mutex<Vec<ToolCallRecord>>,
+    /// Instant when the most recent tool call started executing.
+    tool_start: std::sync::Mutex<Option<std::time::Instant>>,
+}
+
+impl CollectingObserver {
+    /// Create a new collecting observer.
+    pub fn new() -> Self {
+        Self {
+            records: std::sync::Mutex::new(Vec::new()),
+            tool_start: std::sync::Mutex::new(None),
+        }
+    }
+
+    /// Drain all recorded tool calls.
+    pub fn into_records(self) -> Vec<ToolCallRecord> {
+        self.records.into_inner().unwrap_or_default()
+    }
+
+    /// Record a tool call that executed (success or error).
+    fn record_execution(
+        &self,
+        name: &str,
+        arguments: &str,
+        outcome: ToolCallOutcome,
+        duration: std::time::Duration,
+    ) {
+        self.records.lock().unwrap().push(ToolCallRecord {
+            name: name.to_owned(),
+            arguments: arguments.to_owned(),
+            outcome,
+            duration: Some(duration),
+        });
+    }
+
+    /// Record a tool call that was denied or blocked (no execution).
+    fn record_denied(&self, name: &str, arguments: &str, outcome: ToolCallOutcome) {
+        self.records.lock().unwrap().push(ToolCallRecord {
+            name: name.to_owned(),
+            arguments: arguments.to_owned(),
+            outcome,
+            duration: None,
+        });
+    }
+
+    /// Start timing a tool call.
+    fn start_tool(&self) {
+        *self.tool_start.lock().unwrap() = Some(std::time::Instant::now());
+    }
+
+    /// Stop timing and return elapsed duration.
+    fn stop_tool(&self) -> std::time::Duration {
+        let start = self
+            .tool_start
+            .lock()
+            .unwrap()
+            .take()
+            .expect("stop_tool called without matching start_tool");
+        start.elapsed()
+    }
+}
+
+impl Default for CollectingObserver {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -415,8 +600,8 @@ enum State {
         remaining: Vec<ModelToolCall>,
     },
 
-    /// Terminal state — the agent produced a final text reply.
-    Done(String),
+    /// Terminal state — the loop is done.
+    Outcome(LoopOutcome),
 }
 
 /// Mutable context shared across all state transitions.
@@ -438,6 +623,8 @@ struct LoopContext<'a> {
     has_had_edits: bool,
     /// Number of consecutive empty model responses (for abort threshold).
     consecutive_empty_count: u32,
+    /// Records tool calls for the structured `AgentResult`.
+    collector: &'a CollectingObserver,
 }
 
 impl LoopContext<'_> {
@@ -502,7 +689,7 @@ impl LoopContext<'_> {
             State::ExecutingTool { call, remaining } => {
                 self.handle_execution(call, remaining).await
             }
-            State::Done(_) => unreachable!("Done is terminal"),
+            State::Outcome(_) => unreachable!("Outcome is terminal"),
         }
     }
 
@@ -542,7 +729,10 @@ impl LoopContext<'_> {
                 self.phase = crate::session::phase::SessionPhase::Conclusion;
                 self.params.observer.on_state_change(AgentState::Idle).await;
                 let reply = self.format_reply(text, &reasoning_content);
-                Ok(State::Done(reply))
+                Ok(State::Outcome(LoopOutcome::Done {
+                    reply,
+                    finish_reason: LoopFinishReason::Stop,
+                }))
             }
 
             // ── Length-truncated recovery ────────────────────────────────
@@ -584,6 +774,11 @@ impl LoopContext<'_> {
 
         if !approved {
             debug!(tool_name = %call.function.name, action = "denied");
+            self.collector.record_denied(
+                &call.function.name,
+                &call.function.arguments,
+                ToolCallOutcome::Denied,
+            );
             self.params
                 .observer
                 .on_tool_denied(&call.function.name)
@@ -623,6 +818,7 @@ impl LoopContext<'_> {
 
         let call_id = ToolCallId::new(call.id.to_string());
 
+        self.collector.start_tool();
         let result = match self
             .params
             .registry
@@ -635,6 +831,15 @@ impl LoopContext<'_> {
                 // see what went wrong and retry.
                 warn!(error = %e, "tool execution failed, feeding error back to model");
                 let msg = self.format_tool_error(&e);
+                let duration = self.collector.stop_tool();
+                self.collector.record_execution(
+                    &call.function.name,
+                    &call.function.arguments,
+                    ToolCallOutcome::Error {
+                        output: msg.clone(),
+                    },
+                    duration,
+                );
                 let _ = self
                     .session
                     .append_tool_result(call_id, &ToolResult::error(msg));
@@ -649,6 +854,21 @@ impl LoopContext<'_> {
             let _ = self.session.append_tool_result(call_id, &nudge);
             return Ok(self.advance_to_next_call(remaining).await);
         }
+
+        let duration = self.collector.stop_tool();
+        let outcome = if result.is_error {
+            ToolCallOutcome::Error {
+                output: result.output.clone(),
+            }
+        } else {
+            ToolCallOutcome::Success
+        };
+        self.collector.record_execution(
+            &call.function.name,
+            &call.function.arguments,
+            outcome,
+            duration,
+        );
 
         self.params
             .observer
@@ -735,13 +955,14 @@ impl LoopContext<'_> {
                     max, "aborting: model produced {count} consecutive empty responses"
                 );
                 self.params.observer.on_state_change(AgentState::Idle).await;
-                return Ok(State::Done(
-                    "The model returned empty responses \
+                return Ok(State::Outcome(LoopOutcome::Done {
+                    reply: "The model returned empty responses \
                         consecutively and was unable to continue. \
                         This may indicate the model is not functioning \
                         correctly or is too small for the task."
                         .to_owned(),
-                ));
+                    finish_reason: LoopFinishReason::ConsecutiveEmptyResponses,
+                }));
             }
             warn!(
                 count = self.consecutive_empty_count,
@@ -776,7 +997,10 @@ impl LoopContext<'_> {
                 warn!(error = %e, "compaction failed after length truncation");
                 let explanation = Self::format_truncation_explanation(&content, &reasoning_content);
                 self.params.observer.on_state_change(AgentState::Idle).await;
-                Ok(State::Done(explanation))
+                Ok(State::Outcome(LoopOutcome::Done {
+                    reply: explanation,
+                    finish_reason: LoopFinishReason::Stop,
+                }))
             }
         }
     }
@@ -829,6 +1053,13 @@ impl LoopContext<'_> {
             .on_tool_call_intercept(&call.function.name, &call.function.arguments)
         {
             debug!(tool_name = %call.function.name, %reason, "tool call blocked by observer");
+            self.collector.record_denied(
+                &call.function.name,
+                &call.function.arguments,
+                ToolCallOutcome::Blocked {
+                    reason: reason.clone(),
+                },
+            );
             self.params
                 .observer
                 .on_tool_denied(&call.function.name)
@@ -1106,8 +1337,12 @@ pub async fn run_loop(
     session: &mut Session,
     message: &str,
     params: &LoopParams<'_>,
-) -> Result<String> {
+) -> Result<AgentResult> {
     info!("run_loop called with message: {}", message);
+    let start = std::time::Instant::now();
+    let usage_before = session.api_usage().clone();
+    let collector = CollectingObserver::new();
+
     session.append_user_message(message);
 
     let mut ctx = LoopContext {
@@ -1118,19 +1353,60 @@ pub async fn run_loop(
         phase: crate::session::phase::SessionPhase::default(),
         has_had_edits: false,
         consecutive_empty_count: 0,
+        collector: &collector,
     };
 
     let mut state = State::Thinking;
     params.observer.on_state_change(AgentState::Thinking).await;
 
-    loop {
+    let outcome = loop {
         let _iter_span =
             tracing::info_span!("agent_iteration", iteration = ctx.iterations).entered();
-        state = ctx.step(state).await?;
-        if let State::Done(text) = state {
-            return Ok(text);
+        match ctx.step(state).await {
+            Ok(next_state) => {
+                if let State::Outcome(outcome) = next_state {
+                    break outcome;
+                }
+                state = next_state;
+            }
+            Err(e) => break LoopOutcome::Err(e),
         }
+    };
+
+    // Drop ctx to release the mutable borrow on session.
+    let iterations = ctx.iterations;
+    drop(ctx);
+
+    match outcome {
+        LoopOutcome::Done {
+            reply,
+            finish_reason,
+        } => {
+            let usage_after = session.api_usage();
+            Ok(AgentResult {
+                reply,
+                iterations,
+                usage: TokenUsage {
+                    input_tokens: usage_after.total_input_tokens - usage_before.total_input_tokens,
+                    output_tokens: usage_after.total_output_tokens
+                        - usage_before.total_output_tokens,
+                    total_cost: usage_after.total_cost - usage_before.total_cost,
+                    request_count: usage_after.request_count - usage_before.request_count,
+                },
+                tool_calls: collector.into_records(),
+                duration: start.elapsed(),
+                finish_reason,
+                context_stats: session.context_stats(),
+            })
+        }
+        LoopOutcome::Err(e) => Err(classify_loop_error(e)),
     }
+}
+
+/// Classify a [`RhoError`] from the loop into an appropriate [`RhoError`]
+/// for the error path.
+fn classify_loop_error(e: RhoError) -> RhoError {
+    e
 }
 
 // ── Free helpers ──────────────────────────────────────────────────────────────
@@ -1323,14 +1599,14 @@ mod tests {
     }
 
     #[test]
-    fn test_agent_result_ok() {
-        let result: AgentResult<String> = Ok("success".to_string());
+    fn test_agent_result_type_ok() {
+        let result: AgentResultType<String> = Ok("success".to_string());
         assert!(result.is_ok());
     }
 
     #[test]
-    fn test_agent_result_err() {
-        let result: AgentResult<String> = Err(AgentError::Cancelled);
+    fn test_agent_result_type_err() {
+        let result: AgentResultType<String> = Err(AgentError::Cancelled);
         assert!(result.is_err());
     }
 

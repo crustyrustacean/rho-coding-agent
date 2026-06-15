@@ -49,7 +49,7 @@ rho-coding-agent/
 ├── rho-core/                # Agent kernel
 │   └── src/
 │       ├── lib.rs           # Module declarations, convenience re-exports
-│       ├── agent.rs         # Agent loop state machine, `run_loop`, phase tracking, auto-compact
+│       ├── agent.rs         # Agent loop state machine, `run_loop`, `AgentResult`, `CollectingObserver`, `LoopFinishReason`, phase tracking, auto-compact
 │       ├── approval.rs      # `ApprovalPolicy`, `ApprovalGate` traits
 │       ├── client.rs        # `RhoAiClient`, `resolve_api_key`, `is_local_endpoint`, `ModelInfo`, `ModelList`
 │       ├── client/          # Module directory

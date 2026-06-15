@@ -40,7 +40,7 @@
 
 The foundation. Defines the contract everything else implements.
 
-- **Agent loop** — `run_loop()` drives the interaction: send to model → if tool calls, get approval → execute tools → feed results back → repeat until text reply.
+- **Agent loop** — `run_loop()` drives the interaction: send to model → if tool calls, get approval → execute tools → feed results back → repeat until text reply. Returns [`AgentResult`] with the reply text, tool call history, token usage, iteration count, duration, finish reason, and context stats. A [`CollectingObserver`] records tool call events internally; no custom observer is needed by consumers.
 - **Data model** — `ChatMessage` (variant per role: `System`/`User`/`Assistant`/`Tool`), `ContentBlock`, `ModelToolCall`, `AssistantResponse`.
 - **Tool trait** — `Tool`: async, dyn-compatible, takes `CancellationToken`, returns `ToolOutcome`.
 - **Tool registry** — Maps tool names to `Box<dyn Tool>` implementations, each with a risk level.
@@ -213,10 +213,6 @@ Sending `approved: false` denies the tool call and lets the agent continue.
 
 `MockChatClient`, `MockShellExecutor`, `TestProvider`, response builders, approval gates, file-system test environment, sandbox/trust helpers. `TestProvider` wraps a `MockChatClient` as a `Provider` impl, enabling integration tests that need a `ProviderRegistry` without a live model server.
 
-### `rho-test-helpers` — Shared Test Utilities (dev-only)
-
-`MockChatClient`, `MockShellExecutor`, `TestProvider`, response builders, approval gates, file-system test environment, sandbox/trust helpers. `TestProvider` wraps a `MockChatClient` as a `Provider` impl, enabling integration tests that need a `ProviderRegistry` without a live model server.
-
 ## End-to-End Flow
 
 `rho` operates as a continuous loop of **Reasoning → Action → Observation**, bridging an LLM and your local file system and shell.
@@ -232,7 +228,23 @@ Before the loop begins:
 
 ### 2. The Agent Loop (`run_loop`)
 
-The loop in `rho-core/src/agent.rs` follows these steps:
+The loop in `rho-core/src/agent.rs` returns `Result<AgentResult>`, capturing everything a consumer needs without implementing custom observers:
+
+```rust
+let result: AgentResult = rho_core::run_loop(&mut session, "fix the bug", &LoopParams {
+    client: &service,
+    registry: &tools,
+    config: &agent_config,
+    cancel: CancellationToken::new(),
+    gate: &AutoApproveGate,
+    observer: &NopObserver,
+    compaction_client: None,
+}).await?;
+```
+
+A `CollectingObserver` is always active inside `run_loop` — it records every tool call into `AgentResult.tool_calls` automatically. Consumers don't need to build custom observers to get structured output.
+
+The loop follows these steps:
 
 #### A. Context Preparation
 
@@ -265,7 +277,7 @@ Tool results are wrapped in `Tool`-role `ChatMessage` values and appended to the
 ### 3. Iteration vs. Completion
 
 - **Iteration** — The loop repeats. The model observes that `cargo test` failed, so it calls `EditFile` to fix the code, calls `CargoTest` again, and continues until all tests pass.
-- **Completion** — The loop terminates when the model returns a text-only response with no pending tool calls, or when a safety limit is reached (`MaxIterationsExceeded`).
+- **Completion** — The loop terminates when the model returns a text-only response with no pending tool calls (`LoopFinishReason::Stop`), or when a safety limit is reached (`MaxIterations`, `Cancelled`, `RetryBudgetExhausted`, `ConsecutiveEmptyResponses`). The finish reason is recorded in `AgentResult.finish_reason`.
 
 ~~~
 Summary of data flow:
@@ -303,7 +315,7 @@ rho/                # Headless JSON-RPC 2.0 agent
     main.rs         # Thin entry: parse CLI, build App, run
     lib.rs          # Module declarations
     cli.rs          # `Cli` struct (model, endpoint, session flags, etc.)
-    app.rs          # `App::build` (startup phases, extension loading) + `App::run` (JSON-RPC loop)
+    app.rs          # `App::build` (startup phases, extension loading) + `App::run` (JSON-RPC loop, `AgentResult` extraction)
     model.rs        # Model resolution
     ext_observer.rs # `CompositeObserver` — fans out to RPC observer + extension observers
     rpc.rs          # JSON-RPC 2.0 protocol: `run_rpc`, `run_rpc_on`, `RpcObserver`, `RpcApprovalGate`
@@ -339,7 +351,7 @@ rho-ext/            # TypeScript extension runtime
 rho-core/           # Core library
   src/
     lib.rs          # Module declarations and convenience re-exports
-    agent.rs        # Agent loop state machine, `run_loop`, `AgentObserver`
+    agent.rs        # Agent loop state machine, `run_loop`, `AgentResult`, `CollectingObserver`, `AgentObserver`
     approval.rs     # `ApprovalPolicy` and `ApprovalGate` traits
     client.rs       # `RhoAiClient`, `resolve_api_key`, `is_local_endpoint`, `ModelInfo`, `ModelList`
     client/         # Module directory
@@ -407,6 +419,18 @@ cliff.toml          # git-cliff configuration
 | `FinishReason` | `response.rs` | Why the model stopped (`Stop`, `ToolCalls`, `Length`, etc.) |
 | `AssistantResponse` | `conversation.rs` | `Message(String)` or `ToolCalls(Vec<ModelToolCall>)` |
 
+### Agent loop output
+
+| Type | Location | Purpose |
+|---|---|---|
+| `AgentResult` | `agent.rs` | Structured output from `run_loop`: reply, iterations, usage, tool calls, duration, finish reason, context stats |
+| `TokenUsage` | `agent.rs` | Per-call token delta (input, output, cost, request count) |
+| `ToolCallRecord` | `agent.rs` | Single tool call record (name, arguments, outcome, duration) |
+| `ToolCallOutcome` | `agent.rs` | What happened to a tool call (`Success`, `Error`, `Denied`, `Blocked`) |
+| `LoopFinishReason` | `agent.rs` | Why `run_loop` terminated (`Stop`, `MaxIterations`, `Cancelled`, `RetryBudgetExhausted`, `ConsecutiveEmptyResponses`) |
+| `CollectingObserver` | `agent.rs` | Always-active observer that records tool call events into `ToolCallRecord`s |
+| `LoopParams` | `agent.rs` | Parameter bundle for `run_loop` (client, registry, config, cancel, gate, observer, compaction_client) |
+
 ### Tools
 
 | Type | Location | Purpose |
@@ -459,7 +483,7 @@ cliff.toml          # git-cliff configuration
 |---|---|---|
 | `RhoConfig` | `config.rs` | Merged application-wide config |
 | `ConfigLoader` | `config.rs` | Two-tier TOML loading |
-| `AgentConfig` | `agent.rs` | Loop settings: iterations, retry, backoff |
+| `AgentConfig` | `agent.rs` | Loop settings: iterations, retry, backoff, compaction mode |
 
 ### Errors
 
@@ -467,7 +491,7 @@ cliff.toml          # git-cliff configuration
 |---|---|---|
 | `RhoError` | `error.rs` | Thin boundary enum wrapping domain-specific errors (Agent, Client, Session, Sandbox, plus cross-domain variants) |
 | `ClientError` | `client/error.rs` | HTTP, JSON parsing, retry budget exhaustion |
-| `AgentError` | `agent/error.rs` | Agent loop: max iterations, cancellation, protocol violations |
+| `AgentError` | `agent.rs` | Agent loop: max iterations, cancellation, protocol violations |
 | `SessionError` | `session/error.rs` | Session management: entry not found, persistence |
 | `SandboxError` | `sandbox.rs` | File sandbox: path validation, security violations |
 | `ToolError` | `rho-tools/src/error.rs` | Tool operations: file access, command execution, sandbox violations |

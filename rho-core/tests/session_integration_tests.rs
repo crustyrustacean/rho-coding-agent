@@ -503,8 +503,8 @@ async fn amnesia_reproducer_secret_survives() {
     .unwrap();
 
     assert!(
-        result.contains("PLUM-BLOSSOM-8834"),
-        "model should recall the secret from the tool result: {result}"
+        result.reply.contains("PLUM-BLOSSOM-8834"),
+        "model should recall the secret from the tool result: {result:?}"
     );
 }
 
@@ -761,7 +761,7 @@ async fn compact_and_resume_model_response_appended_after_compaction() {
         .await
         .unwrap();
 
-    assert_eq!(result, "the answer is 42");
+    assert_eq!(result.reply, "the answer is 42");
 
     // The last message in path_messages should be the assistant reply
     let messages = session.path_messages();

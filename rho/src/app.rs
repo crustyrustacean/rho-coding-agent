@@ -403,7 +403,7 @@ pub(crate) async fn run_agent_turn(
     params: &LoopParams<'_>,
 ) -> TurnResult {
     match rho_core::run_loop(session, message, params).await {
-        Ok(reply) => TurnResult::Reply(reply),
+        Ok(result) => TurnResult::Reply(result.reply),
         Err(e) => TurnResult::Error(e.to_string()),
     }
 }

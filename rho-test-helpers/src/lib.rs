@@ -777,7 +777,7 @@ pub async fn single_text_turn(
         observer: &NopObserver,
         compaction_client: None,
     };
-    run_loop(session, user_text, &params).await.unwrap()
+    run_loop(session, user_text, &params).await.unwrap().reply
 }
 
 /// Run a single agent loop turn: user sends text, model requests a tool call,

@@ -91,8 +91,9 @@ pub mod tool;
 
 // Convenience re-exports for the most commonly used types
 pub use agent::{
-    AgentConfig, AgentError, AgentObserver, AgentState, InterceptResult, LoopParams, NopObserver,
-    TransitionError, run_loop,
+    AgentConfig, AgentError, AgentObserver, AgentResult, AgentState, CollectingObserver,
+    InterceptResult, LoopFinishReason, LoopParams, NopObserver, TokenUsage, ToolCallOutcome,
+    ToolCallRecord, TransitionError, run_loop,
 };
 pub use approval::{
     ApprovalGate, ApprovalPolicy, AutoApprovePolicy, ConfigApprovalPolicy, DefaultApprovalPolicy,
