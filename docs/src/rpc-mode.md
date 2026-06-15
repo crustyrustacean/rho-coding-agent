@@ -91,7 +91,7 @@ Example interaction with a destructive tool:
 → {"jsonrpc":"2.0","method":"approvalResponse","params":{"approved":true},"id":2}
 ← {"jsonrpc":"2.0","method":"tool/result","params":{"name":"run_command","is_error":false,"output":""}}
 ← {"jsonrpc":"2.0","method":"state/change","params":{"state":"idle"}}
-← {"jsonrpc":"2.0","method":"agent/end","params":{"reply":"Done — the temp files have been removed."}}
+← {"jsonrpc":"2.0","method":"agent/end","params":{"reply":"Done — the temp files have been removed.","iterations":1,"usage":{"inputTokens":420,"outputTokens":28,"totalTokens":448,"totalCost":0.0,"requestCount":1},"toolCalls":[{"name":"run_command","arguments":"{\"command\":\"Remove-Item temp/*\"}","outcome":{"kind":"success"},"durationMs":45}],"durationMs":1200,"finishReason":"stop"}}
 ← {"jsonrpc":"2.0","result":{"reply":"Done..."},"id":1}
 ```
 
@@ -130,7 +130,7 @@ stdout: {"jsonrpc":"2.0","method":"agent/start"}
 stdout: {"jsonrpc":"2.0","method":"state/change","params":{"state":"thinking"}}
 stdout: {"jsonrpc":"2.0","method":"message/delta","params":{"delta":"hello"}}
 stdout: {"jsonrpc":"2.0","method":"state/change","params":{"state":"idle"}}
-stdout: {"jsonrpc":"2.0","method":"agent/end","params":{"reply":"hello"}}
+stdout: {"jsonrpc":"2.0","method":"agent/end","params":{"reply":"hello","iterations":1,"usage":{"inputTokens":32,"outputTokens":5,"totalTokens":37,"totalCost":0.0,"requestCount":1},"toolCalls":[],"durationMs":800,"finishReason":"stop"}}
 stdout: {"jsonrpc":"2.0","result":{"reply":"hello"},"id":1}
 ```
 

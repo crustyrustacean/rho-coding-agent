@@ -7,6 +7,8 @@ rho-coding-agent/
 ├── cliff.toml               # git-cliff configuration
 ├── AGENTS.md                # Project instructions for AI assistants
 ├── docs/                    # This book (mdBook)
+│   └── rpc-schema/
+│       └── openrpc.json    # OpenRPC 1.3.1 schema (machine-readable API spec)
 ├── rho/                     # Binary entry point (headless JSON-RPC 2.0)
 │   └── src/
 │       ├── main.rs           # Thin: parse CLI, build App, run
@@ -124,5 +126,5 @@ rho-coding-agent/
 └── xtask/                   # Dev task runner
     └── src/
         ├── main.rs          # CLI dispatch
-        └── tasks.rs         # `ci`, `test`, `build`, `release`, `changelog`, `fmt`, `lint`, `run`, `clean`, `status` tasks
+        └── tasks.rs         # `ci`, `test`, `build`, `release`, `changelog`, `fmt`, `lint`, `run`, `clean`, `status`, `schema` tasks
 ```

@@ -205,6 +205,7 @@ cargo xtask ci                # Full CI pipeline (fmt → lint → build → tes
 cargo xtask test              # Run all tests
 cargo xtask test -- --nocapture  # Run with stdout visible
 cargo xtask changelog <ver>   # Generate CHANGELOG.md
+cargo xtask schema             # Update version in OpenRPC schema
 ```
 
 ### Project layout

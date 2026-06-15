@@ -4,6 +4,10 @@
 
 - **(rpc)** `agent/end` notification now includes full `AgentResult` fields: `iterations`, `usage` (token counts + cost), `toolCalls` (name, arguments, outcome, duration per call), `durationMs`, and `finishReason`. Frontends can display cost, timing, and tool history without a separate `getSessionStats` call.
 
+### 📝 Documentation
+
+- **(docs)** Updated all docs to reflect enriched `agent/end` notification: `ARCHITECTURE.md` (added missing `resumeSession`/`listTools` methods, updated notification table), `rpc-mode.md` (example sessions), `workspace-layout.md`, `crate-responsibilities.md`, `README.md`.
+
 ### 🏗️ Internal
 
 - `TurnResult::Reply(String)` → `TurnResult::Done(Box<AgentResult>)` to carry the full result through the RPC layer.

@@ -130,7 +130,7 @@ Assembles all layers and runs the headless JSON-RPC 2.0 protocol over stdin/stdo
 11. Construct session (persisted, resumed, or ephemeral)
 12. Fire extension `onLoad` hooks
 
-**`App::run`):** fires extension `onLoad` hooks, then starts the JSON-RPC 2.0 loop via `run_rpc`.
+**`App::run`:** fires extension `onLoad` hooks, then starts the JSON-RPC 2.0 loop via `run_rpc`.
 
 ## Execution Mode: JSON-RPC 2.0
 
@@ -162,11 +162,14 @@ The core RPC loop is generic over I/O (`run_rpc_on<R, W>`) so the in-process int
 | `getMessages` | — | Return all messages on active path |
 | `setModel` | `{model: string}` | Switch the active model |
 | `listModels` | — | List available models from providers |
+| `listProviders` | — | List configured providers with reachability |
 | `getSessionStats` | — | Return token budget / usage info |
 | `listSessions` | — | List previous sessions for project |
 | `listExtensions` | — | List loaded extensions and tools |
 | `reloadExtensions` | — | Reload extensions from disk |
 | `compact` | — | Trigger context compaction |
+| `resumeSession` | `{path: string}` | Resume a previous session |
+| `listTools` | — | List registered tools with schemas and risk levels |
 | `approvalResponse` | `{approved: boolean}` | Respond to an `approval/request` notification |
 
 **Notifications (rho → stdout, no `id`):**
@@ -175,7 +178,7 @@ The core RPC loop is generic over I/O (`run_rpc_on<R, W>`) so the in-process int
 |---|---|---|
 | `ready` | — | Emitted once on startup |
 | `agent/start` | — | Agent began processing a prompt |
-| `agent/end` | `{reply: string}` | Agent finished; full text reply |
+| `agent/end` | `{reply, iterations, usage, toolCalls, durationMs, finishReason}` | Agent finished with full structured result |
 | `agent/error` | `{error: string}` | Agent loop encountered an error |
 | `state/change` | `{state: string}` | Loop state transition |
 | `message/delta` | `{delta: string}` | Streaming text chunk |
@@ -402,10 +405,11 @@ rho-test-helpers/   # Shared test infrastructure (dev-only)
 xtask/              # Dev task runner
   src/
     main.rs         # CLI dispatch
-    tasks.rs        # `ci`, `test`, `build`, `release`, `changelog`, `fmt`, `lint`, `run`, `clean`, `status` tasks
+    tasks.rs        # `ci`, `test`, `build`, `release`, `changelog`, `fmt`, `lint`, `run`, `clean`, `status`, `schema` tasks
 Cargo.toml          # Workspace root
 CHANGELOG.md        # Generated via git-cliff
 cliff.toml          # git-cliff configuration
+docs/rpc-schema/openrpc.json  # OpenRPC 1.3.1 schema (machine-readable API spec)
 ```
 
 ## Key Types
