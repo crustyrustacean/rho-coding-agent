@@ -234,9 +234,6 @@ impl App {
             SessionMode::Resume(path.clone())
         } else if cli.ephemeral {
             SessionMode::Ephemeral
-        } else if let Some(path) = rho_core::find_latest_session(sandbox.path()) {
-            tracing::info!(path = %path.display(), "auto-resuming latest session");
-            SessionMode::Resume(path)
         } else {
             SessionMode::Persisted
         };
