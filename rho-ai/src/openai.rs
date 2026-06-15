@@ -156,9 +156,12 @@ struct SseDelta {
     /// Incremental text content.
     #[serde(default)]
     content: Option<String>,
-    /// Incremental reasoning/thinking content.
+    /// Incremental reasoning/thinking content (DeepSeek, OpenAI o-series).
     #[serde(default)]
     reasoning_content: Option<String>,
+    /// Vendor-specific reasoning field (GLM-5, some OpenRouter models).
+    #[serde(default)]
+    reasoning: Option<String>,
     /// Incremental tool call deltas.
     #[serde(default)]
     tool_calls: Option<Vec<SseToolCallDelta>>,
@@ -391,11 +394,17 @@ fn parse_sse_chunk(chunk: &SseChunk, tool_acc: &mut ToolCallAccumulator) -> Vec<
         events.push(StreamEvent::Text(text.clone()));
     }
 
-    // Reasoning delta (DeepSeek, OpenAI o-series).
-    if let Some(reasoning) = &choice.delta.reasoning_content
+    // Reasoning delta (DeepSeek, OpenAI o-series use `reasoning_content`;
+    // GLM-5 and some OpenRouter models use `reasoning`).
+    let reasoning_text = choice
+        .delta
+        .reasoning_content
+        .as_deref()
+        .or(choice.delta.reasoning.as_deref());
+    if let Some(reasoning) = reasoning_text
         && !reasoning.is_empty()
     {
-        events.push(StreamEvent::Reasoning(reasoning.clone()));
+        events.push(StreamEvent::Reasoning(reasoning.to_owned()));
     }
 
     // Finish reason — emit accumulated tool calls + Done.
@@ -882,6 +891,7 @@ mod tests {
                     role: None,
                     content: Some("Hello".into()),
                     reasoning_content: None,
+                    reasoning: None,
                     tool_calls: None,
                 },
                 finish_reason: None,
@@ -902,6 +912,7 @@ mod tests {
                     role: None,
                     content: Some(String::new()),
                     reasoning_content: None,
+                    reasoning: None,
                     tool_calls: None,
                 },
                 finish_reason: None,
@@ -921,6 +932,7 @@ mod tests {
                     role: None,
                     content: None,
                     reasoning_content: Some("Let me think".into()),
+                    reasoning: None,
                     tool_calls: None,
                 },
                 finish_reason: None,

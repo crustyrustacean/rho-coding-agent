@@ -2,7 +2,7 @@
   "openrpc": "1.3.1",
   "info": {
     "title": "rho",
-    "version": "0.79.0",
+    "version": "0.81.0",
     "description": "Headless coding agent — JSON-RPC 2.0 protocol over stdin/stdout. Diagnostic output goes to stderr."
   },
   "methods": [
@@ -390,6 +390,223 @@
         "description": "Empty acknowledgement.",
         "schema": { "type": "object", "properties": {} }
       }
+    }
+  ],
+  "notifications": [
+    {
+      "name": "ready",
+      "description": "Startup handshake. Emitted once after rho finishes initialization (config loaded, model detected, extensions loaded). The frontend should wait for this before sending any requests.",
+      "params": []
+    },
+    {
+      "name": "agent/start",
+      "description": "Agent began processing a prompt.",
+      "params": []
+    },
+    {
+      "name": "agent/end",
+      "description": "Agent finished processing. Emitted with full structured result from the agent loop.",
+      "params": [
+        {
+          "name": "reply",
+          "description": "The agent's final text reply.",
+          "schema": { "type": "string" },
+          "required": true
+        },
+        {
+          "name": "iterations",
+          "description": "Number of agent loop iterations.",
+          "schema": { "type": "integer" },
+          "required": true
+        },
+        {
+          "name": "usage",
+          "description": "Cumulative token usage for this run.",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "inputTokens": { "type": "integer" },
+              "outputTokens": { "type": "integer" },
+              "totalTokens": { "type": "integer" },
+              "totalCost": { "type": "number" },
+              "requestCount": { "type": "integer" }
+            },
+            "required": ["inputTokens", "outputTokens", "totalTokens", "totalCost", "requestCount"]
+          },
+          "required": true
+        },
+        {
+          "name": "toolCalls",
+          "description": "Ordered list of tool calls made during this run.",
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": { "type": "string" },
+                "arguments": { "type": "string" },
+                "outcome": {
+                  "type": "object",
+                  "properties": {
+                    "kind": { "type": "string", "description": "One of: success, error, denied, blocked." }
+                  },
+                  "required": ["kind"]
+                },
+                "durationMs": { "type": "integer", "description": "Execution duration in milliseconds, omitted if not measured." }
+              },
+              "required": ["name", "arguments", "outcome"]
+            }
+          },
+          "required": true
+        },
+        {
+          "name": "durationMs",
+          "description": "Total wall-clock duration of the agent run in milliseconds.",
+          "schema": { "type": "integer" },
+          "required": true
+        },
+        {
+          "name": "finishReason",
+          "description": "Why the agent loop terminated.",
+          "schema": {
+            "type": "string",
+            "enum": ["stop", "max_iterations", "cancelled", "retry_budget_exhausted", "consecutive_empty_responses"]
+          },
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "agent/error",
+      "description": "The agent loop encountered an error.",
+      "params": [
+        {
+          "name": "error",
+          "description": "Error message.",
+          "schema": { "type": "string" },
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "state/change",
+      "description": "Agent loop state transition.",
+      "params": [
+        {
+          "name": "state",
+          "description": "New state. One of: idle, thinking, awaiting_approval, executing_tool.",
+          "schema": {
+            "type": "string",
+            "enum": ["idle", "thinking", "awaiting_approval", "executing_tool"]
+          },
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "message/delta",
+      "description": "Streaming text chunk from the model's reply.",
+      "params": [
+        {
+          "name": "delta",
+          "description": "Text chunk.",
+          "schema": { "type": "string" },
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "reasoning/delta",
+      "description": "Streaming reasoning/thinking chunk from the model (chain-of-thought).",
+      "params": [
+        {
+          "name": "delta",
+          "description": "Reasoning text chunk.",
+          "schema": { "type": "string" },
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "tool/call",
+      "description": "Model requested a tool call.",
+      "params": [
+        {
+          "name": "name",
+          "description": "Tool name.",
+          "schema": { "type": "string" },
+          "required": true
+        },
+        {
+          "name": "arguments",
+          "description": "Tool arguments as a JSON string.",
+          "schema": { "type": "string" },
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "tool/result",
+      "description": "Tool execution completed.",
+      "params": [
+        {
+          "name": "name",
+          "description": "Tool name.",
+          "schema": { "type": "string" },
+          "required": true
+        },
+        {
+          "name": "is_error",
+          "description": "Whether the tool returned an error.",
+          "schema": { "type": "boolean" },
+          "required": true
+        },
+        {
+          "name": "output",
+          "description": "Tool output text.",
+          "schema": { "type": "string" },
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "tool/denied",
+      "description": "Tool call was denied by the approval gate.",
+      "params": [
+        {
+          "name": "name",
+          "description": "Tool name that was denied.",
+          "schema": { "type": "string" },
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "approval/request",
+      "description": "Tool call requires user approval. The frontend must prompt the user and respond with an approvalResponse method call.",
+      "params": [
+        {
+          "name": "tool",
+          "description": "Tool name requiring approval.",
+          "schema": { "type": "string" },
+          "required": true
+        },
+        {
+          "name": "arguments",
+          "description": "Tool arguments as a JSON string.",
+          "schema": { "type": "string" },
+          "required": true
+        },
+        {
+          "name": "risk",
+          "description": "Risk level. One of: read, write, destructive, network.",
+          "schema": {
+            "type": "string",
+            "enum": ["read", "write", "destructive", "network"]
+          },
+          "required": true
+        }
+      ]
     }
   ]
 }
