@@ -202,21 +202,28 @@ Idle (done)
 </span>pub async fn run_loop(
     session: &amp;mut Session,
     message: &amp;str,
-    client: &amp;dyn LlmService,
-    registry: &amp;ToolRegistry,
-    config: &amp;AgentConfig,
-    cancel: CancellationToken,
-    gate: &amp;dyn ApprovalGate,
-    observer: &amp;dyn AgentObserver,
-) -&gt; Result&lt;String&gt;
+    params: &amp;LoopParams&lt;'_&gt;,
+) -&gt; Result&lt;AgentResult&gt;
 <span class="boring">}</span></code></pre></pre>
-<p><code>run_loop</code> takes a <code>Session</code> and an <code>LlmService</code> (from <code>rho-ai</code>). It:</p>
+<p><code>run_loop</code> takes a <code>Session</code> and a <code>LoopParams</code> (bundle of LLM service, tool registry, config, cancellation token, approval gate, observer, and optional compaction client). A <code>CollectingObserver</code> is always active internally — it records tool call events into <code>AgentResult.tool_calls</code> automatically, so consumers don't need custom observers for structured output.</p>
+<p>It returns <code>Result&lt;AgentResult&gt;</code>, which captures:</p>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>reply</code></td><td><code>String</code></td><td>The model's final text reply</td></tr>
+<tr><td><code>iterations</code></td><td><code>u32</code></td><td>Number of LLM round-trips</td></tr>
+<tr><td><code>usage</code></td><td><code>TokenUsage</code></td><td>Per-call token delta (input, output, cost, request count)</td></tr>
+<tr><td><code>tool_calls</code></td><td><code>Vec&lt;ToolCallRecord&gt;</code></td><td>Ordered tool call history with name, arguments, outcome, duration</td></tr>
+<tr><td><code>duration</code></td><td><code>Duration</code></td><td>Wall-clock time for the entire run_loop</td></tr>
+<tr><td><code>finish_reason</code></td><td><code>LoopFinishReason</code></td><td>Why the loop ended</td></tr>
+<tr><td><code>context_stats</code></td><td><code>ContextStats</code></td><td>Context window utilization snapshot</td></tr>
+</tbody></table>
+</div>
+<p>The loop:</p>
 <ol>
 <li>Appends <code>message</code> as a user turn via <code>session.append_user_message()</code>.</li>
 <li>Enters the Thinking state and sends the session to the model via <code>session.send_current()</code>.</li>
 <li>Processes the model's response:
 <ul>
-<li><strong>Text reply</strong> → record phase as Conclusion, return it (Idle).</li>
+<li><strong>Text reply</strong> → record phase as Conclusion, populate <code>AgentResult</code> and return it (Idle).</li>
 <li><strong>Tool calls</strong> → for each call, check approval, execute, record phase transition, append the result, then loop back to Thinking.</li>
 </ul>
 </li>
@@ -259,6 +266,8 @@ Idle (done)
 }
 <span class="boring">}</span></code></pre></pre>
 <p>All methods have default no-op implementations, so observers only need to override the events they care about. The RPC observer streams reasoning deltas and tool activity as notifications. For tests, benchmarks, and headless use, <code>NopObserver</code> discards all events.</p>
+<h3 id="collectingobserver"><a class="header" href="#collectingobserver">CollectingObserver</a></h3>
+<p><code>run_loop</code> always creates a <code>CollectingObserver</code> internally — it records tool call events (name, arguments, outcome, duration) into <code>ToolCallRecord</code>s that populate <code>AgentResult.tool_calls</code>. This is independent of the <code>observer</code> in <code>LoopParams</code> and requires no action from consumers. Any observer passed via <code>LoopParams</code> still receives all callbacks as before; the <code>CollectingObserver</code> runs alongside it.</p>
 <p>When extensions are loaded, the <code>CompositeObserver</code> fans out every call to both the RPC observer and the extension <code>DenoObserver</code>s. For <code>on_tool_call_intercept</code>, the <strong>first <code>Block</code> wins</strong> — if any extension blocks a tool call, execution is denied immediately.</p>
 <p>The observer is called:</p>
 <ul>
@@ -268,11 +277,11 @@ Idle (done)
 <li>When approval is requested (<code>on_approval_requested</code>)</li>
 </ul>
 <h2 id="retry-with-backoff"><a class="header" href="#retry-with-backoff">Retry with backoff</a></h2>
-<p>Transient HTTP errors (503, 429, connection refused) are retried with exponential backoff. The retry budget is configurable via <code>AgentConfig</code>. If the budget is exhausted, <code>run_loop</code> returns <code>RhoError::RetryBudgetExhausted</code>.</p>
+<p>Transient HTTP errors (503, 429, connection refused) are retried with exponential backoff. The retry budget is configurable via <code>AgentConfig</code>. If the budget is exhausted, the loop terminates with <code>AgentResult.finish_reason = LoopFinishReason::RetryBudgetExhausted</code>.</p>
 <h2 id="cancellation"><a class="header" href="#cancellation">Cancellation</a></h2>
-<p>A <code>CancellationToken</code> is checked at the top of each loop iteration and between tool calls in a batch. When cancelled, <code>run_loop</code> returns <code>RhoError::Cancelled</code> immediately — no pending tool execution is aborted mid-flight, but no new ones are started.</p>
+<p>A <code>CancellationToken</code> is checked at the top of each loop iteration and between tool calls in a batch. When cancelled, the loop terminates with <code>AgentResult.finish_reason = LoopFinishReason::Cancelled</code> immediately — no pending tool execution is aborted mid-flight, but no new ones are started.</p>
 <h2 id="iteration-guard"><a class="header" href="#iteration-guard">Iteration guard</a></h2>
-<p>The loop terminates after <code>config.max_iterations</code> tool-call rounds (default: 32). This prevents infinite loops from misbehaving models. Returns <code>AgentError::MaxIterationsExceeded</code>.</p>
+<p>The loop terminates after <code>config.max_iterations</code> tool-call rounds (default: 32). This prevents infinite loops from misbehaving models. Terminates with <code>AgentResult.finish_reason = LoopFinishReason::MaxIterations</code>.</p>
 <h2 id="stuck-loop-detection"><a class="header" href="#stuck-loop-detection">Stuck-loop detection</a></h2>
 <p>If the model produces the same output <code>stuck_loop_threshold</code> times consecutively (default: 3), a nudge is injected prompting the model to try a different approach.</p>
 <h2 id="session-persistence"><a class="header" href="#session-persistence">Session persistence</a></h2>

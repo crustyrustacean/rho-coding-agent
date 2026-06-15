@@ -200,6 +200,7 @@
 <li>Detect syntax node splits during edits via tree-sitter</li>
 <li>Manage conversation state across sessions with tree-structured persistence and session discovery</li>
 <li>Observe agent activity in real time (reasoning, tool calls, errors) via the <code>AgentObserver</code> trait</li>
+<li>Get structured results from <code>run_loop</code> via <code>AgentResult</code> (reply, iterations, token usage, tool call history, duration, finish reason) without custom observers</li>
 <li>Extend rho with TypeScript extensions that add tools, hooks, and commands — hot-reloadable at runtime</li>
 <li>Compact old conversation turns to stay within context limits</li>
 <li>Monitor context window usage with a live status bar, <code>getSessionStats</code> RPC method, and enhanced token distribution stats</li>
@@ -323,6 +324,8 @@ rho --ephemeral          # in-memory mode, no session file
 ├── cliff.toml               # git-cliff configuration
 ├── AGENTS.md                # Project instructions for AI assistants
 ├── docs/                    # This book (mdBook)
+│   └── rpc-schema/
+│       └── openrpc.json    # OpenRPC 1.3.1 schema (machine-readable API spec)
 ├── rho/                     # Binary entry point (headless JSON-RPC 2.0)
 │   └── src/
 │       ├── main.rs           # Thin: parse CLI, build App, run
@@ -332,6 +335,7 @@ rho --ephemeral          # in-memory mode, no session file
 │       ├── model.rs          # Model resolution (config-as-truth, provider-first)
 │       ├── ext_observer.rs   # `CompositeObserver` — fans out to RPC observer + extension observers
 │       ├── rpc.rs            # JSON-RPC 2.0: `run_rpc`, `run_rpc_on`, observer, approval gate
+│       ├── rpc_wire.rs        # Typed wire-format structs (params, results, notifications)
 │       └── presenter/
 │           └── rpc.rs        # `RpcPresenter` — diagnostic output to stderr
 ├── rho-ai/                 # Unified LLM provider abstraction
@@ -365,7 +369,7 @@ rho --ephemeral          # in-memory mode, no session file
 ├── rho-core/                # Agent kernel
 │   └── src/
 │       ├── lib.rs           # Module declarations, convenience re-exports
-│       ├── agent.rs         # Agent loop state machine, `run_loop`, phase tracking, auto-compact
+│       ├── agent.rs         # Agent loop state machine, `run_loop`, `AgentResult`, `CollectingObserver`, `LoopFinishReason`, phase tracking, auto-compact
 │       ├── approval.rs      # `ApprovalPolicy`, `ApprovalGate` traits
 │       ├── client.rs        # `RhoAiClient`, `resolve_api_key`, `is_local_endpoint`, `ModelInfo`, `ModelList`
 │       ├── client/          # Module directory
@@ -439,16 +443,16 @@ rho --ephemeral          # in-memory mode, no session file
 └── xtask/                   # Dev task runner
     └── src/
         ├── main.rs          # CLI dispatch
-        └── tasks.rs         # `ci`, `test`, `build`, `release`, `changelog`, `fmt`, `lint`, `run`, `clean`, `status` tasks
+        └── tasks.rs         # `ci`, `test`, `build`, `release`, `changelog`, `fmt`, `lint`, `run`, `clean`, `status`, `schema` tasks
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="crate-responsibilities"><a class="header" href="#crate-responsibilities">Crate Responsibilities</a></h1>
 <h2 id="rho-binary"><a class="header" href="#rho-binary"><code>rho</code> (binary)</a></h2>
 <p>The headless JSON-RPC 2.0 agent: CLI argument parsing, tool wiring, extension loading, and system prompt assembly. Reads newline-delimited JSON-RPC 2.0 requests from stdin and writes responses/notifications to stdout. Diagnostic output goes to stderr.</p>
 <p>Constructs a <code>Session</code>, connects to the model via a <code>Provider</code>, and drives the agent loop. Handles provider consent checks, model resolution, startup budget diagnostics, shell-specific prompt extensions, session discovery, extension loading, and live observer output via <code>RpcObserver</code>.</p>
-<p>The RPC implementation is generic over I/O (<code>run_rpc_on&lt;R, W&gt;</code>) so the in-process integration tests can inject canned stdin and capture stdout without touching real file descriptors. See <a href="architecture/../rpc-mode.html">RPC Mode</a> for the full protocol reference.</p>
+<p>The RPC implementation is generic over I/O (<code>run_rpc_on&lt;R, W&gt;</code>) so the in-process integration tests can inject canned stdin and capture stdout without touching real file descriptors. Wire-format types in <code>rpc_wire.rs</code> give every method param, result, and notification a typed Rust struct. See <a href="architecture/../rpc-mode.html">RPC Mode</a> for the full protocol reference and <a href="architecture/../../rpc-schema/openrpc.json"><code>OpenRPC</code> schema</a> for machine-readable API discovery.</p>
 <h2 id="rho-core"><a class="header" href="#rho-core"><code>rho-core</code></a></h2>
-<p>The kernel: agent loop state machine (with <code>AgentObserver</code> for live output, phase tracking, auto-compaction), session management (tree persistence, graduated resolution, phase-aware compaction, LLM compaction, selective eviction, branching, session discovery), context window management (sliding window, token estimation, enhanced <code>ContextStats</code> with role/resolution/phase token distributions), tool registry and traits, approval gates, secret redaction, file sandbox, provider abstraction (<code>Provider</code> trait, <code>ProviderRegistry</code> with named presets and additive config merge), LLM client (<code>RhoAiClient</code>), configuration loading (two-tier TOML with provider preset resolution), and all shared types.</p>
-<p>Key types: <code>Session</code>, <code>AgentConfig</code>, <code>AgentObserver</code>, <code>NopObserver</code>, <code>ContextStats</code>, <code>RoleTokenDistribution</code>, <code>ResolutionTokenDistribution</code>, <code>PhaseTokenDistribution</code>, <code>SessionMetadata</code>, <code>ToolRegistry</code>, <code>Tool</code>, <code>Provider</code>, <code>ProviderRegistry</code>, <code>ContextManager</code>, <code>TokenBudget</code>, <code>SandboxRoot</code>, <code>Redactor</code>, <code>RhoConfig</code>, <code>SessionPhase</code>, <code>CompactionPhase</code>, <code>CompactionStrategy</code>, <code>LlmCompactionStrategy</code>, <code>MechanicalCompactionStrategy</code>, <code>CommandDenylist</code>.</p>
+<p>The kernel: agent loop state machine (with <code>AgentObserver</code> for live output, <code>CollectingObserver</code> for structured tool call recording, phase tracking, auto-compaction) returning <code>AgentResult</code> with full structured output (reply, iterations, token usage, tool call history, duration, finish reason, context stats), session management (tree persistence, graduated resolution, phase-aware compaction, LLM compaction, selective eviction, branching, session discovery), context window management (sliding window, token estimation, enhanced <code>ContextStats</code> with role/resolution/phase token distributions), tool registry and traits, approval gates, secret redaction, file sandbox, provider abstraction (<code>Provider</code> trait, <code>ProviderRegistry</code> with named presets and additive config merge), LLM client (<code>RhoAiClient</code>), configuration loading (two-tier TOML with provider preset resolution), and all shared types.</p>
+<p>Key types: <code>Session</code>, <code>AgentConfig</code>, <code>AgentObserver</code>, <code>NopObserver</code>, <code>CollectingObserver</code>, <code>AgentResult</code>, <code>TokenUsage</code>, <code>ToolCallRecord</code>, <code>ToolCallOutcome</code>, <code>LoopFinishReason</code>, <code>LoopParams</code>, <code>ContextStats</code>, <code>RoleTokenDistribution</code>, <code>ResolutionTokenDistribution</code>, <code>PhaseTokenDistribution</code>, <code>SessionMetadata</code>, <code>ToolRegistry</code>, <code>Tool</code>, <code>Provider</code>, <code>ProviderRegistry</code>, <code>ContextManager</code>, <code>TokenBudget</code>, <code>SandboxRoot</code>, <code>Redactor</code>, <code>RhoConfig</code>, <code>SessionPhase</code>, <code>CompactionPhase</code>, <code>CompactionStrategy</code>, <code>LlmCompactionStrategy</code>, <code>MechanicalCompactionStrategy</code>, <code>CommandDenylist</code>.</p>
 <h2 id="rho-highlight"><a class="header" href="#rho-highlight"><code>rho-highlight</code></a></h2>
 <p>Tree-sitter-based syntax analysis. Provides <code>parse()</code>, <code>highlight()</code>, and <code>node_at()</code> for Rust source code. Used by <code>EditFile</code> for node-splitting validation and by tools that need structural code awareness.</p>
 <p>Key types: <code>Language</code>, <code>HighlightSpan</code>, <code>HighlightTag</code>, <code>NodeInfo</code>.</p>
@@ -478,7 +482,7 @@ rho --ephemeral          # in-memory mode, no session file
 <p>Shared test infrastructure (dev-only): <code>MockChatClient</code>, <code>TestProvider</code>, <code>MockShellExecutor</code>, <code>AutoApproveGate</code>, <code>AutoDenyGate</code>, <code>FixedResponseTool</code>, <code>FailingTool</code>, <code>FileTestEnv</code>, <code>in_memory_session</code>, <code>empty_trust_store</code>, <code>detect_shell</code>, <code>tempdir_with_sandbox</code>, <code>assert_no_orphan_tool_results</code>. Depends on <code>rho-core</code> and <code>rho-ai</code>. Never published.</p>
 <p><code>TestProvider</code> wraps a <code>MockChatClient</code> as a <code>Provider</code> impl, enabling integration tests that need a <code>ProviderRegistry</code> without a live model server.</p>
 <h2 id="xtask"><a class="header" href="#xtask"><code>xtask</code></a></h2>
-<p>Dev task runner: <code>cargo xtask ci</code> (fmt → lint → build → test), <code>cargo xtask test</code>, <code>cargo xtask build</code>, <code>cargo xtask release</code>, <code>cargo xtask changelog</code>, <code>cargo xtask fmt</code>, <code>cargo xtask run</code>, <code>cargo xtask clean</code>, <code>cargo xtask status</code>. Tests use <code>cargo-nextest</code> when available, falling back to <code>cargo test</code>.</p>
+<p>Dev task runner: <code>cargo xtask ci</code> (fmt → lint → build → test), <code>cargo xtask test</code>, <code>cargo xtask build</code>, <code>cargo xtask release</code>, <code>cargo xtask changelog</code>, <code>cargo xtask fmt</code>, <code>cargo xtask run</code>, <code>cargo xtask clean</code>, <code>cargo xtask status</code>, <code>cargo xtask schema</code>. Tests use <code>cargo-nextest</code> when available, falling back to <code>cargo test</code>.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="dependency-flow"><a class="header" href="#dependency-flow">Dependency Flow</a></h1>
 <p>Dependencies flow downward only. A crate may depend on crates below it in the stack but never above.</p>
 <pre><code>rho (binary) ──────────────────────────────────────────
@@ -531,7 +535,7 @@ xtask ────────────────────────�
 <div style="break-before: page; page-break-before: always;"></div><h1 id="core-concepts"><a class="header" href="#core-concepts">Core Concepts</a></h1>
 <p>The agent kernel in <code>rho-core</code> is built on a small set of interlocking concepts.</p>
 <ul>
-<li><a href="./core-concepts/agent-loop.html">Agent Loop</a> — the state machine that drives the conversation</li>
+<li><a href="./core-concepts/agent-loop.html">Agent Loop</a> — the state machine that drives the conversation, returning <code>AgentResult</code> with structured output</li>
 <li><a href="./core-concepts/tool-trait.html">Tool Trait</a> — the interface all tools implement</li>
 <li><a href="./core-concepts/chatclient-provider-trait.html">ChatClient Provider Trait</a> — provider-agnostic model access</li>
 <li><a href="./core-concepts/approval-policy.html">Approval Policy</a> — the gate between tool calls and execution</li>
@@ -562,21 +566,28 @@ Idle (done)
 </span>pub async fn run_loop(
     session: &amp;mut Session,
     message: &amp;str,
-    client: &amp;dyn LlmService,
-    registry: &amp;ToolRegistry,
-    config: &amp;AgentConfig,
-    cancel: CancellationToken,
-    gate: &amp;dyn ApprovalGate,
-    observer: &amp;dyn AgentObserver,
-) -&gt; Result&lt;String&gt;
+    params: &amp;LoopParams&lt;'_&gt;,
+) -&gt; Result&lt;AgentResult&gt;
 <span class="boring">}</span></code></pre></pre>
-<p><code>run_loop</code> takes a <code>Session</code> and an <code>LlmService</code> (from <code>rho-ai</code>). It:</p>
+<p><code>run_loop</code> takes a <code>Session</code> and a <code>LoopParams</code> (bundle of LLM service, tool registry, config, cancellation token, approval gate, observer, and optional compaction client). A <code>CollectingObserver</code> is always active internally — it records tool call events into <code>AgentResult.tool_calls</code> automatically, so consumers don't need custom observers for structured output.</p>
+<p>It returns <code>Result&lt;AgentResult&gt;</code>, which captures:</p>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>reply</code></td><td><code>String</code></td><td>The model's final text reply</td></tr>
+<tr><td><code>iterations</code></td><td><code>u32</code></td><td>Number of LLM round-trips</td></tr>
+<tr><td><code>usage</code></td><td><code>TokenUsage</code></td><td>Per-call token delta (input, output, cost, request count)</td></tr>
+<tr><td><code>tool_calls</code></td><td><code>Vec&lt;ToolCallRecord&gt;</code></td><td>Ordered tool call history with name, arguments, outcome, duration</td></tr>
+<tr><td><code>duration</code></td><td><code>Duration</code></td><td>Wall-clock time for the entire run_loop</td></tr>
+<tr><td><code>finish_reason</code></td><td><code>LoopFinishReason</code></td><td>Why the loop ended</td></tr>
+<tr><td><code>context_stats</code></td><td><code>ContextStats</code></td><td>Context window utilization snapshot</td></tr>
+</tbody></table>
+</div>
+<p>The loop:</p>
 <ol>
 <li>Appends <code>message</code> as a user turn via <code>session.append_user_message()</code>.</li>
 <li>Enters the Thinking state and sends the session to the model via <code>session.send_current()</code>.</li>
 <li>Processes the model's response:
 <ul>
-<li><strong>Text reply</strong> → record phase as Conclusion, return it (Idle).</li>
+<li><strong>Text reply</strong> → record phase as Conclusion, populate <code>AgentResult</code> and return it (Idle).</li>
 <li><strong>Tool calls</strong> → for each call, check approval, execute, record phase transition, append the result, then loop back to Thinking.</li>
 </ul>
 </li>
@@ -619,6 +630,8 @@ Idle (done)
 }
 <span class="boring">}</span></code></pre></pre>
 <p>All methods have default no-op implementations, so observers only need to override the events they care about. The RPC observer streams reasoning deltas and tool activity as notifications. For tests, benchmarks, and headless use, <code>NopObserver</code> discards all events.</p>
+<h3 id="collectingobserver"><a class="header" href="#collectingobserver">CollectingObserver</a></h3>
+<p><code>run_loop</code> always creates a <code>CollectingObserver</code> internally — it records tool call events (name, arguments, outcome, duration) into <code>ToolCallRecord</code>s that populate <code>AgentResult.tool_calls</code>. This is independent of the <code>observer</code> in <code>LoopParams</code> and requires no action from consumers. Any observer passed via <code>LoopParams</code> still receives all callbacks as before; the <code>CollectingObserver</code> runs alongside it.</p>
 <p>When extensions are loaded, the <code>CompositeObserver</code> fans out every call to both the RPC observer and the extension <code>DenoObserver</code>s. For <code>on_tool_call_intercept</code>, the <strong>first <code>Block</code> wins</strong> — if any extension blocks a tool call, execution is denied immediately.</p>
 <p>The observer is called:</p>
 <ul>
@@ -628,11 +641,11 @@ Idle (done)
 <li>When approval is requested (<code>on_approval_requested</code>)</li>
 </ul>
 <h2 id="retry-with-backoff"><a class="header" href="#retry-with-backoff">Retry with backoff</a></h2>
-<p>Transient HTTP errors (503, 429, connection refused) are retried with exponential backoff. The retry budget is configurable via <code>AgentConfig</code>. If the budget is exhausted, <code>run_loop</code> returns <code>RhoError::RetryBudgetExhausted</code>.</p>
+<p>Transient HTTP errors (503, 429, connection refused) are retried with exponential backoff. The retry budget is configurable via <code>AgentConfig</code>. If the budget is exhausted, the loop terminates with <code>AgentResult.finish_reason = LoopFinishReason::RetryBudgetExhausted</code>.</p>
 <h2 id="cancellation"><a class="header" href="#cancellation">Cancellation</a></h2>
-<p>A <code>CancellationToken</code> is checked at the top of each loop iteration and between tool calls in a batch. When cancelled, <code>run_loop</code> returns <code>RhoError::Cancelled</code> immediately — no pending tool execution is aborted mid-flight, but no new ones are started.</p>
+<p>A <code>CancellationToken</code> is checked at the top of each loop iteration and between tool calls in a batch. When cancelled, the loop terminates with <code>AgentResult.finish_reason = LoopFinishReason::Cancelled</code> immediately — no pending tool execution is aborted mid-flight, but no new ones are started.</p>
 <h2 id="iteration-guard"><a class="header" href="#iteration-guard">Iteration guard</a></h2>
-<p>The loop terminates after <code>config.max_iterations</code> tool-call rounds (default: 32). This prevents infinite loops from misbehaving models. Returns <code>AgentError::MaxIterationsExceeded</code>.</p>
+<p>The loop terminates after <code>config.max_iterations</code> tool-call rounds (default: 32). This prevents infinite loops from misbehaving models. Terminates with <code>AgentResult.finish_reason = LoopFinishReason::MaxIterations</code>.</p>
 <h2 id="stuck-loop-detection"><a class="header" href="#stuck-loop-detection">Stuck-loop detection</a></h2>
 <p>If the model produces the same output <code>stuck_loop_threshold</code> times consecutively (default: 3), a nudge is injected prompting the model to try a different approach.</p>
 <h2 id="session-persistence-1"><a class="header" href="#session-persistence-1">Session persistence</a></h2>
@@ -1777,6 +1790,9 @@ type = "openrouter"
 <div style="break-before: page; page-break-before: always;"></div><h1 id="rpc-mode"><a class="header" href="#rpc-mode">RPC Mode</a></h1>
 <p><code>rho</code> runs as a headless agent communicating via <strong>JSON-RPC 2.0</strong> over stdin/stdout. All requests must include <code>"jsonrpc": "2.0"</code>, a <code>method</code> field, optional <code>params</code>, and a numeric or string <code>id</code> for response correlation. Streaming events are delivered as JSON-RPC notifications (no <code>id</code> field).</p>
 <p>Diagnostic output (warnings, budget info, session status) is written to <strong>stderr</strong>, keeping <strong>stdout</strong> exclusively for the protocol.</p>
+<blockquote>
+<p><strong>Machine-readable schema.</strong> An <a href="../rpc-schema/openrpc.json"><code>OpenRPC 1.3.1</code> schema</a> documents every method, its params, and result types. Use it with any <code>OpenRPC</code>-compatible code generator to produce type-safe client stubs in your language of choice.</p>
+</blockquote>
 <h2 id="usage"><a class="header" href="#usage">Usage</a></h2>
 <pre><code class="language-sh">echo '{"jsonrpc":"2.0","method":"prompt","params":{"message":"fix the bug"},"id":1}' | \
   rho --model my-model
@@ -1811,7 +1827,7 @@ type = "openrouter"
 <div class="table-wrapper"><table><thead><tr><th>Method</th><th>Params</th><th>Description</th></tr></thead><tbody>
 <tr><td><code>ready</code></td><td>—</td><td>Emitted once on startup</td></tr>
 <tr><td><code>agent/start</code></td><td>—</td><td>Agent began processing a prompt</td></tr>
-<tr><td><code>agent/end</code></td><td><code>{reply: string}</code></td><td>Agent finished; full text reply</td></tr>
+<tr><td><code>agent/end</code></td><td><code>{reply, iterations, usage, toolCalls, durationMs, finishReason}</code></td><td>Agent finished with full result</td></tr>
 <tr><td><code>agent/error</code></td><td><code>{error: string}</code></td><td>Agent loop encountered an error</td></tr>
 <tr><td><code>state/change</code></td><td><code>{state: string}</code></td><td>Loop state transition (<code>thinking</code>, <code>executing_tool</code>, <code>awaiting_approval</code>, <code>idle</code>)</td></tr>
 <tr><td><code>message/delta</code></td><td><code>{delta: string}</code></td><td>Streaming text chunk</td></tr>
@@ -1845,7 +1861,7 @@ type = "openrouter"
 → {"jsonrpc":"2.0","method":"approvalResponse","params":{"approved":true},"id":2}
 ← {"jsonrpc":"2.0","method":"tool/result","params":{"name":"run_command","is_error":false,"output":""}}
 ← {"jsonrpc":"2.0","method":"state/change","params":{"state":"idle"}}
-← {"jsonrpc":"2.0","method":"agent/end","params":{"reply":"Done — the temp files have been removed."}}
+← {"jsonrpc":"2.0","method":"agent/end","params":{"reply":"Done — the temp files have been removed.","iterations":1,"usage":{"inputTokens":420,"outputTokens":28,"totalTokens":448,"totalCost":0.0,"requestCount":1},"toolCalls":[{"name":"run_command","arguments":"{\"command\":\"Remove-Item temp/*\"}","outcome":{"kind":"success"},"durationMs":45}],"durationMs":1200,"finishReason":"stop"}}
 ← {"jsonrpc":"2.0","result":{"reply":"Done..."},"id":1}
 </code></pre>
 <h2 id="headless-startup-policy"><a class="header" href="#headless-startup-policy">Headless startup policy</a></h2>
@@ -1866,6 +1882,7 @@ type = "openrouter"
 <p>Use <code>getSessionStats</code> to monitor context usage and <code>compact</code> to free space when the context fills up.</p>
 <h2 id="testing"><a class="header" href="#testing">Testing</a></h2>
 <p>The RPC core loop is generic over I/O (<code>run_rpc_on&lt;R, W&gt;</code>), enabling in-process integration tests that inject canned stdin via <code>Cursor&lt;Vec&lt;u8&gt;&gt;</code> and capture stdout without touching real file descriptors. Tests use <code>TestProvider</code> (from <code>rho-test-helpers</code>) to wrap a <code>MockChatClient</code> as a <code>Provider</code> and construct <code>App</code> directly, bypassing CLI startup. See <a href="./development/testing.html">Testing</a> for details.</p>
+<p>Run <code>cargo xtask schema</code> to update the version in the <code>OpenRPC</code> schema after a release.</p>
 <h3 id="example-test-session"><a class="header" href="#example-test-session">Example test session</a></h3>
 <pre><code class="language-text">stdin:  {"jsonrpc":"2.0","method":"prompt","params":{"message":"say hello"},"id":1}
 stdout: {"jsonrpc":"2.0","method":"ready"}
@@ -1873,9 +1890,11 @@ stdout: {"jsonrpc":"2.0","method":"agent/start"}
 stdout: {"jsonrpc":"2.0","method":"state/change","params":{"state":"thinking"}}
 stdout: {"jsonrpc":"2.0","method":"message/delta","params":{"delta":"hello"}}
 stdout: {"jsonrpc":"2.0","method":"state/change","params":{"state":"idle"}}
-stdout: {"jsonrpc":"2.0","method":"agent/end","params":{"reply":"hello"}}
+stdout: {"jsonrpc":"2.0","method":"agent/end","params":{"reply":"hello","iterations":1,"usage":{"inputTokens":32,"outputTokens":5,"totalTokens":37,"totalCost":0.0,"requestCount":1},"toolCalls":[],"durationMs":800,"finishReason":"stop"}}
 stdout: {"jsonrpc":"2.0","result":{"reply":"hello"},"id":1}
 </code></pre>
+<h2 id="wire-format-types"><a class="header" href="#wire-format-types">Wire-format types</a></h2>
+<p>All wire-format structs live in <code>rho/src/rpc_wire.rs</code>. Every method param, result, and notification has a typed Rust struct with <code>Serialize</code> and (where applicable) <code>Deserialize</code>, so the dispatch layer catches malformed requests early and produces well-formed responses. The mdBook source for this page (<code>docs/src/rpc-mode.md</code>) duplicates the information in prose form; the single source of truth is the <code>OpenRPC</code> schema.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="extensions"><a class="header" href="#extensions">Extensions</a></h1>
 <p>rho supports TypeScript extensions that add custom tools, hooks, and commands without modifying the core codebase. Extensions run in isolated V8 isolates via <code>rho-ext</code> (powered by <code>deno_core</code>).</p>
 <h2 id="overview"><a class="header" href="#overview">Overview</a></h2>

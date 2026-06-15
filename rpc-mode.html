@@ -182,6 +182,9 @@
                         <h1 id="rpc-mode"><a class="header" href="#rpc-mode">RPC Mode</a></h1>
 <p><code>rho</code> runs as a headless agent communicating via <strong>JSON-RPC 2.0</strong> over stdin/stdout. All requests must include <code>"jsonrpc": "2.0"</code>, a <code>method</code> field, optional <code>params</code>, and a numeric or string <code>id</code> for response correlation. Streaming events are delivered as JSON-RPC notifications (no <code>id</code> field).</p>
 <p>Diagnostic output (warnings, budget info, session status) is written to <strong>stderr</strong>, keeping <strong>stdout</strong> exclusively for the protocol.</p>
+<blockquote>
+<p><strong>Machine-readable schema.</strong> An <a href="../rpc-schema/openrpc.json"><code>OpenRPC 1.3.1</code> schema</a> documents every method, its params, and result types. Use it with any <code>OpenRPC</code>-compatible code generator to produce type-safe client stubs in your language of choice.</p>
+</blockquote>
 <h2 id="usage"><a class="header" href="#usage">Usage</a></h2>
 <pre><code class="language-sh">echo '{"jsonrpc":"2.0","method":"prompt","params":{"message":"fix the bug"},"id":1}' | \
   rho --model my-model
@@ -216,7 +219,7 @@
 <div class="table-wrapper"><table><thead><tr><th>Method</th><th>Params</th><th>Description</th></tr></thead><tbody>
 <tr><td><code>ready</code></td><td>—</td><td>Emitted once on startup</td></tr>
 <tr><td><code>agent/start</code></td><td>—</td><td>Agent began processing a prompt</td></tr>
-<tr><td><code>agent/end</code></td><td><code>{reply: string}</code></td><td>Agent finished; full text reply</td></tr>
+<tr><td><code>agent/end</code></td><td><code>{reply, iterations, usage, toolCalls, durationMs, finishReason}</code></td><td>Agent finished with full result</td></tr>
 <tr><td><code>agent/error</code></td><td><code>{error: string}</code></td><td>Agent loop encountered an error</td></tr>
 <tr><td><code>state/change</code></td><td><code>{state: string}</code></td><td>Loop state transition (<code>thinking</code>, <code>executing_tool</code>, <code>awaiting_approval</code>, <code>idle</code>)</td></tr>
 <tr><td><code>message/delta</code></td><td><code>{delta: string}</code></td><td>Streaming text chunk</td></tr>
@@ -250,7 +253,7 @@
 → {"jsonrpc":"2.0","method":"approvalResponse","params":{"approved":true},"id":2}
 ← {"jsonrpc":"2.0","method":"tool/result","params":{"name":"run_command","is_error":false,"output":""}}
 ← {"jsonrpc":"2.0","method":"state/change","params":{"state":"idle"}}
-← {"jsonrpc":"2.0","method":"agent/end","params":{"reply":"Done — the temp files have been removed."}}
+← {"jsonrpc":"2.0","method":"agent/end","params":{"reply":"Done — the temp files have been removed.","iterations":1,"usage":{"inputTokens":420,"outputTokens":28,"totalTokens":448,"totalCost":0.0,"requestCount":1},"toolCalls":[{"name":"run_command","arguments":"{\"command\":\"Remove-Item temp/*\"}","outcome":{"kind":"success"},"durationMs":45}],"durationMs":1200,"finishReason":"stop"}}
 ← {"jsonrpc":"2.0","result":{"reply":"Done..."},"id":1}
 </code></pre>
 <h2 id="headless-startup-policy"><a class="header" href="#headless-startup-policy">Headless startup policy</a></h2>
@@ -271,6 +274,7 @@
 <p>Use <code>getSessionStats</code> to monitor context usage and <code>compact</code> to free space when the context fills up.</p>
 <h2 id="testing"><a class="header" href="#testing">Testing</a></h2>
 <p>The RPC core loop is generic over I/O (<code>run_rpc_on&lt;R, W&gt;</code>), enabling in-process integration tests that inject canned stdin via <code>Cursor&lt;Vec&lt;u8&gt;&gt;</code> and capture stdout without touching real file descriptors. Tests use <code>TestProvider</code> (from <code>rho-test-helpers</code>) to wrap a <code>MockChatClient</code> as a <code>Provider</code> and construct <code>App</code> directly, bypassing CLI startup. See <a href="./development/testing.html">Testing</a> for details.</p>
+<p>Run <code>cargo xtask schema</code> to update the version in the <code>OpenRPC</code> schema after a release.</p>
 <h3 id="example-test-session"><a class="header" href="#example-test-session">Example test session</a></h3>
 <pre><code class="language-text">stdin:  {"jsonrpc":"2.0","method":"prompt","params":{"message":"say hello"},"id":1}
 stdout: {"jsonrpc":"2.0","method":"ready"}
@@ -278,9 +282,11 @@ stdout: {"jsonrpc":"2.0","method":"agent/start"}
 stdout: {"jsonrpc":"2.0","method":"state/change","params":{"state":"thinking"}}
 stdout: {"jsonrpc":"2.0","method":"message/delta","params":{"delta":"hello"}}
 stdout: {"jsonrpc":"2.0","method":"state/change","params":{"state":"idle"}}
-stdout: {"jsonrpc":"2.0","method":"agent/end","params":{"reply":"hello"}}
+stdout: {"jsonrpc":"2.0","method":"agent/end","params":{"reply":"hello","iterations":1,"usage":{"inputTokens":32,"outputTokens":5,"totalTokens":37,"totalCost":0.0,"requestCount":1},"toolCalls":[],"durationMs":800,"finishReason":"stop"}}
 stdout: {"jsonrpc":"2.0","result":{"reply":"hello"},"id":1}
 </code></pre>
+<h2 id="wire-format-types"><a class="header" href="#wire-format-types">Wire-format types</a></h2>
+<p>All wire-format structs live in <code>rho/src/rpc_wire.rs</code>. Every method param, result, and notification has a typed Rust struct with <code>Serialize</code> and (where applicable) <code>Deserialize</code>, so the dispatch layer catches malformed requests early and produces well-formed responses. The mdBook source for this page (<code>docs/src/rpc-mode.md</code>) duplicates the information in prose form; the single source of truth is the <code>OpenRPC</code> schema.</p>
 
                     </main>
 

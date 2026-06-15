@@ -202,6 +202,7 @@
 <li>Detect syntax node splits during edits via tree-sitter</li>
 <li>Manage conversation state across sessions with tree-structured persistence and session discovery</li>
 <li>Observe agent activity in real time (reasoning, tool calls, errors) via the <code>AgentObserver</code> trait</li>
+<li>Get structured results from <code>run_loop</code> via <code>AgentResult</code> (reply, iterations, token usage, tool call history, duration, finish reason) without custom observers</li>
 <li>Extend rho with TypeScript extensions that add tools, hooks, and commands — hot-reloadable at runtime</li>
 <li>Compact old conversation turns to stay within context limits</li>
 <li>Monitor context window usage with a live status bar, <code>getSessionStats</code> RPC method, and enhanced token distribution stats</li>
