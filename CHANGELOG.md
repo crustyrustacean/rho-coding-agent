@@ -1,3 +1,16 @@
+## [0.79.0] - 2026-06-15
+
+### 🚀 Features
+
+- **(core)** `run_loop` now returns `Result<AgentResult>` instead of `Result<String>`, providing structured output with reply text, iteration count, token usage (`TokenUsage`), ordered tool call history (`Vec<ToolCallRecord>`), wall-clock duration, finish reason (`LoopFinishReason`), and context stats snapshot.
+- **(core)** `CollectingObserver` always records tool call events into `AgentResult.tool_calls` — no custom observer needed by consumers.
+- **(core)** `LoopFinishReason` enum classifies loop termination: `Stop`, `MaxIterations`, `Cancelled`, `RetryBudgetExhausted`, `ConsecutiveEmptyResponses`.
+- **(core)** `LoopParams` bundles `run_loop` parameters (client, registry, config, cancel, gate, observer, compaction_client).
+
+### 📚 Documentation
+
+- **(docs)** Update ARCHITECTURE.md, README.md, and mdBook docs to reflect `AgentResult` return type, new key types, updated `run_loop` signature, and `CollectingObserver`.
+
 ## [0.78.0] - 2026-06-14
 
 ### 🚜 Refactor
