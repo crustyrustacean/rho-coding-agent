@@ -79,6 +79,13 @@ enum Xtask {
 
     /// Generate/update the `OpenRPC` schema in `docs/rpc-schema/openrpc.json`.
     Schema,
+
+    /// Generate the built-in model catalog from OpenRouter's API.
+    ///
+    /// Fetches models from `https://openrouter.ai/api/v1/models`, applies
+    /// manual overrides from `rho-ai/model-overrides.json`, and writes
+    /// `rho-ai/src/catalog_generated.rs`.
+    GenerateModels,
 }
 
 fn main() -> Result<()> {
@@ -95,5 +102,6 @@ fn main() -> Result<()> {
         Xtask::Release { version, skip_ci } => tasks::release(&version, skip_ci),
         Xtask::Status => tasks::status(),
         Xtask::Schema => tasks::schema(),
+        Xtask::GenerateModels => tasks::generate_models(),
     }
 }
