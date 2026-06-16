@@ -35,7 +35,7 @@ A series of incremental improvements to context management, addressing structura
 | Phase-Aware Compaction | Narrative summaries grouped by session phase | 0.64 |
 | LLM Compaction | Model-generated narrative notes (opt-in, graceful fallback) | 0.64 |
 | Enhanced ContextStats | Token distribution by role, resolution, and phase | 0.64 |
-| Context-Pressure Nudge Removed | Replaced by structural mechanisms | 0.64 |
+| Config fields removed | `context_pressure_threshold`, `context_pressure_interval` removed from code; structural mechanisms handle context management | 0.81 |
 
 ## Upcoming phases
 

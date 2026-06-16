@@ -96,6 +96,7 @@ Provider-agnostic streaming interface for LLM communication.
 - **Retry** — Exponential backoff on transient errors with configurable budget.
 - **SSE parser** — Line-buffered server-sent event parser with streaming accumulation.
 
+
 ### `rho-ext` — TypeScript Extension Runtime
 
 Enables user-authored TypeScript extensions that add tools, hooks, and commands to rho without modifying the core codebase.
@@ -513,6 +514,8 @@ docs/rpc-schema/openrpc.json  # OpenRPC 1.3.1 schema (machine-readable API spec)
 | `ToolName` | `newtypes.rs` | Tool names |
 | `ToolCallId` | `newtypes.rs` | Model-issued tool call IDs |
 | `DiagnosticCode` | `newtypes.rs` | Rust compiler diagnostic codes |
+
+### Extensions
 
 
 

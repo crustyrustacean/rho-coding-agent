@@ -139,24 +139,9 @@ pub struct AgentLoopConfig {
     #[serde(default = "default_show_reasoning")]
     pub show_reasoning: bool,
     /// Context utilization percentage (0–100) at which the agent loop
-    /// would inject a nudge reminding the agent to conserve context.
-    ///
-    /// **Deprecated:** This has been superseded by structural context
-    /// management (graduated resolution, selective eviction, auto-compaction).
-    /// The nudge is no longer injected regardless of this setting.
-    /// Kept for backwards compatibility with existing configs.
-    /// Set to 0 to disable (default, and effectively the only behavior).
-    #[serde(default = "default_context_pressure_threshold")]
-    pub context_pressure_threshold: u8,
-    /// Minimum number of iterations between context-pressure nudges.
-    ///
-    /// **Deprecated:** No-op. See `context_pressure_threshold`.
-    #[serde(default = "default_context_pressure_interval")]
-    pub context_pressure_interval: u32,
-    /// Context utilization percentage (0–100) at which the agent loop
     /// automatically compacts older entries to free context space.
     /// Compaction runs proactively *before* eviction is needed.
-    /// Set to 0 to disable. Should be >= `context_pressure_threshold`.
+    /// Set to 0 to disable (default).
     #[serde(default = "default_auto_compact_threshold")]
     pub auto_compact_threshold: u8,
     /// Compaction strategy: `"mechanical"` (default, no LLM calls) or
@@ -190,8 +175,6 @@ impl Default for AgentLoopConfig {
             stuck_loop_threshold: default_stuck_loop_threshold(),
             max_consecutive_empty: default_max_consecutive_empty(),
             show_reasoning: default_show_reasoning(),
-            context_pressure_threshold: default_context_pressure_threshold(),
-            context_pressure_interval: default_context_pressure_interval(),
             auto_compact_threshold: default_auto_compact_threshold(),
             compaction_mode: default_compaction_mode(),
             reasoning_effort: None,
@@ -236,16 +219,6 @@ fn default_max_consecutive_empty() -> u32 {
 /// Default value for `show_reasoning`.
 fn default_show_reasoning() -> bool {
     false
-}
-/// Default value for `context_pressure_threshold`.
-/// Disabled (0) — context-pressure nudge has been superseded by
-/// structural context management (graduated resolution, eviction, auto-compact).
-fn default_context_pressure_threshold() -> u8 {
-    0
-}
-/// Default value for `context_pressure_interval`.
-fn default_context_pressure_interval() -> u32 {
-    5
 }
 
 /// Default value for `auto_compact_threshold`.
@@ -706,12 +679,6 @@ struct WireAgentLoopConfig {
     /// Whether to display full reasoning content.
     #[serde(default)]
     show_reasoning: Option<bool>,
-    /// Context pressure threshold percentage.
-    #[serde(default)]
-    context_pressure_threshold: Option<u8>,
-    /// Context pressure interval (iterations between nudges).
-    #[serde(default)]
-    context_pressure_interval: Option<u32>,
     /// Auto-compact threshold percentage.
     #[serde(default)]
     auto_compact_threshold: Option<u8>,
@@ -964,14 +931,6 @@ impl ConfigLoader {
                     .show_reasoning
                     .or(user_agent.show_reasoning)
                     .unwrap_or(default_show_reasoning()),
-                context_pressure_threshold: project_agent
-                    .context_pressure_threshold
-                    .or(user_agent.context_pressure_threshold)
-                    .unwrap_or(default_context_pressure_threshold()),
-                context_pressure_interval: project_agent
-                    .context_pressure_interval
-                    .or(user_agent.context_pressure_interval)
-                    .unwrap_or(default_context_pressure_interval()),
                 auto_compact_threshold: project_agent
                     .auto_compact_threshold
                     .or(user_agent.auto_compact_threshold)

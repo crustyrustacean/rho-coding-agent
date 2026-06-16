@@ -1,6 +1,6 @@
 # Agent Loop
 
-The agent loop is the state machine at the heart of rho. It drives the conversation forward by sending messages to the model, executing tool calls, and feeding results back — tracking session phase and managing context pressure throughout.
+The agent loop is the state machine at the heart of rho. It drives the conversation forward by sending messages to the model, executing tool calls, and feeding results back — tracking session phase and managing context utilization throughout.
 
 ## State machine
 
@@ -94,8 +94,6 @@ pub trait AgentObserver: Send + Sync {
     }
 }
 ```
-
-All methods have default no-op implementations, so observers only need to override the events they care about. The RPC observer streams reasoning deltas and tool activity as notifications. For tests, benchmarks, and headless use, `NopObserver` discards all events.
 
 ### CollectingObserver
 

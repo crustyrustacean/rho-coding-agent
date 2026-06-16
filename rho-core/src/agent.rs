@@ -450,18 +450,10 @@ pub struct AgentConfig {
     /// Whether to display full chain-of-thought reasoning in the output.
     /// When `false`, shows a one-line summary instead.
     pub show_reasoning: bool,
-    /// Context utilization threshold (0–100) at which a warning is
-    /// logged about context pressure. **Deprecated:** no longer injects
-    /// a nudge — structural mechanisms handle context management.
-    /// Set to 0 to disable (default).
-    pub context_pressure_threshold: u8,
-    /// Minimum number of iterations between context-pressure warnings.
-    /// **Deprecated:** no-op.
-    pub context_pressure_interval: u32,
     /// Context utilization percentage (0–100) at which the agent loop
     /// automatically compacts older entries to free context space.
     /// Compaction runs proactively *before* eviction is needed.
-    /// Set to 0 to disable. Should be >= `context_pressure_threshold`.
+    /// Set to 0 to disable (default).
     pub auto_compact_threshold: u8,
     /// Compaction mode: `"mechanical"` (default) or `"llm"`.
     /// When `"llm"`, the agent uses the LLM to generate narrative summaries
@@ -479,11 +471,6 @@ impl std::fmt::Debug for AgentConfig {
             .field("stuck_loop_threshold", &self.stuck_loop_threshold)
             .field("max_consecutive_empty", &self.max_consecutive_empty)
             .field("show_reasoning", &self.show_reasoning)
-            .field(
-                "context_pressure_threshold",
-                &self.context_pressure_threshold,
-            )
-            .field("context_pressure_interval", &self.context_pressure_interval)
             .field("auto_compact_threshold", &self.auto_compact_threshold)
             .field("compaction_mode", &self.compaction_mode)
             .finish()
@@ -500,8 +487,6 @@ impl Default for AgentConfig {
             stuck_loop_threshold: 3,
             max_consecutive_empty: 5,
             show_reasoning: false,
-            context_pressure_threshold: 0,
-            context_pressure_interval: 5,
             auto_compact_threshold: 0,
             compaction_mode: "mechanical".to_owned(),
         }
@@ -523,8 +508,6 @@ impl AgentConfig {
             stuck_loop_threshold: config.agent.stuck_loop_threshold,
             max_consecutive_empty: config.agent.max_consecutive_empty,
             show_reasoning: config.agent.show_reasoning,
-            context_pressure_threshold: config.agent.context_pressure_threshold,
-            context_pressure_interval: config.agent.context_pressure_interval,
             auto_compact_threshold: config.agent.auto_compact_threshold,
             compaction_mode: config.agent.compaction_mode.clone(),
         }
@@ -652,32 +635,6 @@ impl LoopContext<'_> {
         Box::new(crate::session::MechanicalCompactionStrategy::new())
     }
 
-    /// Check context utilization and log a warning if it exceeds
-    /// the configured threshold.
-    ///
-    /// **Deprecated:** The nudge message is no longer injected. This method
-    /// only logs a warning when utilization exceeds the threshold, since
-    /// auto-compact and graduated resolution handle context management
-    /// structurally.
-    fn check_context_pressure(
-        session: &Session,
-        threshold: u8,
-        _current_iteration: u32,
-    ) -> Option<String> {
-        if threshold == 0 {
-            return None;
-        }
-        let stats = session.context_stats();
-        if stats.utilization_percent() >= threshold {
-            let pct = stats.utilization_percent();
-            info!(
-                utilization = %pct,
-                "context utilization above threshold (auto-compact should handle this)"
-            );
-        }
-        // Always return None — the nudge is disabled.
-        None
-    }
 
     /// Execute one state transition and return the next state.
     async fn step(&mut self, state: State) -> Result<State> {
@@ -887,14 +844,6 @@ impl LoopContext<'_> {
         }
         info!(phase = %self.phase, tool = %call.function.name, "phase updated");
 
-        // Context-pressure check: log a warning if utilization is above
-        // threshold. The nudge is no longer injected — auto-compact and
-        // graduated resolution handle context management structurally.
-        let _ = Self::check_context_pressure(
-            self.session,
-            self.params.config.context_pressure_threshold,
-            self.iterations,
-        );
 
         // Auto-compact: proactively compact older entries when utilization
         // crosses the auto-compact threshold.
@@ -2020,49 +1969,5 @@ mod tests {
     fn build_tool_calls_from_accumulated_empty() {
         let calls = build_tool_calls_from_accumulated(&[]).unwrap();
         assert!(calls.is_empty());
-    }
-
-    // ── context-pressure (deprecated — no nudge injected) ───────────────────
-
-    #[test]
-    fn context_pressure_check_always_returns_none() {
-        // Even with high utilization, the deprecated context-pressure check
-        // no longer injects a nudge. It only logs.
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
-            .with_token_budget(crate::context::TokenBudget::with_reserve(100, 5));
-
-        let msg = "x".repeat(500);
-        session.append_user_message(&msg);
-        let call_id = ToolCallId::from("call_1");
-        let result = ToolResult::success("x".repeat(300));
-        let _ = session.append_tool_result(call_id, &result);
-
-        let stats = session.context_stats();
-        assert!(
-            stats.utilization_percent() >= 75,
-            "precondition: utilization should be high, got {}%",
-            stats.utilization_percent()
-        );
-
-        let nudge = LoopContext::check_context_pressure(&session, 75, 0);
-        assert!(
-            nudge.is_none(),
-            "nudge should no longer be injected (replaced by auto-compact)"
-        );
-    }
-
-    #[test]
-    fn context_pressure_threshold_zero_returns_none_immediately() {
-        let session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
-        let nudge = LoopContext::check_context_pressure(&session, 0, 0);
-        assert!(nudge.is_none());
-    }
-
-    #[test]
-    fn context_pressure_low_utilization_returns_none() {
-        let session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
-            .with_token_budget(crate::context::TokenBudget::new(128_000));
-        let nudge = LoopContext::check_context_pressure(&session, 75, 0);
-        assert!(nudge.is_none());
     }
 }

@@ -1162,9 +1162,9 @@ dependencies = [
 
 [[package]]
 name = "h2"
-version = "0.4.14"
+version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "171fefbc92fe4a4de27e0698d6a5b392d6a0e333506bc49133760b3bcf948733"
+checksum = "6cb093c84e8bd9b188d4c4a8cb6579fc016968d14c99882163cd3ff402a4f155"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -2278,7 +2278,7 @@ dependencies = [
 
 [[package]]
 name = "rho"
-version = "0.81.1"
+version = "0.81.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2298,7 +2298,7 @@ dependencies = [
 
 [[package]]
 name = "rho-ai"
-version = "0.81.1"
+version = "0.81.2"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2313,7 +2313,7 @@ dependencies = [
 
 [[package]]
 name = "rho-core"
-version = "0.81.1"
+version = "0.81.2"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2338,7 +2338,7 @@ dependencies = [
 
 [[package]]
 name = "rho-ext"
-version = "0.81.1"
+version = "0.81.2"
 dependencies = [
  "async-trait",
  "deno_ast",
@@ -2357,7 +2357,7 @@ dependencies = [
 
 [[package]]
 name = "rho-highlight"
-version = "0.81.1"
+version = "0.81.2"
 dependencies = [
  "rho-core",
  "rho-test-helpers",
@@ -2368,7 +2368,7 @@ dependencies = [
 
 [[package]]
 name = "rho-test-helpers"
-version = "0.81.1"
+version = "0.81.2"
 dependencies = [
  "async-trait",
  "futures",
@@ -2382,7 +2382,7 @@ dependencies = [
 
 [[package]]
 name = "rho-tools"
-version = "0.81.1"
+version = "0.81.2"
 dependencies = [
  "async-trait",
  "dunce",
@@ -4484,7 +4484,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.81.1"
+version = "0.81.2"
 dependencies = [
  "anyhow",
  "clap",

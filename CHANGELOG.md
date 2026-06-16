@@ -1,4 +1,12 @@
-## [0.81.0] - 2026-06-15
+## [0.81.2] - 2026-06-15
+
+### 📝 Documentation
+
+- Remove context-pressure nudge feature from all documentation — the feature was deprecated in 0.58.0 and the config fields (`context_pressure_threshold`, `context_pressure_interval`) have been fully removed from the codebase
+- Update `rho-ai` section in ARCHITECTURE.md with complete crate description
+- Fix stray section header in ARCHITECTURE.md extensions type table
+- Remove `context_pressure_threshold`/`context_pressure_interval` examples from configuration docs
+
 
 ### 🚀 Features
 
