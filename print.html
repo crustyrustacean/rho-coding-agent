@@ -544,7 +544,7 @@ xtask ────────────────────────�
 <li><a href="./core-concepts/project-context-files.html">Project Context Files</a> — loading and trusting project-level instructions</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="agent-loop"><a class="header" href="#agent-loop">Agent Loop</a></h1>
-<p>The agent loop is the state machine at the heart of rho. It drives the conversation forward by sending messages to the model, executing tool calls, and feeding results back — tracking session phase and managing context pressure throughout.</p>
+<p>The agent loop is the state machine at the heart of rho. It drives the conversation forward by sending messages to the model, executing tool calls, and feeding results back — tracking session phase and managing context utilization throughout.</p>
 <h2 id="state-machine"><a class="header" href="#state-machine">State machine</a></h2>
 <pre><code class="language-text">  ┌──────────────────────────────────────────────┐
   │                                              │
@@ -629,7 +629,6 @@ Idle (done)
     }
 }
 <span class="boring">}</span></code></pre></pre>
-<p>All methods have default no-op implementations, so observers only need to override the events they care about. The RPC observer streams reasoning deltas and tool activity as notifications. For tests, benchmarks, and headless use, <code>NopObserver</code> discards all events.</p>
 <h3 id="collectingobserver"><a class="header" href="#collectingobserver">CollectingObserver</a></h3>
 <p><code>run_loop</code> always creates a <code>CollectingObserver</code> internally — it records tool call events (name, arguments, outcome, duration) into <code>ToolCallRecord</code>s that populate <code>AgentResult.tool_calls</code>. This is independent of the <code>observer</code> in <code>LoopParams</code> and requires no action from consumers. Any observer passed via <code>LoopParams</code> still receives all callbacks as before; the <code>CollectingObserver</code> runs alongside it.</p>
 <p>When extensions are loaded, the <code>CompositeObserver</code> fans out every call to both the RPC observer and the extension <code>DenoObserver</code>s. For <code>on_tool_call_intercept</code>, the <strong>first <code>Block</code> wins</strong> — if any extension blocks a tool call, execution is denied immediately.</p>
@@ -921,8 +920,6 @@ pub trait ApprovalGate: Send + Sync {
 <p>On LLM failure, the system falls back to mechanical-only compaction — no error propagation to the agent loop.</p>
 <h3 id="auto-compact-1"><a class="header" href="#auto-compact-1">Auto-compact</a></h3>
 <p>When context utilization crosses the <code>auto_compact_threshold</code> (configurable), the agent loop proactively compacts older entries before eviction is needed. This prevents the abrupt context loss that occurs when turn-level eviction kicks in.</p>
-<h2 id="context-pressure-nudge-removed"><a class="header" href="#context-pressure-nudge-removed">Context-pressure nudge (removed)</a></h2>
-<p>The context-pressure nudge — a synthetic user message injected to warn the model about high utilization — has been removed. It wasted context tokens and was redundant given graduated resolution, selective eviction, auto-compaction, and LLM compaction. The config fields (<code>context_pressure_threshold</code>, <code>context_pressure_interval</code>) remain for backwards compatibility but default to 0 (disabled).</p>
 <h2 id="tool-schema-overhead"><a class="header" href="#tool-schema-overhead">Tool schema overhead</a></h2>
 <p>Tool schemas (the JSON descriptions sent to the model so it knows what tools are available) consume tokens. The context manager subtracts an estimate of this overhead from the available budget before fitting messages, preventing the combined total from exceeding the window.</p>
 <h2 id="token-estimation"><a class="header" href="#token-estimation">Token estimation</a></h2>
@@ -1419,9 +1416,6 @@ auto_compact_threshold = 0
 # Compaction strategy: "mechanical" (default) or "llm" (opt-in)
 # When "llm", the model generates narrative notes for compacted entries.
 compaction_mode = "mechanical"
-
-# Context-pressure threshold (deprecated, no-op, default: 0 = disabled)
-# context_pressure_threshold = 0
 
 # ── Providers ────────────────────────────────────────────────────
 # Use the [[providers]] array format for single or multiple providers.
@@ -2255,7 +2249,7 @@ cargo xtask test -p rho-core -- --nocapture  # Single crate
 <tr><td>Phase-Aware Compaction</td><td>Narrative summaries grouped by session phase</td><td>0.64</td></tr>
 <tr><td>LLM Compaction</td><td>Model-generated narrative notes (opt-in, graceful fallback)</td><td>0.64</td></tr>
 <tr><td>Enhanced ContextStats</td><td>Token distribution by role, resolution, and phase</td><td>0.64</td></tr>
-<tr><td>Context-Pressure Nudge Removed</td><td>Replaced by structural mechanisms</td><td>0.64</td></tr>
+<tr><td>Config fields removed</td><td><code>context_pressure_threshold</code>, <code>context_pressure_interval</code> removed from code; structural mechanisms handle context management</td><td>0.81</td></tr>
 </tbody></table>
 </div>
 <h2 id="upcoming-phases"><a class="header" href="#upcoming-phases">Upcoming phases</a></h2>

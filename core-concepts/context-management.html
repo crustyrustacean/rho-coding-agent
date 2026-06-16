@@ -244,8 +244,6 @@
 <p>On LLM failure, the system falls back to mechanical-only compaction — no error propagation to the agent loop.</p>
 <h3 id="auto-compact"><a class="header" href="#auto-compact">Auto-compact</a></h3>
 <p>When context utilization crosses the <code>auto_compact_threshold</code> (configurable), the agent loop proactively compacts older entries before eviction is needed. This prevents the abrupt context loss that occurs when turn-level eviction kicks in.</p>
-<h2 id="context-pressure-nudge-removed"><a class="header" href="#context-pressure-nudge-removed">Context-pressure nudge (removed)</a></h2>
-<p>The context-pressure nudge — a synthetic user message injected to warn the model about high utilization — has been removed. It wasted context tokens and was redundant given graduated resolution, selective eviction, auto-compaction, and LLM compaction. The config fields (<code>context_pressure_threshold</code>, <code>context_pressure_interval</code>) remain for backwards compatibility but default to 0 (disabled).</p>
 <h2 id="tool-schema-overhead"><a class="header" href="#tool-schema-overhead">Tool schema overhead</a></h2>
 <p>Tool schemas (the JSON descriptions sent to the model so it knows what tools are available) consume tokens. The context manager subtracts an estimate of this overhead from the available budget before fitting messages, preventing the combined total from exceeding the window.</p>
 <h2 id="token-estimation"><a class="header" href="#token-estimation">Token estimation</a></h2>

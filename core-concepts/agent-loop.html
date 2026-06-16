@@ -180,7 +180,7 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="agent-loop"><a class="header" href="#agent-loop">Agent Loop</a></h1>
-<p>The agent loop is the state machine at the heart of rho. It drives the conversation forward by sending messages to the model, executing tool calls, and feeding results back — tracking session phase and managing context pressure throughout.</p>
+<p>The agent loop is the state machine at the heart of rho. It drives the conversation forward by sending messages to the model, executing tool calls, and feeding results back — tracking session phase and managing context utilization throughout.</p>
 <h2 id="state-machine"><a class="header" href="#state-machine">State machine</a></h2>
 <pre><code class="language-text">  ┌──────────────────────────────────────────────┐
   │                                              │
@@ -265,7 +265,6 @@ Idle (done)
     }
 }
 <span class="boring">}</span></code></pre></pre>
-<p>All methods have default no-op implementations, so observers only need to override the events they care about. The RPC observer streams reasoning deltas and tool activity as notifications. For tests, benchmarks, and headless use, <code>NopObserver</code> discards all events.</p>
 <h3 id="collectingobserver"><a class="header" href="#collectingobserver">CollectingObserver</a></h3>
 <p><code>run_loop</code> always creates a <code>CollectingObserver</code> internally — it records tool call events (name, arguments, outcome, duration) into <code>ToolCallRecord</code>s that populate <code>AgentResult.tool_calls</code>. This is independent of the <code>observer</code> in <code>LoopParams</code> and requires no action from consumers. Any observer passed via <code>LoopParams</code> still receives all callbacks as before; the <code>CollectingObserver</code> runs alongside it.</p>
 <p>When extensions are loaded, the <code>CompositeObserver</code> fans out every call to both the RPC observer and the extension <code>DenoObserver</code>s. For <code>on_tool_call_intercept</code>, the <strong>first <code>Block</code> wins</strong> — if any extension blocks a tool call, execution is denied immediately.</p>
