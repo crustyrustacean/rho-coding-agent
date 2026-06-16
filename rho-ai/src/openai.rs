@@ -156,10 +156,10 @@ struct SseDelta {
     /// Incremental text content.
     #[serde(default)]
     content: Option<String>,
-    /// Incremental reasoning/thinking content (DeepSeek, OpenAI o-series).
+    /// Incremental reasoning/thinking content (`DeepSeek`, `OpenAI` o-series).
     #[serde(default)]
     reasoning_content: Option<String>,
-    /// Vendor-specific reasoning field (GLM-5, some OpenRouter models).
+    /// Vendor-specific reasoning field (GLM-5, some `OpenRouter` models).
     #[serde(default)]
     reasoning: Option<String>,
     /// Incremental tool call deltas.
@@ -200,7 +200,7 @@ struct SseUsage {
     /// Tokens in the completion.
     #[serde(default)]
     completion_tokens: u64,
-    /// Cost in USD (sent by OpenRouter and some providers).
+    /// Cost in USD (sent by `OpenRouter` and some providers).
     #[serde(default)]
     cost: Option<f64>,
 }

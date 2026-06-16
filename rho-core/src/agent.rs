@@ -635,7 +635,6 @@ impl LoopContext<'_> {
         Box::new(crate::session::MechanicalCompactionStrategy::new())
     }
 
-
     /// Execute one state transition and return the next state.
     async fn step(&mut self, state: State) -> Result<State> {
         match state {
@@ -843,7 +842,6 @@ impl LoopContext<'_> {
             self.has_had_edits = true;
         }
         info!(phase = %self.phase, tool = %call.function.name, "phase updated");
-
 
         // Auto-compact: proactively compact older entries when utilization
         // crosses the auto-compact threshold.

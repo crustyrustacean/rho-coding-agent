@@ -1646,12 +1646,14 @@ mod tests {
         session.flush().unwrap();
         let save_path = session.save_path().unwrap().to_path_buf();
 
+        let path_str = save_path.display().to_string().replace('\\', "/");
+
         let events = rpc_run(
             MockChatClient::new(vec![]),
             echo_registry(),
             &[&format!(
                 r#"{{"jsonrpc":"2.0","method":"resumeSession","params":{{"path":"{}"}},"id":1}}"#,
-                save_path.display()
+                path_str
             )],
         )
         .await;
