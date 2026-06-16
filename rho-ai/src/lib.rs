@@ -31,6 +31,7 @@
 //! let events = service.chat_stream_with_tools(messages, tools).await?;
 //! ```
 
+pub mod catalog;
 pub mod error;
 pub mod openai;
 pub mod retry;
@@ -38,6 +39,7 @@ pub mod service;
 pub mod sse;
 pub mod types;
 
+pub use catalog::*;
 pub use error::ProviderError;
 pub use service::{EventStream, LlmService};
 pub use types::{
