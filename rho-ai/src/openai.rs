@@ -42,6 +42,15 @@ struct ChatCompletionRequest {
     /// Reasoning effort for thinking-capable models.
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_effort: Option<String>,
+    /// Maximum completion (output) tokens for this request.
+    ///
+    /// Sent explicitly so the provider uses rho's reserved completion budget
+    /// rather than its own default. Several providers (e.g. `OpenRouter` routing
+    /// to `Vertex`/`Bedrock`) default to the model's full `max_tokens` when this
+    /// is absent, which causes `input + max_tokens > context_limit` rejections
+    /// even when rho left ample headroom. Omitted from the wire when `None`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_tokens: Option<usize>,
 }
 
 /// `stream_options` to request usage in the final streaming chunk.
@@ -511,6 +520,7 @@ impl OpenAiService {
                 include_usage: true,
             }),
             reasoning_effort: request.reasoning_effort.clone(),
+            max_tokens: request.max_tokens,
         };
 
         let url = completions_url(&self.config.base_url);
@@ -849,6 +859,7 @@ mod tests {
                 include_usage: true,
             }),
             reasoning_effort: None,
+            max_tokens: Some(2048),
         };
         let json = serde_json::to_value(&req).unwrap();
         assert_eq!(json["model"], "gpt-4o");
@@ -856,6 +867,7 @@ mod tests {
         assert_eq!(json["stream_options"]["include_usage"], true);
         assert_eq!(json["messages"][0]["role"], "user");
         assert!(json.get("tools").is_none()); // empty tools omitted
+        assert_eq!(json["max_tokens"], 2048);
     }
 
     // ── SSE chunk parsing tests ───────────────────────────────────────────
@@ -871,6 +883,7 @@ mod tests {
                 include_usage: true,
             }),
             reasoning_effort: Some("medium".into()),
+            max_tokens: None,
         };
         let json = serde_json::to_value(&req).unwrap();
         assert_eq!(json["reasoning_effort"], "medium");
@@ -887,9 +900,45 @@ mod tests {
                 include_usage: true,
             }),
             reasoning_effort: None,
+            max_tokens: None,
         };
         let json = serde_json::to_value(&req).unwrap();
         assert!(json.get("reasoning_effort").is_none());
+        assert!(json.get("max_tokens").is_none());
+    }
+
+    #[test]
+    fn max_tokens_omitted_when_none() {
+        let req = ChatCompletionRequest {
+            model: "gpt-4o".into(),
+            messages: vec![],
+            tools: vec![],
+            stream: true,
+            stream_options: Some(StreamOptions {
+                include_usage: true,
+            }),
+            reasoning_effort: None,
+            max_tokens: None,
+        };
+        let json = serde_json::to_value(&req).unwrap();
+        assert!(json.get("max_tokens").is_none());
+    }
+
+    #[test]
+    fn max_tokens_sent_when_set() {
+        let req = ChatCompletionRequest {
+            model: "gpt-4o".into(),
+            messages: vec![],
+            tools: vec![],
+            stream: true,
+            stream_options: Some(StreamOptions {
+                include_usage: true,
+            }),
+            reasoning_effort: None,
+            max_tokens: Some(8192),
+        };
+        let json = serde_json::to_value(&req).unwrap();
+        assert_eq!(json["max_tokens"], 8192);
     }
 
     #[test]
