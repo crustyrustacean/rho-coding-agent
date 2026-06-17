@@ -31,6 +31,46 @@ pub(crate) enum TurnResult {
     Error(String),
 }
 
+/// Why a runtime model switch was rejected.
+///
+/// Returned by [`App::set_model`]. A rejected switch leaves the session's
+/// active model and provider untouched, so the next prompt continues to use
+/// the previously working model instead of failing at request time with an
+/// opaque HTTP error.
+#[derive(Debug)]
+pub(crate) enum SetModelError {
+    /// A bare model id was not advertised by any provider's `/v1/models`.
+    ModelNotFound {
+        /// The rejected model identifier.
+        model: String,
+    },
+    /// `provider:model` syntax named a provider that isn't configured.
+    UnknownProvider {
+        /// The rejected provider name.
+        provider: String,
+        /// The model identifier that was to be sent to it.
+        model: String,
+    },
+}
+
+impl SetModelError {
+    /// Human-readable message suitable for surfacing to the user (e.g. as a
+    /// JSON-RPC error message).
+    pub(crate) fn message(&self) -> String {
+        match self {
+            Self::ModelNotFound { model } => format!(
+                "model '{model}' was not found on any provider; use /models to list \
+                 available models, or 'provider:{model}' to target a provider that \
+                 does not advertise models via /v1/models"
+            ),
+            Self::UnknownProvider { provider, model } => format!(
+                "unknown provider '{provider}' for model '{model}'; use /providers to \
+                 list configured providers"
+            ),
+        }
+    }
+}
+
 // ── Session construction ─────────────────────────────────────────────────────
 
 /// Configuration for session construction.
@@ -334,11 +374,21 @@ impl App {
     ///   (no model discovery), then sets the model string. Useful when the
     ///   target provider is slow to respond or doesn't support `/v1/models`.
     ///
-    /// If the model is not found on any provider (bare syntax) or the
-    /// provider name is unknown (`provider:` prefix), the current provider
-    /// is kept and the model string is still updated — matching the
-    /// startup behaviour where a model is accepted verbatim with a warning.
-    pub(crate) async fn set_model(&mut self, spec: &str) {
+    /// # Rejections
+    ///
+    /// A switch is **rejected** (returning [`SetModelError`]) and the session
+    /// is left untouched when the model cannot be routed to a real provider:
+    ///
+    /// - Bare `model_id` not advertised by any provider's `/v1/models`.
+    /// - `provider:model_id` where the named provider is not configured.
+    ///
+    /// Rejecting (rather than accepting the string verbatim) prevents the
+    /// frontend from reporting a successful switch that only fails on the
+    /// next prompt with an opaque HTTP error. Note that `provider:model_id`
+    /// with a *known* provider still trusts the user's assertion that the
+    /// model exists there, since discovery is intentionally skipped on that
+    /// path.
+    pub(crate) async fn set_model(&mut self, spec: &str) -> Result<(), SetModelError> {
         // Parse optional `provider:model` syntax.
         let (explicit_provider, model_id) = if let Some((provider, model)) = spec.split_once(':') {
             (Some(provider), model)
@@ -348,6 +398,10 @@ impl App {
 
         if let Some(provider_name) = explicit_provider {
             // Explicit provider selection — switch by name without model discovery.
+            // A known provider is trusted (the model string is set as-is, useful
+            // when the provider is slow or doesn't support /v1/models), but an
+            // unknown provider name is a hard error: there is nothing to route
+            // the request to.
             if let Some(index) = self.providers.index_of(provider_name) {
                 let old_provider = self.active_provider().name().to_owned();
                 self.active_provider_index = index;
@@ -364,8 +418,12 @@ impl App {
                 tracing::warn!(
                     provider = %provider_name,
                     model = %model_id,
-                    "unknown provider; keeping current provider"
+                    "unknown provider; model switch rejected"
                 );
+                return Err(SetModelError::UnknownProvider {
+                    provider: provider_name.to_owned(),
+                    model: model_id.to_owned(),
+                });
             }
         } else if let Some(index) = self.providers.find_model_index(model_id).await {
             let old_provider = self.active_provider().name().to_owned();
@@ -382,12 +440,16 @@ impl App {
         } else {
             tracing::warn!(
                 model = %model_id,
-                "model not found on any provider via /v1/models; keeping current provider"
+                "model not found on any provider via /v1/models; model switch rejected"
             );
+            return Err(SetModelError::ModelNotFound {
+                model: model_id.to_owned(),
+            });
         }
 
         self.session.set_model(model_id);
         self.ext_loader.set_model_all(model_id).await;
+        Ok(())
     }
 
     /// Trigger context compaction on the active session.
@@ -819,5 +881,25 @@ mod tests {
             panic!("expected Error variant");
         };
         assert_eq!(msg, "fail");
+    }
+
+    #[test]
+    fn set_model_error_messages_name_the_offender() {
+        // These strings are surfaced verbatim to the user as JSON-RPC error
+        // messages, so they must identify what was rejected.
+        let m = SetModelError::ModelNotFound {
+            model: "z.ai/glm-5-turbo".into(),
+        }
+        .message();
+        assert!(m.contains("z.ai/glm-5-turbo"));
+        assert!(m.contains("/models"));
+
+        let m = SetModelError::UnknownProvider {
+            provider: "acme".into(),
+            model: "acme-7b".into(),
+        }
+        .message();
+        assert!(m.contains("acme"));
+        assert!(m.contains("/providers"));
     }
 }

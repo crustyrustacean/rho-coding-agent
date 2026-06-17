@@ -548,32 +548,47 @@ async fn handle_get_messages(app: &App, id: &Value, transport: &dyn Transport) {
 }
 
 /// Switch the active model.
-/// Switch the active model.
+///
+/// Delegates to [`App::set_model`]. On rejection (unknown model or unknown
+/// provider) emits a JSON-RPC `INVALID_PARAMS` error with a user-actionable
+/// message and leaves the session untouched — the frontend surfaces this as a
+/// failed switch rather than falsely reporting success.
 async fn handle_set_model(
     app: &mut App,
     params: SetModelParams,
     id: &Value,
     transport: &dyn Transport,
 ) {
+    let spec = &params.model;
     let old_model = app.session.model().to_owned();
     let old_provider = app.active_provider().name().to_owned();
-    let spec = &params.model;
-    app.set_model(spec).await;
-    let provider = app.active_provider().name().to_owned();
-    let model = app.session.model().to_owned();
-    info!(
-        old_model = %old_model,
-        old_provider = %old_provider,
-        new_model = %model,
-        new_provider = %provider,
-        spec = %spec,
-        "model switched"
-    );
-    send(
-        transport,
-        &success_response(id, SetModelResult { model, provider }),
-    )
-    .await;
+    match app.set_model(spec).await {
+        Ok(()) => {
+            let provider = app.active_provider().name().to_owned();
+            let model = app.session.model().to_owned();
+            info!(
+                old_model = %old_model,
+                old_provider = %old_provider,
+                new_model = %model,
+                new_provider = %provider,
+                spec = %spec,
+                "model switched"
+            );
+            send(
+                transport,
+                &success_response(id, SetModelResult { model, provider }),
+            )
+            .await;
+        }
+        Err(e) => {
+            warn!(spec = %spec, error = ?e, "model switch rejected");
+            send(
+                transport,
+                &error_response(id, INVALID_PARAMS, &e.message()),
+            )
+            .await;
+        }
+    }
 }
 
 /// Return token budget and context-window usage statistics.
@@ -978,6 +993,30 @@ mod tests {
         parse_output(&output)
     }
 
+    /// Like [`rpc_run`] but with an explicit provider registry, for tests that
+    /// need custom provider/model topology.
+    async fn rpc_run_with_providers(
+        providers: ProviderRegistry,
+        registry: ToolRegistry,
+        lines: &[&str],
+    ) -> Vec<Value> {
+        let app = test_app_with_providers(providers, registry);
+        let stdin_data = lines.join("\n") + "\n";
+        let reader = Cursor::new(stdin_data.as_bytes().to_vec());
+        let writer = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let writer_clone = std::sync::Arc::clone(&writer);
+        let transport: Arc<dyn Transport> =
+            Arc::new(StdioTransport::new(reader, WriterWrapper(writer_clone)));
+
+        run_rpc_on(app, transport).await.expect("should not panic");
+
+        let output = std::sync::Arc::try_unwrap(writer)
+            .unwrap()
+            .into_inner()
+            .unwrap();
+        parse_output(&output)
+    }
+
     fn test_app_with_providers(providers: ProviderRegistry, registry: ToolRegistry) -> App {
         let session = Session::in_memory(
             "test-model",
@@ -1326,8 +1365,18 @@ mod tests {
 
     #[tokio::test]
     async fn set_model_switches_model() {
-        let events = rpc_run(
-            MockChatClient::new(vec![]),
+        // The default TestProvider only advertises "mock-model"; advertise
+        // "new-model" too so the switch resolves via /v1/models discovery.
+        let providers = {
+            let mut providers = ProviderRegistry::new();
+            providers.add(Box::new(
+                TestProvider::new("test", MockChatClient::new(vec![]))
+                    .with_models(["mock-model", "new-model"]),
+            ));
+            providers
+        };
+        let events = rpc_run_with_providers(
+            providers,
             echo_registry(),
             &[r#"{"jsonrpc":"2.0","method":"setModel","params":{"model":"new-model"},"id":1}"#],
         )
@@ -1400,8 +1449,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn set_model_keeps_provider_when_not_found() {
-        // Provider test only serves mock-model.
+    async fn set_model_rejects_unknown_model() {
+        // Provider test only serves mock-model; "unknown-model" is not
+        // advertised, so the switch must be rejected.
         let events = rpc_run(
             MockChatClient::new(vec![]),
             echo_registry(),
@@ -1414,13 +1464,80 @@ mod tests {
 
         let resps = responses(&events);
 
-        // setModel response should have the model and current provider.
-        assert_eq!(resps[0]["result"]["model"], "unknown-model");
-        assert_eq!(resps[0]["result"]["provider"], "test");
+        // setModel response must be a JSON-RPC error, not a success.
+        assert!(resps[0].get("error").is_some(), "expected an error response");
+        let message = resps[0]["error"]["message"].as_str().unwrap();
+        assert!(
+            message.contains("unknown-model"),
+            "error message should name the rejected model: {message}"
+        );
 
-        // getState should confirm the provider did not change.
+        // getState should confirm the model and provider are unchanged.
         assert_eq!(resps[1]["result"]["provider"], "test");
-        assert_eq!(resps[1]["result"]["model"], "unknown-model");
+        assert_eq!(resps[1]["result"]["model"], "test-model");
+    }
+
+    #[tokio::test]
+    async fn set_model_rejects_unknown_provider() {
+        // `provider:model` with a provider that isn't configured must be
+        // rejected, even though the syntax bypasses model discovery.
+        let events = rpc_run(
+            MockChatClient::new(vec![]),
+            echo_registry(),
+            &[
+                r#"{"jsonrpc":"2.0","method":"setModel","params":{"model":"nope:mock-model"},"id":1}"#,
+                r#"{"jsonrpc":"2.0","method":"getState","id":2}"#,
+            ],
+        )
+        .await;
+
+        let resps = responses(&events);
+
+        assert!(resps[0].get("error").is_some(), "expected an error response");
+        let message = resps[0]["error"]["message"].as_str().unwrap();
+        assert!(
+            message.contains("nope"),
+            "error message should name the rejected provider: {message}"
+        );
+
+        // Unchanged.
+        assert_eq!(resps[1]["result"]["provider"], "test");
+        assert_eq!(resps[1]["result"]["model"], "test-model");
+    }
+
+    #[tokio::test]
+    async fn set_model_explicit_provider_trusts_model_id() {
+        // `provider:model` with a *known* provider skips discovery and trusts
+        // the user's model id, even if it isn't advertised via /v1/models.
+        let providers = {
+            let mut providers = ProviderRegistry::new();
+            providers.add(Box::new(
+                TestProvider::new("alpha", MockChatClient::new(vec![]))
+                    .with_models(["alpha-1"]),
+            ));
+            providers.add(Box::new(
+                TestProvider::new("beta", MockChatClient::new(vec![]))
+                    .with_models(["beta-1"]),
+            ));
+            providers
+        };
+        let events = rpc_run_with_providers(
+            providers,
+            echo_registry(),
+            &[
+                r#"{"jsonrpc":"2.0","method":"setModel","params":{"model":"beta:beta-unlisted"},"id":1}"#,
+                r#"{"jsonrpc":"2.0","method":"getState","id":2}"#,
+            ],
+        )
+        .await;
+
+        let resps = responses(&events);
+
+        // Success: provider switched to beta, model string accepted verbatim.
+        assert_eq!(resps[0]["result"]["model"], "beta-unlisted");
+        assert_eq!(resps[0]["result"]["provider"], "beta");
+        assert_eq!(resps[1]["result"]["model"], "beta-unlisted");
+        assert_eq!(resps[1]["result"]["provider"], "beta");
     }
 
     #[tokio::test]
