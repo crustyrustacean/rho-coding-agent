@@ -1,3 +1,25 @@
+## [0.81.3] - 2026-06-17
+
+### 🚀 Features
+
+- **(ai)** Built-in model catalog with 306 models generated from `OpenRouter`'s public API via `cargo xtask generate-models`, with manual thinking/reasoning overrides in `rho-ai/model-overrides.json`. The catalog exposes `find()`, `by_provider()`, `search()`, and user-model overrides merged on top of built-ins.
+- Model resolution enriched with catalog data: context window, max output tokens, cost, and thinking support are derived from the catalog instead of relying solely on user configuration. `completion_reserve` is capped at the model's `max_tokens`, and `reasoning_effort` is auto-enabled only for thinking-capable models (suppressed for non-thinking models to avoid invalid params).
+- Default model selection ensures rho never errors with 'no model configured'. Resolution priority: `--model` CLI flag → `agent.model` config → `agent.provider` default_model → first provider's default_model → `RHO_MODEL` env → built-in default (`anthropic/claude-sonnet-4`). Startup presenter feedback (`model_catalog_info`) shows catalog enrichment.
+
+### 🐛 Bug Fixes
+
+- Route the built-in default model to a synthesized `OpenRouter` provider. The default (`anthropic/claude-sonnet-4`) is an `OpenRouter` model id, but the zero-config provider defaults to `localhost:1234`, so the first request failed with 'retry budget exhausted' after 4 attempts. When the built-in default is selected, app startup now registers an `OpenRouter` provider from the `openrouter` preset (picking up `OPENROUTER_API_KEY`); the external-provider consent gate still applies (`rho-code` passes `--accept-external-provider`; bare `rho` gets a clear consent error instead of a silent runtime failure).
+- **(generator)** Fix doubled `//!` doc-comment markers in `catalog_generated.rs` caused by a Rust string-continuation bug in the `generate-models` xtask.
+
+### 🚜 Refactor
+
+- `resolve_model` no longer returns `Result` — it always succeeds after the built-in default fallback was added. Returns a `ResolvedModel` struct carrying catalog enrichment and an `is_builtin_default` flag used to synthesize the matching provider.
+- Expose `rho_core::config::preset_endpoint` / `preset_api_key_env` to avoid duplicating the `OpenRouter` endpoint string when synthesizing the default provider.
+
+### 🏗️ Internal
+
+- Clean up pedantic clippy lints across the workspace (the generated catalog alone tripped 1594+ lints, leaving trunk red): add `#![allow(...)]` for generated-code lints in `catalog_generated.rs`, switch the generator's emit block to `writeln!`, fix redundant closures (`serde_json::Value::as_*`), `map_or_else`, `usize::try_from` for cast-truncation safety, add `Default for Catalog`, fill in missing field docs, and backtick `OpenRouter`/`LM Studio` in doc comments.
+
 ## [0.81.2] - 2026-06-15
 
 ### 📝 Documentation
