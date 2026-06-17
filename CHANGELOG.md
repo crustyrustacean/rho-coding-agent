@@ -1,3 +1,11 @@
+## [0.81.4] - 2026-06-17
+
+### 🐛 Bug Fixes
+
+- **(rpc)** `setModel` now rejects unknown models and providers with a `JSON-RPC` `INVALID_PARAMS` error instead of accepting the model string verbatim and reporting a successful switch. Previously, `/model <invalid-id>` printed "switched" and left the session pointing at a model no provider could serve, surfacing only on the next prompt as an opaque `HTTP 400`. `App::set_model` returns a new `SetModelError` (`ModelNotFound` / `UnknownProvider`) and leaves the session untouched on rejection; `handle_set_model` maps it to a user-actionable error message pointing to `/models` or `/providers`. The `provider:model` syntax with a *known* provider still trusts the model id (discovery is intentionally skipped on that path).
+- **(ai)** `max_tokens` is now sent explicitly on every chat completion request. `rho-core` set `LlmRequest.max_tokens` to the reserved `completion_reserve`, but `rho-ai`'s `OpenAI`-compatible wire struct dropped the field, so providers defaulted to the model's full advertised max. Via `OpenRouter` BYOK routing to `Vertex`/`Bedrock` this turned a healthy `input + 8192` into `input + 64000 > 200000`, causing `HTTP 400` rejections once a session grew. `ChatCompletionRequest` now carries an `Option<usize> max_tokens` (omitted when `None`).
+- **(ai)** Cap the default model's catalog `context_window` to the standard 200,000. `OpenRouter` advertises a 1M beta window for `anthropic/claude-sonnet-4`, but BYOK routing to `Vertex`/`Bedrock` honors only the standard 200K, so the agent loop over-packed context and failed with `input + max_tokens > context_limit`. Added `context_window`/`max_tokens` cap keys to `model-overrides.json` (applied by the `generate-models` xtask, capped at the advertised value), corrected the generated entry, and added a regression test guarding the default model's window.
+
 ## [0.81.3] - 2026-06-17
 
 ### 🚀 Features
