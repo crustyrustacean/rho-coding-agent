@@ -1652,8 +1652,7 @@ mod tests {
             MockChatClient::new(vec![]),
             echo_registry(),
             &[&format!(
-                r#"{{"jsonrpc":"2.0","method":"resumeSession","params":{{"path":"{}"}},"id":1}}"#,
-                path_str
+                r#"{{"jsonrpc":"2.0","method":"resumeSession","params":{{"path":"{path_str}"}},"id":1}}"#,
             )],
         )
         .await;

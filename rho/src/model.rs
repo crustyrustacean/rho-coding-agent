@@ -10,7 +10,6 @@
 //! config defaults.
 
 use crate::presenter::RpcPresenter as P;
-use anyhow::Result;
 use rho_ai::catalog::{Catalog, Model};
 use rho_core::RhoConfig;
 
@@ -32,7 +31,7 @@ use rho_core::RhoConfig;
 /// Enriched model information from the catalog.
 ///
 /// `catalog_model` is `Some` when the model was found in the built-in
-/// catalog (i.e. it's a known OpenRouter model). For custom/local models
+/// catalog (i.e. it's a known `OpenRouter` model). For custom/local models
 /// it's `None`, and the caller should fall back to config defaults.
 #[derive(Debug)]
 pub(crate) struct ResolvedModel {
@@ -42,10 +41,16 @@ pub(crate) struct ResolvedModel {
     pub provider: Option<String>,
     /// Catalog entry, if the model is known.
     pub catalog_model: Option<Model>,
+    /// `true` only when this model came from the built-in default fallback
+    /// (step 6 of [`resolve_model`]). The caller uses this to synthesize a
+    /// matching provider — the built-in default is an `OpenRouter` model id,
+    /// so it must be paired with an `OpenRouter` provider rather than the
+    /// localhost zero-config provider.
+    pub is_builtin_default: bool,
 }
 
 /// Emit catalog enrichment info to the user (stderr) when available.
-fn emit_catalog_info(catalog_model: &Option<Model>) {
+fn emit_catalog_info(catalog_model: Option<&Model>) {
     if let Some(m) = catalog_model {
         P::model_catalog_info(m.context_window, m.max_tokens, m.thinking.supported);
         tracing::info!(
@@ -60,20 +65,22 @@ fn emit_catalog_info(catalog_model: &Option<Model>) {
     }
 }
 
-pub(crate) fn resolve_model(
-    config: &RhoConfig,
-    cli_model: Option<&String>,
-) -> Result<ResolvedModel> {
+/// Resolve the model identifier without network calls.
+///
+/// See the module-level docs for the resolution priority. Always succeeds —
+/// the built-in catalog default (step 6) is the final fallback.
+pub(crate) fn resolve_model(config: &RhoConfig, cli_model: Option<&String>) -> ResolvedModel {
     // 1. CLI flag takes highest priority.
     if let Some(model) = cli_model {
         P::model_from_source(model, "--model", "cli");
         let catalog_model = Catalog::new().find(model).cloned();
-        emit_catalog_info(&catalog_model);
-        return Ok(ResolvedModel {
+        emit_catalog_info(catalog_model.as_ref());
+        return ResolvedModel {
             id: model.clone(),
             provider: None,
             catalog_model,
-        });
+            is_builtin_default: false,
+        };
     }
 
     // 2. Config agent.model.
@@ -81,12 +88,13 @@ pub(crate) fn resolve_model(
         let provider = resolve_provider_for_model(model, config);
         P::model_from_source(model, "config", provider.as_deref().unwrap_or("default"));
         let catalog_model = Catalog::new().find(model).cloned();
-        emit_catalog_info(&catalog_model);
-        return Ok(ResolvedModel {
+        emit_catalog_info(catalog_model.as_ref());
+        return ResolvedModel {
             id: model.to_owned(),
             provider,
             catalog_model,
-        });
+            is_builtin_default: false,
+        };
     }
 
     // 3. Config agent.provider + that provider's default_model.
@@ -100,12 +108,13 @@ pub(crate) fn resolve_model(
             if let Some(model) = provider_config.default_model.as_deref() {
                 P::model_from_source(model, "config", provider_name);
                 let catalog_model = Catalog::new().find(model).cloned();
-                emit_catalog_info(&catalog_model);
-                return Ok(ResolvedModel {
+                emit_catalog_info(catalog_model.as_ref());
+                return ResolvedModel {
                     id: model.to_owned(),
                     provider: Some(provider_name.to_owned()),
                     catalog_model,
-                });
+                    is_builtin_default: false,
+                };
             }
             // Provider named but no default_model — fall through.
             tracing::warn!(
@@ -129,36 +138,47 @@ pub(crate) fn resolve_model(
             .unwrap_or("default");
         P::model_auto_detected(default, provider_name);
         let catalog_model = Catalog::new().find(default).cloned();
-        emit_catalog_info(&catalog_model);
-        return Ok(ResolvedModel {
+        emit_catalog_info(catalog_model.as_ref());
+        return ResolvedModel {
             id: default.to_owned(),
-            provider: config.provider.default_provider().and_then(|p| p.name.clone()),
+            provider: config
+                .provider
+                .default_provider()
+                .and_then(|p| p.name.clone()),
             catalog_model,
-        });
+            is_builtin_default: false,
+        };
     }
 
     // 5. RHO_MODEL environment variable.
     if let Ok(env_model) = std::env::var("RHO_MODEL") {
         P::model_from_source(&env_model, "RHO_MODEL env", "auto");
         let catalog_model = Catalog::new().find(&env_model).cloned();
-        emit_catalog_info(&catalog_model);
-        return Ok(ResolvedModel {
+        emit_catalog_info(catalog_model.as_ref());
+        return ResolvedModel {
             id: env_model,
             provider: None,
             catalog_model,
-        });
+            is_builtin_default: false,
+        };
     }
 
     // 6. Built-in catalog default — never errors, always works.
+    //
+    // This is an OpenRouter model id. The caller (app startup) is
+    // responsible for synthesizing a matching OpenRouter provider, since
+    // the zero-config provider default is `localhost:1234` which cannot
+    // serve it.
     let default_id = rho_ai::catalog::DEFAULT_MODEL_ID;
     P::model_from_source(default_id, "built-in default", "auto");
     let catalog_model = Catalog::new().find(default_id).cloned();
-    emit_catalog_info(&catalog_model);
-    Ok(ResolvedModel {
+    emit_catalog_info(catalog_model.as_ref());
+    ResolvedModel {
         id: default_id.to_owned(),
         provider: None,
         catalog_model,
-    })
+        is_builtin_default: true,
+    }
 }
 
 /// Find which configured provider should handle a given model string.
@@ -224,9 +244,10 @@ mod tests {
             vec![provider("local", Some("local-default"))],
         );
         let cli = Some(&"cli-model".to_owned());
-        let resolved = resolve_model(&config, cli).unwrap();
+        let resolved = resolve_model(&config, cli);
         assert_eq!(resolved.id, "cli-model");
         assert_eq!(resolved.provider, None);
+        assert!(!resolved.is_builtin_default);
     }
 
     #[test]
@@ -235,16 +256,16 @@ mod tests {
             Some("local-default"),
             vec![provider("local", Some("local-default"))],
         );
-        let resolved = resolve_model(&config, None).unwrap();
+        let resolved = resolve_model(&config, None);
         assert_eq!(resolved.id, "local-default");
-        
+
         assert_eq!(resolved.provider, Some("local".to_owned()));
     }
 
     #[test]
     fn default_model_used_when_no_agent_model() {
         let config = config_with(None, vec![provider("local", Some("qwen2.5-coder:7b"))]);
-        let resolved = resolve_model(&config, None).unwrap();
+        let resolved = resolve_model(&config, None);
         assert_eq!(resolved.id, "qwen2.5-coder:7b");
         // Provider resolved by matching default_model.
         assert_eq!(resolved.provider, Some("local".to_owned()));
@@ -253,31 +274,25 @@ mod tests {
     #[test]
     fn no_config_returns_default() {
         let config = config_with(None, vec![]);
-        let resolved = resolve_model(&config, None).unwrap();
+        let resolved = resolve_model(&config, None);
         // Should fall back to built-in default instead of erroring.
         assert_eq!(resolved.id, rho_ai::catalog::DEFAULT_MODEL_ID);
         assert_eq!(resolved.provider, None);
         assert!(resolved.catalog_model.is_some());
+        assert!(resolved.is_builtin_default);
     }
 
     #[test]
     fn providers_without_default_model_returns_default() {
         let config = config_with(None, vec![provider("openrouter", None)]);
-        let result = resolve_model(&config, None);
-        assert!(result.is_ok());
-        let resolved = result.unwrap();
+        let resolved = resolve_model(&config, None);
         assert_eq!(resolved.id, rho_ai::catalog::DEFAULT_MODEL_ID);
     }
 
     #[test]
     fn first_provider_default_model_used() {
-        let config = config_with(
-            None,
-            vec![
-                provider("openrouter", Some("claude-sonnet-4")),
-            ],
-        );
-        let resolved = resolve_model(&config, None).unwrap();
+        let config = config_with(None, vec![provider("openrouter", Some("claude-sonnet-4"))]);
+        let resolved = resolve_model(&config, None);
         assert_eq!(resolved.id, "claude-sonnet-4");
         assert_eq!(resolved.provider, Some("openrouter".to_owned()));
     }
@@ -292,7 +307,7 @@ mod tests {
                 provider("openai", Some("gpt-4o")),
             ],
         );
-        let resolved = resolve_model(&config, None).unwrap();
+        let resolved = resolve_model(&config, None);
         assert_eq!(resolved.id, "claude-sonnet-4");
         // Provider resolved by matching default_model, ignoring agent.provider.
         assert_eq!(resolved.provider, Some("openrouter".to_owned()));
@@ -310,7 +325,7 @@ mod tests {
                 provider("openai", Some("gpt-4o")),
             ],
         );
-        let resolved = resolve_model(&config, None).unwrap();
+        let resolved = resolve_model(&config, None);
         assert_eq!(resolved.id, "claude-sonnet-4");
         assert_eq!(resolved.provider, Some("openrouter".to_owned()));
     }
@@ -325,7 +340,7 @@ mod tests {
                 provider("openai", Some("gpt-4o")),
             ],
         );
-        let resolved = resolve_model(&config, None).unwrap();
+        let resolved = resolve_model(&config, None);
         assert_eq!(resolved.id, "gpt-4o");
         assert_eq!(resolved.provider, Some("openai".to_owned()));
     }
@@ -340,7 +355,7 @@ mod tests {
                 provider("openai", Some("gpt-4o")),
             ],
         );
-        let resolved = resolve_model(&config, None).unwrap();
+        let resolved = resolve_model(&config, None);
         assert_eq!(resolved.id, "claude-sonnet-4");
         // Falls through to first provider's default_model, provider is resolved.
         assert_eq!(resolved.provider, Some("openrouter".to_owned()));
@@ -355,7 +370,7 @@ mod tests {
                 provider("openai", Some("gpt-4o")),
             ],
         );
-        let resolved = resolve_model(&config, None).unwrap();
+        let resolved = resolve_model(&config, None);
         assert_eq!(resolved.id, "claude-sonnet-4");
         assert_eq!(resolved.provider, Some("openrouter".to_owned()));
     }
@@ -365,7 +380,7 @@ mod tests {
     #[test]
     fn catalog_enriches_known_model() {
         let config = config_with(Some("anthropic/claude-sonnet-4"), vec![]);
-        let resolved = resolve_model(&config, None).unwrap();
+        let resolved = resolve_model(&config, None);
         assert!(resolved.catalog_model.is_some());
         let cat = resolved.catalog_model.unwrap();
         assert_eq!(cat.id, "anthropic/claude-sonnet-4");
@@ -376,14 +391,14 @@ mod tests {
     #[test]
     fn catalog_returns_none_for_unknown_model() {
         let config = config_with(Some("my-custom/local-model"), vec![]);
-        let resolved = resolve_model(&config, None).unwrap();
+        let resolved = resolve_model(&config, None);
         assert!(resolved.catalog_model.is_none());
     }
 
     #[test]
     fn default_model_has_catalog_entry() {
         let config = config_with(None, vec![]);
-        let resolved = resolve_model(&config, None).unwrap();
+        let resolved = resolve_model(&config, None);
         assert!(resolved.catalog_model.is_some());
         assert_eq!(resolved.id, rho_ai::catalog::DEFAULT_MODEL_ID);
     }

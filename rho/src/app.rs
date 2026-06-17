@@ -9,9 +9,9 @@ use crate::presenter::RpcPresenter as P;
 use anyhow::{Context, Result};
 use rho_core::tool::CancellationToken as Cancel;
 use rho_core::{
-    AgentConfig, ConfigLoader, LoopParams, MechanicalCompactionStrategy, Provider,
-    ProviderRegistry, Redactor, RhoConfig, SandboxRoot, Session, TokenBudget, ToolRegistry,
-    compose_full_system_prompt,
+    AgentConfig, ConfigLoader, LoopParams, MechanicalCompactionStrategy, OpenAiCompatibleProvider,
+    Provider, ProviderRegistry, Redactor, RhoConfig, SandboxRoot, Session, TokenBudget,
+    ToolRegistry, compose_full_system_prompt,
     context_files::{ContextFile, ContextScanner, TrustStore},
     find_project_root,
 };
@@ -106,17 +106,20 @@ impl App {
     /// 2. Resolve sandbox root
     /// 3. Load configuration (two-tier TOML)
     /// 4. Construct provider registry (endpoint, auth, externality)
-    /// 5. Check provider type compatibility
-    /// 6. Check external provider consent
-    /// 7. Register built-in tools + extensions
-    /// 8. Scan project context files (headless: auto-deny untrusted)
-    /// 9. Compose the system prompt
-    /// 10. Resolve model identifier
-    /// 11. Build agent config with CLI overrides
-    /// 12. Build secret redactor
-    /// 13. Determine token budget
-    /// 14. Construct the session
-    /// 15. Log budget diagnostics
+    /// 5. Resolve model identifier; if the built-in default model is
+    ///    selected, synthesize a matching `OpenRouter` provider
+    /// 6. Check provider type compatibility
+    /// 7. Check external provider consent
+    /// 8. Register built-in tools + extensions
+    /// 9. Scan project context files (headless: auto-deny untrusted)
+    /// 10. Compose the system prompt
+    /// 11. Propagate model id to extensions
+    /// 12. Build agent config with CLI overrides
+    /// 13. Build secret redactor
+    /// 14. Determine token budget
+    /// 15. Resolve reasoning effort (gated by thinking support)
+    /// 16. Construct the session
+    /// 17. Log budget diagnostics
     ///
     /// # Errors
     ///
@@ -134,19 +137,38 @@ impl App {
         let config = load_config(&sandbox);
 
         // ── 4. Provider registry ─────────────────────────────────────────
-        let provider_registry = ProviderRegistry::from_config(
+        let mut provider_registry = ProviderRegistry::from_config(
             &config.provider,
             cli.endpoint.as_deref(),
             cli.api_key_env.as_deref(),
         );
 
-        // ── 5. Provider type compatibility ──────────────────────────────
+        // ── 5. Model resolution + default provider synthesis ─────────────
+        // Resolve the model *before* the provider-consent gate so that, when
+        // the built-in default model (`anthropic/claude-sonnet-4`, an
+        // OpenRouter model id) is selected by the zero-config fallback, we
+        // can register a matching OpenRouter provider first. Without this,
+        // the default model would be routed to the `localhost:1234` zero-config
+        // provider and fail at request time with a connection error.
+        let resolved = resolve_model(&config, cli.model.as_ref());
+        let active_provider_index = if resolved.is_builtin_default {
+            ensure_openrouter_provider(&mut provider_registry)
+        } else {
+            resolved
+                .provider
+                .as_deref()
+                .and_then(|name| provider_registry.index_of(name))
+                .unwrap_or(0)
+        };
+        let model = resolved.id.clone();
+
+        // ── 6. Provider type compatibility ──────────────────────────────
         check_provider_type(&config);
 
-        // ── 6. Provider consent ─────────────────────────────────────────
+        // ── 7. Provider consent ─────────────────────────────────────────
         check_provider_consent(&provider_registry, &cli)?;
 
-        // ── 7. Tool registry + extensions ────────────────────────────────
+        // ── 8. Tool registry + extensions ────────────────────────────────
         let mut tool_registry = ToolRegistry::new();
         let session_path_holder = register_all(&mut tool_registry, sandbox.clone(), &config)
             .context("no PowerShell found on PATH — install PowerShell 7+ (pwsh) or ensure Windows PowerShell (powershell) is available")?;
@@ -168,10 +190,10 @@ impl App {
 
         let tool_schemas = tool_registry.tool_definitions();
 
-        // ── 8. Context files (headless: auto-deny untrusted) ─────────────
+        // ── 9. Context files (headless: auto-deny untrusted) ─────────────
         let context_files = scan_context_files(&sandbox);
 
-        // ── 9. System prompt ─────────────────────────────────────────────
+        // ── 10. System prompt ────────────────────────────────────────────
         let mut system_prompt = compose_full_system_prompt(
             &sandbox,
             &context_files,
@@ -205,28 +227,23 @@ impl App {
             );
         }
 
-        // ── 10. Model ─────────────────────────────────────────────────────
-        let resolved = resolve_model(&config, cli.model.as_ref())?;
-        let model = resolved.id.clone();
-        let model_provider = resolved.provider.clone();
-
-        // Resolve active provider index from the model resolution result.
-        let active_provider_index = model_provider
-            .as_deref()
-            .and_then(|name| provider_registry.index_of(name))
-            .unwrap_or(0);
-
+        // ── 11. Model (already resolved in phase 5) ──────────────────────
+        // `resolved`, `model`, and `active_provider_index` were computed
+        // before the consent gate so the OpenRouter provider could be
+        // synthesized for the built-in default. Here we only propagate the
+        // model id to extensions.
+        //
         // Set model in all loaded extensions so rho.getModel() works.
         ext_loader.set_model_all(&model).await;
 
-        // ── 11. Agent config ─────────────────────────────────────────────
+        // ── 12. Agent config ─────────────────────────────────────────────
         let agent_config = build_agent_config(&config, &cli);
 
-        // ── 12. Redactor ─────────────────────────────────────────────────
+        // ── 13. Redactor ─────────────────────────────────────────────────
         let redactor =
             Redactor::from_config(config.redaction.enabled, &config.redaction.custom_patterns);
 
-        // ── 13. Token budget ─────────────────────────────────────────────
+        // ── 14. Token budget ─────────────────────────────────────────────
         // Use catalog-derived context window when available, falling back to config.
         let token_budget = build_token_budget(&config, &cli, resolved.catalog_model.as_ref());
         tracing::info!(
@@ -235,7 +252,7 @@ impl App {
             "token budget resolved"
         );
 
-        // ── 14. Reasoning effort ─────────────────────────────────────────
+        // ── 15. Reasoning effort ────────────────────────────────────────
         // Only set reasoning effort if the model supports thinking.
         // If the model doesn't support thinking, suppress reasoning_effort
         // even if the user configured it, to avoid sending invalid parameters.
@@ -245,13 +262,19 @@ impl App {
             (None, effort) => effort.clone(),
         };
         match (&reasoning_effort, &resolved.catalog_model) {
-            (Some(e), Some(_c)) => tracing::info!(effort = %e, "reasoning effort enabled (model supports thinking)"),
-            (None, Some(c)) if c.thinking.supported => tracing::info!("reasoning effort not configured"),
-            (None, Some(_c)) => tracing::info!("reasoning effort suppressed (model does not support thinking)"),
+            (Some(e), Some(_c)) => {
+                tracing::info!(effort = %e, "reasoning effort enabled (model supports thinking)");
+            }
+            (None, Some(c)) if c.thinking.supported => {
+                tracing::info!("reasoning effort not configured");
+            }
+            (None, Some(_c)) => {
+                tracing::info!("reasoning effort suppressed (model does not support thinking)");
+            }
             _ => {}
         }
 
-        // ── 14. Session ──────────────────────────────────────────────────
+        // ── 16. Session ──────────────────────────────────────────────────
         let session_mode = if cli.r#continue {
             SessionMode::Continue
         } else if let Some(ref path) = cli.session {
@@ -276,7 +299,7 @@ impl App {
 
         let session = build_session(session_config)?;
 
-        // ── 15. Budget diagnostics ───────────────────────────────────────
+        // ── 17. Budget diagnostics ───────────────────────────────────────
         log_budget_diagnostics(&session);
 
         Ok(Self {
@@ -555,15 +578,17 @@ fn build_token_budget(
 ) -> TokenBudget {
     // Catalog-derived context window takes priority when available.
     // Otherwise, use CLI override, then config.
-    let context_window = catalog_model
-        .map(|m| m.context_window as usize)
-        .unwrap_or_else(|| cli.token_budget.unwrap_or(config.agent.token_budget) as usize);
+    let context_window = catalog_model.map_or_else(
+        || cli.token_budget.unwrap_or(config.agent.token_budget) as usize,
+        |m| usize::try_from(m.context_window).unwrap_or(usize::MAX),
+    );
 
     // Cap completion_reserve at the model's max output tokens.
     let configured_reserve = config.agent.completion_reserve as usize;
-    let completion_reserve = catalog_model
-        .map(|m| configured_reserve.min(m.max_tokens as usize))
-        .unwrap_or(configured_reserve);
+    let completion_reserve = catalog_model.map_or_else(
+        || configured_reserve,
+        |m| configured_reserve.min(usize::try_from(m.max_tokens).unwrap_or(usize::MAX)),
+    );
 
     TokenBudget::with_reserve(context_window, completion_reserve)
 }
@@ -670,11 +695,53 @@ fn resume_session(
 /// Resolve the model identifier.
 ///
 /// Delegates to [`crate::model::resolve_model`].
-fn resolve_model(
-    config: &RhoConfig,
-    cli_model: Option<&String>,
-) -> Result<crate::model::ResolvedModel> {
+fn resolve_model(config: &RhoConfig, cli_model: Option<&String>) -> crate::model::ResolvedModel {
     crate::model::resolve_model(config, cli_model)
+}
+
+/// Ensure an `OpenRouter` provider exists in the registry and return its index.
+///
+/// The built-in default model (`anthropic/claude-sonnet-4`) is an `OpenRouter`
+/// model id. When the zero-config fallback selects it, the only provider in
+/// the registry is the `localhost:1234` default, which cannot serve it — so
+/// the first request fails with a connection error.
+///
+/// This synthesizes an `OpenRouter` provider from the `openrouter` preset
+/// (picking up `OPENROUTER_API_KEY` from the environment) so the default
+/// model is actually reachable. If an `openrouter` provider is already
+/// configured, it is reused unchanged.
+///
+/// Because the synthesized provider is external, the subsequent provider
+/// consent check gates it normally: headless callers must pass
+/// `--accept-external-provider` (rho-code does), and bare `rho` gets a clear
+/// consent error instead of a silent runtime failure.
+fn ensure_openrouter_provider(registry: &mut ProviderRegistry) -> usize {
+    const OPENROUTER_PROVIDER_NAME: &str = "openrouter";
+
+    if let Some(index) = registry.index_of(OPENROUTER_PROVIDER_NAME) {
+        return index;
+    }
+
+    let Some(endpoint) = rho_core::config::preset_endpoint(OPENROUTER_PROVIDER_NAME) else {
+        // Should never happen: "openrouter" is a built-in preset. Fall back
+        // to the default provider rather than crashing startup.
+        tracing::error!("openrouter preset not found; cannot synthesize default provider");
+        return 0;
+    };
+
+    let api_key = rho_core::config::preset_api_key_env(OPENROUTER_PROVIDER_NAME)
+        .and_then(|var| std::env::var(var).ok());
+    let provider =
+        OpenAiCompatibleProvider::new(OPENROUTER_PROVIDER_NAME, endpoint.to_owned(), api_key);
+    registry.add(Box::new(provider));
+    let index = registry.providers().len() - 1;
+    tracing::info!(
+        provider = OPENROUTER_PROVIDER_NAME,
+        endpoint = endpoint,
+        index,
+        "synthesized OpenRouter provider for built-in default model"
+    );
+    index
 }
 
 /// Log token budget diagnostics at startup.

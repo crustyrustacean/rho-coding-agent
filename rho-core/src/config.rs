@@ -801,6 +801,30 @@ fn resolve_presets(providers: &mut [ProviderConfig]) {
     }
 }
 
+/// Look up the endpoint URL for a built-in provider preset.
+///
+/// Returns `None` for an unknown preset name. Used by the binary to
+/// synthesize a default provider for the built-in default model (the
+/// `openrouter` preset for `anthropic/claude-sonnet-4`) without
+/// duplicating the preset's endpoint string.
+///
+/// See [`presets`] for the list of built-in preset names.
+#[must_use]
+pub fn preset_endpoint(preset: &str) -> Option<&'static str> {
+    presets().get(preset).map(|p| p.endpoint)
+}
+
+/// Look up the suggested API-key env var for a built-in provider preset.
+///
+/// Returns `None` for an unknown preset or for presets that need no API key
+/// (local servers like `lm-studio` / `ollama`).
+#[must_use]
+pub fn preset_api_key_env(preset: &str) -> Option<&'static str> {
+    presets()
+        .get(preset)
+        .and_then(|p| (!p.api_key_env.is_empty()).then_some(p.api_key_env))
+}
+
 // ── Provider merge ──────────────────────────────────────────────────────────
 
 /// Merge user-level and project-level provider configurations.
