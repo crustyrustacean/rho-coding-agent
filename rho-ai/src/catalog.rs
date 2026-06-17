@@ -58,6 +58,11 @@ pub struct Model {
     pub thinking: ModelThinking,
 }
 
+/// Default model used when nothing is configured and `RHO_MODEL` is not set.
+///
+/// Picked as the best general-purpose coding model available via OpenRouter.
+pub const DEFAULT_MODEL_ID: &str = "anthropic/claude-sonnet-4";
+
 /// The model catalog — built-in models plus optional user extensions.
 #[derive(Debug, Clone)]
 pub struct Catalog {

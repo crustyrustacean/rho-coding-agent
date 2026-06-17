@@ -206,7 +206,9 @@ impl App {
         }
 
         // ── 10. Model ─────────────────────────────────────────────────────
-        let (model, model_provider) = resolve_model(&config, cli.model.as_ref())?;
+        let resolved = resolve_model(&config, cli.model.as_ref())?;
+        let model = resolved.id.clone();
+        let model_provider = resolved.provider.clone();
 
         // Resolve active provider index from the model resolution result.
         let active_provider_index = model_provider
@@ -225,7 +227,29 @@ impl App {
             Redactor::from_config(config.redaction.enabled, &config.redaction.custom_patterns);
 
         // ── 13. Token budget ─────────────────────────────────────────────
-        let token_budget = build_token_budget(&config, &cli);
+        // Use catalog-derived context window when available, falling back to config.
+        let token_budget = build_token_budget(&config, &cli, resolved.catalog_model.as_ref());
+        tracing::info!(
+            context_window = token_budget.context_window,
+            completion_reserve = token_budget.completion_reserve,
+            "token budget resolved"
+        );
+
+        // ── 14. Reasoning effort ─────────────────────────────────────────
+        // Only set reasoning effort if the model supports thinking.
+        // If the model doesn't support thinking, suppress reasoning_effort
+        // even if the user configured it, to avoid sending invalid parameters.
+        let reasoning_effort = match (&resolved.catalog_model, &config.agent.reasoning_effort) {
+            (Some(catalog), Some(effort)) if catalog.thinking.supported => Some(effort.clone()),
+            (Some(_catalog), _effort) => None,
+            (None, effort) => effort.clone(),
+        };
+        match (&reasoning_effort, &resolved.catalog_model) {
+            (Some(e), Some(_c)) => tracing::info!(effort = %e, "reasoning effort enabled (model supports thinking)"),
+            (None, Some(c)) if c.thinking.supported => tracing::info!("reasoning effort not configured"),
+            (None, Some(_c)) => tracing::info!("reasoning effort suppressed (model does not support thinking)"),
+            _ => {}
+        }
 
         // ── 14. Session ──────────────────────────────────────────────────
         let session_mode = if cli.r#continue {
@@ -245,7 +269,7 @@ impl App {
             sandbox,
             token_budget,
             redactor,
-            reasoning_effort: config.agent.reasoning_effort.clone(),
+            reasoning_effort,
             session_path_holder,
             mode: session_mode,
         };
@@ -524,9 +548,23 @@ fn build_agent_config(config: &RhoConfig, cli: &Cli) -> AgentConfig {
 }
 
 /// Determine the token budget from CLI or config.
-fn build_token_budget(config: &RhoConfig, cli: &Cli) -> TokenBudget {
-    let context_window = cli.token_budget.unwrap_or(config.agent.token_budget) as usize;
-    let completion_reserve = config.agent.completion_reserve as usize;
+fn build_token_budget(
+    config: &RhoConfig,
+    cli: &Cli,
+    catalog_model: Option<&rho_ai::Model>,
+) -> TokenBudget {
+    // Catalog-derived context window takes priority when available.
+    // Otherwise, use CLI override, then config.
+    let context_window = catalog_model
+        .map(|m| m.context_window as usize)
+        .unwrap_or_else(|| cli.token_budget.unwrap_or(config.agent.token_budget) as usize);
+
+    // Cap completion_reserve at the model's max output tokens.
+    let configured_reserve = config.agent.completion_reserve as usize;
+    let completion_reserve = catalog_model
+        .map(|m| configured_reserve.min(m.max_tokens as usize))
+        .unwrap_or(configured_reserve);
+
     TokenBudget::with_reserve(context_window, completion_reserve)
 }
 
@@ -635,7 +673,7 @@ fn resume_session(
 fn resolve_model(
     config: &RhoConfig,
     cli_model: Option<&String>,
-) -> Result<(String, Option<String>)> {
+) -> Result<crate::model::ResolvedModel> {
     crate::model::resolve_model(config, cli_model)
 }
 

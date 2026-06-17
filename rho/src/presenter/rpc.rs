@@ -113,6 +113,13 @@ impl RpcPresenter {
     pub fn model_from_source(model: &str, source: &str, provider: &str) {
         eprintln!("using model from {source}: {model} (provider: {provider})");
     }
+
+    /// Catalog enrichment details for a resolved model.
+    pub fn model_catalog_info(context_window: u64, max_tokens: u64, thinking: bool) {
+        eprintln!(
+            "catalog: context_window={context_window}, max_output={max_tokens}, thinking={thinking}"
+        );
+    }
 }
 
 // ── Provider consent ──────────────────────────────────────────────────────────
