@@ -4290,7 +4290,7 @@ pub fn built_in_models() -> Vec<Model> {
             id: "anthropic/claude-sonnet-4".to_string(),
             name: "Anthropic: Claude Sonnet 4".to_string(),
             provider: "anthropic".to_string(),
-            context_window: 1000000,
+            context_window: 200000,
             max_tokens: 64000,
             input: ModelInput {
                 text: true,

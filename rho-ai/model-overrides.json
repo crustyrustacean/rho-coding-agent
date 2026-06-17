@@ -1,9 +1,10 @@
 {
-  "_description": "Manual overrides for models that the OpenRouter API can't detect. Only add entries for thinking/reasoning models — everything else is auto-generated.",
+  "_description": "Manual overrides for models that the OpenRouter API can't detect, or whose advertised values don't reflect what rho can actually use. Only add entries for thinking/reasoning models, or models needing a context_window/max_tokens cap — everything else is auto-generated. Supported keys: thinking (bool), thinking_format (string), context_window (u64, caps the advertised value), max_tokens (u64, caps the advertised value).",
 
   "anthropic/claude-sonnet-4": {
     "thinking": true,
-    "thinking_format": "anthropic"
+    "thinking_format": "anthropic",
+    "context_window": 200000
   },
   "anthropic/claude-opus-4": {
     "thinking": true,

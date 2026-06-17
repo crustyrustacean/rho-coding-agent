@@ -153,6 +153,29 @@ mod tests {
     }
 
     #[test]
+    fn default_model_context_window_capped_to_standard() {
+        // The default model is served via the synthesized OpenRouter provider,
+        // which routes to BYOK backends (Vertex/Bedrock) that cap Claude Sonnet
+        // 4 at its standard 200K window — NOT the 1M beta OpenRouter
+        // advertises. The catalog must reflect the usable window so the agent
+        // loop doesn't over-pack context and fail with
+        // `input + max_tokens > context_limit`. See `model-overrides.json` and
+        // `xtask` for the cap mechanism. This test guards against an
+        // accidental regeneration that drops the override.
+        let catalog = Catalog::new();
+        let m = catalog
+            .find(crate::catalog::DEFAULT_MODEL_ID)
+            .expect("default model must be in catalog");
+        assert_eq!(
+            m.context_window, 200_000,
+            "default model context_window must be capped to the standard 200K, \
+             not the 1M beta; got {}",
+            m.context_window,
+        );
+        assert!(m.max_tokens > 0);
+    }
+
+    #[test]
     fn find_nonexistent_model_returns_none() {
         let catalog = Catalog::new();
         assert!(catalog.find("nonexistent/model-id").is_none());

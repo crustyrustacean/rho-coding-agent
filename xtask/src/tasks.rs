@@ -481,6 +481,13 @@ pub fn generate_models() -> Result<()> {
         // Thinking overrides.
         let mut thinking_supported = false;
         let mut thinking_format: Option<String> = None;
+        // Optional caps on the advertised context window / max completion
+        // tokens. OpenRouter advertises beta/extended values (e.g. 1M for
+        // claude-sonnet-4) that aren't honored by all routes (BYOK to
+        // Vertex/Bedrock caps at the model's standard window). These caps let
+        // the catalog reflect what rho can actually use.
+        let mut context_window_override: Option<u64> = None;
+        let mut max_tokens_override: Option<u64> = None;
         if let Some(override_data) = overrides.get(id) {
             thinking_supported = override_data
                 .get("thinking")
@@ -490,7 +497,19 @@ pub fn generate_models() -> Result<()> {
                 .get("thinking_format")
                 .and_then(serde_json::Value::as_str)
                 .map(String::from);
+            context_window_override = override_data
+                .get("context_window")
+                .and_then(serde_json::Value::as_u64);
+            max_tokens_override = override_data
+                .get("max_tokens")
+                .and_then(serde_json::Value::as_u64);
         }
+
+        // Apply caps: never exceed the advertised value, but allow lowering it.
+        let context_length = context_window_override
+            .map_or(context_length, |cap| cap.min(context_length));
+        let max_tokens = max_tokens_override
+            .map_or(max_tokens, |cap| cap.min(max_tokens));
 
         // Format thinking_format for output.
         let thinking_format_str = match &thinking_format {
