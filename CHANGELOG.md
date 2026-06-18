@@ -1,3 +1,17 @@
+## [0.83.0] - 2026-06-18
+
+### 🚀 Features
+
+- **(rpc)** `getSessionStats` now serializes a `phaseTokens` breakdown (exploration / execution / verification / conclusion / unclassified) alongside the existing role and resolution distributions. `rho-core` already computed `ContextStats.phase_tokens` from phase-classified entries; the wire layer was dropping it. Same fix-class as the model/provider field — rich kernel data that stopped short of the surface. Also documents the previously-undocumented `apiUsage.totalCachedTokens` in the `OpenRPC` schema.
+- **(rpc)** New `usage` notification, emitted after each model response (once per iteration that hit the model), carrying the per-iteration token/cost delta and a live context snapshot (`estimatedUsed`, `contextWindow`, `completionReserve`, `utilizationPercent`). Frontends can now render a live context/cost gauge during long multi-iteration turns without polling `getSessionStats`. The delta aggregates any retries within the iteration, and `cost` reflects catalog-derived or provider-reported pricing for that iteration.
+- **(core)** `AgentObserver` gains `on_usage(iteration, &IterationUsage, &ContextStats)`, fired from `handle_thinking` after `route_response` accumulates usage. `IterationUsage` carries the per-iteration input/output/cached token deltas, cost, and request count. `CompositeObserver` forwards it to extensions.
+
+### 🏗️ Internal
+
+- Re-export `IterationUsage` from the `rho_core` root so downstream crates (and the `RpcObserver`) can name it.
+- Extended `get_session_stats_returns_fields` test to assert the `phaseTokens` object is present with all five integer keys (structure, not seed-coupled values).
+- Updated `docs/rpc-schema/openrpc.json`: added the `usage` notification and the `phaseTokens` result field, both to their `required` arrays.
+
 ## [0.82.0] - 2026-06-17
 
 ### 🚀 Features

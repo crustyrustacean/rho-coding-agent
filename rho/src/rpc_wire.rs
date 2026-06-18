@@ -99,6 +99,7 @@ pub struct GetSessionStatsResult {
     pub compaction_tokens: u64,
     pub role_tokens: RoleTokenDist,
     pub resolution_tokens: ResolutionTokenDist,
+    pub phase_tokens: PhaseTokenDistWire,
     pub api_usage: ApiUsageWire,
 }
 
@@ -120,6 +121,22 @@ pub struct ResolutionTokenDist {
     pub outlined: u64,
     pub summarized: u64,
     pub pinned: u64,
+}
+
+/// Wire-format phase token distribution (nested inside `getSessionStats`).
+///
+/// Shows how the live context is distributed across session phases, which
+/// tracks the shape of the work being done (exploration vs execution vs
+/// verification vs conclusion). Only meaningful once the session has
+/// classified entries into phases; otherwise all buckets are zero.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PhaseTokenDistWire {
+    pub exploration: u64,
+    pub execution: u64,
+    pub verification: u64,
+    pub conclusion: u64,
+    pub unclassified: u64,
 }
 
 /// Wire-format API usage (nested inside `getSessionStats`).
@@ -359,6 +376,40 @@ pub struct ApprovalRequestParams {
 #[serde(rename_all = "camelCase")]
 pub struct ReadyParams {}
 
+/// Wire-format per-iteration usage delta (nested inside the `usage` notification).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageDeltaWire {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cached_tokens: u64,
+    pub cost: f64,
+    pub request_count: u32,
+}
+
+/// Wire-format live context snapshot (nested inside the `usage` notification).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageContextWire {
+    pub estimated_used: u64,
+    pub context_window: u64,
+    pub completion_reserve: u64,
+    pub utilization_percent: u8,
+}
+
+/// Params for the `usage` notification, emitted after each model response.
+///
+/// Carries the per-iteration token/cost delta and a live context snapshot so
+/// frontends can render a context/cost gauge during long multi-iteration turns
+/// without polling `getSessionStats`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageParams {
+    pub iteration: u32,
+    pub usage: UsageDeltaWire,
+    pub context: UsageContextWire,
+}
+
 // ── Conversion helpers ────────────────────────────────────────────────────────
 
 use rho_core::session::{ContextStats, context_stats::ApiUsage};
@@ -387,6 +438,13 @@ impl From<&ContextStats> for GetSessionStatsResult {
                 outlined: stats.resolution_tokens.outlined as u64,
                 summarized: stats.resolution_tokens.summarized as u64,
                 pinned: stats.resolution_tokens.pinned as u64,
+            },
+            phase_tokens: PhaseTokenDistWire {
+                exploration: stats.phase_tokens.exploration as u64,
+                execution: stats.phase_tokens.execution as u64,
+                verification: stats.phase_tokens.verification as u64,
+                conclusion: stats.phase_tokens.conclusion as u64,
+                unclassified: stats.phase_tokens.unclassified as u64,
             },
             api_usage: ApiUsageWire::default(),
         }

@@ -230,20 +230,33 @@
               },
               "required": ["full", "outlined", "summarized", "pinned"]
             },
+            "phaseTokens": {
+              "type": "object",
+              "description": "Token counts by session phase. All buckets are zero until the session has classified entries into phases.",
+              "properties": {
+                "exploration": { "type": "integer" },
+                "execution": { "type": "integer" },
+                "verification": { "type": "integer" },
+                "conclusion": { "type": "integer" },
+                "unclassified": { "type": "integer" }
+              },
+              "required": ["exploration", "execution", "verification", "conclusion", "unclassified"]
+            },
             "apiUsage": {
               "type": "object",
               "description": "Cumulative API usage across all requests.",
               "properties": {
                 "totalInputTokens": { "type": "integer" },
                 "totalOutputTokens": { "type": "integer" },
+                "totalCachedTokens": { "type": "integer", "description": "Input tokens served from a prompt cache (subset of totalInputTokens)." },
                 "totalTokens": { "type": "integer" },
                 "totalCost": { "type": "number", "description": "Cumulative cost in USD." },
                 "requestCount": { "type": "integer" }
               },
-              "required": ["totalInputTokens", "totalOutputTokens", "totalTokens", "totalCost", "requestCount"]
+              "required": ["totalInputTokens", "totalOutputTokens", "totalCachedTokens", "totalTokens", "totalCost", "requestCount"]
             }
           },
-          "required": ["contextWindow", "completionReserve", "estimatedUsed", "estimatedRemaining", "utilizationPercent", "messageCount", "entryCount", "pathEntryCount", "compactedEntryCount", "compactionTokens", "roleTokens", "resolutionTokens", "apiUsage"]
+          "required": ["contextWindow", "completionReserve", "estimatedUsed", "estimatedRemaining", "utilizationPercent", "messageCount", "entryCount", "pathEntryCount", "compactedEntryCount", "compactionTokens", "roleTokens", "resolutionTokens", "phaseTokens", "apiUsage"]
         }
       }
     },
@@ -402,6 +415,44 @@
       "name": "agent/start",
       "description": "Agent began processing a prompt.",
       "params": []
+    },
+    {
+      "name": "usage",
+      "description": "Per-iteration usage tick. Emitted after each model response is routed (once per iteration that hit the model), carrying the per-iteration token/cost delta and a live context snapshot. Frontends can render a context/cost gauge during long multi-iteration turns from this alone, without polling getSessionStats.",
+      "params": [
+        { "name": "iteration", "required": true, "schema": { "type": "integer", "description": "1-based iteration index within the current turn." } },
+        {
+          "name": "usage",
+          "required": true,
+          "schema": {
+            "type": "object",
+            "description": "Per-iteration delta (aggregates any retries within the iteration).",
+            "properties": {
+              "inputTokens": { "type": "integer" },
+              "outputTokens": { "type": "integer" },
+              "cachedTokens": { "type": "integer", "description": "Input tokens served from a prompt cache (subset of inputTokens)." },
+              "cost": { "type": "number", "description": "Cost in USD for this iteration. 0 when no pricing applied (unknown model / sentinel pricing)." },
+              "requestCount": { "type": "integer", "description": "LLM requests this iteration (>=1; >1 if retried)." }
+            },
+            "required": ["inputTokens", "outputTokens", "cachedTokens", "cost", "requestCount"]
+          }
+        },
+        {
+          "name": "context",
+          "required": true,
+          "schema": {
+            "type": "object",
+            "description": "Live context snapshot after this iteration's model response.",
+            "properties": {
+              "estimatedUsed": { "type": "integer" },
+              "contextWindow": { "type": "integer" },
+              "completionReserve": { "type": "integer" },
+              "utilizationPercent": { "type": "integer", "description": "Context utilization (0-100) against the prompt budget (contextWindow - completionReserve)." }
+            },
+            "required": ["estimatedUsed", "contextWindow", "completionReserve", "utilizationPercent"]
+          }
+        }
+      ]
     },
     {
       "name": "agent/end",

@@ -70,6 +70,17 @@ impl AgentObserver for CompositeObserver<'_> {
         }
     }
 
+    async fn on_usage(
+        &self,
+        iteration: u32,
+        usage: &rho_core::IterationUsage,
+        context: &rho_core::session::ContextStats,
+    ) {
+        for obs in &self.observers {
+            obs.on_usage(iteration, usage, context).await;
+        }
+    }
+
     fn on_tool_call_intercept(&self, name: &str, arguments: &str) -> Option<InterceptResult> {
         for obs in &self.observers {
             if let Some(result) = obs.on_tool_call_intercept(name, arguments) {

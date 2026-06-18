@@ -364,6 +364,41 @@ pub trait AgentObserver: Send + Sync {
     fn on_tool_call_intercept(&self, _name: &str, _arguments: &str) -> Option<InterceptResult> {
         None
     }
+
+    /// A model response completed and its token usage was accumulated.
+    ///
+    /// Fires once per iteration that hit the model (i.e. after each
+    /// `route_response`), carrying the per-iteration delta and a live context
+    /// snapshot. Observers can use this to render a live context/cost gauge
+    /// during long multi-iteration turns, rather than only seeing the final
+    /// totals at [`on_run_end`](Self::on_run_end) / `agent/end`.
+    async fn on_usage(
+        &self,
+        _iteration: u32,
+        _usage: &IterationUsage,
+        _context: &crate::session::ContextStats,
+    ) {
+    }
+}
+
+/// Per-iteration token/cost delta, emitted via [`AgentObserver::on_usage`].
+///
+/// Aggregates all LLM requests within a single loop iteration (including
+/// retries) into one delta. `cost` reflects catalog-derived or
+/// provider-reported cost for this iteration; it stays `0.0` when no pricing
+/// applied (unknown model / sentinel pricing).
+#[derive(Debug, Clone, Default)]
+pub struct IterationUsage {
+    /// Input (prompt) tokens consumed this iteration.
+    pub input_tokens: u64,
+    /// Output (completion) tokens produced this iteration.
+    pub output_tokens: u64,
+    /// Input tokens served from a prompt cache this iteration.
+    pub cached_tokens: u64,
+    /// Cost in USD for this iteration.
+    pub cost: f64,
+    /// Number of LLM requests this iteration (>= 1; >1 if retried).
+    pub request_count: u32,
 }
 
 /// A no-op observer that discards all events.
@@ -657,8 +692,34 @@ impl LoopContext<'_> {
             return Err(AgentError::Cancelled.into());
         }
 
+        // Snapshot usage before the model call so we can emit a per-iteration
+        // delta. `send_with_retry` → `route_response` accumulates into the
+        // session, so the difference is this iteration's contribution
+        // (including any retries within the iteration).
+        let usage_before = self.session.api_usage().clone();
+
         let response = self.send_with_retry().await?;
         self.iterations += 1;
+
+        // Emit a live usage tick: the per-iteration delta plus a fresh
+        // context snapshot. Observers (REPL/TUI) can render a context/cost
+        // gauge during long multi-iteration turns from this alone, without
+        // a `getSessionStats` round-trip per step.
+        let delta = {
+            let after = self.session.api_usage();
+            IterationUsage {
+                input_tokens: after.total_input_tokens - usage_before.total_input_tokens,
+                output_tokens: after.total_output_tokens - usage_before.total_output_tokens,
+                cached_tokens: after.total_cached_tokens - usage_before.total_cached_tokens,
+                cost: after.total_cost - usage_before.total_cost,
+                request_count: after.request_count - usage_before.request_count,
+            }
+        };
+        let context = self.session.context_stats();
+        self.params
+            .observer
+            .on_usage(self.iterations, &delta, &context)
+            .await;
 
         if self.iterations > self.params.config.max_iterations {
             error!(max = self.params.config.max_iterations);

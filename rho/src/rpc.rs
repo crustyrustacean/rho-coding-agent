@@ -81,7 +81,8 @@ use crate::rpc_wire::{
     ModelEntry, PromptErrorResult, PromptParams, PromptResult, ProviderEntry, ReadyParams,
     ReasoningDeltaParams, ResumeSessionParams, ResumeSessionResult, SessionEntry, SetModelParams,
     SetModelResult, StateChangeParams, ToolCallParams, ToolDeniedParams, ToolEntry,
-    ToolResultParams, notification, risk_label, state_name,
+    ToolResultParams, UsageContextWire, UsageDeltaWire, UsageParams, notification, risk_label,
+    state_name,
 };
 use crate::transport::{ReadResult, StdioTransport, Transport};
 use anyhow::Result;
@@ -221,6 +222,36 @@ impl AgentObserver for RpcObserver {
             .write_message(&notification(
                 "tool/denied",
                 &ToolDeniedParams { name: name.into() },
+            ))
+            .await;
+    }
+
+    async fn on_usage(
+        &self,
+        iteration: u32,
+        usage: &rho_core::IterationUsage,
+        context: &rho_core::session::ContextStats,
+    ) {
+        let _ = self
+            .transport
+            .write_message(&notification(
+                "usage",
+                &UsageParams {
+                    iteration,
+                    usage: UsageDeltaWire {
+                        input_tokens: usage.input_tokens,
+                        output_tokens: usage.output_tokens,
+                        cached_tokens: usage.cached_tokens,
+                        cost: usage.cost,
+                        request_count: usage.request_count,
+                    },
+                    context: UsageContextWire {
+                        estimated_used: context.estimated_used as u64,
+                        context_window: context.context_window as u64,
+                        completion_reserve: context.completion_reserve as u64,
+                        utilization_percent: context.utilization_percent(),
+                    },
+                },
             ))
             .await;
     }
@@ -1568,7 +1599,16 @@ mod tests {
         assert!(resp["result"]["apiUsage"].is_object());
         assert_eq!(resp["result"]["apiUsage"]["totalInputTokens"], 0);
         assert_eq!(resp["result"]["apiUsage"]["totalOutputTokens"], 0);
+        assert_eq!(resp["result"]["apiUsage"]["totalCachedTokens"], 0);
         assert_eq!(resp["result"]["apiUsage"]["requestCount"], 0);
+        // The phase breakdown is always present on the wire. Buckets are
+        // integers (possibly zero, possibly populated if the seed session
+        // has classified entries); assert structure rather than specific
+        // values so this isn't coupled to the seed.
+        let phase = &resp["result"]["phaseTokens"];
+        for key in ["exploration", "execution", "verification", "conclusion", "unclassified"] {
+            assert!(phase[key].is_i64(), "phaseTokens.{key} should be an integer, got {}", phase[key]);
+        }
     }
 
     #[tokio::test]
