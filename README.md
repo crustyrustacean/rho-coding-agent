@@ -208,6 +208,20 @@ cargo xtask changelog <ver>   # Generate CHANGELOG.md
 cargo xtask schema             # Update version in OpenRPC schema
 ```
 
+### Pre-push hook
+
+The fast gates (`cargo xtask fmt`, `cargo xtask lint`) run in CI on every
+push to `trunk`. To catch them locally *before* a push — rather than as a
+red check after the fact — install the pre-push hook:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+This runs `fmt` and `lint` (the exact same commands CI uses) and blocks the
+push on failure. Bypass once with `git push --no-verify`. The hook skips the
+slow build/test steps; run `cargo xtask ci` for the full local pipeline.
+
 ### Project layout
 
 ```

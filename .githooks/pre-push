@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Pre-push hook: run the fast gates locally so they don't surface as red CI
+# after the code is already on trunk.
+#
+# This delegates to `cargo xtask fmt` and `cargo xtask lint`, which run the
+# EXACT same commands as CI (cargo fmt --all -- --check and
+# cargo clippy --workspace --all-targets -- -D warnings). One source of truth
+# for the pipeline: if CI checks it, this checks it, with identical flags.
+#
+# We deliberately do NOT run build/test here — too slow for a push gate, and
+# CI covers them.
+#
+# Bypass for a single push:  git push --no-verify
+# Install (one of):
+#   cp .githooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+#   git config core.hooksPath .githooks   # uses all hooks in .githooks/
+
+set -euo pipefail
+
+# Run from repo root so cargo resolves the workspace regardless of cwd.
+cd "$(git rev-parse --show-toplevel)"
+
+# Drain stdin (the ref-update list per githooks(5)); we don't inspect it.
+cat >/dev/null
+
+say()  { printf '\033[1;34m[pre-push]\033[0m %s\n' "$*"; }
+fail() { printf '\033[1;31m[pre-push] FAIL:\033[0m %s\n' "$*"; }
+
+if ! cargo xtask fmt >/dev/null 2>&1; then
+  fail "cargo xtask fmt found unformatted code."
+  say  "Fix with: cargo xtask fmt-fix   (or: cargo fmt --all)"
+  say  "Bypass once with: git push --no-verify"
+  exit 1
+fi
+say "fmt ok"
+
+if ! cargo xtask lint >/dev/null 2>&1; then
+  fail "cargo xtask lint reported warnings."
+  say  "Re-run without redirection to see them: cargo xtask lint"
+  say  "Bypass once with: git push --no-verify"
+  exit 1
+fi
+say "clippy ok"
+
+say "all gates passed"

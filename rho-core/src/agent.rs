@@ -2052,7 +2052,7 @@ mod tests {
             usage: rho_ai::StreamUsage::new(1_000, 500),
         };
         let _ = route_response(&acc, &mut session).unwrap();
-        assert_eq!(session.api_usage().total_cost, 0.0);
+        assert!(session.api_usage().total_cost.abs() < f64::EPSILON);
         assert_eq!(session.api_usage().request_count, 1);
     }
 

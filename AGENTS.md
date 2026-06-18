@@ -57,6 +57,12 @@ cargo xtask ci    # Run the full CI pipeline before considering work done
 
 This runs `fmt → lint → build → test` in sequence. All four must pass.
 
+CI runs the fast gates (`fmt`, `lint`) on every push to `trunk`, and they
+fail often — always run `cargo xtask fmt` and `cargo xtask lint` (or
+`cargo xtask ci`) **before committing/pushing**. The pre-push hook at
+`.githooks/pre-push` enforces this locally; enable it once with
+`git config core.hooksPath .githooks`.
+
 ## Coding Conventions
 
 - **Edition:** Rust 2024.

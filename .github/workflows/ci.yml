@@ -8,36 +8,59 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Don't let GHA's default of `--all-features` leak in via tooling; we test
+  # exactly what ships.
+  RUSTFLAGS: -D warnings
+
+# Cancel in-progress runs on the same ref when a new commit lands. Without
+# this, rapid pushes to trunk queue redundant full runs that each take ~3min
+# and report stale red/green out of order.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  ci:
-    name: fmt → lint → build → test
+  # ── fmt: cheapest check, fastest feedback. Runs first and alone so a
+  # formatting failure is reported as "the fmt job failed" — not buried in a
+  # multi-step log after a build. This is the check most likely to flap on a
+  # push-to-trunk workflow, so isolating it keeps the signal clean.
+  fmt:
+    name: formatting
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo artifacts
-        uses: actions/cache@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
-      - name: Check formatting
+          components: rustfmt
+      - name: cargo fmt --check
         run: cargo fmt --all -- --check
 
-      - name: Run Clippy
+  # ── clippy: second-cheapest. Split out for the same reason as fmt — a
+  # lint failure should be attributable to "the clippy job", independent of
+  # whether the build/tests pass. `-D warnings` is already the policy.
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+  # ── build + test: the expensive path. Cached, and the only job that needs
+  # the full compile. Kept as one job because test implies build anyway and
+  # splitting them doubles compile time for no signal gain.
+  build-test:
+    name: build & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Build
-        run: cargo build --workspace
-
-      - name: Run tests
+        run: cargo build --workspace --all-targets
+      - name: Test
         run: cargo test --workspace
