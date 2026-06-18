@@ -1457,7 +1457,19 @@ pub(crate) fn route_response(
     use crate::message::ContentBlock;
 
     // Accumulate token usage from this response.
-    session.accumulate_usage(&acc.usage);
+    //
+    // Cost enrichment: providers other than OpenRouter don't send a dollar
+    // cost in the usage object. When the provider left `cost` unset, fall back
+    // to the model catalog's per-million pricing. Sentinels (negatively-priced
+    // router models) yield `None`, which surfaces downstream as "cost n/a"
+    // rather than a misleading $0.00.
+    let mut usage = acc.usage.clone();
+    if usage.cost.is_none()
+        && let Some(model) = rho_ai::Catalog::find_built_in(&session.model)
+    {
+        usage.cost = model.cost_for(&usage);
+    }
+    session.accumulate_usage(&usage);
 
     match &acc.stop_reason {
         rho_ai::StopReason::ToolUse => {
@@ -1924,6 +1936,60 @@ mod tests {
             }
             _ => panic!("expected Assistant with tool_calls, got {last:?}"),
         }
+    }
+
+    #[test]
+    fn route_response_enriches_cost_from_catalog_when_provider_omits_it() {
+        // Provider did not report a cost (usage.cost is None, as for any
+        // non-OpenRouter provider). With a catalog model set, route_response
+        // should fall back to per-million pricing.
+        let mut session = test_session(None, &[], vec![]);
+        session.model = "z-ai/glm-5.2".to_string();
+        let acc = rho_ai::AccumulatedResponse {
+            text: "hi".into(),
+            reasoning: String::new(),
+            tool_calls: vec![],
+            stop_reason: rho_ai::StopReason::EndTurn,
+            usage: rho_ai::StreamUsage::new(1_000_000, 0),
+        };
+        let _ = route_response(&acc, &mut session).unwrap();
+        // glm-5.2 input is $1.4/M → 1M tokens should cost $1.4.
+        let cost = session.api_usage().total_cost;
+        assert!((cost - 1.4).abs() < 1e-9, "expected catalog-derived cost, got {cost}");
+    }
+
+    #[test]
+    fn route_response_leaves_cost_unset_when_provider_reports_it() {
+        // When the provider DOES report cost, the catalog fallback must not
+        // override it.
+        let mut session = test_session(None, &[], vec![]);
+        session.model = "z-ai/glm-5.2".to_string();
+        let acc = rho_ai::AccumulatedResponse {
+            text: "hi".into(),
+            reasoning: String::new(),
+            tool_calls: vec![],
+            stop_reason: rho_ai::StopReason::EndTurn,
+            usage: rho_ai::StreamUsage::new(1_000_000, 0).with_cost(0.42),
+        };
+        let _ = route_response(&acc, &mut session).unwrap();
+        assert!((session.api_usage().total_cost - 0.42).abs() < 1e-9);
+    }
+
+    #[test]
+    fn route_response_leaves_cost_unset_for_unknown_model() {
+        // A model not in the catalog (and no provider cost) stays unpriced,
+        // so the frontend can surface "cost n/a" rather than $0.
+        let mut session = test_session(None, &[], vec![]); // model = "test-model"
+        let acc = rho_ai::AccumulatedResponse {
+            text: "hi".into(),
+            reasoning: String::new(),
+            tool_calls: vec![],
+            stop_reason: rho_ai::StopReason::EndTurn,
+            usage: rho_ai::StreamUsage::new(1_000, 500),
+        };
+        let _ = route_response(&acc, &mut session).unwrap();
+        assert_eq!(session.api_usage().total_cost, 0.0);
+        assert_eq!(session.api_usage().request_count, 1);
     }
 
     // ── build_tool_calls_from_accumulated tests ──────────────────────────

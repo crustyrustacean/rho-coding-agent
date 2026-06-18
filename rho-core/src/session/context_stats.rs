@@ -86,6 +86,9 @@ pub struct ApiUsage {
     pub total_input_tokens: u64,
     /// Total output (completion) tokens across all requests.
     pub total_output_tokens: u64,
+    /// Total input tokens served from a prompt cache (subset of
+    /// `total_input_tokens`). Accumulated for visibility into cache savings.
+    pub total_cached_tokens: u64,
     /// Cumulative cost in USD, if the provider reports it.
     pub total_cost: f64,
     /// Number of LLM requests made.
@@ -97,6 +100,7 @@ impl ApiUsage {
     pub fn accumulate(&mut self, usage: &rho_ai::StreamUsage) {
         self.total_input_tokens += usage.input_tokens;
         self.total_output_tokens += usage.output_tokens;
+        self.total_cached_tokens += usage.cached_tokens;
         if let Some(cost) = usage.cost {
             self.total_cost += cost;
         }

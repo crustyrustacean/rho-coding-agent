@@ -201,7 +201,7 @@ struct SseFunctionDelta {
 }
 
 /// Usage statistics (present in the final chunk when `stream_options.include_usage`).
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 struct SseUsage {
     /// Tokens in the prompt.
     #[serde(default)]
@@ -212,6 +212,34 @@ struct SseUsage {
     /// Cost in USD (sent by `OpenRouter` and some providers).
     #[serde(default)]
     cost: Option<f64>,
+    /// Cached prompt tokens (flat field used by `OpenRouter`).
+    #[serde(default)]
+    cached_tokens: Option<u64>,
+    /// `OpenAI` nests cache stats under `prompt_tokens_details`.
+    #[serde(default)]
+    prompt_tokens_details: Option<PromptTokensDetails>,
+}
+
+/// Nested cache breakdown used by `OpenAI`'s usage object.
+#[derive(Debug, Deserialize, Default)]
+struct PromptTokensDetails {
+    /// Number of prompt tokens served from the cache.
+    #[serde(default)]
+    cached_tokens: Option<u64>,
+}
+
+impl SseUsage {
+    /// Resolved cache-hit token count, preferring the flat field and falling
+    /// back to `OpenAI`'s nested `prompt_tokens_details.cached_tokens`.
+    fn resolved_cached(&self) -> u64 {
+        self.cached_tokens
+            .or_else(|| {
+                self.prompt_tokens_details
+                    .as_ref()
+                    .and_then(|d| d.cached_tokens)
+            })
+            .unwrap_or(0)
+    }
 }
 
 // ── Request builder ───────────────────────────────────────────────────────────
@@ -437,7 +465,9 @@ fn parse_sse_chunk(chunk: &SseChunk, tool_acc: &mut ToolCallAccumulator) -> Vec<
             .usage
             .as_ref()
             .map(|u| {
-                let su = StreamUsage::new(u.prompt_tokens, u.completion_tokens);
+                let cached = u.resolved_cached();
+                let su = StreamUsage::new(u.prompt_tokens, u.completion_tokens)
+                    .with_cached(cached);
                 match u.cost {
                     Some(c) if c > 0.0 => su.with_cost(c),
                     _ => su,
@@ -1013,7 +1043,7 @@ mod tests {
             usage: Some(SseUsage {
                 prompt_tokens: 100,
                 completion_tokens: 50,
-                cost: None,
+                ..Default::default()
             }),
         };
         let mut acc = ToolCallAccumulator::default();

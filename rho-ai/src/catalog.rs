@@ -7,6 +7,10 @@
 //! Users can extend or override the built-in catalog via provider config in
 //! `~/.rho/config.toml` (dedicated subscriptions, local models, etc.).
 
+use std::sync::LazyLock;
+
+use crate::types::StreamUsage;
+
 /// Cost information for a model, in USD per million tokens.
 #[derive(Debug, Clone, Default)]
 pub struct ModelCost {
@@ -18,6 +22,43 @@ pub struct ModelCost {
     pub cache_read: f64,
     /// Cost per million cache-write input tokens (prompt caching).
     pub cache_write: f64,
+}
+
+impl ModelCost {
+    /// Compute the USD cost of a usage record from these per-million prices.
+    ///
+    /// Splits input tokens into cache-hit and fresh reads, prices cache hits
+    /// at the discounted `cache_read` rate (falling back to the full input
+    /// rate when the provider reports no cache-read price), and adds output
+    /// tokens at the output rate.
+    ///
+    /// Returns `None` when pricing is unavailable so callers can distinguish
+    /// "priced" from "unpriced". Negative prices are `OpenRouter` sentinels for
+    /// "price unknown" (e.g. router models like `openrouter/auto` return
+    /// `prompt: "-1"`), and are treated as unavailable rather than negative
+    /// cost.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)] // token counts never approach 2^52
+    pub fn cost_for(&self, usage: &StreamUsage) -> Option<f64> {
+        if self.input < 0.0 || self.output < 0.0 {
+            return None;
+        }
+        // Clamp cached to input in case a provider over-reports.
+        let cached = usage.cached_tokens.min(usage.input_tokens);
+        let fresh_input = usage.input_tokens - cached;
+        // Price cache reads at cache_read if reported, else at full input rate
+        // (a missing field should not silently zero-out cache cost).
+        let cache_rate = if self.cache_read > 0.0 {
+            self.cache_read
+        } else {
+            self.input
+        };
+        let cost = (fresh_input as f64 * self.input
+            + cached as f64 * cache_rate
+            + usage.output_tokens as f64 * self.output)
+            / 1_000_000.0;
+        Some(cost)
+    }
 }
 
 /// Input modalities supported by a model.
@@ -60,6 +101,17 @@ pub struct Model {
     pub thinking: ModelThinking,
 }
 
+impl Model {
+    /// Compute the USD cost of a usage record from this model's pricing.
+    ///
+    /// Convenience wrapper around [`ModelCost::cost_for`]. Returns `None` when
+    /// the catalog has no usable pricing for this model (sentinel/unknown).
+    #[must_use]
+    pub fn cost_for(&self, usage: &StreamUsage) -> Option<f64> {
+        self.cost.cost_for(usage)
+    }
+}
+
 /// Default model used when nothing is configured and `RHO_MODEL` is not set.
 ///
 /// Picked as the best general-purpose coding model available via `OpenRouter`.
@@ -72,6 +124,11 @@ pub struct Catalog {
     models: Vec<Model>,
 }
 
+/// Lazily-initialized built-in model list, shared by all lookups so the hot
+/// path (per-iteration cost enrichment) never reallocates the catalog.
+static BUILT_IN: LazyLock<Vec<Model>> =
+    LazyLock::new(crate::catalog_generated::built_in_models);
+
 impl Default for Catalog {
     fn default() -> Self {
         Self::new()
@@ -79,6 +136,14 @@ impl Default for Catalog {
 }
 
 impl Catalog {
+    /// Look up a built-in model by ID without allocating a full catalog.
+    ///
+    /// Returns a static reference into the lazily-initialized built-in list.
+    /// Prefer this over `Catalog::new().find(...)` in hot paths.
+    #[must_use]
+    pub fn find_built_in(id: &str) -> Option<&'static Model> {
+        BUILT_IN.iter().find(|m| m.id == id)
+    }
     /// Create a catalog from the built-in model list only.
     pub fn new() -> Self {
         Self {
@@ -241,5 +306,59 @@ mod tests {
         let m = catalog.find("anthropic/claude-sonnet-4").unwrap();
         assert_eq!(m.name, "OVERRIDDEN");
         assert_eq!(m.provider, "custom");
+    }
+
+    // ── cost computation ───────────────────────────────────────────────
+
+    #[test]
+    fn cost_for_known_model_matches_per_million_pricing() {
+        // glm-5.2 in the generated catalog: input 1.4, output 4.4 per 1M.
+        let model = Catalog::find_built_in("z-ai/glm-5.2").expect("glm-5.2 present");
+        let usage = StreamUsage::new(1_000_000, 500_000);
+        let cost = model.cost_for(&usage).expect("pricing available");
+        // 1M input @ $1.4 + 0.5M output @ $4.4 = 1.4 + 2.2 = 3.6
+        assert!((cost - 3.6).abs() < 1e-9, "got {cost}");
+    }
+
+    #[test]
+    fn cost_for_prices_cached_reads_at_discount() {
+        let model = Catalog::find_built_in("z-ai/glm-5.2").expect("glm-5.2 present");
+        // glm-5.2 reports cache_read 0.26 per 1M.
+        let usage = StreamUsage::new(1_000_000, 0).with_cached(1_000_000);
+        let cost = model.cost_for(&usage).expect("pricing available");
+        // All input cached: 1M @ $0.26 = 0.26
+        assert!((cost - 0.26).abs() < 1e-9, "got {cost}");
+    }
+
+    #[test]
+    fn cost_for_returns_none_for_sentinel_pricing() {
+        // openrouter/auto carries OpenRouter's "-1" sentinel → -1_000_000.
+        let model = Catalog::find_built_in("openrouter/auto").expect("router present");
+        let usage = StreamUsage::new(1_000, 500);
+        assert!(model.cost_for(&usage).is_none(), "sentinel must not yield a cost");
+    }
+
+    #[test]
+    fn cost_for_missing_cache_read_falls_back_to_input_rate() {
+        // A model with a real input/output price but no cache_read reported.
+        let cost = ModelCost {
+            input: 2.0,
+            output: 6.0,
+            cache_read: 0.0,
+            cache_write: 0.0,
+        };
+        // 500k fresh + 500k cached, no output. Without fallback the cached
+        // half would be free ($0.5); with fallback both price at input.
+        let usage = StreamUsage::new(1_000_000, 0).with_cached(500_000);
+        let total = cost.cost_for(&usage).unwrap();
+        assert!((total - 2.0).abs() < 1e-9, "got {total}");
+    }
+
+    #[test]
+    fn find_built_in_does_not_allocate_catalog() {
+        // Smoke test: the static lookup returns a stable reference.
+        let a = Catalog::find_built_in("anthropic/claude-sonnet-4");
+        let b = Catalog::find_built_in("anthropic/claude-sonnet-4");
+        assert!(std::ptr::eq(a.unwrap(), b.unwrap()));
     }
 }

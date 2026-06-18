@@ -147,6 +147,9 @@ pub struct StreamUsage {
     pub input_tokens: u64,
     /// Number of tokens in the output (completion).
     pub output_tokens: u64,
+    /// Number of input tokens served from a prompt cache (subset of
+    /// `input_tokens`). Used to price cache reads at the discounted rate.
+    pub cached_tokens: u64,
     /// Cost in USD, if the provider reports it.
     pub cost: Option<f64>,
 }
@@ -158,6 +161,7 @@ impl StreamUsage {
         Self {
             input_tokens,
             output_tokens,
+            cached_tokens: 0,
             cost: None,
         }
     }
@@ -166,6 +170,13 @@ impl StreamUsage {
     #[must_use]
     pub fn with_cost(mut self, cost: f64) -> Self {
         self.cost = Some(cost);
+        self
+    }
+
+    /// Sets the number of cache-hit input tokens (a subset of `input_tokens`).
+    #[must_use]
+    pub fn with_cached(mut self, cached_tokens: u64) -> Self {
+        self.cached_tokens = cached_tokens;
         self
     }
 }

@@ -128,6 +128,7 @@ pub struct ResolutionTokenDist {
 pub struct ApiUsageWire {
     pub total_input_tokens: u64,
     pub total_output_tokens: u64,
+    pub total_cached_tokens: u64,
     pub total_tokens: u64,
     pub total_cost: f64,
     pub request_count: u32,
@@ -398,6 +399,7 @@ impl GetSessionStatsResult {
         self.api_usage = ApiUsageWire {
             total_input_tokens: usage.total_input_tokens,
             total_output_tokens: usage.total_output_tokens,
+            total_cached_tokens: usage.total_cached_tokens,
             total_tokens: usage.total_tokens(),
             total_cost: usage.total_cost,
             request_count: usage.request_count,

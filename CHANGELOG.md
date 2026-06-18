@@ -1,3 +1,16 @@
+## [0.82.0] - 2026-06-17
+
+### 🚀 Features
+
+- **(ai)** Compute token cost from the built-in catalog when the provider doesn't report one. `ModelCost::cost_for(&StreamUsage)` multiplies reported input/output token counts by the catalog's per-million pricing, with cache-hit input tokens priced at the discounted `cache_read` rate (falling back to the full input rate when a provider omits a cache-read price, so missing data doesn't silently zero-out cost). Negative prices are treated as unavailable: `OpenRouter`'s `-1` sentinel for router/alias models (e.g. `openrouter/auto`) yields `None` rather than negative cost. Added `Catalog::find_built_in()` backed by a `LazyLock` static so the per-iteration lookup never allocates.
+- **(ai)** Capture cached input tokens from both `OpenRouter`'s flat `usage.cached_tokens` field and `OpenAI`'s nested `usage.prompt_tokens_details.cached_tokens`. `StreamUsage` gains a `cached_tokens` field (with `with_cached` builder) so cache reads can be priced at the discounted rate and surfaced as cache savings.
+- **(core)** `route_response` enriches each response's usage with catalog-derived cost only when the provider didn't supply one (`OpenRouter`'s reported cost still wins). `ApiUsage` accumulates `total_cached_tokens` alongside input/output totals.
+- **(rpc)** `getSessionStats` now serializes `totalCachedTokens` in its `apiUsage` object, so frontends can display cache-hit totals.
+
+### 🏗️ Internal
+
+- Added focused tests for catalog cost computation (`cost_for_known_model_matches_per_million_pricing`, `cost_for_prices_cached_reads_at_discount`, `cost_for_returns_none_for_sentinel_pricing`, `cost_for_missing_cache_read_falls_back_to_input_rate`, `find_built_in_does_not_allocate_catalog`) and for the enrichment path in `route_response` (catalog fallback applied when provider omits cost; provider-reported cost not overridden; unknown models left unpriced). Existing `SseUsage` test literals updated to `..Default::default()`.
+
 ## [0.81.4] - 2026-06-17
 
 ### 🐛 Bug Fixes
