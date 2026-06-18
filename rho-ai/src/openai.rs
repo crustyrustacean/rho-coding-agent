@@ -466,8 +466,7 @@ fn parse_sse_chunk(chunk: &SseChunk, tool_acc: &mut ToolCallAccumulator) -> Vec<
             .as_ref()
             .map(|u| {
                 let cached = u.resolved_cached();
-                let su = StreamUsage::new(u.prompt_tokens, u.completion_tokens)
-                    .with_cached(cached);
+                let su = StreamUsage::new(u.prompt_tokens, u.completion_tokens).with_cached(cached);
                 match u.cost {
                     Some(c) if c > 0.0 => su.with_cost(c),
                     _ => su,

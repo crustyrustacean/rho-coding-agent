@@ -126,8 +126,7 @@ pub struct Catalog {
 
 /// Lazily-initialized built-in model list, shared by all lookups so the hot
 /// path (per-iteration cost enrichment) never reallocates the catalog.
-static BUILT_IN: LazyLock<Vec<Model>> =
-    LazyLock::new(crate::catalog_generated::built_in_models);
+static BUILT_IN: LazyLock<Vec<Model>> = LazyLock::new(crate::catalog_generated::built_in_models);
 
 impl Default for Catalog {
     fn default() -> Self {
@@ -335,7 +334,10 @@ mod tests {
         // openrouter/auto carries OpenRouter's "-1" sentinel → -1_000_000.
         let model = Catalog::find_built_in("openrouter/auto").expect("router present");
         let usage = StreamUsage::new(1_000, 500);
-        assert!(model.cost_for(&usage).is_none(), "sentinel must not yield a cost");
+        assert!(
+            model.cost_for(&usage).is_none(),
+            "sentinel must not yield a cost"
+        );
     }
 
     #[test]

@@ -2016,7 +2016,10 @@ mod tests {
         let _ = route_response(&acc, &mut session).unwrap();
         // glm-5.2 input is $1.4/M → 1M tokens should cost $1.4.
         let cost = session.api_usage().total_cost;
-        assert!((cost - 1.4).abs() < 1e-9, "expected catalog-derived cost, got {cost}");
+        assert!(
+            (cost - 1.4).abs() < 1e-9,
+            "expected catalog-derived cost, got {cost}"
+        );
     }
 
     #[test]

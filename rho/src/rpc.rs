@@ -613,11 +613,7 @@ async fn handle_set_model(
         }
         Err(e) => {
             warn!(spec = %spec, error = ?e, "model switch rejected");
-            send(
-                transport,
-                &error_response(id, INVALID_PARAMS, &e.message()),
-            )
-            .await;
+            send(transport, &error_response(id, INVALID_PARAMS, &e.message())).await;
         }
     }
 }
@@ -1496,7 +1492,10 @@ mod tests {
         let resps = responses(&events);
 
         // setModel response must be a JSON-RPC error, not a success.
-        assert!(resps[0].get("error").is_some(), "expected an error response");
+        assert!(
+            resps[0].get("error").is_some(),
+            "expected an error response"
+        );
         let message = resps[0]["error"]["message"].as_str().unwrap();
         assert!(
             message.contains("unknown-model"),
@@ -1524,7 +1523,10 @@ mod tests {
 
         let resps = responses(&events);
 
-        assert!(resps[0].get("error").is_some(), "expected an error response");
+        assert!(
+            resps[0].get("error").is_some(),
+            "expected an error response"
+        );
         let message = resps[0]["error"]["message"].as_str().unwrap();
         assert!(
             message.contains("nope"),
@@ -1543,12 +1545,10 @@ mod tests {
         let providers = {
             let mut providers = ProviderRegistry::new();
             providers.add(Box::new(
-                TestProvider::new("alpha", MockChatClient::new(vec![]))
-                    .with_models(["alpha-1"]),
+                TestProvider::new("alpha", MockChatClient::new(vec![])).with_models(["alpha-1"]),
             ));
             providers.add(Box::new(
-                TestProvider::new("beta", MockChatClient::new(vec![]))
-                    .with_models(["beta-1"]),
+                TestProvider::new("beta", MockChatClient::new(vec![])).with_models(["beta-1"]),
             ));
             providers
         };
@@ -1606,8 +1606,18 @@ mod tests {
         // has classified entries); assert structure rather than specific
         // values so this isn't coupled to the seed.
         let phase = &resp["result"]["phaseTokens"];
-        for key in ["exploration", "execution", "verification", "conclusion", "unclassified"] {
-            assert!(phase[key].is_i64(), "phaseTokens.{key} should be an integer, got {}", phase[key]);
+        for key in [
+            "exploration",
+            "execution",
+            "verification",
+            "conclusion",
+            "unclassified",
+        ] {
+            assert!(
+                phase[key].is_i64(),
+                "phaseTokens.{key} should be an integer, got {}",
+                phase[key]
+            );
         }
     }
 

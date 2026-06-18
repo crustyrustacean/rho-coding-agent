@@ -506,10 +506,9 @@ pub fn generate_models() -> Result<()> {
         }
 
         // Apply caps: never exceed the advertised value, but allow lowering it.
-        let context_length = context_window_override
-            .map_or(context_length, |cap| cap.min(context_length));
-        let max_tokens = max_tokens_override
-            .map_or(max_tokens, |cap| cap.min(max_tokens));
+        let context_length =
+            context_window_override.map_or(context_length, |cap| cap.min(context_length));
+        let max_tokens = max_tokens_override.map_or(max_tokens, |cap| cap.min(max_tokens));
 
         // Format thinking_format for output.
         let thinking_format_str = match &thinking_format {
