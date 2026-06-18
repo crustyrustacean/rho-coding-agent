@@ -1,3 +1,13 @@
+## [0.84.0] - 2026-06-18
+
+### 🚀 Features
+
+- **(memory)** New `rho-memory` crate — persistent knowledge base backed by SQLite + FTS5. Provides structured document storage with full-text search, SHA-256 content deduplication, soft deletes, tag filtering, pagination, and excerpt extraction. Library-only (no HTTP server); designed for embedding in the agent loop, RPC layer, and extension host ops.
+
+### 🧪 Testing
+
+- **(memory)** 11 unit tests covering CRUD, dedup, soft delete, FTS5 search, tag filtering, pagination, metadata, stats, and excerpt extraction.
+
 ## [0.83.0] - 2026-06-18
 
 ### 🚀 Features
