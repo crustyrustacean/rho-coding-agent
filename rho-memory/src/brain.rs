@@ -22,6 +22,7 @@ use crate::models::{CreateRequest, Document, SearchResult, Stats, UpdateRequest}
 /// ).await?;
 /// # Ok::<(), rho_memory::Error>(())
 /// ```
+#[derive(Clone, Debug)]
 pub struct Memory {
     /// The database backend.
     db: Database,

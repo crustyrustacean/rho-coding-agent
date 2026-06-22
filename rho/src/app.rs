@@ -17,9 +17,11 @@ use rho_core::{
 };
 use rho_ext::DenoObserver;
 use rho_ext::loader::ExtensionLoader;
+use rho_memory::Memory;
 use rho_tools::register_all;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::EnvFilter;
 
@@ -208,10 +210,12 @@ impl App {
         // ── 7. Provider consent ─────────────────────────────────────────
         check_provider_consent(&provider_registry, &cli)?;
 
-        // ── 8. Tool registry + extensions ────────────────────────────────
+        // ── 8. Tool registry + memory + extensions ─────────────────
         let mut tool_registry = ToolRegistry::new();
-        let session_path_holder = register_all(&mut tool_registry, sandbox.clone(), &config)
-            .context("no PowerShell found on PATH — install PowerShell 7+ (pwsh) or ensure Windows PowerShell (powershell) is available")?;
+        let memory = open_memory(&sandbox, &config);
+        let session_path_holder =
+            register_all(&mut tool_registry, sandbox.clone(), &config, memory.clone())
+                .context("no PowerShell found on PATH — install PowerShell 7+ (pwsh) or ensure Windows PowerShell (powershell) is available")?;
 
         let mut ext_loader = ExtensionLoader::new(
             config.extensions.clone(),
@@ -518,6 +522,31 @@ pub(crate) async fn run_agent_turn(
 }
 
 // ── Private setup phases ─────────────────────────────────────────────────────
+
+/// Open the project-local memory database if memory is enabled.
+///
+/// Returns `None` when `[memory] enabled` is `false` or the database
+/// fails to open (in which case a warning is printed to stderr).
+fn open_memory(sandbox: &SandboxRoot, config: &RhoConfig) -> Option<Arc<Memory>> {
+    if !config.memory.enabled {
+        return None;
+    }
+
+    let db_path = sandbox.path().join(".rho").join("memory.db");
+    match tokio::runtime::Handle::current().block_on(Memory::open(&db_path)) {
+        Ok(mem) => {
+            tracing::info!(path = %db_path.display(), "memory database opened");
+            Some(Arc::new(mem))
+        }
+        Err(e) => {
+            P::config_warning(&format!(
+                "failed to open memory database at {}: {e}",
+                db_path.display()
+            ));
+            None
+        }
+    }
+}
 
 /// Resolve the sandbox root from CLI `--root` or auto-detection.
 fn resolve_sandbox(cli: &Cli) -> Result<SandboxRoot> {

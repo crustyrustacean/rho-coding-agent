@@ -67,6 +67,8 @@ pub struct RhoConfig {
     pub system_prompt: SystemPromptConfig,
     /// Extension system settings.
     pub extensions: ExtensionConfig,
+    /// Persistent memory (knowledge base) settings.
+    pub memory: MemoryConfig,
 }
 
 // ── AgentLoopConfig ───────────────────────────────────────────────────────────
@@ -570,6 +572,28 @@ pub struct ExtensionPermissions {
     pub allow_paths: Option<Vec<String>>,
 }
 
+// ── MemoryConfig ────────────────────────────────────────────────────────
+
+/// Persistent memory (knowledge base) settings.
+///
+/// Controls whether the project-local knowledge base is enabled.
+/// When enabled, the agent gains tools to store and recall knowledge
+/// across sessions in a `SQLite` database at `.rho/memory.db`.
+///
+/// # TOML format
+///
+/// ```toml
+/// [memory]
+/// enabled = true
+/// ```
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct MemoryConfig {
+    /// Whether the memory system is enabled. Defaults to `false`.
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+// ── Wire format (TOML-deserializable) ───────────────────���─────────────────────
 // ── Wire format (TOML-deserializable) ─────────────────────────────────────────
 
 /// The TOML wire format for a config file.
@@ -609,6 +633,9 @@ struct WireConfig {
     /// Extension system settings.
     #[serde(default)]
     extensions: Option<WireExtensionConfig>,
+    /// Memory system settings.
+    #[serde(default)]
+    memory: Option<MemoryConfig>,
 }
 
 /// Wire format for `[redaction]` section.
@@ -1037,6 +1064,7 @@ impl ConfigLoader {
                     per_extension: pe.per_extension.or(ue.per_extension).unwrap_or_default(),
                 }
             },
+            memory: project.memory.or(user.memory).unwrap_or_default(),
         }
     }
 }

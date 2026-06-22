@@ -9,6 +9,7 @@ use sqlx::{Row, SqlitePool};
 use uuid::Uuid;
 
 /// The raw database handle. Prefer [`Memory`](crate::Memory) as the public API.
+#[derive(Clone, Debug)]
 pub struct Database {
     /// The connection pool.
     pool: SqlitePool,

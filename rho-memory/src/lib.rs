@@ -21,4 +21,4 @@ mod models;
 
 pub use brain::Memory;
 pub use error::Error;
-pub use models::{Document, SearchResult};
+pub use models::{CreateRequest, Document, SearchResult, UpdateRequest};
