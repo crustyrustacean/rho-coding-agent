@@ -360,16 +360,17 @@ pub fn compose_full_system_prompt(
     if config.memory.enabled {
         prompt.push_str(
             "\n\n# Memory\n\n\
-             - A persistent knowledge base is available via `memory` tools.\n\
-             - Use `memory_store` to save important design decisions, architectural patterns,\n\
+             - A persistent knowledge base is available via the `memory` tool.\n\
+             - Use operation `store` to save important design decisions, architectural patterns,\n\
                debugging discoveries, and project conventions for future reference.\n\
-             - Use `memory_search` to recall relevant knowledge before starting a task\n\
+             - Use operation `search` to recall relevant knowledge before starting a task\n\
                or when making architectural decisions.\n\
-             - Be concise and factual — store actionable information, not conversation.\n\
+             - Be concise and factual \u{2014} store actionable information, not conversation.\n\
              - Use tags to organize knowledge (e.g. `architecture`, `convention`, `bugfix`).\n\
-             - Content is deduplicated — storing identical content returns the existing document.",
+             - Content is deduplicated \u{2014} storing identical content returns the existing document.",
         );
     }
+
     // Append config-based system prompt extensions.
     for extension in &config.system_prompt.extensions {
         #[allow(clippy::format_push_string)]
