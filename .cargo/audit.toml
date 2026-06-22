@@ -1,0 +1,5 @@
+[advisories]
+ignore = ["RUSTSEC-2023-0071"]
+
+[advisories.details]
+RUSTSEC-2023-0071 = "Transitive dependency via sqlx-mysql (rsa 0.9.10). No fixed upgrade available yet."

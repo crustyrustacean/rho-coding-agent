@@ -4,7 +4,7 @@ use crate::error::Error;
 use crate::models::{Document, Stats, UpdateRequest};
 use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
-use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Row, SqlitePool};
 use uuid::Uuid;
 
@@ -43,10 +43,12 @@ impl Database {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let url = format!("sqlite:{}?mode=rwc", path.display());
+        let options = SqliteConnectOptions::new()
+            .filename(path)
+            .create_if_missing(true);
         let pool = SqlitePoolOptions::new()
             .max_connections(4)
-            .connect(&url)
+            .connect_with(options)
             .await?;
         let db = Self { pool };
         db.run_migrations().await?;
