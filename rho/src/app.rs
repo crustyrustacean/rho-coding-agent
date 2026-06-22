@@ -212,7 +212,7 @@ impl App {
 
         // ── 8. Tool registry + memory + extensions ─────────────────
         let mut tool_registry = ToolRegistry::new();
-        let memory = open_memory(&sandbox, &config);
+        let memory = open_memory(&sandbox, &config).await;
         let session_path_holder =
             register_all(&mut tool_registry, sandbox.clone(), &config, memory.clone())
                 .context("no PowerShell found on PATH — install PowerShell 7+ (pwsh) or ensure Windows PowerShell (powershell) is available")?;
@@ -527,13 +527,13 @@ pub(crate) async fn run_agent_turn(
 ///
 /// Returns `None` when `[memory] enabled` is `false` or the database
 /// fails to open (in which case a warning is printed to stderr).
-fn open_memory(sandbox: &SandboxRoot, config: &RhoConfig) -> Option<Arc<Memory>> {
+async fn open_memory(sandbox: &SandboxRoot, config: &RhoConfig) -> Option<Arc<Memory>> {
     if !config.memory.enabled {
         return None;
     }
 
     let db_path = sandbox.path().join(".rho").join("memory.db");
-    match tokio::runtime::Handle::current().block_on(Memory::open(&db_path)) {
+    match Memory::open(&db_path).await {
         Ok(mem) => {
             tracing::info!(path = %db_path.display(), "memory database opened");
             Some(Arc::new(mem))
