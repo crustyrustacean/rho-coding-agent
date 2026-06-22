@@ -1844,4 +1844,112 @@ mod tests {
         assert_eq!(v["toolCallId"], "c1");
         assert_eq!(v["content"], "file contents");
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Memory tool integration
+    // ═══════════════════════════════════════════════════════════════════════
+
+    async fn memory_registry() -> ToolRegistry {
+        let mem = rho_memory::Memory::open_in_memory()
+            .await
+            .expect("memory db");
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(rho_tools::MemoryTool::new(std::sync::Arc::new(
+            mem,
+        ))));
+        registry
+    }
+
+    #[tokio::test]
+    async fn prompt_memory_store_and_reply() {
+        // Model calls memory store, gets result, then replies with text.
+        let store_args = serde_json::json!({
+            "operation": "store",
+            "title": "Test Doc",
+            "content": "important fact",
+            "tags": ["test"]
+        });
+        let client = MockChatClient::new(vec![
+            tool_call_events("c1", "memory", serde_json::to_string(&store_args).unwrap()),
+            text_events("stored"),
+        ]);
+        let events = rpc_run(
+            client,
+            memory_registry().await,
+            &[serde_json::to_string(&serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "prompt",
+                "params": {"message": "remember this"},
+                "id": 1
+            }))
+            .unwrap()
+            .as_str()],
+        )
+        .await;
+
+        let tool_calls = events_of_type(&events, "tool/call");
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0]["params"]["name"], "memory");
+
+        let tool_results = events_of_type(&events, "tool/result");
+        assert_eq!(tool_results.len(), 1);
+        assert_eq!(tool_results[0]["params"]["is_error"], false);
+
+        let ends = events_of_type(&events, "agent/end");
+        assert_eq!(ends.len(), 1);
+        assert_eq!(ends[0]["params"]["reply"], "stored");
+    }
+
+    #[tokio::test]
+    async fn prompt_memory_search_after_store() {
+        // First turn: model stores a doc. Second turn: model searches and gets it back.
+        let store_args = serde_json::json!({
+            "operation": "store",
+            "title": "Architecture",
+            "content": "rho uses a layered architecture with rho-core as the kernel",
+            "tags": ["architecture", "rho"]
+        });
+        let search_args = serde_json::json!({
+            "operation": "search",
+            "query": "layered architecture"
+        });
+        let client = MockChatClient::new(vec![
+            // Turn 1: store
+            tool_call_events("c1", "memory", serde_json::to_string(&store_args).unwrap()),
+            text_events("saved"),
+            // Turn 2: search
+            tool_call_events("c2", "memory", serde_json::to_string(&search_args).unwrap()),
+            text_events("found it"),
+        ]);
+        let lines: Vec<String> = vec![
+            serde_json::to_string(&serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "prompt",
+                "params": {"message": "remember the architecture"},
+                "id": 1
+            }))
+            .unwrap(),
+            serde_json::to_string(&serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "prompt",
+                "params": {"message": "what architecture does rho use"},
+                "id": 2
+            }))
+            .unwrap(),
+        ];
+        let line_refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+        let events = rpc_run(client, memory_registry().await, &line_refs).await;
+
+        // Two prompts → two agent/end notifications
+        let ends = events_of_type(&events, "agent/end");
+        assert_eq!(ends.len(), 2);
+
+        // Both turns should have tool calls and results
+        let tool_results = events_of_type(&events, "tool/result");
+        assert_eq!(tool_results.len(), 2);
+        // All tool results should succeed
+        for r in &tool_results {
+            assert_eq!(r["params"]["is_error"], false);
+        }
+    }
 }

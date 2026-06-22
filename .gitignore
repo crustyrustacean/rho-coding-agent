@@ -5,3 +5,4 @@ logs/
 runs/
 bench-results/
 .DS_Store
+.plans/

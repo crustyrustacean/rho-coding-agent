@@ -30,13 +30,14 @@ pub mod error;
 pub mod file_ops;
 pub mod files;
 pub mod hashline;
+pub mod memory;
 pub mod rust;
 pub mod session_summary;
 pub mod shell;
 
 pub use session_summary::SessionSummary;
 
-/// Shared session-path holder for [`SessionSummary`].
+use rho_memory::Memory;
 pub type SessionPathHolder = Arc<Mutex<Option<PathBuf>>>;
 
 use std::path::PathBuf;
@@ -47,6 +48,7 @@ pub use crate::error::{ToolError, ToolResult};
 pub use crates_io::CratesIoLookup;
 pub use file_ops::{BatchRead, ListDir, ReadFile, WriteFile};
 pub use hashline::compute_line_hash;
+pub use memory::MemoryTool;
 pub use rust::{CargoCheck, CargoClippy, CargoFix, CargoTest, RustcExplain, RustdocTool};
 pub use shell::{CommandDenylist, PowerShellExecutor, RunCommand};
 
@@ -67,6 +69,7 @@ pub fn register_all(
     registry: &mut ToolRegistry,
     root: SandboxRoot,
     config: &rho_core::RhoConfig,
+    memory: Option<Arc<Memory>>,
 ) -> ToolResult<SessionPathHolder> {
     registry.register(Box::new(ReadFile { root: root.clone() }));
     registry.register(Box::new(BatchRead { root: root.clone() }));
@@ -117,6 +120,11 @@ pub fn register_all(
         executor,
         denylist,
     }));
+
+    // Memory tools (knowledge base)
+    if let Some(mem) = memory {
+        registry.register(Box::new(MemoryTool::new(mem)));
+    }
 
     // Session summary tool (context recovery)
     let (session_summary, path_holder) = SessionSummary::new();

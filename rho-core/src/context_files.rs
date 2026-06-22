@@ -356,6 +356,21 @@ pub fn compose_full_system_prompt(
            the tools parse JSON output and surface only actionable workspace diagnostics.",
     );
 
+    // Append memory guidance when memory is enabled.
+    if config.memory.enabled {
+        prompt.push_str(
+            "\n\n# Memory\n\n\
+             - A persistent knowledge base is available via the `memory` tool.\n\
+             - Use operation `store` to save important design decisions, architectural patterns,\n\
+               debugging discoveries, and project conventions for future reference.\n\
+             - Use operation `search` to recall relevant knowledge before starting a task\n\
+               or when making architectural decisions.\n\
+             - Be concise and factual \u{2014} store actionable information, not conversation.\n\
+             - Use tags to organize knowledge (e.g. `architecture`, `convention`, `bugfix`).\n\
+             - Content is deduplicated \u{2014} storing identical content returns the existing document.",
+        );
+    }
+
     // Append config-based system prompt extensions.
     for extension in &config.system_prompt.extensions {
         #[allow(clippy::format_push_string)]
