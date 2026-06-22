@@ -1,4 +1,9 @@
-## [0.84.0] - 2026-06-18
+## [0.84.2] - 2026-06-22
+
+### 📝 Documentation
+
+- Update system prompt memory section: clarify that `memory` tool enables cross-session persistence, add "remember this" trigger phrase for `memory::store`
+
 
 ### 🚀 Features
 
