@@ -1,5 +1,4 @@
-/// Document model stored in the knowledge base.
-
+//! Document model stored in the knowledge base.
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

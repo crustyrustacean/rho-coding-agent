@@ -1,4 +1,4 @@
-/// Error types for rho-memory.
+//! Error types for rho-memory.
 
 use thiserror::Error;
 
@@ -9,7 +9,7 @@ pub enum Error {
     #[error("document {0} not found")]
     NotFound(String),
 
-    /// An error from the SQLite database layer.
+    /// An error from the `SQLite` database layer.
     #[error("database error: {0}")]
     Database(#[from] sqlx::Error),
 

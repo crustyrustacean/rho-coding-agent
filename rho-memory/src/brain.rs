@@ -1,13 +1,13 @@
-/// The public knowledge-base API.
-///
-/// Wraps [`Database`] with a friendlier interface. Opens a SQLite file at the
-/// given path (or in-memory) and provides async CRUD + search operations.
+//! The public knowledge-base API.
+//!
+//! Wraps [`Database`] with a friendlier interface. Opens a `SQLite` file at the
+//! given path (or in-memory) and provides async CRUD + search operations.
 
 use crate::db::Database;
 use crate::error::Error;
 use crate::models::{CreateRequest, Document, SearchResult, Stats, UpdateRequest};
 
-/// A persistent knowledge base backed by SQLite + FTS5.
+/// A persistent knowledge base backed by `SQLite` + FTS5.
 ///
 /// # Example
 ///
@@ -23,17 +23,26 @@ use crate::models::{CreateRequest, Document, SearchResult, Stats, UpdateRequest}
 /// # Ok::<(), rho_memory::Error>(())
 /// ```
 pub struct Memory {
+    /// The database backend.
     db: Database,
 }
 
 impl Memory {
     /// Open (or create) a file-backed knowledge base.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database cannot be opened or migrations fail.
     pub async fn open(path: &std::path::Path) -> Result<Self, Error> {
         let db = Database::open_file(path).await?;
         Ok(Self { db })
     }
 
     /// Open an ephemeral in-memory knowledge base (useful for tests).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the in-memory database cannot be created.
     pub async fn open_in_memory() -> Result<Self, Error> {
         let db = Database::in_memory().await?;
         Ok(Self { db })
@@ -43,18 +52,24 @@ impl Memory {
     ///
     /// If an existing non-deleted document has identical content (SHA-256 match),
     /// the existing document is returned instead of creating a duplicate.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database operation fails.
     pub async fn create(
         &self,
         title: &str,
         content: &str,
         tags: &[String],
     ) -> Result<Document, Error> {
-        self.db
-            .create_document(title, content, tags, None)
-            .await
+        self.db.create_document(title, content, tags, None).await
     }
 
     /// Create a new document from a [`CreateRequest`], including optional metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database operation fails.
     pub async fn create_with(&self, req: &CreateRequest) -> Result<Document, Error> {
         self.db
             .create_document(&req.title, &req.content, &req.tags, req.metadata.as_ref())
@@ -62,6 +77,10 @@ impl Memory {
     }
 
     /// Get a document by its UUID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails.
     pub async fn get(&self, id: &uuid::Uuid) -> Result<Option<Document>, Error> {
         self.db.get_document(id).await
     }
@@ -70,6 +89,10 @@ impl Memory {
     ///
     /// Returns `None` if the document doesn't exist. Only fields present in
     /// `update` are changed; the rest are preserved.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database operation fails.
     pub async fn update(
         &self,
         id: &uuid::Uuid,
@@ -79,6 +102,10 @@ impl Memory {
     }
 
     /// Soft-delete a document. Returns `true` if a document was deleted.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database operation fails.
     pub async fn delete(&self, id: &uuid::Uuid) -> Result<bool, Error> {
         self.db.delete_document(id).await
     }
@@ -91,6 +118,10 @@ impl Memory {
     /// * `limit` / `offset` — pagination.
     ///
     /// Returns matching documents and the total hit count.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails.
     pub async fn search(
         &self,
         query: &str,
@@ -102,6 +133,10 @@ impl Memory {
     }
 
     /// Convenience: search and return [`SearchResult`]s with excerpts.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails.
     pub async fn search_with_excerpts(
         &self,
         query: &str,
@@ -114,22 +149,29 @@ impl Memory {
             .into_iter()
             .map(|doc| {
                 let excerpt = extract_excerpt(&doc.content, query);
-                SearchResult { document: doc, excerpt }
+                SearchResult {
+                    document: doc,
+                    excerpt,
+                }
             })
             .collect();
         Ok((results, total))
     }
 
-    /// List all non-deleted documents with pagination (ordered by updated_at desc).
-    pub async fn list(
-        &self,
-        limit: usize,
-        offset: usize,
-    ) -> Result<(Vec<Document>, i64), Error> {
+    /// List all non-deleted documents with pagination (ordered by `updated_at` desc).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails.
+    pub async fn list(&self, limit: usize, offset: usize) -> Result<(Vec<Document>, i64), Error> {
         self.db.list_documents(limit, offset).await
     }
 
     /// Aggregate statistics.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database queries fail.
     pub async fn stats(&self) -> Result<Stats, Error> {
         self.db.get_stats().await
     }
@@ -144,22 +186,22 @@ fn extract_excerpt(content: &str, query: &str) -> String {
     // Find the first query word that appears in the content.
     let match_pos = query_lower
         .split_whitespace()
-        .filter_map(|word| {
-            let pos = content_lower.find(word)?;
-            Some(pos)
-        })
+        .filter_map(|word| content_lower.find(word))
         .min();
 
     let (start, end) = match match_pos {
         Some(pos) => {
-            // Show ~80 chars around the match
-            let context = 80;
-            let start = pos.saturating_sub(context);
-            let end = (pos + context + query.len()).min(content.len());
+            let window = 80;
+            let start = pos.saturating_sub(window);
+            let end = (pos + window + query.len()).min(content.len());
             (start, end)
         }
         None => (0, content.len().min(200)),
     };
+
+    // Adjust to char boundaries to avoid panicking on multi-byte UTF-8.
+    let start = content.floor_char_boundary(start);
+    let end = content.ceil_char_boundary(end);
 
     let mut excerpt = String::from(&content[start..end]);
     if start > 0 {
@@ -288,10 +330,7 @@ mod tests {
             .await
             .unwrap();
 
-        let (results, total) = mem
-            .search("", Some(&["rust".into()]), 10, 0)
-            .await
-            .unwrap();
+        let (results, total) = mem.search("", Some(&["rust".into()]), 10, 0).await.unwrap();
         assert_eq!(total, 1);
         assert_eq!(results[0].title, "Doc A");
     }
@@ -348,9 +387,29 @@ mod tests {
     #[tokio::test]
     async fn search_with_excerpts_includes_context() {
         let mem = fresh().await;
-        mem.create("Find me", "The steering messages feature allows mid-turn correction", &[])
+        mem.create(
+            "Find me",
+            "The steering messages feature allows mid-turn correction",
+            &[],
+        )
+        .await
+        .unwrap();
+
+        let (results, _) = mem
+            .search_with_excerpts("steering", None, 10, 0)
             .await
             .unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].excerpt.contains("steering"));
+    }
+
+    #[tokio::test]
+    async fn excerpt_safe_with_multibyte_utf8() {
+        // Regression test: extract_excerpt must not panic on multi-byte
+        // UTF-8 characters at slice boundaries.
+        let mem = fresh().await;
+        let content = "日本語のテストです。The steering messages feature allows mid-turn correction.日本語のテストです。";
+        mem.create("UTF-8 doc", content, &[]).await.unwrap();
 
         let (results, _) = mem
             .search_with_excerpts("steering", None, 10, 0)

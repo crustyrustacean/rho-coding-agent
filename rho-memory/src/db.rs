@@ -1,4 +1,4 @@
-/// SQLite database operations backing the knowledge base.
+//! `SQLite` database operations backing the knowledge base.
 
 use crate::error::Error;
 use crate::models::{Document, Stats, UpdateRequest};
@@ -10,11 +10,16 @@ use uuid::Uuid;
 
 /// The raw database handle. Prefer [`Memory`](crate::Memory) as the public API.
 pub struct Database {
+    /// The connection pool.
     pool: SqlitePool,
 }
 
 impl Database {
     /// Open an in-memory database (for tests).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the pool cannot be created or migrations fail.
     pub async fn in_memory() -> Result<Self, Error> {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
@@ -28,6 +33,11 @@ impl Database {
     /// Open (or create) a database at the given file path.
     ///
     /// Creates parent directories automatically.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the path is invalid, the pool cannot be created, or
+    /// migrations fail.
     pub async fn open_file(path: &std::path::Path) -> Result<Self, Error> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -42,6 +52,11 @@ impl Database {
         Ok(db)
     }
 
+    /// Apply the initial schema migration.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any SQL statement fails.
     async fn run_migrations(&self) -> Result<(), Error> {
         sqlx::raw_sql(include_str!("../migrations/001_initial.sql"))
             .execute(&self.pool)
@@ -50,6 +65,11 @@ impl Database {
     }
 
     /// Create a new document, deduplicating on content hash.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database operation fails or the dedup lookup
+    /// returns a missing document.
     pub async fn create_document(
         &self,
         title: &str,
@@ -68,15 +88,16 @@ impl Database {
 
         if let Some((id_str,)) = existing {
             let id = Uuid::parse_str(&id_str).map_err(|e| Error::Input(e.to_string()))?;
-            return self.get_document(&id).await?.ok_or_else(|| {
-                Error::Database(sqlx::Error::RowNotFound)
-            });
+            return self
+                .get_document(&id)
+                .await?
+                .ok_or_else(|| Error::Database(sqlx::Error::RowNotFound));
         }
 
         let id = Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
         let tags_json = serde_json::to_string(tags)?;
-        let metadata_json = metadata.map(|m| serde_json::to_string(m)).transpose()?;
+        let metadata_json = metadata.map(serde_json::to_string).transpose()?;
 
         sqlx::query(
             "INSERT INTO documents (id, title, content, content_hash, tags, metadata, created_at, updated_at)
@@ -99,19 +120,26 @@ impl Database {
     }
 
     /// Get a document by UUID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails.
     pub async fn get_document(&self, id: &Uuid) -> Result<Option<Document>, Error> {
         self.get_document_by_id(&id.to_string()).await
     }
 
     /// Update an existing document. Omitted fields in `update` are left unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database operation fails.
     pub async fn update_document(
         &self,
         id: &Uuid,
         update: &UpdateRequest,
     ) -> Result<Option<Document>, Error> {
-        let existing = match self.get_document(id).await? {
-            Some(doc) => doc,
-            None => return Ok(None),
+        let Some(existing) = self.get_document(id).await? else {
+            return Ok(None);
         };
 
         let new_title = update.title.as_deref().unwrap_or(&existing.title);
@@ -126,7 +154,7 @@ impl Database {
 
         let now = Utc::now().to_rfc3339();
         let tags_json = serde_json::to_string(new_tags)?;
-        let metadata_json = new_metadata.map(|m| serde_json::to_string(m)).transpose()?;
+        let metadata_json = new_metadata.map(serde_json::to_string).transpose()?;
 
         sqlx::query(
             "UPDATE documents
@@ -147,18 +175,27 @@ impl Database {
     }
 
     /// Soft-delete a document.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database operation fails.
     pub async fn delete_document(&self, id: &Uuid) -> Result<bool, Error> {
-        let result = sqlx::query("UPDATE documents SET is_deleted = 1, updated_at = ?1 WHERE id = ?2")
-            .bind(Utc::now().to_rfc3339())
-            .bind(id.to_string())
-            .execute(&self.pool)
-            .await?;
+        let result =
+            sqlx::query("UPDATE documents SET is_deleted = 1, updated_at = ?1 WHERE id = ?2")
+                .bind(Utc::now().to_rfc3339())
+                .bind(id.to_string())
+                .execute(&self.pool)
+                .await?;
         Ok(result.rows_affected() > 0)
     }
 
     /// Full-text search with optional tag filtering and pagination.
     ///
     /// Returns matching documents and the total hit count.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails.
     pub async fn search_documents(
         &self,
         query: &str,
@@ -173,8 +210,7 @@ impl Database {
         if !query.is_empty() {
             param_count += 1;
             where_conditions.push(format!(
-                "d.id IN (SELECT id FROM documents_fts WHERE documents_fts MATCH ?{})",
-                param_count
+                "d.id IN (SELECT id FROM documents_fts WHERE documents_fts MATCH ?{param_count})"
             ));
             bind_params.push(Self::escape_fts_query(query));
         }
@@ -182,18 +218,15 @@ impl Database {
         if let Some(tag_list) = tags {
             for tag in tag_list {
                 param_count += 1;
-                where_conditions.push(format!("d.tags LIKE ?{}", param_count));
-                bind_params.push(format!("%\"{}\"%", tag));
+                where_conditions.push(format!("d.tags LIKE ?{param_count}"));
+                bind_params.push(format!("%\"{tag}\"%"));
             }
         }
 
         let where_clause = where_conditions.join(" AND ");
 
         // Count
-        let count_sql = format!(
-            "SELECT COUNT(*) as cnt FROM documents d WHERE {}",
-            where_clause
-        );
+        let count_sql = format!("SELECT COUNT(*) as cnt FROM documents d WHERE {where_clause}");
         let mut count_query = sqlx::query_scalar::<_, i64>(&count_sql);
         for param in &bind_params {
             count_query = count_query.bind(param);
@@ -205,20 +238,19 @@ impl Database {
             "SELECT d.id, d.title, d.content, d.content_hash, d.tags, d.metadata,
                     d.created_at, d.updated_at
              FROM documents d
-             WHERE {}
+             WHERE {where_clause}
              ORDER BY d.updated_at DESC
-             LIMIT ?{} OFFSET ?{}",
-            where_clause,
-            param_count + 1,
-            param_count + 2
+             LIMIT ?{next} OFFSET ?{after}",
+            next = param_count + 1,
+            after = param_count + 2,
         );
 
         let mut query = sqlx::query(&sql);
         for param in &bind_params {
             query = query.bind(param);
         }
-        query = query.bind(limit as i64);
-        query = query.bind(offset as i64);
+        query = query.bind(i64::try_from(limit).unwrap_or(i64::MAX));
+        query = query.bind(i64::try_from(offset).unwrap_or(i64::MAX));
 
         let rows = query.fetch_all(&self.pool).await?;
 
@@ -257,6 +289,10 @@ impl Database {
     }
 
     /// List all non-deleted documents with pagination.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails.
     pub async fn list_documents(
         &self,
         limit: usize,
@@ -266,16 +302,19 @@ impl Database {
     }
 
     /// Aggregate statistics.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any database query fails.
     pub async fn get_stats(&self) -> Result<Stats, Error> {
         let total_documents: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM documents WHERE is_deleted = 0")
                 .fetch_one(&self.pool)
                 .await?;
 
-        let total_links: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM document_links")
-                .fetch_one(&self.pool)
-                .await?;
+        let total_links: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM document_links")
+            .fetch_one(&self.pool)
+            .await?;
 
         let db_size: i64 = sqlx::query_scalar(
             "SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()",
@@ -283,18 +322,17 @@ impl Database {
         .fetch_one(&self.pool)
         .await?;
 
-        let last_updated: Option<DateTime<Utc>> =
-            match sqlx::query_scalar::<_, Option<String>>(
-                "SELECT MAX(updated_at) FROM documents WHERE is_deleted = 0",
-            )
-            .fetch_optional(&self.pool)
-            .await?
-            {
-                Some(Some(updated_str)) => {
-                    Some(DateTime::parse_from_rfc3339(&updated_str)?.with_timezone(&Utc))
-                }
-                _ => Some(Utc::now()),
-            };
+        let last_updated: Option<DateTime<Utc>> = match sqlx::query_scalar::<_, Option<String>>(
+            "SELECT MAX(updated_at) FROM documents WHERE is_deleted = 0",
+        )
+        .fetch_optional(&self.pool)
+        .await?
+        {
+            Some(Some(updated_str)) => {
+                Some(DateTime::parse_from_rfc3339(&updated_str)?.with_timezone(&Utc))
+            }
+            _ => Some(Utc::now()),
+        };
 
         Ok(Stats {
             total_documents,
@@ -306,6 +344,7 @@ impl Database {
 
     // ── Private helpers ───────────────────────────────────────────────────
 
+    /// Fetch a single document by its string ID.
     async fn get_document_by_id(&self, id: &str) -> Result<Option<Document>, Error> {
         let row = sqlx::query(
             "SELECT id, title, content, content_hash, tags, metadata, created_at, updated_at
@@ -344,6 +383,7 @@ impl Database {
         }))
     }
 
+    /// Compute a SHA-256 hash of the given content.
     fn compute_hash(content: &str) -> String {
         let mut hasher = Sha256::new();
         hasher.update(content.as_bytes());
@@ -360,13 +400,17 @@ impl Database {
     }
 }
 
-// Inline hex encoding to avoid pulling in the hex crate.
+/// Inline hex encoding to avoid pulling in the hex crate.
 mod hex {
+    use std::fmt::Write;
+
+    /// Encode bytes as lowercase hexadecimal.
     pub fn encode(bytes: impl AsRef<[u8]>) -> String {
-        bytes
-            .as_ref()
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect()
+        let bytes = bytes.as_ref();
+        let mut s = String::with_capacity(bytes.len() * 2);
+        for b in bytes {
+            let _ = write!(s, "{b:02x}");
+        }
+        s
     }
 }

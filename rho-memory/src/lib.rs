@@ -1,7 +1,7 @@
-//! rho-memory — Persistent knowledge base for the rho coding agent.
+//! `rho-memory` — Persistent knowledge base for the rho coding agent.
 //!
 //! A library crate providing structured document storage with full-text search,
-//! content deduplication, and soft deletes over SQLite (FTS5).
+//! content deduplication, and soft deletes over `SQLite` (FTS5).
 //!
 //! # Quick start
 //!
