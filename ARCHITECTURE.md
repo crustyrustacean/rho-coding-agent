@@ -15,6 +15,8 @@
 ├─────────────────────────────────────────────────┤
 │                   rho-tools                      │  ← Built-in tool implementations
 ├─────────────────────────────────────────────────┤
+│                   rho-memory                     │  ← Persistent knowledge base (SQLite/FTS5)
+├─────────────────────────────────────────────────┤
 │                   rho-highlight                  │  ← Tree-sitter syntax analysis
 ├─────────────────────────────────────────────────┤
 │                   rho-core                       │  ← Agent kernel (loop, types, traits, data model)
@@ -27,10 +29,9 @@
    └──────────────────┘
 
                   rho-ext → rho-core
+                  rho-tools → rho-memory
                   rho-tools → rho-highlight → rho-core
                   rho → rho-core, rho-tools, rho-ext, rho-ai
-                  rho-test-helpers → rho-core, rho-ai
-```
 
 
 
@@ -74,6 +75,7 @@ Concrete tools that ship with the agent:
 | `CargoTest` | Run `cargo test`, return structured results |
 | `CargoFix` | Apply machine-applicable suggestions |
 | `RustcExplain` | Run `rustc --explain <CODE>` |
+| `MemoryTool` | Store, search, and manage project-local knowledge (via `rho-memory`) |
 
 Security controls: command denylist, sandbox-scoped working directory, structured output capture.
 
@@ -113,6 +115,17 @@ Enables user-authored TypeScript extensions that add tools, hooks, and commands 
 
 Extension directories: `~/.rho/extensions/` (user-level) and `.rho/extensions/` (project-level). Project-local extensions override user-level ones with the same name.
 
+
+### `rho-memory` — Persistent Knowledge Base
+
+Project-local knowledge storage with full-text search, content deduplication, and soft deletes over `SQLite` (FTS5). Exposed to the agent via the `MemoryTool` in `rho-tools`.
+
+- **`Memory`** — public API wrapping a `Database` handle. Opens a file-backed database at `.rho/memory.db` within the project root.
+- **`Database`** — raw `SQLite` operations: CRUD, FTS5 search, pagination, stats.
+- **`Document`** — stored document model (id, title, content, content_hash, tags, metadata, timestamps).
+- **`MemoryTool`** — `Tool` trait implementation in `rho-tools` providing `store`, `search`, `get`, `update`, `delete`, `list` operations for the LLM.
+- **Config** — `[memory]` section in `config.toml` with `enabled` gate (default: `false`).
+- **Storage** — project-local at `<project-root>/.rho/memory.db`.
 ### `rho` — Headless JSON-RPC 2.0 Agent
 
 Assembles all layers and runs the headless JSON-RPC 2.0 protocol over stdin/stdout. Wire-format types live in `rpc_wire.rs` (typed structs for every method param, result, and notification), and the dispatch loop in `rpc.rs` deserializes params and serializes results through them. An [`OpenRPC` schema](../docs/rpc-schema/openrpc.json) documents the protocol for client generation.
@@ -393,6 +406,15 @@ rho-tools/          # Built-in tool implementations
     hashline.rs     # Hashline content-addressed editing
     shell.rs        # `PowerShellExecutor`, `RunCommand`, `CommandDenylist`
     rust.rs         # `CargoCheck`, `CargoClippy`, `CargoTest`, `CargoFix`, `RustcExplain`
+rho-memory/         # Persistent knowledge base (SQLite/FTS5)
+  src/
+    lib.rs          # Re-exports: `Memory`, `Document`, `SearchResult`, `Error`
+    brain.rs        # `Memory` — public knowledge-base API
+    db.rs           # `Database` — raw SQLite operations
+    models.rs       # `Document`, `SearchResult`, `CreateRequest`, `UpdateRequest`, `Stats`
+    error.rs        # `Error`
+  migrations/
+    001_initial.sql # Schema: documents, FTS5, triggers
 rho-highlight/      # Tree-sitter syntax analysis
   src/
     lib.rs          # Re-exports
@@ -492,6 +514,7 @@ docs/rpc-schema/openrpc.json  # OpenRPC 1.3.1 schema (machine-readable API spec)
 | `RhoConfig` | `config.rs` | Merged application-wide config |
 | `ConfigLoader` | `config.rs` | Two-tier TOML loading |
 | `AgentConfig` | `agent.rs` | Loop settings: iterations, retry, backoff, compaction mode |
+| `MemoryConfig` | `config.rs` | `[memory]` section: `enabled` toggle for project-local knowledge base |
 
 ### Errors
 
@@ -504,6 +527,7 @@ docs/rpc-schema/openrpc.json  # OpenRPC 1.3.1 schema (machine-readable API spec)
 | `SandboxError` | `sandbox.rs` | File sandbox: path validation, security violations |
 | `ToolError` | `rho-tools/src/error.rs` | Tool operations: file access, command execution, sandbox violations |
 | `HighlightError` | `rho-highlight/src/error.rs` | Syntax highlighting: grammar not available, parse failure, position errors |
+| `Error` | `rho-memory/src/error.rs` | Knowledge base: database, JSON, timestamp, I/O, input errors |
 | `Result<T>` | `error.rs` | `std::result::Result<T, RhoError>` |
 
 ### Newtypes

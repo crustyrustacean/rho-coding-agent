@@ -1918,11 +1918,7 @@ mod tests {
             tool_call_events("c1", "memory", serde_json::to_string(&store_args).unwrap()),
             text_events("saved"),
             // Turn 2: search
-            tool_call_events(
-                "c2",
-                "memory",
-                serde_json::to_string(&search_args).unwrap(),
-            ),
+            tool_call_events("c2", "memory", serde_json::to_string(&search_args).unwrap()),
             text_events("found it"),
         ]);
         let lines: Vec<String> = vec![
