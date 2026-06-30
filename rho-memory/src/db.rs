@@ -230,7 +230,9 @@ impl Database {
 
         // Count
         let count_sql = format!("SELECT COUNT(*) as cnt FROM documents d WHERE {where_clause}");
-        let mut count_query = sqlx::query_scalar::<_, i64>(&count_sql);
+        // SAFETY: `count_sql` is built only from static SQL fragments and numbered
+        // placeholders (`?N`). All user input is bound as prepared-statement parameters.
+        let mut count_query = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_sql));
         for param in &bind_params {
             count_query = count_query.bind(param);
         }
@@ -248,7 +250,9 @@ impl Database {
             after = param_count + 2,
         );
 
-        let mut query = sqlx::query(&sql);
+        // SAFETY: `sql` is built only from static SQL fragments and numbered
+        // placeholders (`?N`). All user input is bound as prepared-statement parameters.
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
         for param in &bind_params {
             query = query.bind(param);
         }

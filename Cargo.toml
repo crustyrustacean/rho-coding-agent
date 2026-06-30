@@ -13,20 +13,20 @@ members = [
 resolver = "3"
 
 [workspace.dependencies]
-anyhow = "1.0.102"
+anyhow = "1.0.103"
 async-trait = "0.1"
 tokio = { version = "1.52.1", features = ["macros", "rt-multi-thread", "process", "io-util"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.149"
 thiserror = "2.0.18"
-tree-sitter = "0.26"
+tree-sitter = "0.26.10"
 futures = "0.3.32"
 sha2 = "0.11.0"
 toml = { version = "1.0", features = ["parse"] }
-which = "8.0"
-reqwest = { version = "0.13.2", features = ["json", "stream"] }
+which = "8.0.4"
+reqwest = { version = "0.13.4", features = ["json", "stream"] }
 tracing = "0.1.44"
-bytes = "1"
+bytes = "1.12.0"
 
 [workspace.package]
 version = "0.84.2"
