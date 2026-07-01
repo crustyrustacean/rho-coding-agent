@@ -1,3 +1,8 @@
+## [0.84.3] - 2026-07-01
+
+### 🐛 Bug Fixes
+
+- **(rpc)** Remove duplicate `/// Trigger context compaction.` doc comment on `handle_compact`
 ## [0.84.2] - 2026-06-22
 
 ### 📝 Documentation

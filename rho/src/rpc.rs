@@ -627,7 +627,6 @@ async fn handle_get_session_stats(app: &App, id: &Value, transport: &dyn Transpo
 }
 
 /// Trigger context compaction.
-/// Trigger context compaction.
 async fn handle_compact(app: &mut App, id: &Value, transport: &dyn Transport) {
     info!("compaction triggered via RPC");
     match app.compact().await {
