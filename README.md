@@ -185,7 +185,9 @@ rho treats model output as untrusted and applies defense-in-depth:
 ├──────────────────┤
 │    rho-ext       │  ← TypeScript extension runtime (V8/deno-core)
 ├──────────────────┤
-│    rho-tools     │  ← Built-in tools: files, shell, rust tooling
+│    rho-tools     │  ← Built-in tools: files, shell, rust tooling, memory
+├──────────────────┤
+│    rho-memory    │  ← Persistent knowledge base (SQLite/FTS5)
 ├──────────────────┤
 │  rho-highlight   │  ← Tree-sitter syntax analysis (node splitting, highlighting)
 ├──────────────────┤
@@ -196,7 +198,7 @@ rho treats model output as untrusted and applies defense-in-depth:
    rho-test-helpers   ← Dev-only: mocks, fixtures, tempdir helpers
 ```
 
-**Dependency rule:** crates only depend on layers below them. `rho-ai` is the lowest layer; `rho-core` depends on it for the `LlmService` trait. `rho-tools` and `rho-highlight` depend on `rho-core`. `rho-ext` depends on `rho-core` for trait implementations. The binary assembles everything.
+**Dependency rule:** crates only depend on layers below them. `rho-ai` is the lowest layer; `rho-core` depends on it for the `LlmService` trait. `rho-highlight` and `rho-memory` depend on `rho-core`. `rho-tools` depends on `rho-core`, `rho-highlight`, and `rho-memory`. `rho-ext` depends on `rho-core` for trait implementations. The binary assembles everything.
 
 ## Development
 
@@ -206,6 +208,8 @@ cargo xtask test              # Run all tests
 cargo xtask test -- --nocapture  # Run with stdout visible
 cargo xtask changelog <ver>   # Generate CHANGELOG.md
 cargo xtask schema             # Update version in OpenRPC schema
+cargo xtask generate-models    # Regenerate the rho-ai model catalog from OpenRouter
+cargo xtask fmt-fix            # Auto-format the workspace (cargo fmt --all)
 ```
 
 ### Pre-push hook
@@ -241,7 +245,8 @@ rho/                  # Headless JSON-RPC 2.0 agent
 rho-ai/               # Unified LLM provider abstraction (streaming, retry, SSE)
 rho-ext/              # TypeScript extension runtime (V8/deno-core)
 rho-core/             # Agent kernel (loop, types, traits, config)
-rho-tools/            # Built-in tools (files, shell, rust tooling)
+rho-tools/            # Built-in tools (files, shell, rust tooling, memory)
+rho-memory/           # Persistent knowledge base (SQLite/FTS5)
 rho-highlight/        # Tree-sitter syntax analysis
 rho-test-helpers/     # Shared test utilities (dev-only)
 xtask/                # Dev task runner

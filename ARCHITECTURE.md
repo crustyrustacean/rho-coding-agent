@@ -6,18 +6,17 @@
 
 ## Dependency Graph
 
+The crates form layers; dependencies flow downward only. Crates at the same
+level are **siblings** — they depend on layers below, not on each other
+(e.g. `rho-ext` does **not** depend on `rho-tools`).
+
 ```
 ┌─────────────────────────────────────────────────┐
 │                   rho (binary)                   │  ← Headless JSON-RPC 2.0 agent
 ├─────────────────────────────────────────────────┤
+│  rho-ext          rho-tools                       │  ← Extensions   /  Built-in tools
 ├─────────────────────────────────────────────────┤
-│                   rho-ext                        │  ← TypeScript extension runtime (V8/deno-core)
-├─────────────────────────────────────────────────┤
-│                   rho-tools                      │  ← Built-in tool implementations
-├─────────────────────────────────────────────────┤
-│                   rho-memory                     │  ← Persistent knowledge base (SQLite/FTS5)
-├─────────────────────────────────────────────────┤
-│                   rho-highlight                  │  ← Tree-sitter syntax analysis
+│            rho-memory      rho-highlight           │  ← Siblings of rho-tools
 ├─────────────────────────────────────────────────┤
 │                   rho-core                       │  ← Agent kernel (loop, types, traits, data model)
 ├─────────────────────────────────────────────────┤
@@ -25,13 +24,23 @@
 └─────────────────────────────────────────────────┘
 
    ┌──────────────────┐
-   │ rho-test-helpers  │  ← Dev-only: mocks, fixtures
+   │ rho-test-helpers  │  ← Dev-only: mocks, fixtures (depends on rho-core)
    └──────────────────┘
+```
 
-                  rho-ext → rho-core
-                  rho-tools → rho-memory
-                  rho-tools → rho-highlight → rho-core
-                  rho → rho-core, rho-tools, rho-ext, rho-ai
+`rho-ext`, `rho-tools`, `rho-memory`, and `rho-highlight` are all siblings
+sitting directly on `rho-core`. `rho-tools` additionally depends on
+`rho-memory` and `rho-highlight`; the others each depend only on `rho-core`.
+
+**Actual dependency edges:**
+
+- `rho` → `rho-core`, `rho-tools`, `rho-ext`, `rho-ai`
+- `rho-ext` → `rho-core`
+- `rho-tools` → `rho-core`, `rho-memory`, `rho-highlight`
+- `rho-memory` → `rho-core`
+- `rho-highlight` → `rho-core`
+- `rho-core` → `rho-ai` (for the `LlmService` trait)
+- `rho-test-helpers` → `rho-core`
 
 
 
@@ -66,6 +75,7 @@ Concrete tools that ship with the agent:
 | Tool | Description |
 |---|---|
 | `ReadFile` | Read a file's contents (text or image) |
+| `BatchRead` | Read multiple files at once (up to 20 paths) in a single call |
 | `WriteFile` | Create or overwrite a file |
 | `EditFile` | Apply targeted replacements (exact-match) |
 | `ListDir` | List directory contents (`.gitignore`-aware) |
@@ -75,6 +85,9 @@ Concrete tools that ship with the agent:
 | `CargoTest` | Run `cargo test`, return structured results |
 | `CargoFix` | Apply machine-applicable suggestions |
 | `RustcExplain` | Run `rustc --explain <CODE>` |
+| `RustdocTool` | Look up Rust standard-library docs from the locally installed rustdoc |
+| `CratesIoLookup` | Look up crates on crates.io (search, info, versions, downloads) |
+| `SessionSummary` | Read the session's compressed turn history for context recovery |
 | `MemoryTool` | Store, search, and manage project-local knowledge (via `rho-memory`) |
 
 Security controls: command denylist, sandbox-scoped working directory, structured output capture.
@@ -95,6 +108,7 @@ Provider-agnostic streaming interface for LLM communication.
 - **`LlmService` trait** — `chat_stream(LlmRequest) → EventStream`. All providers implement this.
 - **`OpenAiService`** — OpenAI-compatible HTTP client with SSE parsing and retry logic. Covers OpenAI, DeepSeek, OpenRouter, Groq, local servers (Ollama, LM Studio), and any OpenAI-compatible endpoint.
 - **Unified types** — `LlmMessage`, `LlmRequest`, `ToolDefinition`, `StreamEvent` (`Text`, `Reasoning`, `ToolUseStart/Delta/Complete`, `Done`), `AccumulatedResponse`.
+- **Model catalog** — `Catalog` (`catalog.rs`) is a built-in model registry generated from OpenRouter's public model list by `cargo xtask generate-models` (output: `catalog_generated.rs`), with manual overrides for thinking support and compatibility flags in `model-overrides.json`. `Model` entries carry context-window limits, thinking support, and `ModelCost` (per-million-token pricing for input, output, cache-read, cache-write). `Catalog::find`/`search`/`by_provider` resolve models for cost computation and `listModels`. Users extend the catalog with custom models via `[[models]]` provider config.
 - **Retry** — Exponential backoff on transient errors with configurable budget.
 - **SSE parser** — Line-buffered server-sent event parser with streaming accumulation.
 
@@ -159,9 +173,9 @@ The protocol is fully typed in `rho/src/rpc_wire.rs` — every method param, res
 echo '{"jsonrpc":"2.0","method":"prompt","params":{"message":"fix the bug"},"id":1}' | rho --model <id>
 ```
 
-The core RPC loop is generic over I/O (`run_rpc_on<R, W>`) so the in-process integration tests can inject canned stdin and capture stdout without touching real file descriptors. The public entry point (`run_rpc`) delegates with real `io::stdin()` and `io::stdout()`.
+The dispatch loop is decoupled from I/O via the [`Transport`] trait (`rho/src/transport.rs`). `StdioTransport` (newline-delimited JSON over stdin/stdout) is the default, but any `Transport` implementation — WebSocket, Unix socket, TCP — works without touching the dispatch logic. The public entry point (`run_rpc`) constructs a real `StdioTransport`; in-process tests inject a `StdioTransport` wired to canned readers and captured writers.
 
-**Integration tests.** 12 end-to-end tests in `rho/src/rpc.rs` cover the full JSON-RPC 2.0 protocol. Tests use `MockChatClient` via `TestProvider` (in `rho-test-helpers`) and construct `App` directly (bypassing CLI startup) to exercise the RPC adapter layer over the real agent loop.
+**Integration tests.** `rho/src/rpc.rs` ships a suite of end-to-end tests (30+ `#[tokio::test]` cases) covering the full JSON-RPC 2.0 protocol. Tests use `MockChatClient` via `TestProvider` (in `rho-test-helpers`) and construct `App` directly (bypassing CLI startup) to exercise the RPC adapter layer over the real agent loop.
 
 ### Protocol
 
@@ -349,8 +363,11 @@ rho-ai/             # Unified LLM provider abstraction
     openai.rs       # `OpenAiService` — OpenAI-compatible HTTP + SSE
     sse.rs          # Server-sent event parser
     retry.rs        # Exponential backoff retry logic
+    catalog.rs      # `Catalog`, `Model`, `ModelCost` — built-in + user model registry
+    catalog_generated.rs # Generated model list (`cargo xtask generate-models`)
     types.rs        # `LlmMessage`, `LlmRequest`, `StreamEvent`, `AccumulatedResponse`
     error.rs        # `ProviderError`
+  model-overrides.json # Manual catalog overrides (thinking flags, compatibility)
 rho-ext/            # TypeScript extension runtime
   src/
     lib.rs          # Re-exports: `ExtensionLoader`, `DenoTool`, `DenoObserver`, etc.
@@ -363,6 +380,8 @@ rho-ext/            # TypeScript extension runtime
     transpile.rs    # TS → JS transpilation via `deno_ast`
     module_loader.rs# `RhoModuleLoader` — ESM module resolution for extensions
     host.rs         # `rho.*` host ops (log, readFile, writeFile, runCommand, getModel, getCwd)
+    ops.rs          # Host-op helper macros (err!, json!, require_perm!, require_field!, js_fn!)
+    async_dispatcher.rs # Shared background thread + tokio runtime for async ops
     host_shim.js    # ESM shim for extension module loading
     std_shim.js    # Standard library shim for extensions
     error.rs        # `ExtensionError` enum
@@ -386,26 +405,55 @@ rho-core/           # Core library
     message.rs      # `ChatMessage`, `ContentBlock`, `ModelToolCall`
     model_match.rs  # `fuzzy_match`, `find_exact`, `format_suggestions`
     newtypes.rs     # `FilePath`, `ToolName`, `ToolCallId`, `DiagnosticCode`
-    prompts.rs      # `base_prompt()`, `compact_prompt()`
+    prompts/        # Prompt templates (loaded as `base_prompt()` / `compact_prompt()`)
+      base.md       # Full agent system prompt
+      compact.md    # Minimal prompt for small-context models
     provider.rs     # `Provider` trait, `OpenAiCompatibleProvider`, `ProviderRegistry`
     redact.rs       # `Redactor` — secret pattern matching
+    request.rs      # `ChatRequest`
+    response.rs     # `ModelResponse`, `FinishReason`
     sandbox.rs      # `SandboxRoot` — file sandbox validation
+    schema.rs       # `ToolSchema` — wire-format tool definitions
     session.rs      # `Session` — tree-shaped conversation with JSONL persistence
     session/
+      accessors.rs  # Read-side accessors (header, leaf, entry, model, system prompt)
+      append.rs     # Write-side: append user/tool/compaction/branch/custom entries
+      builder.rs    # `Session::new`, `open`, `in_memory`, config wiring
       compaction.rs # `CompactionStrategy`, `MechanicalCompactionStrategy`
+      context.rs    # Context preparation: outlining, summarization, path messages
+      context_stats.rs # `ContextStats` — context-window usage snapshot
       entry.rs      # `Entry`, `EntryPayload`, `EntryResolution`
       error.rs      # `SessionError`
       estimator.rs  # `TokenEstimator`, `HeuristicEstimator`
+      eviction.rs   # Turn-internal eviction planner
+      extensions.rs # `ExtensionEntry`, `ExtensionMessageEntry` traits
+      header.rs     # `SessionHeader` — identity, version, origin metadata
+      outliner.rs   # Entry outlining/summarization (per-tool structural summaries)
       persist.rs    # JSONL persistence, `SessionMetadata`
+      phase.rs      # Session phase detection (agent work phase tracking)
+      tree.rs       # Tree traversal: `path_to_root`, `branch_to`, `branch_with_summary`
+      truncation.rs # Output truncation utilities
     shell.rs        # `ShellExecutor` trait, `ShellOutput`
+    stream.rs       # Streaming helpers for the agent loop
     tool.rs         # `Tool` trait, `ToolRegistry`, `ToolResult`, `ToolRisk`
 rho-tools/          # Built-in tool implementations
   src/
     lib.rs          # `register_all()`
-    files.rs        # `ReadFile`, `WriteFile`, `ListDir`, `EditFile`
+    files.rs        # Re-exports file tools from `file_ops` + `edit`
+    file_ops.rs     # `ReadFile`, `WriteFile`, `BatchRead`, `ListDir`
+    edit.rs         # `EditFile` — hashline-anchored editing
     hashline.rs     # Hashline content-addressed editing
     shell.rs        # `PowerShellExecutor`, `RunCommand`, `CommandDenylist`
-    rust.rs         # `CargoCheck`, `CargoClippy`, `CargoTest`, `CargoFix`, `RustcExplain`
+    crates_io.rs    # `CratesIoLookup` — crates.io metadata lookup
+    session_summary.rs # `SessionSummary` — compressed turn history for recovery
+    memory.rs       # `MemoryTool` — knowledge base (via `rho-memory`)
+    rust/           # Rust tooling
+      tools.rs      # `CargoCheck`, `CargoClippy`, `CargoTest`, `CargoFix`, `RustcExplain`
+      rustdoc.rs    # `RustdocTool` — stdlib docs from local rustdoc
+      convert.rs    # Raw cargo JSON → core diagnostic conversion
+      format.rs     # Diagnostic formatting and AST context
+      parse.rs      # NDJSON parsing for `--message-format=json`
+      types.rs      # Raw cargo JSON types (module-private)
 rho-memory/         # Persistent knowledge base (SQLite/FTS5)
   src/
     lib.rs          # Re-exports: `Memory`, `Document`, `SearchResult`, `Error`
@@ -418,6 +466,7 @@ rho-memory/         # Persistent knowledge base (SQLite/FTS5)
 rho-highlight/      # Tree-sitter syntax analysis
   src/
     lib.rs          # Re-exports
+    lang.rs         # `Language` enum — grammar selection (feature-gated)
     parse.rs        # Tree-sitter parsing
     highlight.rs    # Token classification and highlighting
     query.rs        # AST node lookup by position
@@ -428,7 +477,7 @@ rho-test-helpers/   # Shared test infrastructure (dev-only)
 xtask/              # Dev task runner
   src/
     main.rs         # CLI dispatch
-    tasks.rs        # `ci`, `test`, `build`, `release`, `changelog`, `fmt`, `lint`, `run`, `clean`, `status`, `schema` tasks
+    tasks.rs        # `ci`, `test`, `build`, `release`, `changelog`, `fmt`, `fmt-fix`, `lint`, `run`, `clean`, `status`, `schema`, `generate-models` tasks
 Cargo.toml          # Workspace root
 CHANGELOG.md        # Generated via git-cliff
 cliff.toml          # git-cliff configuration
@@ -469,7 +518,7 @@ docs/rpc-schema/openrpc.json  # OpenRPC 1.3.1 schema (machine-readable API spec)
 | `ToolRegistry` | `tool.rs` | Maps tool names to `Box<dyn Tool>` |
 | `ToolRisk` | `tool.rs` | `Read`, `Write`, `Destructive`, `Network` |
 | `ToolResult` | `tool.rs` | Result of a tool execution |
-| `ToolSchema` | `schema.rs` | Wire-format tool definition |
+| `ToolSchema` | `rho-core/src/schema.rs` | Wire-format tool definition |
 | `CancellationToken` | `tool.rs` | Cooperative cancellation signal |
 
 ### Client and provider
@@ -481,6 +530,9 @@ docs/rpc-schema/openrpc.json  # OpenRPC 1.3.1 schema (machine-readable API spec)
 | `OpenAiService` | `rho-ai/openai.rs` | OpenAI-compatible HTTP client with SSE streaming |
 | `StreamEvent` | `rho-ai/types.rs` | Streaming response event (`Text`, `Reasoning`, `ToolUse*`, `Done`) |
 | `AccumulatedResponse` | `rho-ai/types.rs` | Fully-accumulated response (text + tool calls + usage) |
+| `Catalog` | `rho-ai/catalog.rs` | Built-in + user model registry (find, search, by_provider) |
+| `Model` | `rho-ai/catalog.rs` | Catalog entry: context window, thinking support, pricing |
+| `ModelCost` | `rho-ai/catalog.rs` | Per-million-token pricing (input, output, cache-read, cache-write) |
 | `RhoAiClient` | `client.rs` | Wraps `LlmService` for use in the agent loop |
 | `Provider` | `provider.rs` | Trait: `name`, `is_external`, `list_models`, `clone_boxed_service`, `llm_service` |
 | `ProviderRegistry` | `provider.rs` | Ordered collection of `Box<dyn Provider>` |
