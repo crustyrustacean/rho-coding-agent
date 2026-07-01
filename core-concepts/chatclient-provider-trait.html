@@ -202,16 +202,18 @@ pub trait LlmService: Send + Sync {
 
 // Default: localhost
 let service = OpenAiService::new(rho_ai::ProviderConfig::new(
-    "",  // no API key for local
-    "http://localhost:1234/v1",\n));
+    "",                          // no API key for local
+    "http://localhost:1234/v1",  // base URL
+));
 
 // Custom endpoint with API key
 let service = OpenAiService::new(rho_ai::ProviderConfig::new(
     "sk-...",
-    "https://api.openai.com/v1",\n));
+    "https://api.openai.com/v1",
+));
 <span class="boring">}</span></code></pre></pre>
 <p>The model is specified per-request via <code>LlmRequest::model</code>, not in the provider config. This ensures the model always comes from the session, never from a stale config value.</p>
-<h3 id="redacted"><a class="header" href="#redacted">[REDACTED]</a></h3>
+<h3 id="authentication"><a class="header" href="#authentication">Authentication</a></h3>
 <p>When an API key is provided via <code>api_key_env</code> in config, it is sent as an <code>Authorization: Bearer &lt;key&gt;</code> header with every request. Local endpoints typically don't need this. See <a href="../providers.html">External Providers</a> for setup details.</p>
 <h3 id="provider-consent"><a class="header" href="#provider-consent">Provider consent</a></h3>
 <p>The binary (<code>rho</code>) checks whether the configured endpoint is local before connecting. Non-local endpoints (e.g., <code>api.openai.com</code>) trigger an interactive consent warning that lists the external provider(s) by name. If no local server is detected, the warning also notes this. Use <code>--accept-external-provider</code> to skip this in automated workflows, or <code>--endpoint</code> (which implies consent since the user explicitly chose the target).</p>
@@ -231,7 +233,7 @@ let service = OpenAiService::new(rho_ai::ProviderConfig::new(
 <tr><td><code>LlmRequest</code></td><td><code>model</code>, <code>messages</code>, <code>tools</code> — the full API request body</td></tr>
 <tr><td><code>StreamEvent</code></td><td>Streaming response event (<code>Text</code>, <code>Reasoning</code>, <code>ToolUseStart/Delta/Complete</code>, <code>Done</code>)</td></tr>
 <tr><td><code>AccumulatedResponse</code></td><td>Fully-accumulated response (text + tool calls + usage)</td></tr>
-<tr><td><code>FinishReason</code></td><td><code>Stop</code> (text reply), <code>ToolCalls</code>, <code>Length</code> (truncated), <code>ContentFilter</code></td></tr>
+<tr><td><code>FinishReason</code></td><td><code>Stop</code> (text reply), <code>ToolCalls</code>, <code>Length</code> (truncated), <code>ContentFilter</code>, <code>Other</code></td></tr>
 <tr><td><code>LlmUsage</code></td><td><code>prompt_tokens</code>, <code>completion_tokens</code>, <code>total_tokens</code></td></tr>
 </tbody></table>
 </div>

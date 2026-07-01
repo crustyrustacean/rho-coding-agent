@@ -185,26 +185,26 @@
     │
     ├── rho-ext ──── rho-core ──── rho-ai ──────────────
     │
-    ├── rho-tools ─────────────────────────────────────
-    │       │
-    │       └── rho-highlight (via EditFile node-splitting)
+    ├── rho-tools ── rho-highlight ── rho-core ─────────
+    │           └──── rho-memory ── rho-core ────────────
     │
-    └── rho-core ─────────────────────────────────────
-            │
+    └── rho-core ──── rho-ai ──────────────────────────
+
 rho-test-helpers ── rho-core, rho-ai ────────────────
 xtask ──────────────────────────────────────────────
 </code></pre>
 <div class="table-wrapper"><table><thead><tr><th>Crate</th><th>Depends on</th><th>Notes</th></tr></thead><tbody>
 <tr><td><code>rho</code></td><td><code>rho-core</code>, <code>rho-tools</code>, <code>rho-ext</code>, <code>rho-ai</code></td><td>Headless JSON-RPC 2.0 agent</td></tr>
+<tr><td><code>rho-ext</code></td><td><code>rho-core</code>, <code>deno_core</code>, <code>deno_ast</code></td><td>TypeScript extension runtime</td></tr>
+<tr><td><code>rho-tools</code></td><td><code>rho-core</code>, <code>rho-highlight</code>, <code>rho-memory</code></td><td>Tool implementations; highlight for node-splitting, memory for <code>MemoryTool</code></td></tr>
+<tr><td><code>rho-memory</code></td><td><code>rho-core</code></td><td>Persistent knowledge base (SQLite/FTS5)</td></tr>
+<tr><td><code>rho-highlight</code></td><td><code>rho-core</code></td><td>Tree-sitter grammar; uses core diagnostic types</td></tr>
+<tr><td><code>rho-core</code></td><td><code>rho-ai</code></td><td>Kernel — the foundation everything else builds on</td></tr>
+<tr><td><code>rho-ai</code></td><td>none (external only)</td><td>Unified LLM provider abstraction</td></tr>
+<tr><td><code>rho-test-helpers</code></td><td><code>rho-core</code>, <code>rho-ai</code></td><td>Dev-only — provides mocks and fixtures for testing</td></tr>
+<tr><td><code>xtask</code></td><td>none (cargo integration)</td><td>Dev-only — task runner, no rho crate dependencies</td></tr>
 </tbody></table>
 </div>
-<p>| <code>rho-ext</code> | <code>rho-core</code>, <code>deno_core</code>, <code>deno_ast</code> | TypeScript extension runtime |
-| <code>rho-tools</code> | <code>rho-core</code>, <code>rho-highlight</code> | Tool implementations use core types and highlight for node-splitting |
-| <code>rho-highlight</code> | none (external only) | Tree-sitter grammar — standalone, no rho dependencies |
-| <code>rho-core</code> | <code>rho-ai</code> | Kernel — the foundation everything else builds on |
-| <code>rho-ai</code> | none (external only) | Unified LLM provider abstraction |
-| <code>rho-test-helpers</code> | <code>rho-core</code>, <code>rho-ai</code> | Dev-only — provides mocks and fixtures for testing |
-| <code>xtask</code> | none (cargo integration) | Dev-only — task runner, no rho crate dependencies |</p>
 <h2 id="key-external-dependencies"><a class="header" href="#key-external-dependencies">Key external dependencies</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Dependency</th><th>Used by</th><th>Purpose</th></tr></thead><tbody>
 <tr><td><code>reqwest</code></td><td><code>rho-ai</code></td><td>HTTP client for model API</td></tr>
@@ -219,6 +219,7 @@ xtask ────────────────────────�
 <tr><td><code>deno_ast</code></td><td><code>rho-ext</code></td><td>TypeScript transpilation</td></tr>
 <tr><td><code>thiserror</code></td><td><code>rho-core</code>, <code>rho-ext</code></td><td>Error type derivation</td></tr>
 <tr><td><code>futures</code></td><td><code>rho-ai</code></td><td>Stream traits for SSE</td></tr>
+<tr><td><code>sqlx</code></td><td><code>rho-memory</code></td><td>SQLite + FTS5 for the knowledge base</td></tr>
 </tbody></table>
 </div>
 <h2 id="what-this-buys-you"><a class="header" href="#what-this-buys-you">What this buys you</a></h2>

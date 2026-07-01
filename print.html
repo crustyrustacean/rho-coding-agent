@@ -264,8 +264,6 @@ rho --ephemeral          # in-memory mode, no session file
 <h2 id="cli-flags-rho"><a class="header" href="#cli-flags-rho">CLI flags (<code>rho</code>)</a></h2>
 <p>The <code>rho</code> binary runs in headless JSON-RPC 2.0 mode.</p>
 <div class="table-wrapper"><table><thead><tr><th>Flag</th><th>Description</th></tr></thead><tbody>
-<tr><td>Flag</td><td>Description</td></tr>
-<tr><td>---</td><td>---</td></tr>
 <tr><td><code>-m, --model &lt;MODEL&gt;</code></td><td>Model identifier (uses config default if omitted)</td></tr>
 <tr><td><code>-s, --system &lt;SYSTEM&gt;</code></td><td>Override the system prompt</td></tr>
 <tr><td><code>--compact</code></td><td>Use a minimal system prompt for small-context models</td></tr>
@@ -303,6 +301,8 @@ rho --ephemeral          # in-memory mode, no session file
 ├─────────────────────────────────────────────────┤
 │                   rho-tools                      │
 ├─────────────────────────────────────────────────┤
+│                   rho-memory                     │
+├─────────────────────────────────────────────────┤
 │                   rho-highlight                  │
 ├─────────────────────────────────────────────────┤
 │                   rho-core                       │
@@ -310,7 +310,7 @@ rho --ephemeral          # in-memory mode, no session file
 │                   rho-ai                         │
 └─────────────────────────────────────────────────┘
 </code></pre>
-<p>The rule is simple: a crate may only depend on crates below it in the stack. <code>rho-ai</code> and <code>rho-highlight</code> depend on nothing but external libraries.</p>
+<p>The rule is simple: a crate may only depend on crates below it in the stack. <code>rho-ai</code> depends on nothing but external libraries; every other crate eventually depends on <code>rho-core</code> (and <code>rho-core</code> depends on <code>rho-ai</code>).</p>
 <p>See also:</p>
 <ul>
 <li><a href="./architecture/workspace-layout.html">Workspace Layout</a></li>
@@ -345,8 +345,11 @@ rho --ephemeral          # in-memory mode, no session file
 │       ├── openai.rs        # `OpenAiService` — OpenAI-compatible HTTP + SSE
 │       ├── sse.rs           # Server-sent event parser
 │       ├── retry.rs         # Exponential backoff retry logic
+│       ├── catalog.rs       # `Catalog`, `Model`, `ModelCost` — model registry + pricing
+│       ├── catalog_generated.rs # Generated model list (`cargo xtask generate-models`)
 │       ├── types.rs         # `LlmMessage`, `LlmRequest`, `StreamEvent`, `AccumulatedResponse`
 │       └── error.rs         # `ProviderError`
+│   └── model-overrides.json # Manual catalog overrides (thinking flags, compatibility)
 ├── rho-ext/                # TypeScript extension runtime (V8/deno-core)
 │   └── src/
 │       ├── lib.rs          # Re-exports: `ExtensionLoader`, `DenoTool`, `DenoObserver`, etc.
@@ -411,8 +414,17 @@ rho --ephemeral          # in-memory mode, no session file
 │       │   ├── tree.rs         # `path_to_root`, `branch_to`, `branch_with_summary`
 │       │   └── truncation.rs   # Bounded truncation, char boundary, footer
 │       ├── shell.rs         # `ShellExecutor` trait, `ShellOutput`
-│       ├── stream.rs        # `StreamChunk`, `StreamEvent`, streaming response types
+│       ├── stream.rs        # `StreamChunk` — unified streaming event type
 │       └── tool.rs          # `Tool` trait, `ToolRegistry`, `ToolRisk`, `ToolOutcome`
+├── rho-memory/             # Persistent knowledge base (SQLite/FTS5)
+│   ├── src/
+│   │   ├── lib.rs           # Re-exports: `Memory`, `Document`, `SearchResult`
+│   │   ├── brain.rs         # `Memory` — public knowledge-base API
+│   │   ├── db.rs            # `Database` — raw SQLite operations
+│   │   ├── models.rs        # `Document`, `SearchResult`, `CreateRequest`, `Stats`
+│   │   └── error.rs         # Knowledge-base errors
+│   └── migrations/
+│       └── 001_initial.sql  # Schema: documents, FTS5, triggers
 ├── rho-highlight/           # Tree-sitter syntax analysis
 │   └── src/
 │       ├── lib.rs           # Re-exports
@@ -424,32 +436,34 @@ rho --ephemeral          # in-memory mode, no session file
 ├── rho-tools/               # Built-in tool implementations
 │   └── src/
 │       ├── lib.rs           # `register_all()`
-│       ├── files.rs         # `ReadFile`, `WriteFile`, `ListDir`, `EditFile`
+│       ├── files.rs         # Re-exports file tools from `file_ops` + `edit`
+│       ├── file_ops.rs      # `ReadFile`, `WriteFile`, `BatchRead`, `ListDir`
+│       ├── edit.rs          # `EditFile` — hashline-anchored editing
 │       ├── hashline.rs      # Hashline content-addressed editing
 │       ├── shell.rs         # `RunCommand`, `PowerShellExecutor`, `CommandDenylist`
 │       ├── crates_io.rs     # `CratesIoLookup`
 │       ├── session_summary.rs # `SessionSummary` — compressed session history tool
+│       ├── memory.rs        # `MemoryTool` — knowledge base (via `rho-memory`)
 │       ├── error.rs         # Tool error types
-│       └── rust/
-│           ├── mod.rs       # Rust tools module
+│       └── rust/            # Rust tooling (module root: `rust.rs`)
 │           ├── tools.rs     # `CargoCheck`, `CargoClippy`, `CargoTest`, `CargoFix`, `RustcExplain`
-│           ├── rustdoc.rs   # `RustdocLookup` — local rustdoc HTML parsing
+│           ├── rustdoc.rs   # `RustdocTool` — local rustdoc HTML parsing
 │           ├── parse.rs     # NDJSON output parsing
 │           ├── convert.rs   # Diagnostic conversion
-│           ├── format.rs     # Diagnostic formatting
+│           ├── format.rs    # Diagnostic formatting
 │           └── types.rs     # Shared Rust tool types
 ├── rho-test-helpers/        # Shared test infrastructure (dev-only)
 │   └── src/lib.rs           # `MockChatClient`, `TestProvider`, response builders, helpers
 └── xtask/                   # Dev task runner
     └── src/
         ├── main.rs          # CLI dispatch
-        └── tasks.rs         # `ci`, `test`, `build`, `release`, `changelog`, `fmt`, `lint`, `run`, `clean`, `status`, `schema` tasks
+        └── tasks.rs         # `ci`, `test`, `build`, `release`, `changelog`, `fmt`, `fmt-fix`, `lint`, `run`, `clean`, `status`, `schema`, `generate-models` tasks
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="crate-responsibilities"><a class="header" href="#crate-responsibilities">Crate Responsibilities</a></h1>
 <h2 id="rho-binary"><a class="header" href="#rho-binary"><code>rho</code> (binary)</a></h2>
 <p>The headless JSON-RPC 2.0 agent: CLI argument parsing, tool wiring, extension loading, and system prompt assembly. Reads newline-delimited JSON-RPC 2.0 requests from stdin and writes responses/notifications to stdout. Diagnostic output goes to stderr.</p>
 <p>Constructs a <code>Session</code>, connects to the model via a <code>Provider</code>, and drives the agent loop. Handles provider consent checks, model resolution, startup budget diagnostics, shell-specific prompt extensions, session discovery, extension loading, and live observer output via <code>RpcObserver</code>.</p>
-<p>The RPC implementation is generic over I/O (<code>run_rpc_on&lt;R, W&gt;</code>) so the in-process integration tests can inject canned stdin and capture stdout without touching real file descriptors. Wire-format types in <code>rpc_wire.rs</code> give every method param, result, and notification a typed Rust struct. See <a href="architecture/../rpc-mode.html">RPC Mode</a> for the full protocol reference and <a href="architecture/../../rpc-schema/openrpc.json"><code>OpenRPC</code> schema</a> for machine-readable API discovery.</p>
+<p>The RPC implementation is decoupled from I/O via the <code>Transport</code> trait (<code>rho/src/transport.rs</code>); <code>StdioTransport</code> (newline-delimited JSON over stdin/stdout) is the default, and in-process tests inject a <code>StdioTransport</code> wired to canned readers and captured writers. Wire-format types in <code>rpc_wire.rs</code> give every method param, result, and notification a typed Rust struct. See <a href="architecture/../rpc-mode.html">RPC Mode</a> for the full protocol reference and <a href="architecture/../../rpc-schema/openrpc.json"><code>OpenRPC</code> schema</a> for machine-readable API discovery.</p>
 <h2 id="rho-core"><a class="header" href="#rho-core"><code>rho-core</code></a></h2>
 <p>The kernel: agent loop state machine (with <code>AgentObserver</code> for live output, <code>CollectingObserver</code> for structured tool call recording, phase tracking, auto-compaction) returning <code>AgentResult</code> with full structured output (reply, iterations, token usage, tool call history, duration, finish reason, context stats), session management (tree persistence, graduated resolution, phase-aware compaction, LLM compaction, selective eviction, branching, session discovery), context window management (sliding window, token estimation, enhanced <code>ContextStats</code> with role/resolution/phase token distributions), tool registry and traits, approval gates, secret redaction, file sandbox, provider abstraction (<code>Provider</code> trait, <code>ProviderRegistry</code> with named presets and additive config merge), LLM client (<code>RhoAiClient</code>), configuration loading (two-tier TOML with provider preset resolution), and all shared types.</p>
 <p>Key types: <code>Session</code>, <code>AgentConfig</code>, <code>AgentObserver</code>, <code>NopObserver</code>, <code>CollectingObserver</code>, <code>AgentResult</code>, <code>TokenUsage</code>, <code>ToolCallRecord</code>, <code>ToolCallOutcome</code>, <code>LoopFinishReason</code>, <code>LoopParams</code>, <code>ContextStats</code>, <code>RoleTokenDistribution</code>, <code>ResolutionTokenDistribution</code>, <code>PhaseTokenDistribution</code>, <code>SessionMetadata</code>, <code>ToolRegistry</code>, <code>Tool</code>, <code>Provider</code>, <code>ProviderRegistry</code>, <code>ContextManager</code>, <code>TokenBudget</code>, <code>SandboxRoot</code>, <code>Redactor</code>, <code>RhoConfig</code>, <code>SessionPhase</code>, <code>CompactionPhase</code>, <code>CompactionStrategy</code>, <code>LlmCompactionStrategy</code>, <code>MechanicalCompactionStrategy</code>, <code>CommandDenylist</code>.</p>
@@ -459,12 +473,17 @@ rho --ephemeral          # in-memory mode, no session file
 <h2 id="rho-tools"><a class="header" href="#rho-tools"><code>rho-tools</code></a></h2>
 <p>Built-in tool implementations:</p>
 <ul>
-<li><strong>File tools:</strong> <code>ReadFile</code>, <code>WriteFile</code>, <code>ListDir</code>, <code>EditFile</code></li>
+<li><strong>File tools:</strong> <code>ReadFile</code>, <code>BatchRead</code>, <code>WriteFile</code>, <code>ListDir</code>, <code>EditFile</code></li>
 <li><strong>Shell tools:</strong> <code>RunCommand</code>, <code>PowerShellExecutor</code>, <code>CommandDenylist</code></li>
 <li><strong>Rust tools:</strong> <code>CargoCheck</code>, <code>CargoClippy</code>, <code>CargoTest</code>, <code>CargoFix</code>, <code>RustcExplain</code></li>
 <li><strong>Lookup tools:</strong> <code>RustdocTool</code>, <code>CratesIoLookup</code></li>
+<li><strong>Session tools:</strong> <code>SessionSummary</code> (compressed turn history for context recovery)</li>
+<li><strong>Knowledge base:</strong> <code>MemoryTool</code> (project-local docs via <code>rho-memory</code>, gated by <code>[memory] enabled</code>)</li>
 </ul>
 <p>Each implements the <code>Tool</code> trait from <code>rho-core</code>.</p>
+<h2 id="rho-memory"><a class="header" href="#rho-memory"><code>rho-memory</code></a></h2>
+<p>Persistent knowledge base for project-local docs: full-text search (SQLite FTS5), content deduplication, and soft deletes. Exposed to the agent through the <code>MemoryTool</code> in <code>rho-tools</code>. Storage lives at <code>&lt;project-root&gt;/.rho/memory.db</code>. Gated by the <code>[memory]</code> config section (<code>enabled = true</code>).</p>
+<p>Key types: <code>Memory</code>, <code>Database</code>, <code>Document</code>, <code>SearchResult</code>.</p>
 <h2 id="rho-ext"><a class="header" href="#rho-ext"><code>rho-ext</code></a></h2>
 <p>TypeScript extension runtime (powered by <code>deno_core</code> and V8). Enables user-authored extensions that add tools, hooks, and commands to rho.</p>
 <ul>
@@ -482,33 +501,33 @@ rho --ephemeral          # in-memory mode, no session file
 <p>Shared test infrastructure (dev-only): <code>MockChatClient</code>, <code>TestProvider</code>, <code>MockShellExecutor</code>, <code>AutoApproveGate</code>, <code>AutoDenyGate</code>, <code>FixedResponseTool</code>, <code>FailingTool</code>, <code>FileTestEnv</code>, <code>in_memory_session</code>, <code>empty_trust_store</code>, <code>detect_shell</code>, <code>tempdir_with_sandbox</code>, <code>assert_no_orphan_tool_results</code>. Depends on <code>rho-core</code> and <code>rho-ai</code>. Never published.</p>
 <p><code>TestProvider</code> wraps a <code>MockChatClient</code> as a <code>Provider</code> impl, enabling integration tests that need a <code>ProviderRegistry</code> without a live model server.</p>
 <h2 id="xtask"><a class="header" href="#xtask"><code>xtask</code></a></h2>
-<p>Dev task runner: <code>cargo xtask ci</code> (fmt → lint → build → test), <code>cargo xtask test</code>, <code>cargo xtask build</code>, <code>cargo xtask release</code>, <code>cargo xtask changelog</code>, <code>cargo xtask fmt</code>, <code>cargo xtask run</code>, <code>cargo xtask clean</code>, <code>cargo xtask status</code>, <code>cargo xtask schema</code>. Tests use <code>cargo-nextest</code> when available, falling back to <code>cargo test</code>.</p>
+<p>Dev task runner: <code>cargo xtask ci</code> (fmt → lint → build → test), <code>cargo xtask test</code>, <code>cargo xtask build</code>, <code>cargo xtask release</code>, <code>cargo xtask changelog</code>, <code>cargo xtask fmt</code>, <code>cargo xtask fmt-fix</code>, <code>cargo xtask run</code>, <code>cargo xtask clean</code>, <code>cargo xtask status</code>, <code>cargo xtask schema</code>, <code>cargo xtask generate-models</code>. Tests use <code>cargo-nextest</code> when available, falling back to <code>cargo test</code>.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="dependency-flow"><a class="header" href="#dependency-flow">Dependency Flow</a></h1>
 <p>Dependencies flow downward only. A crate may depend on crates below it in the stack but never above.</p>
 <pre><code>rho (binary) ──────────────────────────────────────────
     │
     ├── rho-ext ──── rho-core ──── rho-ai ──────────────
     │
-    ├── rho-tools ─────────────────────────────────────
-    │       │
-    │       └── rho-highlight (via EditFile node-splitting)
+    ├── rho-tools ── rho-highlight ── rho-core ─────────
+    │           └──── rho-memory ── rho-core ────────────
     │
-    └── rho-core ─────────────────────────────────────
-            │
+    └── rho-core ──── rho-ai ──────────────────────────
+
 rho-test-helpers ── rho-core, rho-ai ────────────────
 xtask ──────────────────────────────────────────────
 </code></pre>
 <div class="table-wrapper"><table><thead><tr><th>Crate</th><th>Depends on</th><th>Notes</th></tr></thead><tbody>
 <tr><td><code>rho</code></td><td><code>rho-core</code>, <code>rho-tools</code>, <code>rho-ext</code>, <code>rho-ai</code></td><td>Headless JSON-RPC 2.0 agent</td></tr>
+<tr><td><code>rho-ext</code></td><td><code>rho-core</code>, <code>deno_core</code>, <code>deno_ast</code></td><td>TypeScript extension runtime</td></tr>
+<tr><td><code>rho-tools</code></td><td><code>rho-core</code>, <code>rho-highlight</code>, <code>rho-memory</code></td><td>Tool implementations; highlight for node-splitting, memory for <code>MemoryTool</code></td></tr>
+<tr><td><code>rho-memory</code></td><td><code>rho-core</code></td><td>Persistent knowledge base (SQLite/FTS5)</td></tr>
+<tr><td><code>rho-highlight</code></td><td><code>rho-core</code></td><td>Tree-sitter grammar; uses core diagnostic types</td></tr>
+<tr><td><code>rho-core</code></td><td><code>rho-ai</code></td><td>Kernel — the foundation everything else builds on</td></tr>
+<tr><td><code>rho-ai</code></td><td>none (external only)</td><td>Unified LLM provider abstraction</td></tr>
+<tr><td><code>rho-test-helpers</code></td><td><code>rho-core</code>, <code>rho-ai</code></td><td>Dev-only — provides mocks and fixtures for testing</td></tr>
+<tr><td><code>xtask</code></td><td>none (cargo integration)</td><td>Dev-only — task runner, no rho crate dependencies</td></tr>
 </tbody></table>
 </div>
-<p>| <code>rho-ext</code> | <code>rho-core</code>, <code>deno_core</code>, <code>deno_ast</code> | TypeScript extension runtime |
-| <code>rho-tools</code> | <code>rho-core</code>, <code>rho-highlight</code> | Tool implementations use core types and highlight for node-splitting |
-| <code>rho-highlight</code> | none (external only) | Tree-sitter grammar — standalone, no rho dependencies |
-| <code>rho-core</code> | <code>rho-ai</code> | Kernel — the foundation everything else builds on |
-| <code>rho-ai</code> | none (external only) | Unified LLM provider abstraction |
-| <code>rho-test-helpers</code> | <code>rho-core</code>, <code>rho-ai</code> | Dev-only — provides mocks and fixtures for testing |
-| <code>xtask</code> | none (cargo integration) | Dev-only — task runner, no rho crate dependencies |</p>
 <h2 id="key-external-dependencies"><a class="header" href="#key-external-dependencies">Key external dependencies</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Dependency</th><th>Used by</th><th>Purpose</th></tr></thead><tbody>
 <tr><td><code>reqwest</code></td><td><code>rho-ai</code></td><td>HTTP client for model API</td></tr>
@@ -523,6 +542,7 @@ xtask ────────────────────────�
 <tr><td><code>deno_ast</code></td><td><code>rho-ext</code></td><td>TypeScript transpilation</td></tr>
 <tr><td><code>thiserror</code></td><td><code>rho-core</code>, <code>rho-ext</code></td><td>Error type derivation</td></tr>
 <tr><td><code>futures</code></td><td><code>rho-ai</code></td><td>Stream traits for SSE</td></tr>
+<tr><td><code>sqlx</code></td><td><code>rho-memory</code></td><td>SQLite + FTS5 for the knowledge base</td></tr>
 </tbody></table>
 </div>
 <h2 id="what-this-buys-you"><a class="header" href="#what-this-buys-you">What this buys you</a></h2>
@@ -614,18 +634,31 @@ Idle (done)
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>pub trait AgentObserver: Send + Sync {
-    fn on_state_change(&amp;self, _state: AgentState) {}
-    fn on_text_delta(&amp;self, _delta: &amp;str) {}
-    fn on_reasoning_delta(&amp;self, _delta: &amp;str) {}
-    fn on_tool_call(&amp;self, _name: &amp;str, _arguments: &amp;str) {}
-    fn on_tool_result(&amp;self, _name: &amp;str, _result: &amp;ToolResult) {}
-    fn on_tool_denied(&amp;self, _name: &amp;str) {}
-    fn on_approval_requested(&amp;self, _tool_name: &amp;str, _risk: ToolRisk) {}
+    async fn on_state_change(&amp;self, _state: AgentState) {}
+    async fn on_text_delta(&amp;self, _delta: &amp;str) {}
+    async fn on_reasoning_delta(&amp;self, _delta: &amp;str) {}
+    async fn on_tool_call(&amp;self, _name: &amp;str, _arguments: &amp;str) {}
+    async fn on_tool_result(&amp;self, _name: &amp;str, _result: &amp;ToolResult) {}
+    async fn on_tool_denied(&amp;self, _name: &amp;str) {}
+    async fn on_approval_requested(&amp;self, _tool_name: &amp;str, _risk: ToolRisk) {}
 
     /// Called before a tool executes. Return Block to prevent execution.
     /// Used by extensions to implement approval gates and safety filters.
+    /// Synchronous because it is a pure policy decision (no I/O).
     fn on_tool_call_intercept(&amp;self, _name: &amp;str, _args: &amp;str) -&gt; Option&lt;InterceptResult&gt; {
         None
+    }
+
+    /// A model response completed and its token usage was accumulated.
+    /// Fires once per iteration that hit the model, carrying the per-iteration
+    /// delta and a live context snapshot — useful for rendering a live
+    /// context/cost gauge during long multi-iteration turns.
+    async fn on_usage(
+        &amp;self,
+        _iteration: u32,
+        _usage: &amp;IterationUsage,
+        _context: &amp;crate::session::ContextStats,
+    ) {
     }
 }
 <span class="boring">}</span></code></pre></pre>
@@ -712,9 +745,10 @@ let result = registry.execute(&amp;call, cancel).await?;
 <span class="boring">}</span></code></pre></pre>
 <p>Duplicate tool names panic at registration (fast-fail, programming error). Execution returns <code>RhoError::ToolNotFound</code> if the model requests an unregistered tool.</p>
 <h2 id="built-in-tools"><a class="header" href="#built-in-tools">Built-in tools</a></h2>
-<p>rho ships with 13 built-in tools, all registered in <code>rho-tools::register_all()</code>:</p>
+<p>rho ships with 14 built-in tools, all registered in <code>rho-tools::register_all()</code> (plus <code>memory</code>, registered only when <code>[memory] enabled = true</code>):</p>
 <div class="table-wrapper"><table><thead><tr><th>Tool</th><th>Risk</th><th>Description</th></tr></thead><tbody>
 <tr><td><code>read_file</code></td><td>Read</td><td>Read file contents, wrapped in <code>&lt;context&gt;</code> framing</td></tr>
+<tr><td><code>batch_read</code></td><td>Read</td><td>Read multiple files at once (up to 20 paths)</td></tr>
 <tr><td><code>write_file</code></td><td>Write</td><td>Create or overwrite files within the sandbox</td></tr>
 <tr><td><code>list_dir</code></td><td>Read</td><td><code>.gitignore</code>-aware directory listing</td></tr>
 <tr><td><code>edit_file</code></td><td>Write</td><td>Hashline-anchor replacements with node-splitting validation</td></tr>
@@ -727,6 +761,7 @@ let result = registry.execute(&amp;call, cancel).await?;
 <tr><td><code>rustdoc_lookup</code></td><td>Read</td><td>Look up Rust standard library documentation (local rustdoc)</td></tr>
 <tr><td><code>crates_io_lookup</code></td><td>Read</td><td>Search and inspect crate metadata on crates.io</td></tr>
 <tr><td><code>session_summary</code></td><td>Read</td><td>Compressed numbered history of user requests and outcomes</td></tr>
+<tr><td><code>memory</code></td><td>Read</td><td>Store, search, and manage project-local knowledge (via <code>rho-memory</code>)</td></tr>
 </tbody></table>
 </div>
 <h2 id="extension-tools"><a class="header" href="#extension-tools">Extension tools</a></h2>
@@ -756,16 +791,18 @@ pub trait LlmService: Send + Sync {
 
 // Default: localhost
 let service = OpenAiService::new(rho_ai::ProviderConfig::new(
-    "",  // no API key for local
-    "http://localhost:1234/v1",\n));
+    "",                          // no API key for local
+    "http://localhost:1234/v1",  // base URL
+));
 
 // Custom endpoint with API key
 let service = OpenAiService::new(rho_ai::ProviderConfig::new(
     "sk-...",
-    "https://api.openai.com/v1",\n));
+    "https://api.openai.com/v1",
+));
 <span class="boring">}</span></code></pre></pre>
 <p>The model is specified per-request via <code>LlmRequest::model</code>, not in the provider config. This ensures the model always comes from the session, never from a stale config value.</p>
-<h3 id="redacted"><a class="header" href="#redacted">[REDACTED]</a></h3>
+<h3 id="authentication"><a class="header" href="#authentication">Authentication</a></h3>
 <p>When an API key is provided via <code>api_key_env</code> in config, it is sent as an <code>Authorization: Bearer &lt;key&gt;</code> header with every request. Local endpoints typically don't need this. See <a href="core-concepts/../providers.html">External Providers</a> for setup details.</p>
 <h3 id="provider-consent"><a class="header" href="#provider-consent">Provider consent</a></h3>
 <p>The binary (<code>rho</code>) checks whether the configured endpoint is local before connecting. Non-local endpoints (e.g., <code>api.openai.com</code>) trigger an interactive consent warning that lists the external provider(s) by name. If no local server is detected, the warning also notes this. Use <code>--accept-external-provider</code> to skip this in automated workflows, or <code>--endpoint</code> (which implies consent since the user explicitly chose the target).</p>
@@ -785,7 +822,7 @@ let service = OpenAiService::new(rho_ai::ProviderConfig::new(
 <tr><td><code>LlmRequest</code></td><td><code>model</code>, <code>messages</code>, <code>tools</code> — the full API request body</td></tr>
 <tr><td><code>StreamEvent</code></td><td>Streaming response event (<code>Text</code>, <code>Reasoning</code>, <code>ToolUseStart/Delta/Complete</code>, <code>Done</code>)</td></tr>
 <tr><td><code>AccumulatedResponse</code></td><td>Fully-accumulated response (text + tool calls + usage)</td></tr>
-<tr><td><code>FinishReason</code></td><td><code>Stop</code> (text reply), <code>ToolCalls</code>, <code>Length</code> (truncated), <code>ContentFilter</code></td></tr>
+<tr><td><code>FinishReason</code></td><td><code>Stop</code> (text reply), <code>ToolCalls</code>, <code>Length</code> (truncated), <code>ContentFilter</code>, <code>Other</code></td></tr>
 <tr><td><code>LlmUsage</code></td><td><code>prompt_tokens</code>, <code>completion_tokens</code>, <code>total_tokens</code></td></tr>
 </tbody></table>
 </div>
@@ -1484,6 +1521,12 @@ enabled = true
 # Additional regex patterns to redact
 custom_patterns = ["my-key-[a-zA-Z0-9]{32}"]
 
+[memory]
+# Enable the project-local knowledge base (MemoryTool). Default: false.
+# When enabled, rho-memory opens &lt;project-root&gt;/.rho/memory.db (SQLite + FTS5)
+# and the `memory` tool becomes available to the model.
+enabled = false
+
 [system_prompt]
 # Additional prompt fragments appended after the base prompt
 extensions = ["Always use Rust idioms."]
@@ -1520,17 +1563,17 @@ api_key_env = "OPENAI_API_KEY"
 <p>rho can connect to any OpenAI-compatible endpoint (OpenAI, Groq, OpenRouter, DeepInfra, etc.). See the <a href="./providers.html">External Providers</a> page for setup instructions.</p>
 <h2 id="cli-overrides"><a class="header" href="#cli-overrides">CLI overrides</a></h2>
 <p>All config values can be overridden by CLI flags. CLI flags take highest priority:</p>
-<div class="table-wrapper"><table><thead><tr><th>Config field</th><th>CLI flag</th></tr></thead><tbody>
-<tr><td><code>agent.model</code></td><td><code>--model</code></td></tr>
-<tr><td><code>agent.provider</code></td><td>—</td></tr>
-<tr><td><code>agent.token_budget</code></td><td><code>--token-budget</code></td></tr>
-<tr><td><code>provider.endpoint</code></td><td><code>--endpoint</code></td></tr>
-<tr><td><code>provider.api_key_env</code></td><td><code>--api-key-env</code></td></tr>
-<tr><td><code>agent.max_iterations</code></td><td><code>--max-iterations</code></td></tr>
-<tr><td>System prompt</td><td><code>--system</code></td></tr>
-<tr><td>Compact prompt</td><td><code>--compact</code></td></tr>
-<tr><td>Provider consent</td><td><code>--accept-external-provider</code></td></tr>
-<tr><td>Session resume</td><td><code>--session</code> or <code>-c</code></td></tr>
+<div class="table-wrapper"><table><thead><tr><th>Config field</th><th>CLI flag</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>agent.model</code></td><td><code>--model</code></td><td>Model identifier</td></tr>
+<tr><td><code>agent.provider</code></td><td>—</td><td>Provider name (uses its <code>default_model</code>)</td></tr>
+<tr><td><code>agent.token_budget</code></td><td><code>--token-budget</code></td><td>Context window token budget</td></tr>
+<tr><td><code>provider.endpoint</code></td><td><code>--endpoint</code></td><td>API endpoint URL</td></tr>
+<tr><td><code>provider.api_key_env</code></td><td><code>--api-key-env</code></td><td>Env var holding the API key</td></tr>
+<tr><td><code>agent.max_iterations</code></td><td><code>--max-iterations</code></td><td>Max agent loop iterations</td></tr>
+<tr><td>System prompt</td><td><code>--system</code></td><td>Override the system prompt</td></tr>
+<tr><td>Compact prompt</td><td><code>--compact</code></td><td>Use the minimal system prompt</td></tr>
+<tr><td>Provider consent</td><td><code>--accept-external-provider</code></td><td>Skip consent warning</td></tr>
+<tr><td>Session resume</td><td><code>--session</code> / <code>-c</code></td><td>Resume a previous session</td></tr>
 </tbody></table>
 </div><div style="break-before: page; page-break-before: always;"></div><h1 id="external-providers-1"><a class="header" href="#external-providers-1">External Providers</a></h1>
 <p>rho's <code>OpenAiService</code> (in <code>rho-ai</code>) speaks the <strong>OpenAI Chat Completions wire format</strong> (<code>POST /v1/chat/completions</code>). It works with any endpoint that implements this format — including local servers (LM Studio, Ollama) and external providers that offer an OpenAI-compatible API.</p>
@@ -1814,6 +1857,8 @@ type = "openrouter"
 <tr><td><code>listExtensions</code></td><td>—</td><td>List loaded extensions and tools</td></tr>
 <tr><td><code>reloadExtensions</code></td><td>—</td><td>Reload extensions from disk</td></tr>
 <tr><td><code>compact</code></td><td>—</td><td>Trigger context compaction</td></tr>
+<tr><td><code>resumeSession</code></td><td><code>{path: string}</code></td><td>Resume a previous session from JSONL</td></tr>
+<tr><td><code>listTools</code></td><td>—</td><td>List registered tools with schemas and risk levels</td></tr>
 <tr><td><code>approvalResponse</code></td><td><code>{approved: boolean}</code></td><td>Respond to an <code>approval/request</code> notification</td></tr>
 </tbody></table>
 </div>
@@ -1875,7 +1920,7 @@ type = "openrouter"
 </ul>
 <p>Use <code>getSessionStats</code> to monitor context usage and <code>compact</code> to free space when the context fills up.</p>
 <h2 id="testing"><a class="header" href="#testing">Testing</a></h2>
-<p>The RPC core loop is generic over I/O (<code>run_rpc_on&lt;R, W&gt;</code>), enabling in-process integration tests that inject canned stdin via <code>Cursor&lt;Vec&lt;u8&gt;&gt;</code> and capture stdout without touching real file descriptors. Tests use <code>TestProvider</code> (from <code>rho-test-helpers</code>) to wrap a <code>MockChatClient</code> as a <code>Provider</code> and construct <code>App</code> directly, bypassing CLI startup. See <a href="./development/testing.html">Testing</a> for details.</p>
+<p>The RPC dispatch loop is decoupled from I/O via the <code>Transport</code> trait (<code>rho/src/transport.rs</code>). <code>StdioTransport</code> (newline-delimited JSON over stdin/stdout) is the default; in-process integration tests inject a <code>StdioTransport</code> wired to canned <code>Cursor&lt;Vec&lt;u8&gt;&gt;</code> readers and captured writers, without touching real file descriptors. Tests use <code>TestProvider</code> (from <code>rho-test-helpers</code>) to wrap a <code>MockChatClient</code> as a <code>Provider</code> and construct <code>App</code> directly, bypassing CLI startup. See <a href="./development/testing.html">Testing</a> for details.</p>
 <p>Run <code>cargo xtask schema</code> to update the version in the <code>OpenRPC</code> schema after a release.</p>
 <h3 id="example-test-session"><a class="header" href="#example-test-session">Example test session</a></h3>
 <pre><code class="language-text">stdin:  {"jsonrpc":"2.0","method":"prompt","params":{"message":"say hello"},"id":1}
@@ -2125,11 +2170,9 @@ cargo xtask test -p rho-core -- --nocapture  # Single crate
 <tr><td>Tool integration tests</td><td><code>rho-tools/tests/tool_tests.rs</code></td><td>Tool execution, sandbox enforcement, denylist</td></tr>
 <tr><td>Shell executor tests</td><td><code>rho-tools/tests/shell_executor_tests.rs</code></td><td>Shell command execution, path normalization</td></tr>
 <tr><td>Extension unit tests</td><td><code>rho-ext/src/*.rs</code> (<code>#[cfg(test)] mod tests</code>)</td><td>Runtime spawning, manifest parsing, discovery, transpilation, DenoTool, DenoObserver, host ops, module loader</td></tr>
-<tr><td>Eval unit tests</td><td><code>rho-eval/src/tasks.rs</code></td><td>Task verification logic (pass/fail/error)</td></tr>
-<tr><td>Bench unit tests</td><td><code>rho-bench/src/*.rs</code></td><td>Harness config, display formatting, persistence</td></tr>
 </tbody></table>
 </div>
-<p>RPC integration tests live in <code>rho/src/rpc.rs</code> (not <code>rho/tests/</code>) because <code>App</code>'s fields are <code>pub(crate)</code>. They use <code>TestProvider</code> to wrap a <code>MockChatClient</code> as a <code>Provider</code> and construct <code>App</code> directly, bypassing the full CLI startup sequence. The RPC core loop is generic over I/O (<code>run_rpc_on&lt;R, W&gt;</code>), so tests inject <code>Cursor&lt;Vec&lt;u8&gt;&gt;</code> for both stdin and stdout.</p>
+<p>RPC integration tests live in <code>rho/src/rpc.rs</code> (not <code>rho/tests/</code>) because <code>App</code>'s fields are <code>pub(crate)</code>. They use <code>TestProvider</code> to wrap a <code>MockChatClient</code> as a <code>Provider</code> and construct <code>App</code> directly, bypassing the full CLI startup sequence. The RPC dispatch loop is decoupled from I/O via the <code>Transport</code> trait (<code>rho/src/transport.rs</code>); tests inject a <code>StdioTransport</code> wired to <code>Cursor&lt;Vec&lt;u8&gt;&gt;</code> readers and captured writers for both stdin and stdout.</p>
 <h2 id="test-helpers-rho-test-helpers"><a class="header" href="#test-helpers-rho-test-helpers">Test helpers (<code>rho-test-helpers</code>)</a></h2>
 <p><code>rho-test-helpers</code> provides the shared infrastructure that all test layers use:</p>
 <h3 id="mocks"><a class="header" href="#mocks">Mocks</a></h3>
@@ -2173,7 +2216,7 @@ cargo xtask test -p rho-core -- --nocapture  # Single crate
 <tr><td>Denylist</td><td>High</td><td>Each denied command and substring pattern</td></tr>
 <tr><td>Context management</td><td>High</td><td>Eviction, pinning, compaction rendering</td></tr>
 <tr><td>Integration</td><td>Medium</td><td>Agent loop with realistic message sequences</td></tr>
-<tr><td>Scenarios</td><td>Low (5)</td><td>End-to-end validation against real model — driven via <code>rho-bench</code></td></tr>
+<tr><td>Scenarios</td><td>Low</td><td>End-to-end validation against real model servers</td></tr>
 </tbody></table>
 </div><div style="break-before: page; page-break-before: always;"></div><h1 id="dependency-philosophy"><a class="header" href="#dependency-philosophy">Dependency Philosophy</a></h1>
 <p>rho is conservative about adding external dependencies. Every new dependency is a supply-chain commitment that affects build times, binary size, audit surface, and maintenance burden.</p>
@@ -2219,14 +2262,14 @@ cargo xtask test -p rho-core -- --nocapture  # Single crate
 <tr><td><code>clap-cargo</code></td><td>Manual <code>cargo_metadata</code> integration avoided; <code>--version</code> from <code>clap</code> derive</td></tr>
 </tbody></table>
 </div><div style="break-before: page; page-break-before: always;"></div><h1 id="roadmap"><a class="header" href="#roadmap">Roadmap</a></h1>
-<p>rho is developed in phases, each building on the last. The current version is <strong>0.69.0</strong>.</p>
+<p>rho is developed in phases, each building on the last. The current version is <strong>0.84.2</strong>.</p>
 <h2 id="phase-summary"><a class="header" href="#phase-summary">Phase summary</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Phase</th><th>Status</th><th>Summary</th></tr></thead><tbody>
 <tr><td>1a: The Agent Loop</td><td>✅ Complete</td><td>Agent loop, tool registry, <code>ChatClient</code> trait, conversation management</td></tr>
 <tr><td>1b: Security Surface</td><td>✅ Complete</td><td>Approval gate, file sandbox, context-file trust, secret redaction, untrusted-data framing</td></tr>
 <tr><td>2: Shell, File Tools &amp; Cross-Platform</td><td>✅ Complete</td><td>PowerShell-native shell, file tools, config loader, command denylist, cross-platform</td></tr>
 <tr><td>2.5: Adaptive-Resolution Context</td><td>✅ Complete</td><td>Session tree, resolution levels, calibrated budget, tool-result bounding, amnesia fix, JSONL persistence</td></tr>
-<tr><td>3: Rust Tooling and Tree-Sitter</td><td>✅ Complete</td><td><code>rho-highlight</code>, structured diagnostics, <code>CargoCheck</code>/<code>Clippy</code>/<code>Test</code>/<code>Fix</code>/<code>RustcExplain</code>, node-splitting validation, <code>rho-eval</code> benchmark suite, <code>rho-bench</code> multi-model harness</td></tr>
+<tr><td>3: Rust Tooling and Tree-Sitter</td><td>✅ Complete</td><td><code>rho-highlight</code>, structured diagnostics, <code>CargoCheck</code>/<code>Clippy</code>/<code>Test</code>/<code>Fix</code>/<code>RustcExplain</code>, node-splitting validation</td></tr>
 <tr><td>3.5: Rust Standard Library Reference</td><td>✅ Complete</td><td>Local rustdoc lookup tool for stdlib API docs</td></tr>
 <tr><td>3.6: crates.io Research</td><td>✅ Complete</td><td>Crate metadata lookup, search, version history, dependency inspection</td></tr>
 <tr><td>3.8: Hashline Editing</td><td>✅ Complete</td><td>Content-addressed line references with fuzzy anchor matching</td></tr>

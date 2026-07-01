@@ -334,6 +334,12 @@ enabled = true
 # Additional regex patterns to redact
 custom_patterns = ["my-key-[a-zA-Z0-9]{32}"]
 
+[memory]
+# Enable the project-local knowledge base (MemoryTool). Default: false.
+# When enabled, rho-memory opens &lt;project-root&gt;/.rho/memory.db (SQLite + FTS5)
+# and the `memory` tool becomes available to the model.
+enabled = false
+
 [system_prompt]
 # Additional prompt fragments appended after the base prompt
 extensions = ["Always use Rust idioms."]
@@ -370,17 +376,17 @@ api_key_env = "OPENAI_API_KEY"
 <p>rho can connect to any OpenAI-compatible endpoint (OpenAI, Groq, OpenRouter, DeepInfra, etc.). See the <a href="./providers.html">External Providers</a> page for setup instructions.</p>
 <h2 id="cli-overrides"><a class="header" href="#cli-overrides">CLI overrides</a></h2>
 <p>All config values can be overridden by CLI flags. CLI flags take highest priority:</p>
-<div class="table-wrapper"><table><thead><tr><th>Config field</th><th>CLI flag</th></tr></thead><tbody>
-<tr><td><code>agent.model</code></td><td><code>--model</code></td></tr>
-<tr><td><code>agent.provider</code></td><td>—</td></tr>
-<tr><td><code>agent.token_budget</code></td><td><code>--token-budget</code></td></tr>
-<tr><td><code>provider.endpoint</code></td><td><code>--endpoint</code></td></tr>
-<tr><td><code>provider.api_key_env</code></td><td><code>--api-key-env</code></td></tr>
-<tr><td><code>agent.max_iterations</code></td><td><code>--max-iterations</code></td></tr>
-<tr><td>System prompt</td><td><code>--system</code></td></tr>
-<tr><td>Compact prompt</td><td><code>--compact</code></td></tr>
-<tr><td>Provider consent</td><td><code>--accept-external-provider</code></td></tr>
-<tr><td>Session resume</td><td><code>--session</code> or <code>-c</code></td></tr>
+<div class="table-wrapper"><table><thead><tr><th>Config field</th><th>CLI flag</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>agent.model</code></td><td><code>--model</code></td><td>Model identifier</td></tr>
+<tr><td><code>agent.provider</code></td><td>—</td><td>Provider name (uses its <code>default_model</code>)</td></tr>
+<tr><td><code>agent.token_budget</code></td><td><code>--token-budget</code></td><td>Context window token budget</td></tr>
+<tr><td><code>provider.endpoint</code></td><td><code>--endpoint</code></td><td>API endpoint URL</td></tr>
+<tr><td><code>provider.api_key_env</code></td><td><code>--api-key-env</code></td><td>Env var holding the API key</td></tr>
+<tr><td><code>agent.max_iterations</code></td><td><code>--max-iterations</code></td><td>Max agent loop iterations</td></tr>
+<tr><td>System prompt</td><td><code>--system</code></td><td>Override the system prompt</td></tr>
+<tr><td>Compact prompt</td><td><code>--compact</code></td><td>Use the minimal system prompt</td></tr>
+<tr><td>Provider consent</td><td><code>--accept-external-provider</code></td><td>Skip consent warning</td></tr>
+<tr><td>Session resume</td><td><code>--session</code> / <code>-c</code></td><td>Resume a previous session</td></tr>
 </tbody></table>
 </div>
                     </main>

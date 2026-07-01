@@ -188,6 +188,8 @@
 ├─────────────────────────────────────────────────┤
 │                   rho-tools                      │
 ├─────────────────────────────────────────────────┤
+│                   rho-memory                     │
+├─────────────────────────────────────────────────┤
 │                   rho-highlight                  │
 ├─────────────────────────────────────────────────┤
 │                   rho-core                       │
@@ -195,7 +197,7 @@
 │                   rho-ai                         │
 └─────────────────────────────────────────────────┘
 </code></pre>
-<p>The rule is simple: a crate may only depend on crates below it in the stack. <code>rho-ai</code> and <code>rho-highlight</code> depend on nothing but external libraries.</p>
+<p>The rule is simple: a crate may only depend on crates below it in the stack. <code>rho-ai</code> depends on nothing but external libraries; every other crate eventually depends on <code>rho-core</code> (and <code>rho-core</code> depends on <code>rho-ai</code>).</p>
 <p>See also:</p>
 <ul>
 <li><a href="./architecture/workspace-layout.html">Workspace Layout</a></li>

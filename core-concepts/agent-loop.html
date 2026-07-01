@@ -250,18 +250,31 @@ Idle (done)
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>pub trait AgentObserver: Send + Sync {
-    fn on_state_change(&amp;self, _state: AgentState) {}
-    fn on_text_delta(&amp;self, _delta: &amp;str) {}
-    fn on_reasoning_delta(&amp;self, _delta: &amp;str) {}
-    fn on_tool_call(&amp;self, _name: &amp;str, _arguments: &amp;str) {}
-    fn on_tool_result(&amp;self, _name: &amp;str, _result: &amp;ToolResult) {}
-    fn on_tool_denied(&amp;self, _name: &amp;str) {}
-    fn on_approval_requested(&amp;self, _tool_name: &amp;str, _risk: ToolRisk) {}
+    async fn on_state_change(&amp;self, _state: AgentState) {}
+    async fn on_text_delta(&amp;self, _delta: &amp;str) {}
+    async fn on_reasoning_delta(&amp;self, _delta: &amp;str) {}
+    async fn on_tool_call(&amp;self, _name: &amp;str, _arguments: &amp;str) {}
+    async fn on_tool_result(&amp;self, _name: &amp;str, _result: &amp;ToolResult) {}
+    async fn on_tool_denied(&amp;self, _name: &amp;str) {}
+    async fn on_approval_requested(&amp;self, _tool_name: &amp;str, _risk: ToolRisk) {}
 
     /// Called before a tool executes. Return Block to prevent execution.
     /// Used by extensions to implement approval gates and safety filters.
+    /// Synchronous because it is a pure policy decision (no I/O).
     fn on_tool_call_intercept(&amp;self, _name: &amp;str, _args: &amp;str) -&gt; Option&lt;InterceptResult&gt; {
         None
+    }
+
+    /// A model response completed and its token usage was accumulated.
+    /// Fires once per iteration that hit the model, carrying the per-iteration
+    /// delta and a live context snapshot — useful for rendering a live
+    /// context/cost gauge during long multi-iteration turns.
+    async fn on_usage(
+        &amp;self,
+        _iteration: u32,
+        _usage: &amp;IterationUsage,
+        _context: &amp;crate::session::ContextStats,
+    ) {
     }
 }
 <span class="boring">}</span></code></pre></pre>

@@ -212,6 +212,8 @@
 <tr><td><code>listExtensions</code></td><td>—</td><td>List loaded extensions and tools</td></tr>
 <tr><td><code>reloadExtensions</code></td><td>—</td><td>Reload extensions from disk</td></tr>
 <tr><td><code>compact</code></td><td>—</td><td>Trigger context compaction</td></tr>
+<tr><td><code>resumeSession</code></td><td><code>{path: string}</code></td><td>Resume a previous session from JSONL</td></tr>
+<tr><td><code>listTools</code></td><td>—</td><td>List registered tools with schemas and risk levels</td></tr>
 <tr><td><code>approvalResponse</code></td><td><code>{approved: boolean}</code></td><td>Respond to an <code>approval/request</code> notification</td></tr>
 </tbody></table>
 </div>
@@ -273,7 +275,7 @@
 </ul>
 <p>Use <code>getSessionStats</code> to monitor context usage and <code>compact</code> to free space when the context fills up.</p>
 <h2 id="testing"><a class="header" href="#testing">Testing</a></h2>
-<p>The RPC core loop is generic over I/O (<code>run_rpc_on&lt;R, W&gt;</code>), enabling in-process integration tests that inject canned stdin via <code>Cursor&lt;Vec&lt;u8&gt;&gt;</code> and capture stdout without touching real file descriptors. Tests use <code>TestProvider</code> (from <code>rho-test-helpers</code>) to wrap a <code>MockChatClient</code> as a <code>Provider</code> and construct <code>App</code> directly, bypassing CLI startup. See <a href="./development/testing.html">Testing</a> for details.</p>
+<p>The RPC dispatch loop is decoupled from I/O via the <code>Transport</code> trait (<code>rho/src/transport.rs</code>). <code>StdioTransport</code> (newline-delimited JSON over stdin/stdout) is the default; in-process integration tests inject a <code>StdioTransport</code> wired to canned <code>Cursor&lt;Vec&lt;u8&gt;&gt;</code> readers and captured writers, without touching real file descriptors. Tests use <code>TestProvider</code> (from <code>rho-test-helpers</code>) to wrap a <code>MockChatClient</code> as a <code>Provider</code> and construct <code>App</code> directly, bypassing CLI startup. See <a href="./development/testing.html">Testing</a> for details.</p>
 <p>Run <code>cargo xtask schema</code> to update the version in the <code>OpenRPC</code> schema after a release.</p>
 <h3 id="example-test-session"><a class="header" href="#example-test-session">Example test session</a></h3>
 <pre><code class="language-text">stdin:  {"jsonrpc":"2.0","method":"prompt","params":{"message":"say hello"},"id":1}
