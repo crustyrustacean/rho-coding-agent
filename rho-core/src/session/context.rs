@@ -249,6 +249,12 @@ impl Session {
     /// - The system message (root entry) is never compacted.
     /// - The most recent entry (the leaf) is never compacted.
     /// - At least one entry remains un-compacted after this operation.
+    /// - A [`Pinned`](EntryResolution::Pinned) entry is a hard barrier: the
+    ///   compaction range terminates at (and excludes) the first pinned entry,
+    ///   so pinned entries — and anything newer than them — are preserved at
+    ///   full resolution. A pin near the root may therefore leave too little
+    ///   compactable history to meet the threshold, in which case this returns
+    ///   an error and turn-internal eviction takes over.
     ///
     /// # Errors
     ///
@@ -277,6 +283,13 @@ impl Session {
         // Find the contiguous range of oldest entries whose tokens exceed
         // the threshold. We never compact the root (index 0) or the leaf
         // (last entry).
+        //
+        // `Pinned` entries are *hard barriers*: the walk stops at the first
+        // pinned entry (exclusive), so neither the pin nor anything after it
+        // is absorbed into the compaction range. This is what makes pinning
+        // effective against auto-compaction — without it, a pinned entry
+        // sitting in the middle of the compactable range would be swallowed
+        // by the positional slice below and silently demoted to `Compacted`.
         let mut cumulative_tokens: usize = 0;
         let mut compact_end: usize = 0; // exclusive upper bound; 0 means not reached
 
@@ -287,7 +300,13 @@ impl Session {
                 break;
             }
 
-            // Only compact Full-resolution entries
+            // A pinned entry terminates the compaction range. Anything at or
+            // after it is preserved at full resolution.
+            if matches!(entry.resolution, EntryResolution::Pinned) {
+                break;
+            }
+
+            // Skip entries already at a reduced/attached resolution.
             if !matches!(entry.resolution, EntryResolution::Full) {
                 continue;
             }
@@ -1194,6 +1213,86 @@ mod tests {
         } else {
             panic!("expected Compaction payload");
         }
+    }
+
+    // ── Pinned barrier vs. compaction (Task: pin API, step 1) ─────────
+    //
+    // These pin entries via direct field mutation because the public
+    // `pin_entry` API lands in a follow-up step. They guard the invariant
+    // that `compact_older_than` never absorbs or demotes a `Pinned` entry.
+
+    /// Regression: a pinned entry must survive auto-compaction.
+    ///
+    /// With the pre-fix `compact_older_than`, a pinned entry sitting between
+    /// the root and a later `Full` entry was swallowed by the positional
+    /// `chronological[1..compact_end]` slice and silently demoted to
+    /// `Compacted`. Under barrier semantics the walk stops at the pin, so the
+    /// range cannot form and the pin is preserved.
+    #[tokio::test]
+    async fn pinned_entry_survives_compaction() {
+        use crate::session::compaction::MechanicalCompactionStrategy;
+
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let pinned_id = session.append_user_message("current task: land the reload fix");
+        // Pin it directly (pin_entry API comes in the next step).
+        if let Some(entry) = session.entries.get_mut(&pinned_id) {
+            entry.resolution = EntryResolution::Pinned;
+        }
+        session.append_assistant_message(ChatMessage::assistant_text("working on it"));
+        session.append_user_message("keep going"); // leaf
+
+        let strategy = MechanicalCompactionStrategy::new();
+        // threshold = 1: without the barrier, the only `Full` entry after the
+        // pin would meet the threshold and pull the pin into the range.
+        let _ = session.compact_older_than(1, &strategy).await;
+
+        let pinned = session.entry(&pinned_id).unwrap();
+        assert_eq!(
+            pinned.resolution,
+            EntryResolution::Pinned,
+            "pinned entry must not be demoted by compaction"
+        );
+    }
+
+    /// Compaction that succeeds up to a pin must not cross it: only the
+    /// pre-pin `Full` entries are compacted; the pin and everything after it
+    /// are left at full resolution.
+    #[tokio::test]
+    async fn pinned_entry_terminates_compaction_range() {
+        use crate::session::compaction::MechanicalCompactionStrategy;
+
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let before_id = session.append_user_message("old context");
+        let pinned_id = session.append_user_message("the plan");
+        if let Some(entry) = session.entries.get_mut(&pinned_id) {
+            entry.resolution = EntryResolution::Pinned;
+        }
+        let after_id = session.append_user_message("newer context");
+        session.append_user_message("leaf"); // leaf
+
+        let strategy = MechanicalCompactionStrategy::new();
+        // threshold = 1 is met by the first `Full` entry (`before_id`), which
+        // precedes the pin, so compaction succeeds and compacts only it.
+        let compaction_id = session.compact_older_than(1, &strategy).await.unwrap();
+
+        // The pre-pin entry was compacted.
+        assert!(
+            matches!(&session.entry(&before_id).unwrap().resolution,
+                     EntryResolution::Compacted { into } if *into == compaction_id),
+            "entry before the pin should be compacted"
+        );
+        // The pin is untouched.
+        assert_eq!(
+            session.entry(&pinned_id).unwrap().resolution,
+            EntryResolution::Pinned,
+            "pinned entry must survive"
+        );
+        // The entry after the pin is untouched (still Full).
+        assert_eq!(
+            session.entry(&after_id).unwrap().resolution,
+            EntryResolution::Full,
+            "entry after the pin must not be swept into the range"
+        );
     }
 
     // ── outline_entry / summarize_entry tests (Phase 1 Step 4) ──────────
