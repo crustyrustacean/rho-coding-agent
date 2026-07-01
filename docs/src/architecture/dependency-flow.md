@@ -7,12 +7,11 @@ rho (binary) ──────────────────────�
     │
     ├── rho-ext ──── rho-core ──── rho-ai ──────────────
     │
-    ├── rho-tools ─────────────────────────────────────
-    │       │
-    │       └── rho-highlight (via EditFile node-splitting)
+    ├── rho-tools ── rho-highlight ── rho-core ─────────
+    │           └──── rho-memory ── rho-core ────────────
     │
-    └── rho-core ─────────────────────────────────────
-            │
+    └── rho-core ──── rho-ai ──────────────────────────
+
 rho-test-helpers ── rho-core, rho-ai ────────────────
 xtask ──────────────────────────────────────────────
 ```
@@ -20,10 +19,10 @@ xtask ────────────────────────�
 | Crate | Depends on | Notes |
 |---|---|---|
 | `rho` | `rho-core`, `rho-tools`, `rho-ext`, `rho-ai` | Headless JSON-RPC 2.0 agent |
-
 | `rho-ext` | `rho-core`, `deno_core`, `deno_ast` | TypeScript extension runtime |
-| `rho-tools` | `rho-core`, `rho-highlight` | Tool implementations use core types and highlight for node-splitting |
-| `rho-highlight` | none (external only) | Tree-sitter grammar — standalone, no rho dependencies |
+| `rho-tools` | `rho-core`, `rho-highlight`, `rho-memory` | Tool implementations; highlight for node-splitting, memory for `MemoryTool` |
+| `rho-memory` | `rho-core` | Persistent knowledge base (SQLite/FTS5) |
+| `rho-highlight` | `rho-core` | Tree-sitter grammar; uses core diagnostic types |
 | `rho-core` | `rho-ai` | Kernel — the foundation everything else builds on |
 | `rho-ai` | none (external only) | Unified LLM provider abstraction |
 | `rho-test-helpers` | `rho-core`, `rho-ai` | Dev-only — provides mocks and fixtures for testing |
@@ -45,6 +44,7 @@ xtask ────────────────────────�
 | `deno_ast` | `rho-ext` | TypeScript transpilation |
 | `thiserror` | `rho-core`, `rho-ext` | Error type derivation |
 | `futures` | `rho-ai` | Stream traits for SSE |
+| `sqlx` | `rho-memory` | SQLite + FTS5 for the knowledge base |
 ## What this buys you
 
 The layered structure means:

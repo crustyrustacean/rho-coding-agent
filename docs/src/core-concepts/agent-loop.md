@@ -79,18 +79,31 @@ The `AgentObserver` trait receives live events from the agent loop so that a REP
 
 ```rust
 pub trait AgentObserver: Send + Sync {
-    fn on_state_change(&self, _state: AgentState) {}
-    fn on_text_delta(&self, _delta: &str) {}
-    fn on_reasoning_delta(&self, _delta: &str) {}
-    fn on_tool_call(&self, _name: &str, _arguments: &str) {}
-    fn on_tool_result(&self, _name: &str, _result: &ToolResult) {}
-    fn on_tool_denied(&self, _name: &str) {}
-    fn on_approval_requested(&self, _tool_name: &str, _risk: ToolRisk) {}
+    async fn on_state_change(&self, _state: AgentState) {}
+    async fn on_text_delta(&self, _delta: &str) {}
+    async fn on_reasoning_delta(&self, _delta: &str) {}
+    async fn on_tool_call(&self, _name: &str, _arguments: &str) {}
+    async fn on_tool_result(&self, _name: &str, _result: &ToolResult) {}
+    async fn on_tool_denied(&self, _name: &str) {}
+    async fn on_approval_requested(&self, _tool_name: &str, _risk: ToolRisk) {}
 
     /// Called before a tool executes. Return Block to prevent execution.
     /// Used by extensions to implement approval gates and safety filters.
+    /// Synchronous because it is a pure policy decision (no I/O).
     fn on_tool_call_intercept(&self, _name: &str, _args: &str) -> Option<InterceptResult> {
         None
+    }
+
+    /// A model response completed and its token usage was accumulated.
+    /// Fires once per iteration that hit the model, carrying the per-iteration
+    /// delta and a live context snapshot — useful for rendering a live
+    /// context/cost gauge during long multi-iteration turns.
+    async fn on_usage(
+        &self,
+        _iteration: u32,
+        _usage: &IterationUsage,
+        _context: &crate::session::ContextStats,
+    ) {
     }
 }
 ```

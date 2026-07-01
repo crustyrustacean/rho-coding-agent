@@ -28,8 +28,11 @@ rho-coding-agent/
 │       ├── openai.rs        # `OpenAiService` — OpenAI-compatible HTTP + SSE
 │       ├── sse.rs           # Server-sent event parser
 │       ├── retry.rs         # Exponential backoff retry logic
+│       ├── catalog.rs       # `Catalog`, `Model`, `ModelCost` — model registry + pricing
+│       ├── catalog_generated.rs # Generated model list (`cargo xtask generate-models`)
 │       ├── types.rs         # `LlmMessage`, `LlmRequest`, `StreamEvent`, `AccumulatedResponse`
 │       └── error.rs         # `ProviderError`
+│   └── model-overrides.json # Manual catalog overrides (thinking flags, compatibility)
 ├── rho-ext/                # TypeScript extension runtime (V8/deno-core)
 │   └── src/
 │       ├── lib.rs          # Re-exports: `ExtensionLoader`, `DenoTool`, `DenoObserver`, etc.
@@ -94,8 +97,17 @@ rho-coding-agent/
 │       │   ├── tree.rs         # `path_to_root`, `branch_to`, `branch_with_summary`
 │       │   └── truncation.rs   # Bounded truncation, char boundary, footer
 │       ├── shell.rs         # `ShellExecutor` trait, `ShellOutput`
-│       ├── stream.rs        # `StreamChunk`, `StreamEvent`, streaming response types
+│       ├── stream.rs        # `StreamChunk` — unified streaming event type
 │       └── tool.rs          # `Tool` trait, `ToolRegistry`, `ToolRisk`, `ToolOutcome`
+├── rho-memory/             # Persistent knowledge base (SQLite/FTS5)
+│   ├── src/
+│   │   ├── lib.rs           # Re-exports: `Memory`, `Document`, `SearchResult`
+│   │   ├── brain.rs         # `Memory` — public knowledge-base API
+│   │   ├── db.rs            # `Database` — raw SQLite operations
+│   │   ├── models.rs        # `Document`, `SearchResult`, `CreateRequest`, `Stats`
+│   │   └── error.rs         # Knowledge-base errors
+│   └── migrations/
+│       └── 001_initial.sql  # Schema: documents, FTS5, triggers
 ├── rho-highlight/           # Tree-sitter syntax analysis
 │   └── src/
 │       ├── lib.rs           # Re-exports
@@ -107,24 +119,26 @@ rho-coding-agent/
 ├── rho-tools/               # Built-in tool implementations
 │   └── src/
 │       ├── lib.rs           # `register_all()`
-│       ├── files.rs         # `ReadFile`, `WriteFile`, `ListDir`, `EditFile`
+│       ├── files.rs         # Re-exports file tools from `file_ops` + `edit`
+│       ├── file_ops.rs      # `ReadFile`, `WriteFile`, `BatchRead`, `ListDir`
+│       ├── edit.rs          # `EditFile` — hashline-anchored editing
 │       ├── hashline.rs      # Hashline content-addressed editing
 │       ├── shell.rs         # `RunCommand`, `PowerShellExecutor`, `CommandDenylist`
 │       ├── crates_io.rs     # `CratesIoLookup`
 │       ├── session_summary.rs # `SessionSummary` — compressed session history tool
+│       ├── memory.rs        # `MemoryTool` — knowledge base (via `rho-memory`)
 │       ├── error.rs         # Tool error types
-│       └── rust/
-│           ├── mod.rs       # Rust tools module
+│       └── rust/            # Rust tooling (module root: `rust.rs`)
 │           ├── tools.rs     # `CargoCheck`, `CargoClippy`, `CargoTest`, `CargoFix`, `RustcExplain`
-│           ├── rustdoc.rs   # `RustdocLookup` — local rustdoc HTML parsing
+│           ├── rustdoc.rs   # `RustdocTool` — local rustdoc HTML parsing
 │           ├── parse.rs     # NDJSON output parsing
 │           ├── convert.rs   # Diagnostic conversion
-│           ├── format.rs     # Diagnostic formatting
+│           ├── format.rs    # Diagnostic formatting
 │           └── types.rs     # Shared Rust tool types
 ├── rho-test-helpers/        # Shared test infrastructure (dev-only)
 │   └── src/lib.rs           # `MockChatClient`, `TestProvider`, response builders, helpers
 └── xtask/                   # Dev task runner
     └── src/
         ├── main.rs          # CLI dispatch
-        └── tasks.rs         # `ci`, `test`, `build`, `release`, `changelog`, `fmt`, `lint`, `run`, `clean`, `status`, `schema` tasks
+        └── tasks.rs         # `ci`, `test`, `build`, `release`, `changelog`, `fmt`, `fmt-fix`, `lint`, `run`, `clean`, `status`, `schema`, `generate-models` tasks
 ```

@@ -80,8 +80,6 @@ The `rho` binary runs in headless JSON-RPC 2.0 mode.
 
 | Flag | Description |
 |---|---|
-| Flag | Description |
-|---|---|
 | `-m, --model <MODEL>` | Model identifier (uses config default if omitted) |
 | `-s, --system <SYSTEM>` | Override the system prompt |
 | `--compact` | Use a minimal system prompt for small-context models |

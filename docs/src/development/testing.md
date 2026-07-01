@@ -22,10 +22,8 @@ cargo xtask test -p rho-core -- --nocapture  # Single crate
 | Tool integration tests | `rho-tools/tests/tool_tests.rs` | Tool execution, sandbox enforcement, denylist |
 | Shell executor tests | `rho-tools/tests/shell_executor_tests.rs` | Shell command execution, path normalization |
 | Extension unit tests | `rho-ext/src/*.rs` (`#[cfg(test)] mod tests`) | Runtime spawning, manifest parsing, discovery, transpilation, DenoTool, DenoObserver, host ops, module loader |
-| Eval unit tests | `rho-eval/src/tasks.rs` | Task verification logic (pass/fail/error) |
-| Bench unit tests | `rho-bench/src/*.rs` | Harness config, display formatting, persistence |
 
-RPC integration tests live in `rho/src/rpc.rs` (not `rho/tests/`) because `App`'s fields are `pub(crate)`. They use `TestProvider` to wrap a `MockChatClient` as a `Provider` and construct `App` directly, bypassing the full CLI startup sequence. The RPC core loop is generic over I/O (`run_rpc_on<R, W>`), so tests inject `Cursor<Vec<u8>>` for both stdin and stdout.
+RPC integration tests live in `rho/src/rpc.rs` (not `rho/tests/`) because `App`'s fields are `pub(crate)`. They use `TestProvider` to wrap a `MockChatClient` as a `Provider` and construct `App` directly, bypassing the full CLI startup sequence. The RPC dispatch loop is decoupled from I/O via the `Transport` trait (`rho/src/transport.rs`); tests inject a `StdioTransport` wired to `Cursor<Vec<u8>>` readers and captured writers for both stdin and stdout.
 
 ## Test helpers (`rho-test-helpers`)
 
@@ -77,4 +75,4 @@ RPC integration tests live in `rho/src/rpc.rs` (not `rho/tests/`) because `App`'
 | Denylist | High | Each denied command and substring pattern |
 | Context management | High | Eviction, pinning, compaction rendering |
 | Integration | Medium | Agent loop with realistic message sequences |
-| Scenarios | Low (5) | End-to-end validation against real model — driven via `rho-bench` |
+| Scenarios | Low | End-to-end validation against real model servers |

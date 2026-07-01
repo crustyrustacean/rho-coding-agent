@@ -73,11 +73,12 @@ Duplicate tool names panic at registration (fast-fail, programming error). Execu
 
 ## Built-in tools
 
-rho ships with 13 built-in tools, all registered in `rho-tools::register_all()`:
+rho ships with 14 built-in tools, all registered in `rho-tools::register_all()` (plus `memory`, registered only when `[memory] enabled = true`):
 
 | Tool | Risk | Description |
 |---|---|---|
 | `read_file` | Read | Read file contents, wrapped in `<context>` framing |
+| `batch_read` | Read | Read multiple files at once (up to 20 paths) |
 | `write_file` | Write | Create or overwrite files within the sandbox |
 | `list_dir` | Read | `.gitignore`-aware directory listing |
 | `edit_file` | Write | Hashline-anchor replacements with node-splitting validation |
@@ -90,6 +91,7 @@ rho ships with 13 built-in tools, all registered in `rho-tools::register_all()`:
 | `rustdoc_lookup` | Read | Look up Rust standard library documentation (local rustdoc) |
 | `crates_io_lookup` | Read | Search and inspect crate metadata on crates.io |
 | `session_summary` | Read | Compressed numbered history of user requests and outcomes |
+| `memory` | Read | Store, search, and manage project-local knowledge (via `rho-memory`) |
 
 ## Extension tools
 

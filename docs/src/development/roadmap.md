@@ -1,6 +1,6 @@
 # Roadmap
 
-rho is developed in phases, each building on the last. The current version is **0.69.0**.
+rho is developed in phases, each building on the last. The current version is **0.84.2**.
 
 ## Phase summary
 
@@ -10,7 +10,7 @@ rho is developed in phases, each building on the last. The current version is **
 | 1b: Security Surface | ✅ Complete | Approval gate, file sandbox, context-file trust, secret redaction, untrusted-data framing |
 | 2: Shell, File Tools & Cross-Platform | ✅ Complete | PowerShell-native shell, file tools, config loader, command denylist, cross-platform |
 | 2.5: Adaptive-Resolution Context | ✅ Complete | Session tree, resolution levels, calibrated budget, tool-result bounding, amnesia fix, JSONL persistence |
-| 3: Rust Tooling and Tree-Sitter | ✅ Complete | `rho-highlight`, structured diagnostics, `CargoCheck`/`Clippy`/`Test`/`Fix`/`RustcExplain`, node-splitting validation, `rho-eval` benchmark suite, `rho-bench` multi-model harness |
+| 3: Rust Tooling and Tree-Sitter | ✅ Complete | `rho-highlight`, structured diagnostics, `CargoCheck`/`Clippy`/`Test`/`Fix`/`RustcExplain`, node-splitting validation |
 | 3.5: Rust Standard Library Reference | ✅ Complete | Local rustdoc lookup tool for stdlib API docs |
 | 3.6: crates.io Research | ✅ Complete | Crate metadata lookup, search, version history, dependency inspection |
 | 3.8: Hashline Editing | ✅ Complete | Content-addressed line references with fuzzy anchor matching |

@@ -10,6 +10,8 @@ rho is organized as a layered workspace where dependencies flow downward only.
 ├─────────────────────────────────────────────────┤
 │                   rho-tools                      │
 ├─────────────────────────────────────────────────┤
+│                   rho-memory                     │
+├─────────────────────────────────────────────────┤
 │                   rho-highlight                  │
 ├─────────────────────────────────────────────────┤
 │                   rho-core                       │
@@ -18,7 +20,7 @@ rho is organized as a layered workspace where dependencies flow downward only.
 └─────────────────────────────────────────────────┘
 ```
 
-The rule is simple: a crate may only depend on crates below it in the stack. `rho-ai` and `rho-highlight` depend on nothing but external libraries.
+The rule is simple: a crate may only depend on crates below it in the stack. `rho-ai` depends on nothing but external libraries; every other crate eventually depends on `rho-core` (and `rho-core` depends on `rho-ai`).
 
 See also:
 

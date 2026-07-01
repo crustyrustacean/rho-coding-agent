@@ -27,18 +27,20 @@ use rho_ai::OpenAiService;
 
 // Default: localhost
 let service = OpenAiService::new(rho_ai::ProviderConfig::new(
-    "",  // no API key for local
-    "http://localhost:1234/v1",\n));
+    "",                          // no API key for local
+    "http://localhost:1234/v1",  // base URL
+));
 
 // Custom endpoint with API key
 let service = OpenAiService::new(rho_ai::ProviderConfig::new(
     "sk-...",
-    "https://api.openai.com/v1",\n));
+    "https://api.openai.com/v1",
+));
 ```
 
 The model is specified per-request via `LlmRequest::model`, not in the provider config. This ensures the model always comes from the session, never from a stale config value.
 
-### [REDACTED]
+### Authentication
 
 When an API key is provided via `api_key_env` in config, it is sent as an `Authorization: Bearer <key>` header with every request. Local endpoints typically don't need this. See [External Providers](../providers.md) for setup details.
 
@@ -68,7 +70,7 @@ rho does **not** call `/v1/models` at startup. The config file is the source of 
 | `LlmRequest` | `model`, `messages`, `tools` — the full API request body |
 | `StreamEvent` | Streaming response event (`Text`, `Reasoning`, `ToolUseStart/Delta/Complete`, `Done`) |
 | `AccumulatedResponse` | Fully-accumulated response (text + tool calls + usage) |
-| `FinishReason` | `Stop` (text reply), `ToolCalls`, `Length` (truncated), `ContentFilter` |
+| `FinishReason` | `Stop` (text reply), `ToolCalls`, `Length` (truncated), `ContentFilter`, `Other` |
 | `LlmUsage` | `prompt_tokens`, `completion_tokens`, `total_tokens` |
 
 ## Streaming

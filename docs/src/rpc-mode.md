@@ -42,6 +42,8 @@ echo '{"jsonrpc":"2.0","method":"prompt","params":{"message":"explain this funct
 | `listExtensions` | — | List loaded extensions and tools |
 | `reloadExtensions` | — | Reload extensions from disk |
 | `compact` | — | Trigger context compaction |
+| `resumeSession` | `{path: string}` | Resume a previous session from JSONL |
+| `listTools` | — | List registered tools with schemas and risk levels |
 | `approvalResponse` | `{approved: boolean}` | Respond to an `approval/request` notification |
 
 ### Notifications (rho → stdout, no `id`)
@@ -50,7 +52,7 @@ echo '{"jsonrpc":"2.0","method":"prompt","params":{"message":"explain this funct
 |---|---|---|
 | `ready` | — | Emitted once on startup |
 | `agent/start` | — | Agent began processing a prompt |
-| `agent/end` | `{reply, iterations, usage, toolCalls, durationMs, finishReason}` | Agent finished with full result
+| `agent/end` | `{reply, iterations, usage, toolCalls, durationMs, finishReason}` | Agent finished with full result |
 | `agent/error` | `{error: string}` | Agent loop encountered an error |
 | `state/change` | `{state: string}` | Loop state transition (`thinking`, `executing_tool`, `awaiting_approval`, `idle`) |
 | `message/delta` | `{delta: string}` | Streaming text chunk |
@@ -117,7 +119,7 @@ Use `getSessionStats` to monitor context usage and `compact` to free space when 
 
 ## Testing
 
-The RPC core loop is generic over I/O (`run_rpc_on<R, W>`), enabling in-process integration tests that inject canned stdin via `Cursor<Vec<u8>>` and capture stdout without touching real file descriptors. Tests use `TestProvider` (from `rho-test-helpers`) to wrap a `MockChatClient` as a `Provider` and construct `App` directly, bypassing CLI startup. See [Testing](./development/testing.md) for details.
+The RPC dispatch loop is decoupled from I/O via the `Transport` trait (`rho/src/transport.rs`). `StdioTransport` (newline-delimited JSON over stdin/stdout) is the default; in-process integration tests inject a `StdioTransport` wired to canned `Cursor<Vec<u8>>` readers and captured writers, without touching real file descriptors. Tests use `TestProvider` (from `rho-test-helpers`) to wrap a `MockChatClient` as a `Provider` and construct `App` directly, bypassing CLI startup. See [Testing](./development/testing.md) for details.
 
 Run `cargo xtask schema` to update the version in the `OpenRPC` schema after a release.
 

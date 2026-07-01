@@ -168,6 +168,12 @@ enabled = true
 # Additional regex patterns to redact
 custom_patterns = ["my-key-[a-zA-Z0-9]{32}"]
 
+[memory]
+# Enable the project-local knowledge base (MemoryTool). Default: false.
+# When enabled, rho-memory opens <project-root>/.rho/memory.db (SQLite + FTS5)
+# and the `memory` tool becomes available to the model.
+enabled = false
+
 [system_prompt]
 # Additional prompt fragments appended after the base prompt
 extensions = ["Always use Rust idioms."]
@@ -214,15 +220,15 @@ rho can connect to any OpenAI-compatible endpoint (OpenAI, Groq, OpenRouter, Dee
 
 All config values can be overridden by CLI flags. CLI flags take highest priority:
 
-| Config field | CLI flag |
-|---|---|
+| Config field | CLI flag | Description |
+|---|---|---|
 | `agent.model` | `--model` | Model identifier |
 | `agent.provider` | — | Provider name (uses its `default_model`) |
-| `agent.token_budget` | `--token-budget` |
-| `provider.endpoint` | `--endpoint` |
-| `provider.api_key_env` | `--api-key-env` |
-| `agent.max_iterations` | `--max-iterations` |
-| System prompt | `--system` |
-| Compact prompt | `--compact` |
-| Provider consent | `--accept-external-provider` |
-| Session resume | `--session` or `-c` |
+| `agent.token_budget` | `--token-budget` | Context window token budget |
+| `provider.endpoint` | `--endpoint` | API endpoint URL |
+| `provider.api_key_env` | `--api-key-env` | Env var holding the API key |
+| `agent.max_iterations` | `--max-iterations` | Max agent loop iterations |
+| System prompt | `--system` | Override the system prompt |
+| Compact prompt | `--compact` | Use the minimal system prompt |
+| Provider consent | `--accept-external-provider` | Skip consent warning |
+| Session resume | `--session` / `-c` | Resume a previous session |

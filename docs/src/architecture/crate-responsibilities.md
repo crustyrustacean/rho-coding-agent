@@ -6,7 +6,7 @@ The headless JSON-RPC 2.0 agent: CLI argument parsing, tool wiring, extension lo
 
 Constructs a `Session`, connects to the model via a `Provider`, and drives the agent loop. Handles provider consent checks, model resolution, startup budget diagnostics, shell-specific prompt extensions, session discovery, extension loading, and live observer output via `RpcObserver`.
 
-The RPC implementation is generic over I/O (`run_rpc_on<R, W>`) so the in-process integration tests can inject canned stdin and capture stdout without touching real file descriptors. Wire-format types in `rpc_wire.rs` give every method param, result, and notification a typed Rust struct. See [RPC Mode](../rpc-mode.md) for the full protocol reference and [`OpenRPC` schema](../../rpc-schema/openrpc.json) for machine-readable API discovery.
+The RPC implementation is decoupled from I/O via the `Transport` trait (`rho/src/transport.rs`); `StdioTransport` (newline-delimited JSON over stdin/stdout) is the default, and in-process tests inject a `StdioTransport` wired to canned readers and captured writers. Wire-format types in `rpc_wire.rs` give every method param, result, and notification a typed Rust struct. See [RPC Mode](../rpc-mode.md) for the full protocol reference and [`OpenRPC` schema](../../rpc-schema/openrpc.json) for machine-readable API discovery.
 
 ## `rho-core`
 
@@ -26,12 +26,20 @@ Key types: `Language`, `HighlightSpan`, `HighlightTag`, `NodeInfo`.
 
 Built-in tool implementations:
 
-- **File tools:** `ReadFile`, `WriteFile`, `ListDir`, `EditFile`
+- **File tools:** `ReadFile`, `BatchRead`, `WriteFile`, `ListDir`, `EditFile`
 - **Shell tools:** `RunCommand`, `PowerShellExecutor`, `CommandDenylist`
 - **Rust tools:** `CargoCheck`, `CargoClippy`, `CargoTest`, `CargoFix`, `RustcExplain`
 - **Lookup tools:** `RustdocTool`, `CratesIoLookup`
+- **Session tools:** `SessionSummary` (compressed turn history for context recovery)
+- **Knowledge base:** `MemoryTool` (project-local docs via `rho-memory`, gated by `[memory] enabled`)
 
 Each implements the `Tool` trait from `rho-core`.
+
+## `rho-memory`
+
+Persistent knowledge base for project-local docs: full-text search (SQLite FTS5), content deduplication, and soft deletes. Exposed to the agent through the `MemoryTool` in `rho-tools`. Storage lives at `<project-root>/.rho/memory.db`. Gated by the `[memory]` config section (`enabled = true`).
+
+Key types: `Memory`, `Database`, `Document`, `SearchResult`.
 
 ## `rho-ext`
 
@@ -57,4 +65,4 @@ Shared test infrastructure (dev-only): `MockChatClient`, `TestProvider`, `MockSh
 
 ## `xtask`
 
-Dev task runner: `cargo xtask ci` (fmt → lint → build → test), `cargo xtask test`, `cargo xtask build`, `cargo xtask release`, `cargo xtask changelog`, `cargo xtask fmt`, `cargo xtask run`, `cargo xtask clean`, `cargo xtask status`, `cargo xtask schema`. Tests use `cargo-nextest` when available, falling back to `cargo test`.
+Dev task runner: `cargo xtask ci` (fmt → lint → build → test), `cargo xtask test`, `cargo xtask build`, `cargo xtask release`, `cargo xtask changelog`, `cargo xtask fmt`, `cargo xtask fmt-fix`, `cargo xtask run`, `cargo xtask clean`, `cargo xtask status`, `cargo xtask schema`, `cargo xtask generate-models`. Tests use `cargo-nextest` when available, falling back to `cargo test`.
