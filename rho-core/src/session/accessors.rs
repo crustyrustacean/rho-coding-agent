@@ -136,6 +136,17 @@ impl Session {
             .message_budget(self.system_overhead(), self.schema_overhead())
     }
 
+    /// The cached tool schemas currently advertised to the model.
+    ///
+    /// This snapshot is captured at session start and only refreshed when
+    /// [`Session::set_tools`](crate::Session::set_tools) is called (e.g. after
+    /// an extension reload or session resume). Inspecting it lets callers
+    /// detect drift between the live [`ToolRegistry`](crate::ToolRegistry) and
+    /// what the session will actually send to the model.
+    pub fn tools(&self) -> &[rho_ai::ToolDefinition] {
+        &self.tools
+    }
+
     /// Read-only access to the redactor.
     pub fn redactor(&self) -> &Redactor {
         &self.redactor

@@ -828,6 +828,14 @@ async fn handle_reload_extensions(app: &mut App, id: &Value, transport: &dyn Tra
                 "extensions reloaded"
             );
             app.ext_observers = app.ext_loader.build_observers();
+            // Extension tools changed (added/reloaded/removed): sync the
+            // session's cached tool schemas so subsequent turns advertise the
+            // new tool definitions to the model. Without this, the Session
+            // keeps the stale schemas captured at start/last-sync and newly
+            // loaded tools are invisible to the model mid-conversation.
+            if report.has_changes() {
+                app.session.set_tools(app.registry.tool_definitions());
+            }
             send(
                 transport,
                 &success_response(
@@ -1950,5 +1958,58 @@ mod tests {
         for r in &tool_results {
             assert_eq!(r["params"]["is_error"], false);
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Extension reload → session tool-schema sync (regression)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Regression test for the stale `tool_schemas` bug.
+    ///
+    /// `handle_reload_extensions` updates `app.registry` when extensions are
+    /// added/reloaded/removed, but the `Session` caches its own copy of the
+    /// tool schemas at start time. If the session is not re-synced, newly
+    /// loaded extension tools are invisible to the model for the rest of the
+    /// conversation. This test pins the invariant: after syncing the session
+    /// with the live registry (as the reload handler now does), the session
+    /// advertises the new tools.
+    #[tokio::test]
+    async fn reload_syncs_session_tool_schemas() {
+        // Start with a one-tool registry, mirroring a freshly built session.
+        let registry = echo_registry();
+        let mut app = test_app(MockChatClient::new(vec![]), registry);
+
+        // Model session start: the session captures the live registry's tool
+        // definitions (as `build_session` does in production).
+        app.session.set_tools(app.registry.tool_definitions());
+        assert_eq!(app.session.tools().len(), 1);
+        assert_eq!(app.session.tools()[0].name, "echo_tool");
+
+        // Simulate what `ExtensionLoader::reload` does to the registry on a
+        // successful reload that adds a tool: register a brand-new tool.
+        app.registry.register(Box::new(FixedResponseTool {
+            name: "new_ext_tool",
+            response: "ext".into(),
+            risk: ToolRisk::Read,
+        }));
+
+        // Pre-sync: the registry has the new tool, but the session does not —
+        // this is exactly the drift the bug produced.
+        assert_eq!(app.registry.tool_definitions().len(), 2);
+        assert_eq!(app.session.tools().len(), 1);
+
+        // The reload handler now calls this after a reload with changes:
+        app.session.set_tools(app.registry.tool_definitions());
+
+        // Post-sync: the session advertises the full live tool set.
+        assert_eq!(app.session.tools().len(), 2);
+        let names: Vec<_> = app
+            .session
+            .tools()
+            .iter()
+            .map(|t| t.name.as_str())
+            .collect();
+        assert!(names.contains(&"echo_tool"));
+        assert!(names.contains(&"new_ext_tool"));
     }
 }
