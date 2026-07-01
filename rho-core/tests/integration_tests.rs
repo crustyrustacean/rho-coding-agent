@@ -1035,7 +1035,7 @@ fn base_prompt_sha256_is_pinned() {
     let normalized = rho_core::base_prompt().replace('\r', "");
     let hash = rho_core::context_files::sha256_hex(&normalized);
     assert_eq!(
-        hash, "10d28589391d0caafd6ee1699c3de135d16a0dbdda00f32fb1e1841b752cf415",
+        hash, "5a2ed37d86ab38ef9774b5974b4faecc3e003c44c95cd38b957ca79661e131cb",
         "base_prompt() hash changed — update this test to match the new hash"
     );
 }
