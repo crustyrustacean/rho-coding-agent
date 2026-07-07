@@ -44,8 +44,6 @@
 //!             └──────────┘
 //! ```
 
-use thiserror::Error;
-
 use crate::approval::{ApprovalGate, ApprovalPolicy, DefaultApprovalPolicy};
 use crate::conversation::AssistantResponse;
 use crate::error::{Result, RhoError};
@@ -57,6 +55,7 @@ use crate::tool::{CancellationToken, Tool, ToolRegistry, ToolResult, ToolRisk};
 use async_trait::async_trait;
 use futures::StreamExt;
 use std::collections::HashMap;
+use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
 // ── AgentError ────────────────────────────────────────────────────────────────
@@ -237,6 +236,21 @@ impl CollectingObserver {
         self.records.into_inner().unwrap_or_default()
     }
 
+    /// Lock a mutex for recording, returning the guard — or `None` (with a
+    /// warning) if the mutex is poisoned. Poison means a prior panic left the
+    /// guarded data inconsistent; for an observer — a side-channel that only
+    /// records events for later inspection — the right response is to log and
+    /// keep running, not crash the agent loop. (Consistent with `into_records`,
+    /// which already does `unwrap_or_default`.)
+    fn lock_or_warn<T>(mutex: &std::sync::Mutex<T>) -> Option<std::sync::MutexGuard<'_, T>> {
+        if let Ok(guard) = mutex.lock() {
+            Some(guard)
+        } else {
+            warn!("CollectingObserver mutex poisoned; dropping event");
+            None
+        }
+    }
+
     /// Record a tool call that executed (success or error).
     fn record_execution(
         &self,
@@ -245,37 +259,49 @@ impl CollectingObserver {
         outcome: ToolCallOutcome,
         duration: std::time::Duration,
     ) {
-        self.records.lock().unwrap().push(ToolCallRecord {
-            name: name.to_owned(),
-            arguments: arguments.to_owned(),
-            outcome,
-            duration: Some(duration),
-        });
+        if let Some(mut records) = Self::lock_or_warn(&self.records) {
+            records.push(ToolCallRecord {
+                name: name.to_owned(),
+                arguments: arguments.to_owned(),
+                outcome,
+                duration: Some(duration),
+            });
+        }
     }
 
     /// Record a tool call that was denied or blocked (no execution).
     fn record_denied(&self, name: &str, arguments: &str, outcome: ToolCallOutcome) {
-        self.records.lock().unwrap().push(ToolCallRecord {
-            name: name.to_owned(),
-            arguments: arguments.to_owned(),
-            outcome,
-            duration: None,
-        });
+        if let Some(mut records) = Self::lock_or_warn(&self.records) {
+            records.push(ToolCallRecord {
+                name: name.to_owned(),
+                arguments: arguments.to_owned(),
+                outcome,
+                duration: None,
+            });
+        }
     }
 
     /// Start timing a tool call.
     fn start_tool(&self) {
-        *self.tool_start.lock().unwrap() = Some(std::time::Instant::now());
+        if let Some(mut start) = Self::lock_or_warn(&self.tool_start) {
+            *start = Some(std::time::Instant::now());
+        }
     }
 
     /// Stop timing and return elapsed duration.
+    ///
+    /// Degrades gracefully on both failure modes — this observer is a
+    /// side-channel and must not crash the agent loop:
+    ///   - mutex poisoned → can't read the slot → `Duration::ZERO` (timing lost)
+    ///   - no matching `start_tool` → programming error, warned → `Duration::ZERO`
     fn stop_tool(&self) -> std::time::Duration {
-        let start = self
-            .tool_start
-            .lock()
-            .unwrap()
-            .take()
-            .expect("stop_tool called without matching start_tool");
+        let Some(mut start_slot) = Self::lock_or_warn(&self.tool_start) else {
+            return std::time::Duration::ZERO;
+        };
+        let Some(start) = start_slot.take() else {
+            warn!("stop_tool called without a matching start_tool");
+            return std::time::Duration::ZERO;
+        };
         start.elapsed()
     }
 }
