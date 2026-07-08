@@ -33,4 +33,4 @@ tokio = { workspace = true, features = ["full"] }
 tree-sitter.workspace = true
 url = "2.5.8"
 uuid = { version = "1", features = ["v4", "serde"] }
-which = "7"
+which = "8.0.4"

@@ -106,10 +106,7 @@ impl ShellExecutor for PowerShellExecutor {
             return Err(ToolError::Cancelled.into());
         }
 
-        // Normalize path separators before execution.
-        let normalized = normalize_path_separators(command);
-
-        let args = self.build_args(&normalized);
+        let args = self.build_args(command);
 
         let mut child = Command::new(self.shell)
             .args(&args)
@@ -348,47 +345,6 @@ impl Tool for RunCommand {
 
 // ── Path normalization ────────────────────────────────────────────────────────
 
-/// Normalize path separators for the current platform.
-///
-/// On Windows, replaces `/` with `\` when the slash is adjacent to a path-like
-/// character (alphanumeric, dot, underscore, or dash). This converts
-/// `src/main.rs` to `src\main.rs` but leaves `10 / 2` (division with spaces)
-/// alone.
-///
-/// On non-Windows (macOS, Linux), returns the command unchanged — forward
-/// slashes are the native path separator and PowerShell on these platforms
-/// handles them natively.
-fn normalize_path_separators(command: &str) -> String {
-    if !cfg!(target_os = "windows") {
-        return command.to_owned();
-    }
-
-    let chars: Vec<char> = command.chars().collect();
-    let mut result = String::with_capacity(command.len());
-
-    for (i, &ch) in chars.iter().enumerate() {
-        if ch == '/' {
-            let prev_is_path = i > 0 && is_path_char(chars[i - 1]);
-            let next_is_path = i + 1 < chars.len() && is_path_char(chars[i + 1]);
-
-            if prev_is_path || next_is_path {
-                result.push('\\');
-            } else {
-                result.push(ch);
-            }
-        } else {
-            result.push(ch);
-        }
-    }
-
-    result
-}
-
-/// Returns `true` if `ch` is a character commonly found in file paths.
-fn is_path_char(ch: char) -> bool {
-    ch.is_alphanumeric() || matches!(ch, '.' | '_' | '-')
-}
-
 // ── Working directory escape detection ────────────────────────────────────────
 
 /// Detect if a command attempts to change the working directory.
@@ -605,77 +561,6 @@ mod tests {
             dl.check("[system.net.webclient]::new()").is_some(),
             "lowercase .NET type should be caught"
         );
-    }
-
-    // ── Path normalization ─────────────────────────────────────────────────
-
-    #[test]
-    fn normalize_preserves_division_with_spaces() {
-        assert_eq!(normalize_path_separators("10 / 2"), "10 / 2");
-    }
-
-    #[test]
-    fn normalize_empty_input() {
-        assert_eq!(normalize_path_separators(""), "");
-    }
-
-    #[test]
-    fn normalize_standalone_slash() {
-        // A lone "/" with spaces on both sides is division.
-        assert_eq!(normalize_path_separators("1 / 2"), "1 / 2");
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    #[test]
-    fn normalize_preserves_forward_slash_unix() {
-        // On non-Windows, forward slashes are the native path separator.
-        assert_eq!(
-            normalize_path_separators("Get-Content src/main.rs"),
-            "Get-Content src/main.rs"
-        );
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn normalize_converts_path_slashes() {
-        assert_eq!(
-            normalize_path_separators("Get-Content src/main.rs"),
-            "Get-Content src\\main.rs"
-        );
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn normalize_converts_drive_colon_slash() {
-        assert_eq!(
-            normalize_path_separators("cd C:/Users/foo"),
-            "cd C:\\Users\\foo"
-        );
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn normalize_preserves_already_backslash() {
-        assert_eq!(
-            normalize_path_separators("Get-Content src\\main.rs"),
-            "Get-Content src\\main.rs"
-        );
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn normalize_mixed_slashes() {
-        assert_eq!(
-            normalize_path_separators("Get-Content src/lib/mod.rs"),
-            "Get-Content src\\lib\\mod.rs"
-        );
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn normalize_slash_at_end_of_path() {
-        // "dir/" → "dir\" (trailing slash after path char)
-        assert_eq!(normalize_path_separators("cd src/"), "cd src\\");
     }
 
     // ── cd warning detection ─────────────────────────────────────────────
