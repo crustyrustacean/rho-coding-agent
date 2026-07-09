@@ -2304,7 +2304,7 @@ async fn edit_file_hashline_diff_shows_old_content_on_minus_lines() {
         plus_line.contains("BETA"),
         "'+ 'line should show NEW content (BETA): {plus_line}"
     );
-} // ── CargoTest with --format json integration tests ──────────────────────────
+} // ── CargoTest integration tests ─────────────────────────────────────────────
 
 /// Simulates the agent workflow: `CargoTest` parses JSON test output.
 #[tokio::test]
@@ -2313,11 +2313,8 @@ async fn cargo_test_parses_all_passed_json_output() {
 
     let env = FileTestEnv::new();
 
-    // All tests passed JSON output
-    let test_json = r#"{"type":"test","name":"tests::test_passes","event":"ok","duration_ms":5}
-{"type":"test","name":"tests::test_ignored","event":"ignored","duration_ms":0}
-{"type":"test","name":"tests::test_passes_too","event":"ok","duration_ms":3}
-"#;
+    // Human-readable `cargo test` output (the format produced on stable).
+    let test_json = "test tests::test_passes ... ok\ntest tests::test_ignored ... ignored\ntest tests::test_passes_too ... ok\n\ntest result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out\n";
     let mock = MockShellExecutor::new(vec![ShellOutput::new(
         test_json.to_owned(),
         String::new(),
@@ -2351,11 +2348,7 @@ async fn cargo_test_reports_failures() {
 
     let env = FileTestEnv::new();
 
-    let test_json = r#"{"type":"test","name":"tests::test_ok","event":"ok","duration_ms":2}
-{"type":"test","name":"tests::test_fails","event":"failed","duration_ms":10,"stdout":"","stderr":"assertion failed: 1 + 1 != 3"}
-{"type":"test","name":"tests::test_ignored","event":"ignored","duration_ms":0}
-{"type":"test","name":"tests::test_also_fails","event":"failed","duration_ms":7,"stdout":"panicked at src/lib.rs:42","stderr":""}
-"#;
+    let test_json = "test tests::test_ok ... ok\ntest tests::test_fails ... FAILED\ntest tests::test_ignored ... ignored\ntest tests::test_also_fails ... FAILED\n\n---- tests::test_fails stdout ----\nassertion failed: 1 + 1 != 3\nnote: run with `RUST_BACKTRACE=1`...\n\ntest result: FAILED. 1 passed; 2 failed; 1 ignored; 0 measured; 0 filtered out\n";
     let mock = MockShellExecutor::new(vec![ShellOutput::new(
         test_json.to_owned(),
         String::new(),
@@ -2423,15 +2416,13 @@ async fn cargo_test_empty_output_means_no_tests() {
 }
 
 #[tokio::test]
-async fn cargo_test_ignores_non_test_ndjson_lines() {
+async fn cargo_test_sums_counts_across_test_binaries() {
     use rho_test_helpers::{FileTestEnv, MockShellExecutor};
 
     let env = FileTestEnv::new();
 
-    let test_json = r#"{"type":"test","name":"tests::ok","event":"ok","duration_ms":1}
-{"reason":"suite-finished","name":"tests","success":true}
-{"type":"test","name":"tests::slow","event":"ok","duration_ms":99}
-"#;
+    // `cargo test` runs multiple test binaries; each emits its own summary.
+    let test_json = "test a::t1 ... ok\n\ntest result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n\ntest b::t2 ... ok\n\ntest result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n";
     let mock = MockShellExecutor::new(vec![ShellOutput::new(
         test_json.to_owned(),
         String::new(),
@@ -2451,7 +2442,11 @@ async fn cargo_test_ignores_non_test_ndjson_lines() {
     match &outcome {
         ToolOutcome::Immediate(r) => {
             assert!(!r.is_error, "should succeed: {}", r.output);
-            assert!(r.output.contains("2 passed"), "expected 2 passed");
+            assert!(
+                r.output.contains("15 passed"),
+                "expected summed 15 passed: {}",
+                r.output
+            );
         }
         ToolOutcome::Streamed(_) => panic!("expected immediate"),
     }
@@ -2464,9 +2459,7 @@ async fn cargo_test_passes_package_and_test_name_arguments() {
     let env = FileTestEnv::new();
 
     let mock = MockShellExecutor::new(vec![ShellOutput::new(
-        r#"{"type":"test","name":"my_test","event":"ok","duration_ms":1}
-"#
-        .to_owned(),
+        "test my_test ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored\n".to_owned(),
         String::new(),
         0,
     )]);
@@ -2489,18 +2482,81 @@ async fn cargo_test_passes_package_and_test_name_arguments() {
 
     assert!(!immediate_is_error(&outcome), "should succeed");
 
-    // Verify the executor received the correct command with --format json
+    // `--package` is a cargo flag (before `--`); the test filter follows `--`.
+    // Must NOT use the unstable `--format json`.
     let commands = mock.commands();
     assert_eq!(commands.len(), 1);
     let cmd = &commands[0];
-    assert!(cmd.contains("cargo test"), "should run cargo test");
-    assert!(cmd.contains("--package"), "should include --package");
-    assert!(cmd.contains("my_crate"), "should include package name");
-    assert!(cmd.contains("my_test"), "should include test name");
     assert!(
-        cmd.contains("--format json"),
-        "should include --format json"
+        cmd.starts_with("cargo test"),
+        "should run cargo test: {cmd}"
     );
+    assert!(
+        cmd.contains("--package my_crate"),
+        "should include --package before --: {cmd}"
+    );
+    assert!(
+        cmd.contains("-- my_test"),
+        "should pass test name after --: {cmd}"
+    );
+    assert!(
+        !cmd.contains("--format json"),
+        "must not use unstable --format json: {cmd}"
+    );
+}
+
+#[tokio::test]
+async fn cargo_test_surfaces_stderr_when_cargo_itself_fails() {
+    use rho_test_helpers::{FileTestEnv, MockShellExecutor};
+
+    let env = FileTestEnv::new();
+
+    // Reproduces the 0.84.6 incident: on stable Rust the old `--format json`
+    // was rejected, so stdout was empty and the error went to stderr — the old
+    // tool reported an opaque empty "Tests failed:\n" every time. The fix
+    // surfaces the real error and exit code.
+    let stderr = "error: The \"json\" format is only accepted on the nightly compiler\nerror: test failed, to rerun pass `-p rho-core --lib`";
+    let mock = MockShellExecutor::new(vec![ShellOutput::new(
+        String::new(),
+        stderr.to_owned(),
+        101,
+    )]);
+
+    let tool = CargoTest {
+        root: env.sandbox().clone(),
+        executor: Box::new(mock),
+    };
+
+    let outcome = tool
+        .execute(serde_json::json!({}), CancellationToken::new())
+        .await
+        .unwrap();
+
+    match &outcome {
+        ToolOutcome::Immediate(r) => {
+            assert!(r.is_error, "cargo failure should be error: {}", r.output);
+            assert!(
+                !r.output.trim().is_empty(),
+                "must not be the old opaque empty 'Tests failed:\\n'"
+            );
+            assert!(
+                r.output.contains("cargo test failed"),
+                "should name the failure: {}",
+                r.output
+            );
+            assert!(
+                r.output.contains("exit 101"),
+                "should report the exit code: {}",
+                r.output
+            );
+            assert!(
+                r.output.contains("nightly compiler"),
+                "should surface the stderr error: {}",
+                r.output
+            );
+        }
+        ToolOutcome::Streamed(_) => panic!("expected immediate"),
+    }
 }
 
 #[tokio::test]

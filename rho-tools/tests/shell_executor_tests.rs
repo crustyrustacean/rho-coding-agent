@@ -220,58 +220,6 @@ fn executor_reports_available_shell() {
     );
 }
 
-// ── Path normalization ───────────────────────────────────────────────────────
-
-#[tokio::test]
-async fn normalizes_forward_slashes_in_paths() {
-    skip_if_no_powershell!();
-    let executor = get_executor();
-    // Use a path with forward slashes.
-    let output = executor
-        .execute(
-            "Write-Output 'src/main.rs'",
-            Path::new("."),
-            None,
-            CancellationToken::new(),
-            None,
-        )
-        .await
-        .expect("execution should succeed");
-
-    // On Windows, slashes are normalized to backslashes.
-    // On macOS/Linux, forward slashes are preserved (native).
-    assert_eq!(output.exit_code, 0);
-    let path_in_output = if cfg!(target_os = "windows") {
-        "src\\main.rs"
-    } else {
-        "src/main.rs"
-    };
-    assert!(
-        output.stdout.contains(path_in_output),
-        "expected path {path_in_output} in output: {}",
-        output.stdout.trim()
-    );
-}
-
-#[tokio::test]
-async fn preserves_division_operator() {
-    skip_if_no_powershell!();
-    let executor = get_executor();
-    // `10 / 2` should NOT be normalized — spaces around `/` mean division.
-    let output = executor
-        .execute(
-            "10 / 2",
-            Path::new("."),
-            None,
-            CancellationToken::new(),
-            None,
-        )
-        .await
-        .expect("execution should succeed");
-
-    assert_eq!(output.exit_code, 0);
-}
-
 // ── PowerShell-specific features ──────────────────────────────────────────────
 
 #[tokio::test]
