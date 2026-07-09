@@ -48,6 +48,11 @@ pub struct ResumeSessionParams {
 #[allow(dead_code)]
 pub struct ApprovalResponseParams {
     pub approved: bool,
+    /// Optional redirect message. When `approved` is `false` and this is
+    /// present, the agent treats it as a redirect — the user's alternative
+    /// instructions are injected as a conversation turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 // ── Method results ────────────────────────────────────────────────────────────

@@ -96,7 +96,8 @@ pub use agent::{
     ToolCallOutcome, ToolCallRecord, TransitionError, run_loop,
 };
 pub use approval::{
-    ApprovalGate, ApprovalPolicy, AutoApprovePolicy, ConfigApprovalPolicy, DefaultApprovalPolicy,
+    ApprovalDecision, ApprovalGate, ApprovalPolicy, AutoApprovePolicy, ConfigApprovalPolicy,
+    DefaultApprovalPolicy,
 };
 pub use client::{ModelInfo, ModelList, RhoAiClient, is_local_endpoint, resolve_api_key};
 pub use config::{

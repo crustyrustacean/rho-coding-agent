@@ -44,7 +44,7 @@
 //!             └──────────┘
 //! ```
 
-use crate::approval::{ApprovalGate, ApprovalPolicy, DefaultApprovalPolicy};
+use crate::approval::{ApprovalDecision, ApprovalGate, ApprovalPolicy, DefaultApprovalPolicy};
 use crate::conversation::AssistantResponse;
 use crate::error::{Result, RhoError};
 use crate::message::ChatMessage;
@@ -813,32 +813,52 @@ impl LoopContext<'_> {
             .get_by_name(&call.function.name)
             .map_or(ToolRisk::Destructive, Tool::risk);
 
-        let approved = self.params.gate.request_approval(&call, risk).await;
-
-        if !approved {
-            debug!(tool_name = %call.function.name, action = "denied");
-            self.collector.record_denied(
-                &call.function.name,
-                &call.function.arguments,
-                ToolCallOutcome::Denied,
-            );
-            self.params
-                .observer
-                .on_tool_denied(&call.function.name)
-                .await;
-            let call_id = ToolCallId::new(call.id.to_string());
-            let _ = self
-                .session
-                .append_tool_result(call_id, &ToolResult::error("Tool call denied by user."));
-            return Ok(self.advance_to_next_call(remaining).await);
+        match self.params.gate.request_approval(&call, risk).await {
+            ApprovalDecision::Approved => {
+                // Approved — transition to executing.
+                self.params
+                    .observer
+                    .on_state_change(AgentState::ExecutingTool)
+                    .await;
+                Ok(State::ExecutingTool { call, remaining })
+            }
+            ApprovalDecision::Redirect { message } => {
+                // User denied and provided alternative instructions.
+                // Inject as a user message and return to Thinking so the
+                // model can re-plan.
+                debug!(tool_name = %call.function.name, action = "redirected");
+                self.collector.record_denied(
+                    &call.function.name,
+                    &call.function.arguments,
+                    ToolCallOutcome::Denied,
+                );
+                let call_id = ToolCallId::new(call.id.to_string());
+                let _ = self.session.append_tool_result(
+                    call_id,
+                    &ToolResult::error("Tool call redirected by user."),
+                );
+                self.session.append_user_message(&message);
+                Ok(State::Thinking)
+            }
+            ApprovalDecision::Denied => {
+                // User denied with no redirect — record and advance.
+                debug!(tool_name = %call.function.name, action = "denied");
+                self.collector.record_denied(
+                    &call.function.name,
+                    &call.function.arguments,
+                    ToolCallOutcome::Denied,
+                );
+                self.params
+                    .observer
+                    .on_tool_denied(&call.function.name)
+                    .await;
+                let call_id = ToolCallId::new(call.id.to_string());
+                let _ = self
+                    .session
+                    .append_tool_result(call_id, &ToolResult::error("Tool call denied by user."));
+                Ok(self.advance_to_next_call(remaining).await)
+            }
         }
-
-        // Approved — transition to executing.
-        self.params
-            .observer
-            .on_state_change(AgentState::ExecutingTool)
-            .await;
-        Ok(State::ExecutingTool { call, remaining })
     }
 
     // ── ExecutingTool ────────────────────────────────────────────────────

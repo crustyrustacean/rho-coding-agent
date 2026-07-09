@@ -42,7 +42,7 @@ use rho_core::{
     AgentConfig, CancellationToken, ChatMessage, RhoError, SandboxRoot, Session, ShellExecutor,
     ShellOutput, Tool, ToolName, ToolOutcome, ToolRegistry, ToolResult, TrustStore,
     agent::{LoopParams, NopObserver, run_loop},
-    approval::ApprovalGate,
+    approval::{ApprovalDecision, ApprovalGate},
     message::ModelToolCall,
     tool::ToolRisk,
 };
@@ -503,8 +503,8 @@ pub struct AutoApproveGate;
 
 #[async_trait]
 impl ApprovalGate for AutoApproveGate {
-    async fn request_approval(&self, _call: &ModelToolCall, _risk: ToolRisk) -> bool {
-        true
+    async fn request_approval(&self, _call: &ModelToolCall, _risk: ToolRisk) -> ApprovalDecision {
+        ApprovalDecision::Approved
     }
 }
 
@@ -515,8 +515,8 @@ pub struct AutoDenyGate;
 
 #[async_trait]
 impl ApprovalGate for AutoDenyGate {
-    async fn request_approval(&self, _call: &ModelToolCall, _risk: ToolRisk) -> bool {
-        false
+    async fn request_approval(&self, _call: &ModelToolCall, _risk: ToolRisk) -> ApprovalDecision {
+        ApprovalDecision::Denied
     }
 }
 

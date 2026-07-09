@@ -268,7 +268,11 @@ struct RpcApprovalGate {
 
 #[async_trait]
 impl rho_core::ApprovalGate for RpcApprovalGate {
-    async fn request_approval(&self, call: &ModelToolCall, risk: rho_core::ToolRisk) -> bool {
+    async fn request_approval(
+        &self,
+        call: &ModelToolCall,
+        risk: rho_core::ToolRisk,
+    ) -> rho_core::ApprovalDecision {
         let _ = self
             .transport
             .write_message(&notification(
@@ -282,8 +286,18 @@ impl rho_core::ApprovalGate for RpcApprovalGate {
             .await;
 
         match self.transport.read_message().await {
-            ReadResult::Message(v) => v["params"]["approved"].as_bool().unwrap_or(false),
-            _ => false,
+            ReadResult::Message(v) => {
+                let approved = v["params"]["approved"].as_bool().unwrap_or(false);
+                let message = v["params"]["message"].as_str().map(String::from);
+                if approved {
+                    rho_core::ApprovalDecision::Approved
+                } else if let Some(msg) = message {
+                    rho_core::ApprovalDecision::Redirect { message: msg }
+                } else {
+                    rho_core::ApprovalDecision::Denied
+                }
+            }
+            _ => rho_core::ApprovalDecision::Denied,
         }
     }
 }
@@ -1352,6 +1366,44 @@ mod tests {
 
         let denied = events_of_type(&events, "tool/denied");
         assert_eq!(denied.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn approval_redirect_flow() {
+        // Model calls a destructive tool; client denies with a redirect message.
+        // The redirect message is injected as a user turn, and the model gets
+        // another chance to respond — it replies with text acknowledging the redirect.
+        let client = MockChatClient::new(vec![
+            tool_call_events("c1", "destroy_tool", "{}"),
+            text_events("understood, reading instead"),
+        ]);
+        let events = rpc_run(
+            client,
+            destructive_registry(),
+            &[
+                r#"{"jsonrpc":"2.0","method":"prompt","params":{"message":"destroy"},"id":1}"#,
+                r#"{"jsonrpc":"2.0","method":"approvalResponse","params":{"approved":false,"message":"Don't destroy that file, just read it"},"id":2}"#,
+            ],
+        )
+        .await;
+
+        // Should emit exactly one approval request.
+        let approvals = events_of_type(&events, "approval/request");
+        assert_eq!(approvals.len(), 1);
+        assert_eq!(approvals[0]["params"]["tool"], "destroy_tool");
+
+        // Tool should NOT have executed — no tool/result.
+        let tool_results = events_of_type(&events, "tool/result");
+        assert_eq!(tool_results.len(), 0);
+
+        // Should NOT have a tool/denied notification — redirect is not a plain denial.
+        let denied = events_of_type(&events, "tool/denied");
+        assert_eq!(denied.len(), 0);
+
+        // The redirect gives the model another turn, which ends with agent/end.
+        let ends = events_of_type(&events, "agent/end");
+        assert_eq!(ends.len(), 1);
+        assert_eq!(ends[0]["params"]["reply"], "understood, reading instead");
     }
 
     // ═══════════════════════════════════════════════════════════════════════

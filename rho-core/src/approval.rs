@@ -25,6 +25,28 @@ use crate::newtypes::ToolName;
 use crate::tool::ToolRisk;
 use async_trait::async_trait;
 
+// ── ApprovalDecision ──────────────────────────────────────────────────────────
+
+/// The result of an approval gate interaction.
+///
+/// Three outcomes are possible:
+/// - The user approved the tool call → [`Approved`](ApprovalDecision::Approved).
+/// - The user denied the tool call with no further input → [`Denied`](ApprovalDecision::Denied).
+///   The agent loop injects a generic denial error and continues.
+/// - The user denied the tool call *and* provided alternative instructions →
+///   [`Redirect`](ApprovalDecision::Redirect). The agent loop records the denial,
+///   injects the user's message as a new conversation turn, and returns to
+///   thinking so the model can re-plan.
+#[derive(Debug, Clone)]
+pub enum ApprovalDecision {
+    /// Proceed with tool execution.
+    Approved,
+    /// Tool denied; inject a generic denial error and continue.
+    Denied,
+    /// Tool denied; inject the user's alternative instructions and re-plan.
+    Redirect { message: String },
+}
+
 // ── ApprovalPolicy ────────────────────────────────────────────────────────────
 
 /// Decides whether a tool call requires human confirmation before execution.
@@ -130,9 +152,16 @@ impl ApprovalPolicy for ConfigApprovalPolicy {
 /// The gate is responsible for rendering the prompt and collecting the response.
 /// The bare REPL renders `Execute [tool]? [y/N]`; the Phase 4 TUI renders a
 /// rich preview panel. Either way, the agent loop just calls this method and
-/// acts on the `bool` result.
+/// acts on the [`ApprovalDecision`] result.
+///
+/// # Return values
+///
+/// - [`ApprovalDecision::Approved`] — proceed with execution.
+/// - [`ApprovalDecision::Denied`] — inject a generic denial error and continue.
+/// - [`ApprovalDecision::Redirect`] — inject the user's alternative instructions
+///   and return to thinking so the model can re-plan.
 #[async_trait]
 pub trait ApprovalGate: Send + Sync {
-    /// Request approval for `call`. Returns `true` if the user approves.
-    async fn request_approval(&self, call: &ModelToolCall, risk: ToolRisk) -> bool;
+    /// Request approval for `call`. Returns the user's decision.
+    async fn request_approval(&self, call: &ModelToolCall, risk: ToolRisk) -> ApprovalDecision;
 }
