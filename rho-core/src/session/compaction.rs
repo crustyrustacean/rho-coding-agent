@@ -87,6 +87,14 @@ pub struct MechanicalCompactionStrategy {
 }
 
 impl MechanicalCompactionStrategy {
+    /// Maximum number of phase segments retained in a compaction summary.
+    ///
+    /// Older segments are dropped once the log exceeds this length. This
+    /// bounds the rendered summary size: each phase renders to one line, so
+    /// this cap keeps the summary to a predictable handful of lines of
+    /// activity detail regardless of how many compactions have run.
+    const MAX_PHASE_SEGMENTS: usize = 40;
+
     /// Create a new mechanical compaction strategy.
     pub fn new() -> Self {
         Self::default()
@@ -131,6 +139,25 @@ impl CompactionStrategy for MechanicalCompactionStrategy {
             _ => Duration::ZERO,
         };
 
+        let mut phases = phase_tracker.into_phases();
+
+        // Cap the phase log to the most recent segments. `absorb_prior_phases`
+        // rolls the entire prior phase history forward on every compaction, so
+        // without a cap `phases` grows without bound (observed in the field:
+        // a single 1-entry compaction produced 147 phase segments / 115 KB
+        // because it cloned the whole prior history). The high-level
+        // narrative is preserved by `original_request` / `current_request`;
+        // phases are activity detail, and only the most recent activity is
+        // relevant for resuming.
+        let mut notes: Option<String> = None;
+        if phases.len() > Self::MAX_PHASE_SEGMENTS {
+            let dropped = phases.len() - Self::MAX_PHASE_SEGMENTS;
+            phases = phases.split_off(phases.len() - Self::MAX_PHASE_SEGMENTS);
+            notes = Some(format!(
+                "({dropped} older phase segments truncated; see prior compaction summaries for older activity)"
+            ));
+        }
+
         Ok(CompactionSummary {
             original_request,
             current_request,
@@ -138,9 +165,9 @@ impl CompactionStrategy for MechanicalCompactionStrategy {
             tokens_compacted,
             entry_count: entries.len(),
             time_span,
-            notes: None,
+            notes,
             key_findings,
-            phases: phase_tracker.into_phases(),
+            phases,
         })
     }
 }
@@ -1427,6 +1454,80 @@ mod tests {
             tokens < 100,
             "compaction entry estimate must reflect summary text ({tokens}), \
              not the historic tokens_before (old formula gave ~250_000)"
+        );
+    }
+
+    #[tokio::test]
+    async fn mechanical_compaction_caps_phase_segments() {
+        // Regression: `absorb_prior_phases` rolls the entire prior phase
+        // history forward on every compaction, so `phases` grows without
+        // bound (observed: a 1-entry compaction produced 147 phase segments
+        // / 115 KB because it cloned the whole prior history). The strategy
+        // must cap `phases` to keep the rendered summary bounded.
+        let strategy = MechanicalCompactionStrategy::new();
+
+        // A prior compaction summary carrying 100 phase segments — the
+        // accumulation that `absorb_prior_phases` would otherwise clone
+        // forward verbatim on every subsequent compaction.
+        let big_phases: Vec<CompactionPhase> = (0..100)
+            .map(|i| CompactionPhase {
+                phase: "execution".to_owned(),
+                tool_calls: {
+                    let mut m = BTreeMap::new();
+                    m.insert(ToolName::from("run_command"), vec![format!("echo {i}")]);
+                    m
+                },
+                key_findings: BTreeMap::new(),
+                user_messages: Vec::new(),
+            })
+            .collect();
+        let prior_summary = CompactionSummary {
+            original_request: Some("the original goal".to_owned()),
+            current_request: Some("the active task".to_owned()),
+            tool_calls: BTreeMap::new(),
+            tokens_compacted: 50_000,
+            entry_count: 50,
+            time_span: Duration::from_mins(10),
+            notes: None,
+            key_findings: BTreeMap::new(),
+            phases: big_phases,
+        };
+
+        let entries = [
+            full_entry(EntryPayload::Compaction {
+                summary: prior_summary,
+                first_kept: EntryId::new(),
+                tokens_before: 50_000,
+            }),
+            full_entry(EntryPayload::Message(ChatMessage::user_text("keep going"))),
+            full_entry(EntryPayload::Message(ChatMessage::Assistant {
+                content: vec![],
+                tool_calls: vec![ModelToolCall {
+                    id: ToolCallId::from("c1"),
+                    call_type: "function".to_owned(),
+                    function: ToolCallFunction {
+                        name: ToolName::from("run_command"),
+                        arguments: r#"{"command":"echo hi"}"#.to_owned(),
+                    },
+                }],
+            })),
+            full_entry(EntryPayload::Message(ChatMessage::tool_result(
+                ToolCallId::from("c1"),
+                "hi",
+            ))),
+        ];
+        let refs: Vec<&Entry> = entries.iter().collect();
+        let summary = strategy.compact(&refs).await.unwrap();
+
+        assert!(
+            summary.phases.len() <= MechanicalCompactionStrategy::MAX_PHASE_SEGMENTS,
+            "phases ({}) must be capped at {}",
+            summary.phases.len(),
+            MechanicalCompactionStrategy::MAX_PHASE_SEGMENTS
+        );
+        assert!(
+            summary.notes.is_some(),
+            "truncation should be noted when prior phases exceed the cap"
         );
     }
 
