@@ -61,6 +61,7 @@ echo '{"jsonrpc":"2.0","method":"prompt","params":{"message":"explain this funct
 | `tool/result` | `{name, is_error, output}` | Tool finished executing |
 | `tool/denied` | `{name}` | Tool call denied by approval gate |
 | `approval/request` | `{tool, arguments, risk}` | Approval required — send `approvalResponse` |
+| `usage` | `{iteration, usage, context}` | Per-iteration token/cost delta and live context snapshot |
 
 ### Error codes
 
@@ -105,7 +106,7 @@ In RPC mode there is no interactive terminal, so the startup phases that normall
 |---|---|
 | Provider consent | Requires `--accept-external-provider` flag (returns an error if missing) |
 | Context file trust | Already-trusted files load silently; new or changed files are auto-denied |
-| Model picker | Requires `--model` flag (returns an error instead of interactive selection) |
+| Model picker | Resolves from config (`agent.model`, `agent.provider`, provider `default_model`) or CLI `--model`. Falls back to built-in default. No network calls at startup |
 
 ## Session management
 

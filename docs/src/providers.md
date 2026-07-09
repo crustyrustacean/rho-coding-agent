@@ -91,7 +91,7 @@ rho --accept-external-provider
 
 ## Provider consent
 
-When connecting to a non-local endpoint, rho displays an interactive consent warning before any data leaves your machine:
+When connecting to a non-local endpoint, rho checks for external providers before starting. If external providers are configured and neither `--accept-external-provider` nor `--endpoint` is passed, rho prints a warning to stderr and exits with an error:
 
 ```text
   ⚠  No local model server detected
@@ -102,12 +102,12 @@ When connecting to a non-local endpoint, rho displays an interactive consent war
       This may expose proprietary code, secrets, or other
       sensitive data to the providers and any intermediaries.
 
-      Continue? [y/N]
+  Aborting. Use --accept-external-provider to skip this prompt.
 ```
 
 If rho also has a local provider (e.g. LM Studio is running alongside an external provider), the "No local model server detected" header is omitted.
 
-The consent prompt fires automatically for config-driven external endpoints. It is **skipped** when you use `--endpoint` on the CLI (explicit endpoint implies consent) or `--accept-external-provider`.
+The consent gate fires automatically for config-driven external endpoints. It is **skipped** when you use `--endpoint` on the CLI (explicit endpoint implies consent) or `--accept-external-provider`.
 
 ## Specifying the model
 

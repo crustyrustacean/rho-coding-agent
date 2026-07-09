@@ -1,12 +1,12 @@
 # Roadmap
 
-rho is developed in phases, each building on the last. The current version is **0.84.2**.
+rho is developed in phases, each building on the last. The current version is **0.84.7**.
 
 ## Phase summary
 
 | Phase | Status | Summary |
 |---|---|---|
-| 1a: The Agent Loop | ✅ Complete | Agent loop, tool registry, `ChatClient` trait, conversation management |
+| 1a: The Agent Loop | ✅ Complete | Agent loop, tool registry, `LlmService` trait, conversation management |
 | 1b: Security Surface | ✅ Complete | Approval gate, file sandbox, context-file trust, secret redaction, untrusted-data framing |
 | 2: Shell, File Tools & Cross-Platform | ✅ Complete | PowerShell-native shell, file tools, config loader, command denylist, cross-platform |
 | 2.5: Adaptive-Resolution Context | ✅ Complete | Session tree, resolution levels, calibrated budget, tool-result bounding, amnesia fix, JSONL persistence |

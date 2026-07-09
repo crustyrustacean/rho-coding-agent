@@ -46,11 +46,11 @@ When an API key is provided via `api_key_env` in config, it is sent as an `Autho
 
 ### Provider consent
 
-The binary (`rho`) checks whether the configured endpoint is local before connecting. Non-local endpoints (e.g., `api.openai.com`) trigger an interactive consent warning that lists the external provider(s) by name. If no local server is detected, the warning also notes this. Use `--accept-external-provider` to skip this in automated workflows, or `--endpoint` (which implies consent since the user explicitly chose the target).
+The binary (`rho`) checks whether the configured endpoint is local before connecting. Non-local endpoints (e.g., `api.openai.com`) trigger a consent warning that lists the external provider(s) by name and exits with an error unless the user passes `--accept-external-provider` or `--endpoint` (which implies consent since the user explicitly chose the target). This is a headless consent gate — there is no interactive prompt.
 
 ### Model picker
 
-When no model can be resolved from config or CLI, rho reports an error at startup. Set `--model <id>`, `agent.model`, or `agent.provider` with a `default_model` on the provider to ensure a model is always available.
+When no model can be resolved from config or CLI, rho falls back to a built-in default model (`anthropic/claude-sonnet-4` via OpenRouter). Set `--model <id>`, `agent.model`, or `agent.provider` with a `default_model` on the provider to use a specific model. The built-in default requires an OpenRouter API key or a configured provider.
 
 ## Model resolution
 

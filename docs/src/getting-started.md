@@ -38,7 +38,7 @@ provider = "openrouter"
 
 ### No configuration?
 
-If you run rho with no local server and no configured provider, rho will print an error telling you to configure a provider and model. Set them in config or pass `--endpoint <url> --model <id>` on the command line.
+If you run rho with no local server and no configured provider, rho falls back to a built-in default model (`anthropic/claude-sonnet-4` via OpenRouter). This requires an OpenRouter API key — set `OPENROUTER_API_KEY` in your environment or configure a provider explicitly. Set the model in config or pass `--endpoint <url> --model <id>` on the command line.
 
 ## Build
 
@@ -70,7 +70,7 @@ On startup, rho:
 2. Loads configuration from `~/.rho/config.toml` and `.rho/config.toml`.
 3. Scans for project context files (`AGENTS.md`, etc.) and auto-denies untrusted files in headless mode.
 4. Checks provider consent for external endpoints.
-5. Resolves the model from config (`agent.model`, `agent.provider`, or a provider's `default_model`) or CLI `--model`. No network calls at startup.
+5. Resolves the model from config (`agent.model`, `agent.provider`, or a provider's `default_model`) or CLI `--model`. Falls back to a built-in default model if none configured. No network calls at startup.
 6. Creates a session (persisted to `~/.rho/sessions/` by default, or in-memory with `--ephemeral`). If previous sessions exist, a hint is printed.
 7. Enters the RPC loop and waits for commands.
 

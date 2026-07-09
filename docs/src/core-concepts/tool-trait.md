@@ -37,6 +37,7 @@ Every tool has a `ToolRisk` that determines whether it needs human approval:
 | `Read` | Cannot modify state | Auto-approved | `ReadFile`, `ListDir`, `CargoCheck` |
 | `Write` | May create or modify files | Requires approval | `WriteFile`, `EditFile`, `CargoFix` |
 | `Destructive` | May cause irreversible effects | Requires approval | `RunCommand` |
+| `Network` | Makes network requests | Requires approval | Extension tools that call `fetch()` |
 
 The approval policy can override these defaults per-tool via config.
 

@@ -215,6 +215,7 @@ The dispatch loop is decoupled from I/O via the [`Transport`] trait (`rho/src/tr
 | `tool/result` | `{name, is_error, output}` | Tool finished executing |
 | `tool/denied` | `{name}` | Tool call denied by approval gate |
 | `approval/request` | `{tool, arguments, risk}` | Approval required — send `approvalResponse` |
+| `usage` | `{iteration, usage, context}` | Per-iteration token/cost delta and live context snapshot |
 
 **Error codes:**
 
@@ -353,6 +354,7 @@ rho/                # Headless JSON-RPC 2.0 agent
     ext_observer.rs # `CompositeObserver` — fans out to RPC observer + extension observers
     rpc.rs          # JSON-RPC 2.0 protocol: `run_rpc`, `run_rpc_on`, `RpcObserver`, `RpcApprovalGate`
     rpc_wire.rs      # Typed wire-format structs: params, results, notifications, `OpenRPC` schema types
+    transport.rs       # `Transport` trait, `StdioTransport` (newline-delimited JSON)
     presenter.rs    # Presenter module root
     presenter/
       rpc.rs        # `RpcPresenter` — diagnostic output to stderr

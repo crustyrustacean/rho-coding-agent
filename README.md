@@ -70,7 +70,7 @@ A local coding agent written in Rust. `rho` runs as a headless process communica
    cargo run --package rho -- --accept-external-provider
    ```
 
-   The `--accept-external-provider` flag skips the consent prompt that warns your data will be sent to an external server. Omit it on first use to see the warning.
+   The `--accept-external-provider` flag skips the consent warning that warns your data will be sent to an external server. Omit it on first use to see the warning.
 
    See [External Providers](docs/src/providers.md) for more providers (Groq, OpenRouter, DeepInfra) and detailed configuration.
 
@@ -180,21 +180,17 @@ rho treats model output as untrusted and applies defense-in-depth:
 ## Architecture
 
 ```
-┌──────────────────┐
-│      rho         │  ← Headless JSON-RPC 2.0 agent
-├──────────────────┤
-│    rho-ext       │  ← TypeScript extension runtime (V8/deno-core)
-├──────────────────┤
-│    rho-tools     │  ← Built-in tools: files, shell, rust tooling, memory
-├──────────────────┤
-│    rho-memory    │  ← Persistent knowledge base (SQLite/FTS5)
-├──────────────────┤
-│  rho-highlight   │  ← Tree-sitter syntax analysis (node splitting, highlighting)
-├──────────────────┤
-│    rho-core      │  ← Agent kernel: loop, types, traits, config
-├──────────────────┤
-│    rho-ai        │  ← Unified LLM provider abstraction (streaming, retry, SSE)
-└──────────────────┘
+┌─────────────────────────────────────────────────┐
+│                   rho (binary)                   │  ← Headless JSON-RPC 2.0 agent
+├─────────────────────────────────────────────────┤
+│  rho-ext          rho-tools                       │  ← Extensions   /  Built-in tools
+├─────────────────────────────────────────────────┤
+│            rho-memory      rho-highlight           │  ← Siblings of rho-tools
+├─────────────────────────────────────────────────┤
+│                   rho-core                       │  ← Agent kernel: loop, types, traits, config
+├─────────────────────────────────────────────────┤
+│                   rho-ai                         │  ← Unified LLM provider abstraction (streaming, retry, SSE)
+└─────────────────────────────────────────────────┘
    rho-test-helpers   ← Dev-only: mocks, fixtures, tempdir helpers
 ```
 
@@ -239,6 +235,7 @@ rho/                  # Headless JSON-RPC 2.0 agent
     ext_observer.rs   # CompositeObserver — fans out to RPC + extension observers
     rpc.rs            # JSON-RPC 2.0 protocol (methods, notifications, approval gate)
     rpc_wire.rs        # Typed wire-format structs (params, results, notifications)
+    transport.rs       # Transport trait (StdioTransport)
     presenter.rs      # Presenter module root
     presenter/
       rpc.rs          # RpcPresenter — diagnostic output to stderr

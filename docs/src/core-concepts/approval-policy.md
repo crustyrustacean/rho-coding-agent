@@ -33,6 +33,7 @@ When a tool is not listed in config, the risk-based default applies:
 | `Read` | Auto |
 | `Write` | Ask |
 | `Destructive` | Ask |
+| `Network` | Ask |
 
 ## Gate: `RpcApprovalGate`
 
@@ -51,6 +52,12 @@ The `ApprovalGate` trait is async, so any UI can implement it:
 ```rust
 #[async_trait]
 pub trait ApprovalGate: Send + Sync {
-    async fn request_approval(&self, call: &ModelToolCall, risk: ToolRisk) -> bool;
+    async fn request_approval(&self, call: &ModelToolCall, risk: ToolRisk) -> ApprovalDecision;
 }
 ```
+
+`ApprovalDecision` has three variants:
+
+- `Approved` — proceed with execution.
+- `Denied` — inject a generic denial error and continue.
+- `Redirect { message }` — inject the user's alternative instructions and return to thinking so the model can re-plan.

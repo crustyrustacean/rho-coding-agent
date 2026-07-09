@@ -4,23 +4,21 @@ rho is organized as a layered workspace where dependencies flow downward only.
 
 ```text
 ┌─────────────────────────────────────────────────┐
-│                   rho (binary)                   │
+│                   rho (binary)                   │  ← Headless JSON-RPC 2.0 agent
 ├─────────────────────────────────────────────────┤
-│                   rho-ext                        │
+│  rho-ext          rho-tools                       │  ← Extensions   /  Built-in tools
 ├─────────────────────────────────────────────────┤
-│                   rho-tools                      │
+│            rho-memory      rho-highlight           │  ← Siblings of rho-tools
 ├─────────────────────────────────────────────────┤
-│                   rho-memory                     │
+│                   rho-core                       │  ← Agent kernel (loop, types, traits, data model)
 ├─────────────────────────────────────────────────┤
-│                   rho-highlight                  │
-├─────────────────────────────────────────────────┤
-│                   rho-core                       │
-├─────────────────────────────────────────────────┤
-│                   rho-ai                         │
+│                   rho-ai                         │  ← Unified LLM provider abstraction
 └─────────────────────────────────────────────────┘
 ```
 
-The rule is simple: a crate may only depend on crates below it in the stack. `rho-ai` depends on nothing but external libraries; every other crate eventually depends on `rho-core` (and `rho-core` depends on `rho-ai`).
+`rho-ai` is the lowest layer; it depends only on external libraries. `rho-core` depends on `rho-ai` for the `LlmService` trait. Every other crate eventually depends on `rho-core`.
+
+`rho-ext`, `rho-tools`, `rho-memory`, and `rho-highlight` are all siblings sitting directly on `rho-core`. `rho-tools` additionally depends on `rho-memory` and `rho-highlight`; the others each depend only on `rho-core`.
 
 See also:
 

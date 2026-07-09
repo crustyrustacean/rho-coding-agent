@@ -25,7 +25,8 @@
 //! | `getMessages`      | —                           | Return all messages on active path |
 //! | `setModel`         | `{model: string}`          | Switch model (`id` or `provider:id`) |
 //! | `listModels`       | —                           | List available models from providers |
-//! | `listProviders`    | —                           | List configured providers with reachability |//! | `getSessionStats`  | —                           | Return token budget / usage info   |
+//! | `listProviders`    | —                           | List configured providers with reachability |
+//! | `getSessionStats`  | —                           | Return token budget / usage info   |
 //! | `listSessions`     | —                           | List previous sessions for project |
 //! | `listExtensions`   | —                           | List loaded extensions and tools   |
 //! | `reloadExtensions` | —                           | Reload extensions from disk        |

@@ -19,6 +19,7 @@ rho-coding-agent/
 │       ├── ext_observer.rs   # `CompositeObserver` — fans out to RPC observer + extension observers
 │       ├── rpc.rs            # JSON-RPC 2.0: `run_rpc`, `run_rpc_on`, observer, approval gate
 │       ├── rpc_wire.rs        # Typed wire-format structs (params, results, notifications)
+│       ├── transport.rs        # `Transport` trait, `StdioTransport` (newline-delimited JSON)
 │       └── presenter/
 │           └── rpc.rs        # `RpcPresenter` — diagnostic output to stderr
 ├── rho-ai/                 # Unified LLM provider abstraction
