@@ -64,7 +64,11 @@ pub trait CompactionStrategy: Send + Sync {
 /// without any LLM calls.
 ///
 /// Walks the entries and extracts:
-/// - `original_request`: the first `ChatMessage::User` text encountered.
+/// - `original_request`: the first non-empty `ChatMessage::User` text (the
+///   initial request that began the compacted segment — background).
+/// - `current_request`: the last non-empty `ChatMessage::User` text (the
+///   active task at the end of the compacted segment — what the agent should
+///   resume). See [`CompactionSummary::current_request`].
 /// - `tool_calls`: groups `ChatMessage::Assistant { tool_calls }` entries by
 ///   tool name; for each call, formats a one-line argument summary.
 /// - `tokens_compacted`: sum of estimated tokens across all compacted entries.
@@ -93,6 +97,7 @@ impl MechanicalCompactionStrategy {
 impl CompactionStrategy for MechanicalCompactionStrategy {
     async fn compact(&self, entries: &[&Entry]) -> Result<CompactionSummary> {
         let mut original_request: Option<String> = None;
+        let mut current_request: Option<String> = None;
         let mut tool_calls: BTreeMap<ToolName, Vec<String>> = BTreeMap::new();
         let mut tokens_compacted: usize = 0;
         let mut first_timestamp: Option<std::time::SystemTime> = None;
@@ -110,6 +115,7 @@ impl CompactionStrategy for MechanicalCompactionStrategy {
             process_entry(
                 entry,
                 &mut original_request,
+                &mut current_request,
                 &mut tool_calls,
                 &mut key_findings,
                 &mut tool_call_names,
@@ -127,6 +133,7 @@ impl CompactionStrategy for MechanicalCompactionStrategy {
 
         Ok(CompactionSummary {
             original_request,
+            current_request,
             tool_calls,
             tokens_compacted,
             entry_count: entries.len(),
@@ -182,6 +189,19 @@ impl PhaseTracker {
         flush_phase_segment(&mut self.current_segment, &mut self.phases);
     }
 
+    /// Prepend phases from a prior compaction summary being rolled forward.
+    ///
+    /// A prior summary represents older work than anything accumulated so far
+    /// (on a single leaf path only the latest compaction is Full-resolution;
+    /// earlier ones are `Compacted` and filtered out before compaction runs),
+    /// so its phases belong at the front of the list. The caller should
+    /// [`flush`](Self::flush) first to close any in-progress segment.
+    fn absorb_prior_phases(&mut self, phases: Vec<CompactionPhase>) {
+        let mut combined = phases;
+        combined.append(&mut self.phases);
+        self.phases = combined;
+    }
+
     /// Consume the tracker and return the completed phase segments.
     fn into_phases(self) -> Vec<CompactionPhase> {
         self.phases
@@ -224,23 +244,26 @@ fn track_time_bounds(
 fn process_entry(
     entry: &Entry,
     original_request: &mut Option<String>,
+    current_request: &mut Option<String>,
     tool_calls: &mut BTreeMap<ToolName, Vec<String>>,
     key_findings: &mut BTreeMap<ToolName, Vec<String>>,
     tool_call_names: &mut HashMap<String, ToolName>,
     phase_tracker: &mut PhaseTracker,
 ) {
-    if let EntryPayload::Message(msg) = &entry.payload {
-        match msg {
+    match &entry.payload {
+        EntryPayload::Message(msg) => match msg {
             ChatMessage::User { content } => {
-                if original_request.is_none() {
-                    let text = extract_text(content);
-                    if !text.is_empty() {
-                        *original_request = Some(text);
-                    }
-                }
                 phase_tracker.flush();
                 let text = extract_text(content);
                 if !text.is_empty() {
+                    // First user message in the range is the initial request
+                    // (background on how the segment began).
+                    if original_request.is_none() {
+                        *original_request = Some(text.clone());
+                    }
+                    // Overwrite every turn so we end on the LAST user message —
+                    // the active task the agent should resume after compaction.
+                    *current_request = Some(text.clone());
                     phase_tracker.current_segment.user_messages.push(text);
                 }
             }
@@ -286,7 +309,33 @@ fn process_entry(
                     }
                 }
             }
+        },
+        EntryPayload::Compaction { summary, .. } => {
+            // A prior compaction summary is being rolled forward. On a single
+            // leaf path only the *latest* compaction is Full-resolution
+            // (earlier ones are `Compacted` and filtered out before reaching
+            // here), so this summary represents older work than anything
+            // accumulated so far. Preserve it instead of silently dropping it:
+            //   - inherit its request as the earliest-known `original_request`,
+            //   - its `current_request` supersedes earlier user messages (it
+            //     is newer), and is itself superseded by any later one,
+            //   - its phase-structured activity is kept at the front.
+            phase_tracker.flush();
+            if original_request.is_none() {
+                original_request.clone_from(&summary.original_request);
+            }
+            if let Some(req) = &summary.current_request {
+                *current_request = Some(req.clone());
+            }
+            // Roll the prior summary's phase-structured activity forward.
+            // Modern summaries always populate `phases` for any tool activity
+            // (the flat `tool_calls`/`key_findings` fields carry the same
+            // data and exist only for pre-Phase-5 fallback rendering), so
+            // absorbing `phases` preserves everything.
+            phase_tracker.absorb_prior_phases(summary.phases.clone());
         }
+        // BranchSummary and other payloads are not rolled forward.
+        _ => {}
     }
 }
 
@@ -384,6 +433,9 @@ impl LlmCompactionStrategy {
              Output ONLY the narrative, no preamble.\n\n",
         );
 
+        if let Some(ref req) = summary.current_request {
+            let _ = writeln!(prompt, "Current request: {req}");
+        }
         if let Some(ref req) = summary.original_request {
             let _ = writeln!(prompt, "Original request: {req}");
         }
@@ -586,17 +638,26 @@ fn summary_text_chars(summary: &CompactionSummary) -> usize {
     if let Some(ref req) = summary.original_request {
         chars += req.len();
     }
-    for (name, calls) in &summary.tool_calls {
-        chars += name.len() + calls.iter().map(|c| c.len() + 2).sum::<usize>();
+    if let Some(ref req) = summary.current_request {
+        chars += req.len();
     }
-    // Phase-structured content
-    for segment in &summary.phases {
-        chars += segment.phase.len() + 10; // phase header overhead
-        for (name, calls) in &segment.tool_calls {
+    // Mirror `render_compaction_summary`: phases when present, else flat.
+    if summary.phases.is_empty() {
+        for (name, calls) in &summary.tool_calls {
             chars += name.len() + calls.iter().map(|c| c.len() + 2).sum::<usize>();
         }
-        for findings in segment.key_findings.values() {
+        for findings in summary.key_findings.values() {
             chars += findings.iter().map(|f| f.len() + 2).sum::<usize>();
+        }
+    } else {
+        for segment in &summary.phases {
+            chars += segment.phase.len() + 10; // phase header overhead
+            for (name, calls) in &segment.tool_calls {
+                chars += name.len() + calls.iter().map(|c| c.len() + 2).sum::<usize>();
+            }
+            for findings in segment.key_findings.values() {
+                chars += findings.iter().map(|f| f.len() + 2).sum::<usize>();
+            }
         }
     }
     if let Some(ref notes) = summary.notes {
@@ -747,6 +808,11 @@ mod tests {
             summary.original_request,
             Some("fix the bug in main.rs".to_owned())
         );
+        // With a single user message, both initial and current capture it.
+        assert_eq!(
+            summary.current_request,
+            Some("fix the bug in main.rs".to_owned())
+        );
     }
 
     #[tokio::test]
@@ -761,8 +827,10 @@ mod tests {
         let strategy = MechanicalCompactionStrategy::new();
         let summary = strategy.compact(&refs).await.unwrap();
 
-        // Only the FIRST user message should be captured
+        // The FIRST user message is the initial (background) request…
         assert_eq!(summary.original_request, Some("first".to_owned()));
+        // …while the MOST RECENT user message is the active task to resume.
+        assert_eq!(summary.current_request, Some("second".to_owned()));
     }
 
     #[tokio::test]
@@ -777,6 +845,189 @@ mod tests {
         let summary = strategy.compact(&refs).await.unwrap();
 
         assert_eq!(summary.original_request, None);
+        assert_eq!(summary.current_request, None);
+    }
+
+    /// Regression test for the "rho lost itself" compaction bug.
+    ///
+    /// In a long, multi-topic session the first user message can be hours old
+    /// and about a totally different topic than the current task. Compaction
+    /// must anchor the post-compaction context to the **most recent** user
+    /// request (the active task), not the session-opening message — otherwise
+    /// the model resumes the stale request instead of the current one.
+    ///
+    /// Mirrors the incident recorded in session `1783487802`: the opening
+    /// request was "What documents are in your memory?" while the active task
+    /// was a question about `RpcApprovalGate`. After compaction the model
+    /// reverted to listing memory documents. With `current_request`, the
+    /// rendered summary now leads with the active task and demotes the stale
+    /// opening request to background context.
+    #[tokio::test]
+    async fn mechanical_current_request_is_most_recent_not_first() {
+        let entries = [
+            full_entry(EntryPayload::Message(ChatMessage::user_text(
+                "What documents are in your memory for this project?",
+            ))),
+            full_entry(EntryPayload::Message(ChatMessage::assistant_text(
+                "Here are the 4 documents stored in project memory…",
+            ))),
+            full_entry(EntryPayload::Message(ChatMessage::user_text(
+                "Do we need a new constructor, `new()` method on `RpcApprovalGate`?",
+            ))),
+            full_entry(EntryPayload::Message(ChatMessage::assistant_text(
+                "Yes — a `new()` makes the oneshot wiring explicit.",
+            ))),
+            full_entry(EntryPayload::Message(ChatMessage::user_text(
+                "Why `Arc<Mutex<…` for our oneshot channel?",
+            ))),
+        ];
+        let refs: Vec<&Entry> = entries.iter().collect();
+
+        let summary = MechanicalCompactionStrategy::new()
+            .compact(&refs)
+            .await
+            .unwrap();
+
+        // The initial request is the (now stale) session-opening message…
+        assert_eq!(
+            summary.original_request,
+            Some("What documents are in your memory for this project?".to_owned())
+        );
+        // …but the active task is the most-recent user message.
+        assert_eq!(
+            summary.current_request,
+            Some("Why `Arc<Mutex<…` for our oneshot channel?".to_owned())
+        );
+
+        // The rendered summary must lead with the current task so the model
+        // resumes the right work, and demote the stale opening request.
+        let msg = crate::context::render_compaction_summary(&summary);
+        let ChatMessage::User { content } = &msg else {
+            panic!("expected synthetic User message");
+        };
+        let crate::message::ContentBlock::Text { text } = &content[0];
+        assert!(
+            text.contains("Current request: \"Why `Arc<Mutex<…` for our oneshot channel?\""),
+            "rendered summary must lead with the current task, got: {text}"
+        );
+        assert!(
+            text.contains(
+                "Initial request: \"What documents are in your memory for this project?\""
+            ),
+            "stale opening request should appear as background, got: {text}"
+        );
+        let cur = text.find("Current request:").unwrap();
+        let init = text.find("Initial request:").unwrap();
+        assert!(
+            cur < init,
+            "current request must precede the initial request"
+        );
+    }
+
+    /// Regression test for the re-compaction fidelity gap.
+    ///
+    /// When a compaction range includes a *prior* `Compaction` entry, the
+    /// prior summary's content (request + phase-structured activity) must be
+    /// rolled forward into the new summary, not silently dropped. Previously
+    /// `process_entry` only handled `Message` payloads, so a rolled-up prior
+    /// summary vanished — losing the record of earlier work.
+    #[tokio::test]
+    async fn mechanical_compaction_preserves_prior_summary() {
+        let prior_summary = CompactionSummary {
+            original_request: Some("the original goal".to_owned()),
+            current_request: Some("rolled-forward task".to_owned()),
+            tool_calls: BTreeMap::new(),
+            key_findings: BTreeMap::new(),
+            phases: vec![CompactionPhase {
+                phase: "exploration".to_owned(),
+                tool_calls: {
+                    let mut m = BTreeMap::new();
+                    m.insert(ToolName::from("read_file"), vec!["src/main.rs".to_owned()]);
+                    m
+                },
+                key_findings: {
+                    let mut m = BTreeMap::new();
+                    m.insert(
+                        ToolName::from("read_file"),
+                        vec!["found the bug".to_owned()],
+                    );
+                    m
+                },
+                user_messages: vec![],
+            }],
+            tokens_compacted: 5_000,
+            entry_count: 10,
+            time_span: Duration::from_mins(1),
+            notes: None,
+        };
+        let entries = [
+            full_entry(EntryPayload::Compaction {
+                summary: prior_summary,
+                first_kept: EntryId::new(),
+                tokens_before: 5_000,
+            }),
+            full_entry(EntryPayload::Message(ChatMessage::user_text(
+                "and now a new request",
+            ))),
+            full_entry(EntryPayload::Message(ChatMessage::Assistant {
+                content: vec![],
+                tool_calls: vec![ModelToolCall {
+                    id: ToolCallId::from("c1"),
+                    call_type: "function".to_owned(),
+                    function: ToolCallFunction {
+                        name: ToolName::from("run_command"),
+                        arguments: r#"{\"command\":\"cargo test\"}"#.to_owned(),
+                    },
+                }],
+            })),
+        ];
+        let refs: Vec<&Entry> = entries.iter().collect();
+
+        let summary = MechanicalCompactionStrategy::new()
+            .compact(&refs)
+            .await
+            .unwrap();
+
+        // original_request inherited from the prior summary (earliest).
+        assert_eq!(
+            summary.original_request,
+            Some("the original goal".to_owned())
+        );
+        // current_request superseded by the later user message.
+        assert_eq!(
+            summary.current_request,
+            Some("and now a new request".to_owned())
+        );
+        // Prior phase activity is preserved (not silently dropped)...
+        let has_prior = summary.phases.iter().any(|p| {
+            p.phase == "exploration"
+                && p.tool_calls.contains_key(&ToolName::from("read_file"))
+                && p.key_findings
+                    .values()
+                    .flatten()
+                    .any(|f| f.contains("found the bug"))
+        });
+        assert!(
+            has_prior,
+            "prior compaction phases must be preserved, got: {:#?}",
+            summary.phases
+        );
+        // ...and the prior phase is ordered before the new activity (it is
+        // older), since a prior summary represents older work.
+        let prior_idx = summary
+            .phases
+            .iter()
+            .position(|p| p.phase == "exploration")
+            .unwrap();
+        let new_idx = summary
+            .phases
+            .iter()
+            .position(|p| p.tool_calls.contains_key(&ToolName::from("run_command")))
+            .unwrap();
+        assert!(
+            prior_idx < new_idx,
+            "prior phase must precede new activity ({prior_idx} < {new_idx})"
+        );
     }
 
     #[tokio::test]
@@ -1382,6 +1633,7 @@ mod tests {
     fn build_prompt_includes_original_request() {
         let summary = CompactionSummary {
             original_request: Some("fix the parser bug".to_owned()),
+            current_request: None,
             tool_calls: BTreeMap::new(),
             key_findings: BTreeMap::new(),
             phases: Vec::new(),
@@ -1411,6 +1663,7 @@ mod tests {
 
         let summary = CompactionSummary {
             original_request: None,
+            current_request: None,
             tool_calls: BTreeMap::new(),
             key_findings: BTreeMap::new(),
             phases,
@@ -1434,6 +1687,7 @@ mod tests {
     fn build_prompt_includes_entry_and_token_counts() {
         let summary = CompactionSummary {
             original_request: None,
+            current_request: None,
             tool_calls: BTreeMap::new(),
             key_findings: BTreeMap::new(),
             phases: Vec::new(),
@@ -1457,6 +1711,7 @@ mod tests {
     fn build_prompt_truncates_long_input() {
         let summary = CompactionSummary {
             original_request: Some("x".repeat(5000)),
+            current_request: None,
             tool_calls: BTreeMap::new(),
             key_findings: BTreeMap::new(),
             phases: Vec::new(),

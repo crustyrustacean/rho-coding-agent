@@ -297,7 +297,8 @@ fn render_reduced_fidelity(entry: &Entry, text: &str) -> Option<ChatMessage> {
 /// The rendering contract is:
 /// ```text
 /// [Compacted: {entry_count} entries, {tokens_compacted} tokens, span {duration}]
-/// Original request: "{original_request, if present}"
+/// Current request: "{current_request, if present}"   (active task to resume)
+/// Initial request: "{original_request, if present}"  (background, when different)
 /// Tool activity:
 ///   - {tool_name}: {N} calls — {args_summary_1}, {args_summary_2}, ...
 /// {notes, if present}
@@ -329,9 +330,19 @@ pub fn render_compaction_summary(summary: &crate::session::CompactionSummary) ->
         summary.entry_count, summary.tokens_compacted, summary.time_span
     );
 
-    // Original request
-    if let Some(ref req) = summary.original_request {
-        let _ = writeln!(body, "Original request: \"{req}\"");
+    // Current request — the active task the agent should resume. Rendered
+    // first and prominently so the post-compaction context anchors to the
+    // most-recent user intent rather than the (possibly long-stale)
+    // session-opening request.
+    if let Some(ref req) = summary.current_request {
+        let _ = writeln!(body, "Current request: \"{req}\"");
+    }
+    // Initial request — background on how the segment began. Shown only when
+    // it differs from the current request (i.e. the conversation drifted).
+    if let Some(ref req) = summary.original_request
+        && summary.current_request.as_deref() != Some(req.as_str())
+    {
+        let _ = writeln!(body, "Initial request: \"{req}\"");
     }
 
     // Phase-structured narrative (Phase 5)
@@ -1392,6 +1403,7 @@ mod tests {
     fn fit_path_renders_compaction_as_synthetic_user() {
         let summary = CompactionSummary {
             original_request: Some("fix the bug".to_owned()),
+            current_request: Some("write a regression test".to_owned()),
             tool_calls: {
                 let mut map = std::collections::BTreeMap::new();
                 map.insert(ToolName::from("read_file"), vec!["main.rs".to_owned()]);
@@ -1435,7 +1447,16 @@ mod tests {
         if let ChatMessage::User { content } = &result[1] {
             let ContentBlock::Text { text } = &content[0];
             assert!(text.contains("[Compacted: 3 entries, 500 tokens"));
-            assert!(text.contains("Original request: \"fix the bug\""));
+            // The active task is rendered first and prominently.
+            assert!(text.contains("Current request: \"write a regression test\""));
+            // The initial request appears as background only because it differs.
+            assert!(text.contains("Initial request: \"fix the bug\""));
+            let cur = text.find("Current request:").unwrap();
+            let init = text.find("Initial request:").unwrap();
+            assert!(
+                cur < init,
+                "current request must precede the initial request"
+            );
             assert!(text.contains("read_file"));
         } else {
             panic!("expected User message");
@@ -1446,6 +1467,7 @@ mod tests {
     fn fit_path_renders_branch_summary_as_synthetic_user() {
         let summary = CompactionSummary {
             original_request: None,
+            current_request: None,
             tool_calls: std::collections::BTreeMap::new(),
             tokens_compacted: 50,
             entry_count: 1,

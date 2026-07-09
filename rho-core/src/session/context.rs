@@ -453,18 +453,14 @@ impl Session {
             EntryPayload::Message(msg) => crate::context::approximate_tokens(msg),
             EntryPayload::Compaction { summary, .. }
             | EntryPayload::BranchSummary { summary, .. } => {
-                // Compaction summaries are rendered as a synthetic User message.
-                // Estimate from the summary's text content.
-                let chars = 100; // header overhead
-                let body_chars = if let Some(ref req) = summary.original_request {
-                    req.len()
-                } else {
-                    0
-                };
-                // Rough estimate: header + request + phase narratives
-                let total =
-                    chars + body_chars + summary.tool_calls.len() * 20 + summary.phases.len() * 40;
-                total.div_ceil(4).max(1)
+                // Compaction/BranchSummary entries render as a synthetic User
+                // message whose size is the summary's text (requests, tool
+                // activity, key findings, notes). Estimate from that rendered
+                // text — consistent with how `compact_older_than` sizes these
+                // entries — so utilization reflects what the model actually
+                // sees, including finding-heavy summaries.
+                let text = super::truncation::summary_text_chars(summary);
+                text.len().div_ceil(4).max(1)
             }
             EntryPayload::CustomMessage { content, .. } => {
                 // Rendered as User message with the content blocks.
@@ -698,6 +694,7 @@ mod tests {
 
         let summary = CompactionSummary {
             original_request: Some("fix the bug".to_owned()),
+            current_request: None,
             tool_calls: {
                 let mut map = std::collections::BTreeMap::new();
                 map.insert(ToolName::from("read_file"), vec!["src/main.rs".to_owned()]);
@@ -759,6 +756,7 @@ mod tests {
 
         let summary = CompactionSummary {
             original_request: None,
+            current_request: None,
             tool_calls: std::collections::BTreeMap::new(),
             tokens_compacted: 50,
             entry_count: 1,
@@ -910,6 +908,7 @@ mod tests {
 
         let summary = CompactionSummary {
             original_request: Some("fix it".to_owned()),
+            current_request: Some("add a unit test".to_owned()),
             tool_calls,
             tokens_compacted: 500,
             entry_count: 7,
@@ -932,7 +931,8 @@ mod tests {
         if let ChatMessage::User { content } = &msg1 {
             let ContentBlock::Text { text } = &content[0];
             assert!(text.contains("[Compacted: 7 entries, 500 tokens"));
-            assert!(text.contains("Original request: \"fix it\""));
+            assert!(text.contains("Current request: \"add a unit test\""));
+            assert!(text.contains("Initial request: \"fix it\""));
             assert!(text.contains("read_file: 2 calls"));
             assert!(text.contains("a.rs, b.rs"));
             assert!(text.contains("notes here"));
@@ -947,6 +947,7 @@ mod tests {
 
         let summary = CompactionSummary {
             original_request: None,
+            current_request: None,
             tool_calls: std::collections::BTreeMap::new(),
             tokens_compacted: 100,
             entry_count: 2,
@@ -960,7 +961,8 @@ mod tests {
         if let ChatMessage::User { content } = &msg {
             let ContentBlock::Text { text } = &content[0];
             assert!(text.contains("[Compacted: 2 entries, 100 tokens"));
-            assert!(!text.contains("Original request"));
+            assert!(!text.contains("Current request"));
+            assert!(!text.contains("Initial request"));
             assert!(!text.contains("Tool activity"));
         } else {
             panic!("expected User message");
@@ -1213,6 +1215,61 @@ mod tests {
         } else {
             panic!("expected Compaction payload");
         }
+    }
+
+    #[test]
+    fn estimate_entry_tokens_in_path_counts_summary_findings() {
+        use crate::newtypes::EntryId;
+        use crate::session::entry::EntryResolution;
+        use std::collections::BTreeMap;
+        use std::time::{Duration, SystemTime};
+
+        fn compaction_entry(summary: CompactionSummary) -> Entry {
+            Entry {
+                id: EntryId::new(),
+                parent_id: None,
+                timestamp: SystemTime::UNIX_EPOCH,
+                resolution: EntryResolution::Full,
+                payload: EntryPayload::Compaction {
+                    summary,
+                    first_kept: EntryId::new(),
+                    tokens_before: 0,
+                },
+            }
+        }
+
+        let base = || CompactionSummary {
+            original_request: Some("r".to_owned()),
+            current_request: None,
+            tool_calls: BTreeMap::new(),
+            key_findings: BTreeMap::new(),
+            phases: Vec::new(),
+            tokens_compacted: 0,
+            entry_count: 0,
+            time_span: Duration::ZERO,
+            notes: None,
+        };
+
+        let empty = compaction_entry(base());
+
+        // Same summary but packed with ~10k chars of key findings.
+        let mut heavy = base();
+        let mut findings = BTreeMap::new();
+        findings.insert(ToolName::from("read_file"), vec!["x".repeat(10_000)]);
+        heavy.key_findings = findings;
+        let finding_heavy = compaction_entry(heavy);
+
+        let small = Session::estimate_entry_tokens_in_path(&empty);
+        let large = Session::estimate_entry_tokens_in_path(&finding_heavy);
+
+        // The old heuristic ignored `key_findings`, so both estimated the
+        // same tiny number. Findings (~2.5k tokens) must now be counted, so a
+        // finding-heavy summary estimates substantially larger.
+        assert!(
+            large > small + 2_000,
+            "finding-heavy summary must estimate larger ({large} vs {small}); \
+             key findings must be counted"
+        );
     }
 
     // ── Pinned barrier vs. compaction (Task: pin API, step 1) ─────────

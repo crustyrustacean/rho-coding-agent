@@ -59,6 +59,14 @@ use tracing::{debug, warn};
 /// The header line is *not* an `Entry` — it's session-level metadata that
 /// doesn't belong in the tree. It's always the first line. All subsequent
 /// lines are entries.
+//
+// `Entry` is a session-tree node that intentionally carries rich inline
+// payloads (a full `CompactionSummary`, message content blocks, etc.), so the
+// `Entry` variant is much larger than `Header`. Boxing it (as clippy
+// suggests) would add a heap indirection on every JSONL line read and write
+// for little benefit; the size is bounded and these values are transient
+// during (de)serialisation. Suppressed deliberately.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(tag = "type")]
 pub enum JsonlLine {

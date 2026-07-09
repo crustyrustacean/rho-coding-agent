@@ -83,6 +83,7 @@ fn entry_round_trip_all_variants() {
             payload: EntryPayload::Compaction {
                 summary: CompactionSummary {
                     original_request: Some("fix it".to_owned()),
+                    current_request: None,
                     tool_calls: BTreeMap::new(),
                     tokens_compacted: 100,
                     entry_count: 2,
@@ -103,6 +104,7 @@ fn entry_round_trip_all_variants() {
             payload: EntryPayload::BranchSummary {
                 summary: CompactionSummary {
                     original_request: None,
+                    current_request: None,
                     tool_calls: BTreeMap::new(),
                     tokens_compacted: 50,
                     entry_count: 1,
@@ -370,6 +372,7 @@ fn branch_summary_correct_from_id() {
 
     let summary = CompactionSummary {
         original_request: Some("hello".to_owned()),
+        current_request: None,
         tool_calls: BTreeMap::new(),
         tokens_compacted: 100,
         entry_count: 2,
@@ -1220,6 +1223,7 @@ fn compaction_summary_rendering_byte_stable() {
 
     let summary = CompactionSummary {
         original_request: Some("fix the compilation error".to_owned()),
+        current_request: Some("rerun the failing test".to_owned()),
         tool_calls,
         tokens_compacted: 2048,
         entry_count: 15,
@@ -1237,7 +1241,8 @@ fn compaction_summary_rendering_byte_stable() {
     if let ChatMessage::User { content } = &msg1 {
         let ContentBlock::Text { text } = &content[0];
         assert!(text.contains("[Compacted: 15 entries, 2048 tokens"));
-        assert!(text.contains("Original request: \"fix the compilation error\""));
+        assert!(text.contains("Current request: \"rerun the failing test\""));
+        assert!(text.contains("Initial request: \"fix the compilation error\""));
         assert!(text.contains("read_file: 2 calls"));
         assert!(text.contains("run_command: 1 calls"));
         assert!(text.contains("compacted to fit budget"));
@@ -1261,6 +1266,7 @@ fn compaction_summary_renders_key_findings() {
 
     let summary = CompactionSummary {
         original_request: Some("read the code".to_owned()),
+        current_request: None,
         tool_calls,
         tokens_compacted: 500,
         entry_count: 3,

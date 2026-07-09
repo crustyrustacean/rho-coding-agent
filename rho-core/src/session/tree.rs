@@ -426,6 +426,7 @@ mod tests {
 
         let summary = CompactionSummary {
             original_request: Some("hello".to_owned()),
+            current_request: None,
             tool_calls: std::collections::BTreeMap::new(),
             tokens_compacted: 100,
             entry_count: 1,
@@ -463,6 +464,7 @@ mod tests {
         let fake_id = EntryId::new();
         let summary = CompactionSummary {
             original_request: None,
+            current_request: None,
             tool_calls: std::collections::BTreeMap::new(),
             tokens_compacted: 0,
             entry_count: 0,

@@ -494,6 +494,7 @@ mod tests {
 
         let summary = super::super::CompactionSummary {
             original_request: Some("hello".to_owned()),
+            current_request: None,
             tool_calls: std::collections::BTreeMap::new(),
             tokens_compacted: 100,
             entry_count: 2,
@@ -517,6 +518,7 @@ mod tests {
 
         let summary = super::super::CompactionSummary {
             original_request: None,
+            current_request: None,
             tool_calls: std::collections::BTreeMap::new(),
             tokens_compacted: 50,
             entry_count: 1,

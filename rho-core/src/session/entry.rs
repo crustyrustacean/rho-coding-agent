@@ -219,7 +219,10 @@ pub struct CompactionPhase {
 /// when a `Compaction` or `BranchSummary` entry appears on the leaf path.
 ///
 /// The structured form (as opposed to prose) ensures:
-/// - P2.5-6: the original user request is preserved by type, not convention.
+/// - P2.5-6: the user request is preserved by type, not convention. Both the
+///   initial request (`original_request`) and the most-recent / active request
+///   (`current_request`) are captured, so resumption after compaction anchors
+///   to the *current* task rather than a stale session-opening message.
 /// - P2.5-8: what was evicted is self-describing.
 /// - An `LlmCompactionStrategy` (Phase 4+) can populate `notes` without
 ///   changing the consumers.
@@ -227,7 +230,8 @@ pub struct CompactionPhase {
 /// The rendering contract is:
 /// ```text
 /// [Compacted: {entry_count} entries, {tokens_compacted} tokens, span {duration}]
-/// Original request: "{original_request, if present}"
+/// Current request: "{current_request, if present}"   (the active task to resume)
+/// Initial request: "{original_request, if present}"  (background, when it differs)
 ///
 /// **Exploration:** Read main.rs, lib.rs. Initial cargo_check: 1 error.
 /// **Execution:** Edited main.rs (3 edits).
@@ -244,8 +248,21 @@ pub struct CompactionPhase {
 /// `EntryPayload::Compaction` and `EntryPayload::BranchSummary` are constructable.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CompactionSummary {
-    /// Verbatim original user request, if present in the compacted range.
+    /// Verbatim *initial* user request in the compacted range — the first
+    /// non-empty `ChatMessage::User` text encountered. Provides background on
+    /// how the compacted segment began.
     pub original_request: Option<String>,
+    /// Verbatim *most recent* user request in the compacted range — the last
+    /// non-empty `ChatMessage::User` text encountered.
+    ///
+    /// This is the active task the agent was working on at the end of the
+    /// compacted segment. The post-compaction context renders it first and
+    /// prominently so resumption anchors to the *current* work rather than the
+    /// (possibly long-stale) [`original_request`](Self::original_request).
+    ///
+    /// Older sessions persisted before this field existed default to `None`.
+    #[serde(default)]
+    pub current_request: Option<String>,
     /// Tool calls grouped by tool name, with one-line argument summaries.
     pub tool_calls: BTreeMap<ToolName, Vec<String>>,
     /// Result summaries
@@ -363,6 +380,7 @@ mod tests {
         tool_calls.insert(ToolName::from("read_file"), vec!["src/main.rs".to_owned()]);
         let summary = CompactionSummary {
             original_request: Some("list files".to_owned()),
+            current_request: None,
             tool_calls,
             tokens_compacted: 1024,
             entry_count: 5,
@@ -385,6 +403,7 @@ mod tests {
     fn payload_branch_summary_round_trips() {
         let summary = CompactionSummary {
             original_request: None,
+            current_request: None,
             tool_calls: BTreeMap::new(),
             tokens_compacted: 512,
             entry_count: 3,
@@ -557,6 +576,7 @@ mod tests {
         tool_calls.insert(ToolName::from("run_command"), vec!["cargo test".to_owned()]);
         let summary = CompactionSummary {
             original_request: Some("fix the bug".to_owned()),
+            current_request: None,
             tool_calls,
             tokens_compacted: 4096,
             entry_count: 12,
@@ -574,6 +594,7 @@ mod tests {
     fn compaction_summary_minimal_round_trips() {
         let summary = CompactionSummary {
             original_request: None,
+            current_request: None,
             tool_calls: BTreeMap::new(),
             tokens_compacted: 0,
             entry_count: 0,

@@ -81,15 +81,18 @@ pub(crate) fn estimate_entry_tokens_for_compaction(
             let text = format_message_text(msg);
             estimator.estimate(model, &text).max(1)
         }
-        EntryPayload::Compaction {
-            summary,
-            tokens_before,
-            ..
-        } => {
-            // For existing compaction entries, use the recorded tokens_before
-            // plus the summary's own token cost
+        EntryPayload::Compaction { summary, .. } => {
+            // A compaction entry costs only what its rendered summary
+            // contributes to the context. It must NOT be re-charged the
+            // `tokens_before` it absorbed — that work is already done, and
+            // re-charging it makes the entry permanently "heavy", so
+            // successive compactions grow their selected ranges instead of
+            // shrinking them (observed in the field: 246k -> 410k
+            // `tokens_before` across two compactions two minutes apart,
+            // re-triggering compaction immediately). Size it by the summary
+            // alone, consistently with how `fit_path` renders it.
             let summary_text = summary_text_chars(summary);
-            *tokens_before + estimator.estimate(model, &summary_text)
+            estimator.estimate(model, &summary_text).max(1)
         }
         EntryPayload::BranchSummary { summary, .. } => {
             let text = summary_text_chars(summary);
@@ -148,41 +151,62 @@ fn format_message_text(msg: &ChatMessage) -> String {
     text
 }
 
-/// Format a `CompactionSummary` into a single string for token estimation.
-fn summary_text_chars(summary: &CompactionSummary) -> String {
+/// Format a [`CompactionSummary`] into a single string for token estimation.
+///
+/// Includes every field that the renderer emits (initial + current requests,
+/// flat and phase-structured tool activity, flat and phase-structured key
+/// findings, and notes) so the estimate reflects what the model actually sees.
+pub(crate) fn summary_text_chars(summary: &CompactionSummary) -> String {
     let mut text = String::new();
     if let Some(ref req) = summary.original_request {
+        text.push_str("Initial request: ");
         text.push_str(req);
-        text.push(' ');
+        text.push('\n');
     }
-    for (name, calls) in &summary.tool_calls {
-        text.push_str(name);
-        for call in calls {
-            text.push(' ');
-            text.push_str(call);
-        }
+    if let Some(ref req) = summary.current_request {
+        text.push_str("Current request: ");
+        text.push_str(req);
+        text.push('\n');
     }
-    // Phase-structured content
-    for segment in &summary.phases {
-        text.push(' ');
-        text.push_str(&segment.phase);
-        for (name, calls) in &segment.tool_calls {
-            text.push(' ');
+    // Mirror `render_compaction_summary`: phase-structured content when
+    // present, otherwise the flat fallback. (Modern summaries populate
+    // `phases` for any tool activity, so reading both would double-count.)
+    if summary.phases.is_empty() {
+        for (name, calls) in &summary.tool_calls {
             text.push_str(name);
             for call in calls {
                 text.push(' ');
                 text.push_str(call);
             }
+            text.push('\n');
         }
-        for findings in segment.key_findings.values() {
+        for findings in summary.key_findings.values() {
             for finding in findings {
-                text.push(' ');
                 text.push_str(finding);
+                text.push('\n');
+            }
+        }
+    } else {
+        for segment in &summary.phases {
+            text.push_str(&segment.phase);
+            text.push('\n');
+            for (name, calls) in &segment.tool_calls {
+                text.push_str(name);
+                for call in calls {
+                    text.push(' ');
+                    text.push_str(call);
+                }
+                text.push('\n');
+            }
+            for findings in segment.key_findings.values() {
+                for finding in findings {
+                    text.push_str(finding);
+                    text.push('\n');
+                }
             }
         }
     }
     if let Some(ref notes) = summary.notes {
-        text.push(' ');
         text.push_str(notes);
     }
     text
@@ -208,5 +232,122 @@ mod tests {
         assert_eq!(floor_char_boundary(s, 4), 3); // floor to previous boundary
         assert_eq!(floor_char_boundary(s, 6), 6); // exact boundary
         assert_eq!(floor_char_boundary(s, 8), 6); // floor to previous boundary
+    }
+
+    /// Regression test for the "compaction doesn't shrink" bug.
+    ///
+    /// A compaction entry that absorbed a large amount of context must be sized
+    /// by its *rendered summary* for range-selection — not re-charged the
+    /// `tokens_before` it absorbed. Re-charging it makes the entry permanently
+    /// heavy, so successive compactions grow their selected ranges instead of
+    /// shrinking them (observed: 246k -> 410k `tokens_before` across two
+    /// compactions two minutes apart, re-triggering compaction immediately).
+    #[test]
+    fn compaction_entry_estimated_by_summary_not_tokens_before() {
+        use crate::newtypes::EntryId;
+        use crate::session::entry::EntryResolution;
+        use crate::session::estimator::HeuristicEstimator;
+        use std::collections::BTreeMap;
+        use std::time::{Duration, SystemTime};
+
+        let summary = CompactionSummary {
+            original_request: Some("do something".to_owned()),
+            current_request: Some("now do something else".to_owned()),
+            tool_calls: BTreeMap::new(),
+            key_findings: BTreeMap::new(),
+            phases: Vec::new(),
+            tokens_compacted: 1_000_000,
+            entry_count: 999,
+            time_span: Duration::from_secs(99),
+            notes: None,
+        };
+        let entry = Entry {
+            id: EntryId::new(),
+            parent_id: None,
+            timestamp: SystemTime::UNIX_EPOCH,
+            resolution: EntryResolution::Full,
+            payload: EntryPayload::Compaction {
+                summary: summary.clone(),
+                first_kept: EntryId::new(),
+                tokens_before: 1_000_000,
+            },
+        };
+
+        let estimator = HeuristicEstimator::new();
+        let tokens = estimate_entry_tokens_for_compaction(&entry, "m", &estimator);
+
+        // Summary text is ~60 chars (~15 tokens at chars/4). The estimate
+        // must reflect that small summary, NOT the 1_000_000 tokens_before
+        // (which under the old logic produced ~250_000).
+        assert!(
+            (1..100).contains(&tokens),
+            "compaction entry must be sized by its summary ({tokens} tokens), \
+             not tokens_before (1_000_000)"
+        );
+    }
+
+    /// A modern mechanical summary populates BOTH the flat `tool_calls` and the
+    /// phase segments with the same tool activity. The token estimate must
+    /// count it once (via phases), not twice (flat + phases).
+    #[test]
+    fn summary_estimate_does_not_double_count_flat_and_phases() {
+        use crate::newtypes::{EntryId, ToolName};
+        use crate::session::entry::{CompactionPhase, EntryResolution};
+        use crate::session::estimator::HeuristicEstimator;
+        use std::collections::BTreeMap;
+        use std::time::{Duration, SystemTime};
+
+        fn entry(summary: CompactionSummary) -> Entry {
+            Entry {
+                id: EntryId::new(),
+                parent_id: None,
+                timestamp: SystemTime::UNIX_EPOCH,
+                resolution: EntryResolution::Full,
+                payload: EntryPayload::Compaction {
+                    summary,
+                    first_kept: EntryId::new(),
+                    tokens_before: 0,
+                },
+            }
+        }
+        fn base() -> CompactionSummary {
+            CompactionSummary {
+                original_request: None,
+                current_request: None,
+                tool_calls: BTreeMap::new(),
+                key_findings: BTreeMap::new(),
+                phases: Vec::new(),
+                tokens_compacted: 0,
+                entry_count: 0,
+                time_span: Duration::ZERO,
+                notes: None,
+            }
+        }
+
+        let mut calls = BTreeMap::new();
+        calls.insert(ToolName::from("read_file"), vec!["src/main.rs".to_owned()]);
+        let segment = CompactionPhase {
+            phase: "exploration".to_owned(),
+            tool_calls: calls.clone(),
+            key_findings: BTreeMap::new(),
+            user_messages: vec![],
+        };
+
+        // Activity only in phases.
+        let mut phases_only = base();
+        phases_only.phases = vec![segment.clone()];
+        // Same activity in BOTH flat and phases (as modern summaries carry).
+        let mut both = base();
+        both.tool_calls = calls;
+        both.phases = vec![segment];
+
+        let est = HeuristicEstimator::new();
+        let a = estimate_entry_tokens_for_compaction(&entry(phases_only), "m", &est);
+        let b = estimate_entry_tokens_for_compaction(&entry(both), "m", &est);
+
+        assert_eq!(
+            a, b,
+            "must not double-count tool activity present in both flat and phases"
+        );
     }
 }
