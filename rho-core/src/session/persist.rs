@@ -106,12 +106,8 @@ pub fn project_hash(cwd: &Path) -> String {
 ///
 /// Layout: `~/.rho/sessions/<project-hash>/<timestamp>_<session-id>.jsonl`
 pub fn default_save_path(cwd: &Path, session_id: &str, created_at_secs: u64) -> PathBuf {
-    let home = dirs_home();
-    let hash = project_hash(cwd);
-    home.join(".rho")
-        .join("sessions")
-        .join(hash)
-        .join(format!("{created_at_secs}_{session_id}.jsonl"))
+    let filename = format!("{created_at_secs}_{session_id}.jsonl");
+    session_dir_for(&dirs_home(), cwd).join(filename)
 }
 
 /// Best-effort home directory resolution.
@@ -119,6 +115,21 @@ fn dirs_home() -> PathBuf {
     std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .map_or_else(|_| PathBuf::from("/tmp"), PathBuf::from)
+}
+
+/// The sessions root directory under a given home: `<home>/.rho/sessions`.
+fn sessions_root(home: &Path) -> PathBuf {
+    home.join(".rho").join("sessions")
+}
+
+/// The per-project session directory for `cwd` under `home`:
+/// `<home>/.rho/sessions/<project_hash(cwd)>`.
+///
+/// Taking `home` as a parameter (rather than always reading it from the
+/// environment) lets tests isolate in a temp directory instead of the real
+/// session store — see `list_sessions_in` / `find_latest_session_in`.
+fn session_dir_for(home: &Path, cwd: &Path) -> PathBuf {
+    sessions_root(home).join(project_hash(cwd))
 }
 
 // ── Session discovery ──────────────────────────────────────────────────────────
@@ -151,8 +162,15 @@ pub struct SessionMetadata {
 ///
 /// Returns an empty vector if the session directory doesn't exist.
 pub fn list_sessions(cwd: &Path) -> Vec<SessionMetadata> {
-    let hash = project_hash(cwd);
-    let session_dir = dirs_home().join(".rho").join("sessions").join(hash);
+    list_sessions_in(&dirs_home(), cwd)
+}
+
+/// Testable variant of [`list_sessions`] rooted at an explicit `home`, so
+/// tests can isolate in a temp directory instead of the real session store
+/// (which avoids global-env races and cross-test contention under the full
+/// parallel suite, and keeps the real store clean).
+fn list_sessions_in(home: &Path, cwd: &Path) -> Vec<SessionMetadata> {
+    let session_dir = session_dir_for(home, cwd);
 
     let Ok(entries) = std::fs::read_dir(&session_dir) else {
         return Vec::new();
@@ -183,7 +201,12 @@ pub fn list_sessions(cwd: &Path) -> Vec<SessionMetadata> {
 /// the most recent filesystem modification time. Returns `None` if the
 /// directory doesn't exist or is empty.
 pub fn find_latest_session(cwd: &Path) -> Option<PathBuf> {
-    list_sessions(cwd).first().map(|m| m.path.clone())
+    find_latest_session_in(&dirs_home(), cwd)
+}
+
+/// Testable variant of [`find_latest_session`] rooted at an explicit `home`.
+fn find_latest_session_in(home: &Path, cwd: &Path) -> Option<PathBuf> {
+    list_sessions_in(home, cwd).first().map(|m| m.path.clone())
 }
 
 /// Extract lightweight metadata from a single JSONL session file.
@@ -618,21 +641,21 @@ mod tests {
 
     #[test]
     fn list_sessions_returns_empty_for_empty_directory() {
+        let home = tempfile::tempdir().unwrap();
         let base = unique_test_dir("list_empty");
-        let hash = project_hash(&base);
-        let session_dir = dirs_home().join(".rho").join("sessions").join(&hash);
-        let _ = std::fs::create_dir_all(&session_dir);
+        let session_dir = session_dir_for(home.path(), &base);
+        std::fs::create_dir_all(&session_dir).unwrap();
 
-        let result = list_sessions(&base);
+        let result = list_sessions_in(home.path(), &base);
         assert!(result.is_empty());
     }
 
     #[test]
     fn list_sessions_returns_sessions_sorted_by_mtime() {
+        let home = tempfile::tempdir().unwrap();
         let base = unique_test_dir("list_sorted");
-        let hash = project_hash(&base);
-        let session_dir = dirs_home().join(".rho").join("sessions").join(&hash);
-        let _ = std::fs::create_dir_all(&session_dir);
+        let session_dir = session_dir_for(home.path(), &base);
+        std::fs::create_dir_all(&session_dir).unwrap();
 
         let _older = create_test_session(&session_dir, "aaa11111", 1000, 5);
         let _newer = create_test_session(&session_dir, "bbb22222", 2000, 10);
@@ -650,7 +673,7 @@ mod tests {
             .and_then(|f| f.set_modified(newer_time))
             .ok();
 
-        let result = list_sessions(&base);
+        let result = list_sessions_in(home.path(), &base);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].id, "bbb22222");
         assert_eq!(result[1].id, "aaa11111");
@@ -667,10 +690,10 @@ mod tests {
 
     #[test]
     fn find_latest_returns_most_recent_session() {
+        let home = tempfile::tempdir().unwrap();
         let base = unique_test_dir("find_latest");
-        let hash = project_hash(&base);
-        let session_dir = dirs_home().join(".rho").join("sessions").join(&hash);
-        let _ = std::fs::create_dir_all(&session_dir);
+        let session_dir = session_dir_for(home.path(), &base);
+        std::fs::create_dir_all(&session_dir).unwrap();
 
         let _old = create_test_session(&session_dir, "ccc33333", 5000, 3);
         let _new = create_test_session(&session_dir, "ddd44444", 6000, 7);
@@ -688,7 +711,7 @@ mod tests {
             .and_then(|f| f.set_modified(newer_time))
             .ok();
 
-        let result = find_latest_session(&base);
+        let result = find_latest_session_in(home.path(), &base);
         assert!(result.is_some());
         let path = result.unwrap();
         assert!(path.to_string_lossy().contains("ddd44444"));
@@ -696,16 +719,16 @@ mod tests {
 
     #[test]
     fn list_sessions_skips_non_jsonl_files() {
+        let home = tempfile::tempdir().unwrap();
         let base = unique_test_dir("skip_files");
-        let hash = project_hash(&base);
-        let session_dir = dirs_home().join(".rho").join("sessions").join(&hash);
-        let _ = std::fs::create_dir_all(&session_dir);
+        let session_dir = session_dir_for(home.path(), &base);
+        std::fs::create_dir_all(&session_dir).unwrap();
 
         let _ = create_test_session(&session_dir, "eee55555", 7000, 2);
         std::fs::write(session_dir.join("readme.txt"), "not a session").unwrap();
         std::fs::File::create(session_dir.join("empty.jsonl")).unwrap();
 
-        let result = list_sessions(&base);
+        let result = list_sessions_in(home.path(), &base);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].id, "eee55555");
     }
