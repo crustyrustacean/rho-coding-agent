@@ -570,15 +570,16 @@ impl CompactionStrategy for LlmCompactionStrategy {
 fn estimate_entry_tokens(entry: &Entry) -> usize {
     let chars = match &entry.payload {
         EntryPayload::Message(msg) => message_chars(msg),
-        EntryPayload::Compaction {
-            summary,
-            tokens_before,
-            ..
-        } => {
-            // For compaction entries, use tokens_before as the basis
-            // plus the summary's own text content
-            let summary_chars = summary_text_chars(summary);
-            (*tokens_before / 4).max(summary_chars)
+        EntryPayload::Compaction { summary, .. } => {
+            // Size a compaction entry by its rendered summary text only.
+            // Re-charging `tokens_before` (the historic count absorbed by the
+            // *prior* compaction) makes the entry permanently "heavy": every
+            // successive compaction re-embeds the full cumulative history, so
+            // `tokens_compacted` grows monotonically and the summary balloons
+            // (observed in the field: 17 compactions, last summary ~250k
+            // tokens). Mirrors `estimate_entry_tokens_for_compaction` in
+            // `truncation.rs`, which sizes by the summary alone.
+            summary_text_chars(summary)
         }
         EntryPayload::BranchSummary { summary, .. } => summary_text_chars(summary),
         EntryPayload::Custom { data, .. } => data.to_string().len(),
@@ -1392,6 +1393,41 @@ mod tests {
         });
         let tokens = estimate_entry_tokens(&entry);
         assert!(tokens > 0, "should estimate tokens for a custom entry");
+    }
+
+    #[test]
+    fn estimate_tokens_for_compaction_entry_ignores_tokens_before() {
+        // Regression: `estimate_entry_tokens` must size a `Compaction` entry
+        // by its rendered summary text alone, NOT re-charge the historic
+        // `tokens_before`. Re-charging made every prior compaction
+        // permanently "heavy", so `tokens_compacted` grew monotonically and
+        // summaries ballooned across compactions (the edge-thrash).
+        let summary = CompactionSummary {
+            original_request: Some("do the thing".to_owned()),
+            current_request: Some("still doing it".to_owned()),
+            tool_calls: BTreeMap::new(),
+            tokens_compacted: 1_000_000,
+            entry_count: 999,
+            time_span: Duration::from_mins(1),
+            notes: None,
+            key_findings: BTreeMap::new(),
+            phases: Vec::new(),
+        };
+        let entry = full_entry(EntryPayload::Compaction {
+            summary,
+            first_kept: EntryId::new(),
+            // A huge historic cost that must NOT inflate the estimate.
+            tokens_before: 1_000_000,
+        });
+        let tokens = estimate_entry_tokens(&entry);
+        // Summary text is tiny ("do the thing" + "still doing it" + overhead),
+        // so the estimate must be small — well under the 250_000 the old
+        // `(*tokens_before / 4).max(...)` formula would have produced.
+        assert!(
+            tokens < 100,
+            "compaction entry estimate must reflect summary text ({tokens}), \
+             not the historic tokens_before (old formula gave ~250_000)"
+        );
     }
 
     // ── LlmCompactionStrategy tests ─────────────────────────────────────

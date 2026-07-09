@@ -332,11 +332,25 @@ impl Session {
             .into());
         }
 
-        // Collect the entries to compact (indices 1..compact_end)
-        let to_compact: Vec<&Entry> = chronological[1..compact_end].to_vec();
+        // Collect the entries to compact (indices 1..compact_end).
+        //
+        // Only `Full`-resolution entries are summarised. Entries already at
+        // a reduced resolution (`Compacted`, `Summarized`, `Outlined`) retain
+        // their original payload but are excluded here: re-summarising them
+        // would fold the same content into every successive summary, causing
+        // summaries to grow quadratically and pin utilisation at the
+        // compaction threshold (the "edge-thrash" regression, observed as
+        // 17 back-to-back compactions with summary sizes growing to ~250k
+        // tokens). A prior compaction *summary* entry is itself `Full`, so
+        // it stays in the range and is rolled forward by `process_entry`.
+        let to_compact: Vec<&Entry> = chronological[1..compact_end]
+            .iter()
+            .copied()
+            .filter(|e| matches!(e.resolution, EntryResolution::Full))
+            .collect();
         if to_compact.is_empty() {
             return Err(SessionError::Persistence(
-                "cannot compact: no entries selected".to_string(),
+                "cannot compact: no full-resolution entries selected".to_string(),
             )
             .into());
         }
@@ -1215,6 +1229,134 @@ mod tests {
         } else {
             panic!("expected Compaction payload");
         }
+    }
+
+    /// Regression test for the compaction edge-thrash.
+    ///
+    /// `compact_older_than` must summarise only `Full`-resolution entries.
+    /// Previously it took a positional slice `1..compact_end` that still
+    /// included entries already demoted to `Compacted` (their payload is the
+    /// original `Message`), so `process_entry` re-summarised them every
+    /// compaction. Combined with `estimate_entry_tokens` re-charging
+    /// `tokens_before`, each successive summary re-embedded the entire
+    /// cumulative history: summaries grew quadratically, stayed `Full` on
+    /// the active path, pinned utilisation at the threshold, and re-triggered
+    /// compaction within a turn or two (observed: 17 back-to-back compactions,
+    /// final summary ~250k tokens / 1MB).
+    ///
+    /// This test runs two compactions and asserts the second summary does NOT
+    /// re-summarise the first batch — its tool activity is rolled forward
+    /// exactly once (via the prior summary's phases), not duplicated.
+    #[tokio::test]
+    async fn compact_older_than_does_not_resummarize_compacted_entries() {
+        use crate::session::compaction::MechanicalCompactionStrategy;
+
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+
+        // A ~3000-char content block makes each assistant entry ~750 tokens,
+        // so a threshold of 400 guarantees the compaction walk spans the
+        // intended multi-entry range before breaking (the walk breaks the
+        // moment cumulative tokens cross the threshold).
+        let filler: String = "x".repeat(3000);
+        let asst_with_call = |call_id: &str, path: &str| ChatMessage::Assistant {
+            content: vec![crate::message::ContentBlock::Text {
+                text: filler.clone(),
+            }],
+            tool_calls: vec![ModelToolCall {
+                id: ToolCallId::from(call_id),
+                call_type: "function".to_owned(),
+                function: ToolCallFunction {
+                    name: ToolName::from("read_file"),
+                    arguments: format!(r#"{{\"path\":\"{path}\"}}"#),
+                },
+            }],
+        };
+
+        // Batch 1: one read_file call.
+        let u1 = session.append_user_message("do batch 1");
+        session.append_assistant_message(asst_with_call("c1", "a.rs"));
+        session.append_tool_result(
+            ToolCallId::from("c1"),
+            &crate::tool::ToolResult::success("content of a.rs"),
+        );
+        // Leaf for the first compaction (never compacted).
+        let _leaf1 = session.append_user_message("checkpoint 1");
+
+        // First compaction: the walk accumulates until the large assistant
+        // entry pushes cumulative tokens past the threshold (400), so it
+        // compacts [u1, asst1] and stops before the leaf. Produces summary S1.
+        let strategy = MechanicalCompactionStrategy::new();
+        let s1_id = session.compact_older_than(400, &strategy).await.unwrap();
+
+        let s1 = match &session.entry(&s1_id).unwrap().payload {
+            EntryPayload::Compaction { summary, .. } => summary.clone(),
+            _ => panic!("expected Compaction payload for S1"),
+        };
+        let count_read_file = |s: &CompactionSummary| {
+            s.phases
+                .iter()
+                .map(|p| {
+                    p.tool_calls
+                        .get(&ToolName::from("read_file"))
+                        .map_or(0, Vec::len)
+                })
+                .sum::<usize>()
+        };
+        assert_eq!(
+            count_read_file(&s1),
+            1,
+            "S1 should record the single read_file from batch 1"
+        );
+        // The batch-1 user message must now be Compacted, pointing at S1.
+        assert!(
+            matches!(
+                &session.entry(&u1).unwrap().resolution,
+                EntryResolution::Compacted { into } if *into == s1_id
+            ),
+            "batch-1 entry should be Compacted into S1"
+        );
+
+        // Batch 2: a second read_file call, appended after S1.
+        session.append_user_message("do batch 2");
+        session.append_assistant_message(asst_with_call("c2", "b.rs"));
+        session.append_tool_result(
+            ToolCallId::from("c2"),
+            &crate::tool::ToolResult::success("content of b.rs"),
+        );
+        let _leaf2 = session.append_user_message("checkpoint 2");
+
+        // Second compaction: the walk now spans [Compacted batch-1 msgs,
+        // tool_result, leaf1, S1, u2, asst2]. Only the `Full` entries
+        // (tool_result, leaf1, S1, u2, asst2) must be summarised — the
+        // Compacted batch-1 messages must NOT be re-summarised.
+        let s2_id = session.compact_older_than(400, &strategy).await.unwrap();
+        let s2 = match &session.entry(&s2_id).unwrap().payload {
+            EntryPayload::Compaction { summary, .. } => summary.clone(),
+            _ => panic!("expected Compaction payload for S2"),
+        };
+
+        // The key assertion: read_file appears exactly twice in S2 — once
+        // rolled forward from S1's phases, once from batch 2. With the bug it
+        // would appear three times (S1 phases + re-summarised batch-1 message
+        // + batch 2).
+        assert_eq!(
+            count_read_file(&s2),
+            2,
+            "S2 must not re-summarise already-Compacted entries: \
+             expected 2 read_file calls (1 rolled forward + 1 new), got {}",
+            count_read_file(&s2)
+        );
+
+        // The batch-1 entry must still point at S1 — compaction 2 must not
+        // re-transition it (its content was already folded into S1, which was
+        // itself rolled forward, so re-transitioning would orphan S1).
+        assert!(
+            matches!(
+                &session.entry(&u1).unwrap().resolution,
+                EntryResolution::Compacted { into } if *into == s1_id
+            ),
+            "batch-1 entry should remain Compacted into S1 after the second compaction"
+        );
     }
 
     #[test]

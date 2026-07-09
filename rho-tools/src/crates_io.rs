@@ -204,7 +204,7 @@ impl CratesIoClient {
             status: status.as_u16(),
             message: format!(
                 "JSON parse error: {e}; body: {}",
-                &body_text.chars().take(500).collect::<String>()
+                body_text.chars().take(500).collect::<String>()
             ),
         })?;
 
