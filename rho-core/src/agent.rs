@@ -1469,7 +1469,10 @@ pub async fn run_loop(
                 context_stats: session.context_stats(),
             })
         }
-        LoopOutcome::Err(e) => Err(classify_loop_error(e)),
+        LoopOutcome::Err(e) => {
+            record_turn_error(session, &e);
+            Err(classify_loop_error(e))
+        }
     }
 }
 
@@ -1477,6 +1480,34 @@ pub async fn run_loop(
 /// for the error path.
 fn classify_loop_error(e: RhoError) -> RhoError {
     e
+}
+
+/// Record a terminal agent-loop error on the session as an `Attached`
+/// marker entry so failures leave a diagnostic trace on disk.
+///
+/// Without this, a turn that fails terminally (e.g. retry budget exhausted
+/// after repeated stream timeouts) vanishes — the conversation log shows the
+/// user message with no reply and no explanation. The marker uses the
+/// `rho.turn_error.v1` kind and stores a coarse category plus the error
+/// message as JSON, queryable from the session log.
+///
+/// Cancellation ([`AgentError::Cancelled`]) is user-initiated and is not
+/// recorded.
+fn record_turn_error(session: &mut Session, error: &RhoError) {
+    if matches!(error, RhoError::Agent(AgentError::Cancelled)) {
+        return;
+    }
+    let category = match error {
+        RhoError::Client(_) | RhoError::RetryBudgetExhausted(_, _) => "client",
+        RhoError::Agent(_) => "agent",
+        RhoError::Session(_) => "session",
+        RhoError::Sandbox(_) => "sandbox",
+        RhoError::ToolNotFound(_) | RhoError::Tool(_) => "tool",
+    };
+    session.append_custom_state(
+        "rho.turn_error.v1".to_owned(),
+        serde_json::json!({ "category": category, "error": error.to_string() }),
+    );
 }
 
 // ── Free helpers ──────────────────────────────────────────────────────────────
@@ -1671,6 +1702,8 @@ pub(crate) fn route_response(
     }
     session.accumulate_usage(&usage);
 
+    let finish = crate::response::FinishReason::from(acc.stop_reason.clone());
+
     match &acc.stop_reason {
         rho_ai::StopReason::ToolUse => {
             let tool_calls = build_tool_calls_from_accumulated(&acc.tool_calls)?;
@@ -1683,11 +1716,15 @@ pub(crate) fn route_response(
                     }]
                 },
                 tool_calls: tool_calls.clone(),
+                finish_reason: Some(finish.clone()),
             });
             Ok(AssistantResponse::ToolCalls(tool_calls))
         }
         rho_ai::StopReason::Length => {
-            session.append_assistant_message(crate::ChatMessage::assistant_text(&acc.text));
+            session.append_assistant_message(crate::ChatMessage::assistant_text_with_reason(
+                &acc.text,
+                finish.clone(),
+            ));
             Ok(AssistantResponse::LengthTruncated {
                 content: acc.text.clone(),
                 reasoning_content: acc.reasoning.clone(),
@@ -1703,14 +1740,20 @@ pub(crate) fn route_response(
             // attempt compaction and retry. ContentFilter is excluded
             // because retrying a filtered response is futile.
             if text.is_empty() && !matches!(acc.stop_reason, rho_ai::StopReason::ContentFilter) {
-                session.append_assistant_message(crate::ChatMessage::assistant_text(&text));
+                session.append_assistant_message(crate::ChatMessage::assistant_text_with_reason(
+                    &text,
+                    finish.clone(),
+                ));
                 return Ok(AssistantResponse::LengthTruncated {
                     content: text,
                     reasoning_content: reasoning,
                 });
             }
 
-            session.append_assistant_message(crate::ChatMessage::assistant_text(&text));
+            session.append_assistant_message(crate::ChatMessage::assistant_text_with_reason(
+                &text,
+                finish.clone(),
+            ));
             Ok(AssistantResponse::Message {
                 text: acc.text.clone(),
                 reasoning_content: acc.reasoning.clone(),
@@ -2187,6 +2230,151 @@ mod tests {
         assert!(
             matches!(last, ChatMessage::Assistant { .. }),
             "expected Assistant message, got {last:?}"
+        );
+    }
+
+    #[test]
+    fn route_response_persists_finish_reason_for_end_turn() {
+        let mut session = test_session(None, &[], vec![]);
+        let acc = rho_ai::AccumulatedResponse {
+            text: "reply".into(),
+            reasoning: String::new(),
+            tool_calls: vec![],
+            stop_reason: rho_ai::StopReason::EndTurn,
+            usage: rho_ai::StreamUsage::default(),
+        };
+        let _ = route_response(&acc, &mut session).unwrap();
+        let msgs = session.path_messages();
+        let last = msgs.last().expect("should have a message");
+        match last {
+            ChatMessage::Assistant { finish_reason, .. } => {
+                assert_eq!(*finish_reason, Some(crate::response::FinishReason::Stop));
+            }
+            other => panic!("expected Assistant message, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn route_response_persists_finish_reason_for_tool_use() {
+        let mut session = test_session(None, &[], vec![]);
+        let acc = rho_ai::AccumulatedResponse {
+            text: String::new(),
+            reasoning: String::new(),
+            tool_calls: vec![rho_ai::AccumulatedToolCall {
+                id: Some("c1".into()),
+                function_name: Some("read_file".into()),
+                arguments: "{}".into(),
+            }],
+            stop_reason: rho_ai::StopReason::ToolUse,
+            usage: rho_ai::StreamUsage::default(),
+        };
+        let _ = route_response(&acc, &mut session).unwrap();
+        let msgs = session.path_messages();
+        let last = msgs.last().expect("should have a message");
+        match last {
+            ChatMessage::Assistant { finish_reason, .. } => {
+                assert_eq!(
+                    *finish_reason,
+                    Some(crate::response::FinishReason::ToolCalls)
+                );
+            }
+            other => panic!("expected Assistant message, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn route_response_persists_finish_reason_for_length() {
+        let mut session = test_session(None, &[], vec![]);
+        let acc = rho_ai::AccumulatedResponse {
+            text: "partial".into(),
+            reasoning: String::new(),
+            tool_calls: vec![],
+            stop_reason: rho_ai::StopReason::Length,
+            usage: rho_ai::StreamUsage::default(),
+        };
+        let _ = route_response(&acc, &mut session).unwrap();
+        let msgs = session.path_messages();
+        let last = msgs.last().expect("should have a message");
+        match last {
+            ChatMessage::Assistant { finish_reason, .. } => {
+                assert_eq!(*finish_reason, Some(crate::response::FinishReason::Length));
+            }
+            other => panic!("expected Assistant message, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn route_response_persists_finish_reason_for_empty_stop() {
+        // The exact failure mode from the field: an empty reply that closed
+        // successfully. finish_reason must be recorded so the empty assistant
+        // message is no longer a silent mystery on disk.
+        let mut session = test_session(None, &[], vec![]);
+        let acc = rho_ai::AccumulatedResponse {
+            text: String::new(),
+            reasoning: String::new(),
+            tool_calls: vec![],
+            stop_reason: rho_ai::StopReason::EndTurn,
+            usage: rho_ai::StreamUsage::default(),
+        };
+        let _ = route_response(&acc, &mut session).unwrap();
+        let msgs = session.path_messages();
+        let last = msgs.last().expect("should have a message");
+        match last {
+            ChatMessage::Assistant {
+                content,
+                finish_reason,
+                ..
+            } => {
+                let text: String = content
+                    .iter()
+                    .map(|b| match b {
+                        crate::ContentBlock::Text { text } => text.as_str(),
+                    })
+                    .collect();
+                assert!(
+                    text.is_empty(),
+                    "content text should be empty, got {text:?}"
+                );
+                assert_eq!(*finish_reason, Some(crate::response::FinishReason::Stop));
+            }
+            other => panic!("expected Assistant message, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn record_turn_error_appends_diagnostic_marker() {
+        let mut session = test_session(None, &["hi"], vec![]);
+        let error = RhoError::Client(crate::client::error::ClientError::StreamTimeout {
+            phase: "first token",
+            elapsed_secs: 90,
+        });
+        record_turn_error(&mut session, &error);
+        let leaf = session.leaf().expect("leaf should point at the marker");
+        let entry = session.entry(&leaf).expect("marker entry should exist");
+        match &entry.payload {
+            crate::session::EntryPayload::Custom { kind, data } => {
+                assert_eq!(kind, "rho.turn_error.v1");
+                assert_eq!(data["category"], "client");
+                assert!(
+                    data["error"]
+                        .as_str()
+                        .is_some_and(|s| s.contains("first token")),
+                    "error message should mention the phase"
+                );
+            }
+            other => panic!("expected Custom marker, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn record_turn_error_skips_cancellation() {
+        let mut session = test_session(None, &["hi"], vec![]);
+        let leaf_before = session.leaf();
+        record_turn_error(&mut session, &RhoError::Agent(AgentError::Cancelled));
+        assert_eq!(
+            session.leaf(),
+            leaf_before,
+            "cancellation is user-initiated and must not append a marker"
         );
     }
 

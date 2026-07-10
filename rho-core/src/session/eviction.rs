@@ -341,6 +341,7 @@ mod tests {
 
     fn assistant_entry_with_tool(call_id: &str) -> Entry {
         test_entry_full(EntryPayload::Message(ChatMessage::Assistant {
+            finish_reason: None,
             content: vec![],
             tool_calls: vec![ModelToolCall {
                 id: ToolCallId::from(call_id),
@@ -414,6 +415,7 @@ mod tests {
             system_entry(),
             user_entry("go"),
             test_entry_full(EntryPayload::Message(ChatMessage::Assistant {
+                finish_reason: None,
                 content: vec![],
                 tool_calls: vec![
                     ModelToolCall {
@@ -629,6 +631,7 @@ mod tests {
                 user_entry("original"),
                 // Turn 2: assistant + 2 tool results
                 test_entry_full(EntryPayload::Message(ChatMessage::Assistant {
+                    finish_reason: None,
                     content: vec![],
                     tool_calls: vec![
                         ModelToolCall {

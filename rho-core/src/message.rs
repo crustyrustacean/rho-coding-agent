@@ -76,6 +76,14 @@ pub enum ChatMessage {
         content: Vec<ContentBlock>,
         /// Tool calls the model wants to invoke.
         tool_calls: Vec<ModelToolCall>,
+        /// Why the model stopped generating this turn, if known.
+        ///
+        /// Persisted for diagnostics: it distinguishes a silent empty reply
+        /// that was actually a `Length` cutoff or `ContentFilter` stop from
+        /// a genuinely empty `Stop`, which would otherwise leave no trace on
+        /// disk. `None` for assistant messages created synthetically (tests,
+        /// compaction rebuilds) and for legacy session files.
+        finish_reason: Option<crate::response::FinishReason>,
     },
     /// The result of a tool invocation, keyed by call ID.
     Tool {
@@ -117,6 +125,23 @@ impl ChatMessage {
         Self::Assistant {
             content: vec![ContentBlock::Text { text: text.into() }],
             tool_calls: vec![],
+            finish_reason: None,
+        }
+    }
+
+    /// `Assistant` message with a single text block and a recorded finish reason.
+    ///
+    /// Used when persisting a model response so the stop reason is available
+    /// for diagnostics (e.g. an empty reply with `finish_reason: "stop"`
+    /// is visibly distinct from a `Length` cutoff).
+    pub fn assistant_text_with_reason(
+        text: impl Into<String>,
+        finish_reason: crate::response::FinishReason,
+    ) -> Self {
+        Self::Assistant {
+            content: vec![ContentBlock::Text { text: text.into() }],
+            tool_calls: vec![],
+            finish_reason: Some(finish_reason),
         }
     }
 
@@ -176,6 +201,7 @@ impl ChatMessage {
             Self::Assistant {
                 content,
                 tool_calls,
+                finish_reason: _,
             } => {
                 let text = if content.is_empty() {
                     None
@@ -243,6 +269,7 @@ impl Serialize for ChatMessage {
             ChatMessage::Assistant {
                 content,
                 tool_calls,
+                finish_reason,
             } => {
                 map.insert("role".to_owned(), Value::String("assistant".to_owned()));
                 map.insert("content".to_owned(), serialize_content(content));
@@ -250,6 +277,12 @@ impl Serialize for ChatMessage {
                     map.insert(
                         "tool_calls".to_owned(),
                         serde_json::to_value(tool_calls).map_err(serde::ser::Error::custom)?,
+                    );
+                }
+                if let Some(reason) = finish_reason {
+                    map.insert(
+                        "finish_reason".to_owned(),
+                        serde_json::to_value(reason).map_err(serde::ser::Error::custom)?,
                     );
                 }
             }
@@ -282,6 +315,9 @@ struct WireChatMessage {
     tool_calls: Vec<ModelToolCall>,
     /// Tool call ID from tool result messages.
     tool_call_id: Option<String>,
+    /// Why the model stopped generating (assistant messages only).
+    #[serde(default)]
+    finish_reason: Option<crate::response::FinishReason>,
 }
 
 /// Content is either a plain string or an array of typed blocks.
@@ -331,6 +367,7 @@ impl<'de> Deserialize<'de> for ChatMessage {
             "assistant" => Ok(ChatMessage::Assistant {
                 content,
                 tool_calls: wire.tool_calls,
+                finish_reason: wire.finish_reason,
             }),
             "tool" => {
                 let id = wire
@@ -389,8 +426,46 @@ mod tests {
     }
 
     #[test]
+    fn assistant_finish_reason_round_trips_through_json() {
+        // finish_reason is the diagnostic trace that survives on disk — it must
+        // serialize when present and deserialize back intact.
+        let msg = ChatMessage::Assistant {
+            content: vec![],
+            tool_calls: vec![],
+            finish_reason: Some(crate::response::FinishReason::ContentFilter),
+        };
+        let v = serde_json::to_value(&msg).unwrap();
+        assert_eq!(v["role"], "assistant");
+        assert_eq!(v["finish_reason"], "content_filter");
+
+        let back: ChatMessage = serde_json::from_value(v).unwrap();
+        match back {
+            ChatMessage::Assistant { finish_reason, .. } => {
+                assert_eq!(
+                    finish_reason,
+                    Some(crate::response::FinishReason::ContentFilter)
+                );
+            }
+            other => panic!("expected Assistant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn assistant_without_finish_reason_omits_field() {
+        // Legacy/synthetic messages (finish_reason: None) must not emit the
+        // field, so old session files keep their shape and new files stay clean.
+        let msg = ChatMessage::assistant_text("hello");
+        let v = serde_json::to_value(&msg).unwrap();
+        assert!(
+            v.get("finish_reason").is_none(),
+            "field should be absent when None"
+        );
+    }
+
+    #[test]
     fn assistant_with_tool_calls_serializes_them() {
         let msg = ChatMessage::Assistant {
+            finish_reason: None,
             content: vec![],
             tool_calls: vec![ModelToolCall {
                 id: ToolCallId::from("call_1"),

@@ -894,6 +894,7 @@ pub(crate) fn message_to_json(msg: &ChatMessage) -> Value {
         ChatMessage::Assistant {
             content,
             tool_calls,
+            finish_reason: _,
         } => {
             let calls: Vec<Value> = tool_calls
                 .iter()
@@ -1770,6 +1771,7 @@ mod tests {
     #[test]
     fn message_to_json_assistant_with_tools() {
         let msg = ChatMessage::Assistant {
+            finish_reason: None,
             content: vec![],
             tool_calls: vec![ModelToolCall {
                 id: ToolCallId::new("c1".to_owned()),

@@ -1007,6 +1007,7 @@ mod tests {
                         arguments: r#"{\"command\":\"cargo test\"}"#.to_owned(),
                     },
                 }],
+                finish_reason: None,
             })),
         ];
         let refs: Vec<&Entry> = entries.iter().collect();
@@ -1072,6 +1073,7 @@ mod tests {
                         arguments: r#"{"path":"src/main.rs"}"#.to_owned(),
                     },
                 }],
+                finish_reason: None,
             })),
             full_entry(EntryPayload::Message(ChatMessage::tool_result(
                 ToolCallId::from("call_1"),
@@ -1087,6 +1089,7 @@ mod tests {
                         arguments: r#"{"path":"src/lib.rs"}"#.to_owned(),
                     },
                 }],
+                finish_reason: None,
             })),
         ];
         let refs: Vec<&Entry> = entries.iter().collect();
@@ -1116,6 +1119,7 @@ mod tests {
                         arguments: r#"{"path":"a.rs"}"#.to_owned(),
                     },
                 }],
+                finish_reason: None,
             })),
             full_entry(EntryPayload::Message(ChatMessage::tool_result(
                 ToolCallId::from("call_1"),
@@ -1131,6 +1135,7 @@ mod tests {
                         arguments: r#"{"command":"cargo test"}"#.to_owned(),
                     },
                 }],
+                finish_reason: None,
             })),
         ];
         let refs: Vec<&Entry> = entries.iter().collect();
@@ -1242,6 +1247,7 @@ mod tests {
                         arguments: r#"{"path":"main.rs"}"#.to_owned(),
                     },
                 }],
+                finish_reason: None,
             })),
         ];
         let refs: Vec<&Entry> = entries.iter().collect();
@@ -1273,6 +1279,7 @@ mod tests {
                         arguments: r"{}".to_owned(),
                     },
                 }],
+                finish_reason: None,
             })),
             full_entry(EntryPayload::Message(ChatMessage::tool_result(
                 ToolCallId::from("call_1"),
@@ -1312,6 +1319,7 @@ mod tests {
                         arguments: r#"{"path":"a.rs"}"#.to_owned(),
                     },
                 }],
+                finish_reason: None,
             })),
             full_entry(EntryPayload::Message(ChatMessage::tool_result(
                 ToolCallId::from("call_1"),
@@ -1327,6 +1335,7 @@ mod tests {
                         arguments: r#"{"path":"b.rs"}"#.to_owned(),
                     },
                 }],
+                finish_reason: None,
             })),
             full_entry(EntryPayload::Message(ChatMessage::tool_result(
                 ToolCallId::from("call_2"),
@@ -1510,6 +1519,7 @@ mod tests {
                         arguments: r#"{"command":"echo hi"}"#.to_owned(),
                     },
                 }],
+                finish_reason: None,
             })),
             full_entry(EntryPayload::Message(ChatMessage::tool_result(
                 ToolCallId::from("c1"),
@@ -1613,6 +1623,7 @@ mod tests {
                         arguments: r#"{"path":"src/main.rs"}"#.to_owned(),
                     },
                 }],
+                finish_reason: None,
             })),
             full_entry(EntryPayload::Message(ChatMessage::tool_result(
                 ToolCallId::from("call_1"),
@@ -1656,6 +1667,7 @@ mod tests {
                         arguments: r#"{"path":"a.rs"}"#.to_owned(),
                     },
                 }],
+                finish_reason: None,
             })),
             full_entry(EntryPayload::Message(ChatMessage::Assistant {
                 content: vec![],
@@ -1667,6 +1679,7 @@ mod tests {
                         arguments: r#"{"command":"cargo test"}"#.to_owned(),
                     },
                 }],
+                finish_reason: None,
             })),
         ];
         let refs: Vec<&Entry> = entries.iter().collect();

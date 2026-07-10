@@ -522,6 +522,7 @@ fn fitter_never_evicts_most_recent_tool_call_pair() {
         ChatMessage::system_text("sys"),
         ChatMessage::user_text("do it"),
         ChatMessage::Assistant {
+            finish_reason: None,
             content: vec![],
             tool_calls: vec![ModelToolCall {
                 id: ToolCallId::from("call_1"),

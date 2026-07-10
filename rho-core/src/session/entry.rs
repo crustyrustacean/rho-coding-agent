@@ -614,6 +614,7 @@ mod tests {
     fn entry_with_assistant_tool_calls_round_trips() {
         let entry = test_entry(
             EntryPayload::Message(ChatMessage::Assistant {
+                finish_reason: None,
                 content: vec![],
                 tool_calls: vec![ModelToolCall {
                     id: ToolCallId::from("call_1"),

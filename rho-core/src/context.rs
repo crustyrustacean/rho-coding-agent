@@ -283,6 +283,7 @@ fn render_reduced_fidelity(entry: &Entry, text: &str) -> Option<ChatMessage> {
                     text: text.to_owned(),
                 }],
                 tool_calls: tool_calls.clone(),
+                finish_reason: None,
             }),
             _ => Some(ChatMessage::user_text(text)),
         },
@@ -990,6 +991,7 @@ mod tests {
                     arguments: "{}".to_owned(),
                 },
             }],
+            finish_reason: None,
         }
     }
 
@@ -1769,6 +1771,7 @@ mod tests {
                             arguments: r#"{\"path\":\"main.rs\"}"#.to_owned(),
                         },
                     }],
+                    finish_reason: None,
                 }),
                 EntryResolution::Outlined {
                     outline: "Assistant: 1 tool call (read_file)".to_owned(),
@@ -1785,6 +1788,7 @@ mod tests {
         if let ChatMessage::Assistant {
             content,
             tool_calls,
+            ..
         } = &result[1]
         {
             assert_eq!(tool_calls.len(), 1, "tool_calls should be preserved");

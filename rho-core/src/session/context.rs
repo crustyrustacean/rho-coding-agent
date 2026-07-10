@@ -674,6 +674,7 @@ mod tests {
             if let ChatMessage::Assistant {
                 content,
                 tool_calls,
+                ..
             } = m
             {
                 tool_calls.is_empty()
@@ -882,6 +883,7 @@ mod tests {
             if let ChatMessage::Assistant {
                 content,
                 tool_calls,
+                ..
             } = m
             {
                 tool_calls.is_empty()
@@ -1264,6 +1266,7 @@ mod tests {
         // moment cumulative tokens cross the threshold).
         let filler: String = "x".repeat(3000);
         let asst_with_call = |call_id: &str, path: &str| ChatMessage::Assistant {
+            finish_reason: None,
             content: vec![crate::message::ContentBlock::Text {
                 text: filler.clone(),
             }],
@@ -1813,6 +1816,7 @@ mod tests {
 
     fn assistant_with_tool_call(call_id: &str) -> ChatMessage {
         ChatMessage::Assistant {
+            finish_reason: None,
             content: vec![],
             tool_calls: vec![ModelToolCall {
                 id: ToolCallId::from(call_id),

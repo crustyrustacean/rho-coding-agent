@@ -774,6 +774,7 @@ fn context_manager_does_not_split_tool_call_turn() {
         ChatMessage::system_text("sys"),
         ChatMessage::user_text("do it"),
         ChatMessage::Assistant {
+            finish_reason: None,
             content: vec![],
             tool_calls: vec![ModelToolCall {
                 id: ToolCallId::from("call_1"),

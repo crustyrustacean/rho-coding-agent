@@ -83,6 +83,22 @@ impl<'de> Deserialize<'de> for FinishReason {
     }
 }
 
+/// Bridge rho-ai's streaming [`StopReason`](rho_ai::StopReason) to rho-core's
+/// [`FinishReason`] for persistence.
+///
+/// `EndTurn` maps to [`FinishReason::Stop`] (a complete, natural stop).
+impl From<rho_ai::StopReason> for FinishReason {
+    fn from(reason: rho_ai::StopReason) -> Self {
+        match reason {
+            rho_ai::StopReason::EndTurn => Self::Stop,
+            rho_ai::StopReason::ToolUse => Self::ToolCalls,
+            rho_ai::StopReason::Length => Self::Length,
+            rho_ai::StopReason::ContentFilter => Self::ContentFilter,
+            rho_ai::StopReason::Other(s) => Self::Other(s),
+        }
+    }
+}
+
 /// The assistant message within a [`ModelChoice`].
 #[derive(Clone, Debug, Deserialize)]
 pub struct ModelMessage {

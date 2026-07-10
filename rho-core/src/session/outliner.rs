@@ -586,6 +586,7 @@ mod tests {
 
     fn assistant_entry(tool_calls: Vec<ModelToolCall>) -> Entry {
         test_entry(EntryPayload::Message(ChatMessage::Assistant {
+            finish_reason: None,
             content: vec![],
             tool_calls,
         }))
