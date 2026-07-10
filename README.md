@@ -249,6 +249,8 @@ rho-test-helpers/     # Shared test utilities (dev-only)
 xtask/                # Dev task runner
 ```
 
+## Community Discord - Coming Soon
+
 ## Contributing
 
 Contributions are welcome! Please follow [conventional commits](https://www.conventionalcommits.org/):
