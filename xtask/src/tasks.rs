@@ -47,10 +47,11 @@ fn read_workspace_version() -> Result<String> {
             in_workspace_package = trimmed == "[workspace.package]";
             continue;
         }
-        if in_workspace_package && trimmed.starts_with("version") {
-            if let Some((_, value)) = trimmed.split_once('=') {
-                return Ok(value.trim().trim_matches('"').to_owned());
-            }
+        if in_workspace_package
+            && trimmed.starts_with("version")
+            && let Some((_, value)) = trimmed.split_once('=')
+        {
+            return Ok(value.trim().trim_matches('"').to_owned());
         }
     }
     bail!("could not find workspace.package.version in {cargo_toml_path}");
