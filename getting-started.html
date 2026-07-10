@@ -206,7 +206,7 @@ default_model = "deepseek-v4-flash"
 provider = "openrouter"
 </code></pre>
 <h3 id="no-configuration"><a class="header" href="#no-configuration">No configuration?</a></h3>
-<p>If you run rho with no local server and no configured provider, rho will print an error telling you to configure a provider and model. Set them in config or pass <code>--endpoint &lt;url&gt; --model &lt;id&gt;</code> on the command line.</p>
+<p>If you run rho with no local server and no configured provider, rho falls back to a built-in default model (<code>anthropic/claude-sonnet-4</code> via OpenRouter). This requires an OpenRouter API key — set <code>OPENROUTER_API_KEY</code> in your environment or configure a provider explicitly. Set the model in config or pass <code>--endpoint &lt;url&gt; --model &lt;id&gt;</code> on the command line.</p>
 <h2 id="build"><a class="header" href="#build">Build</a></h2>
 <pre><code class="language-sh">cargo build --release -p rho        # headless RPC agent
 </code></pre>
@@ -227,7 +227,7 @@ rho --ephemeral          # in-memory mode, no session file
 <li>Loads configuration from <code>~/.rho/config.toml</code> and <code>.rho/config.toml</code>.</li>
 <li>Scans for project context files (<code>AGENTS.md</code>, etc.) and auto-denies untrusted files in headless mode.</li>
 <li>Checks provider consent for external endpoints.</li>
-<li>Resolves the model from config (<code>agent.model</code>, <code>agent.provider</code>, or a provider's <code>default_model</code>) or CLI <code>--model</code>. No network calls at startup.</li>
+<li>Resolves the model from config (<code>agent.model</code>, <code>agent.provider</code>, or a provider's <code>default_model</code>) or CLI <code>--model</code>. Falls back to a built-in default model if none configured. No network calls at startup.</li>
 <li>Creates a session (persisted to <code>~/.rho/sessions/</code> by default, or in-memory with <code>--ephemeral</code>). If previous sessions exist, a hint is printed.</li>
 <li>Enters the RPC loop and waits for commands.</li>
 </ol>

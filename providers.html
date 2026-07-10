@@ -247,7 +247,7 @@ default_model = "gpt-4o"
 rho --accept-external-provider
 </code></pre>
 <h2 id="provider-consent"><a class="header" href="#provider-consent">Provider consent</a></h2>
-<p>When connecting to a non-local endpoint, rho displays an interactive consent warning before any data leaves your machine:</p>
+<p>When connecting to a non-local endpoint, rho checks for external providers before starting. If external providers are configured and neither <code>--accept-external-provider</code> nor <code>--endpoint</code> is passed, rho prints a warning to stderr and exits with an error:</p>
 <pre><code class="language-text">  ⚠  No local model server detected
   ⚠  External provider(s) configured:
       - openrouter
@@ -256,10 +256,10 @@ rho --accept-external-provider
       This may expose proprietary code, secrets, or other
       sensitive data to the providers and any intermediaries.
 
-      Continue? [y/N]
+  Aborting. Use --accept-external-provider to skip this prompt.
 </code></pre>
 <p>If rho also has a local provider (e.g. LM Studio is running alongside an external provider), the "No local model server detected" header is omitted.</p>
-<p>The consent prompt fires automatically for config-driven external endpoints. It is <strong>skipped</strong> when you use <code>--endpoint</code> on the CLI (explicit endpoint implies consent) or <code>--accept-external-provider</code>.</p>
+<p>The consent gate fires automatically for config-driven external endpoints. It is <strong>skipped</strong> when you use <code>--endpoint</code> on the CLI (explicit endpoint implies consent) or <code>--accept-external-provider</code>.</p>
 <h2 id="specifying-the-model"><a class="header" href="#specifying-the-model">Specifying the model</a></h2>
 <p>There are several ways to set the model, in priority order:</p>
 <ol>

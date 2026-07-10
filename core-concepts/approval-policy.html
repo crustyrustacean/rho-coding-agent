@@ -205,6 +205,7 @@ run_command = "ask"   # always ask
 <tr><td><code>Read</code></td><td>Auto</td></tr>
 <tr><td><code>Write</code></td><td>Ask</td></tr>
 <tr><td><code>Destructive</code></td><td>Ask</td></tr>
+<tr><td><code>Network</code></td><td>Ask</td></tr>
 </tbody></table>
 </div>
 <h2 id="gate-rpcapprovalgate"><a class="header" href="#gate-rpcapprovalgate">Gate: <code>RpcApprovalGate</code></a></h2>
@@ -218,9 +219,15 @@ run_command = "ask"   # always ask
 </span><span class="boring">fn main() {
 </span>#[async_trait]
 pub trait ApprovalGate: Send + Sync {
-    async fn request_approval(&amp;self, call: &amp;ModelToolCall, risk: ToolRisk) -&gt; bool;
+    async fn request_approval(&amp;self, call: &amp;ModelToolCall, risk: ToolRisk) -&gt; ApprovalDecision;
 }
 <span class="boring">}</span></code></pre></pre>
+<p><code>ApprovalDecision</code> has three variants:</p>
+<ul>
+<li><code>Approved</code> — proceed with execution.</li>
+<li><code>Denied</code> — inject a generic denial error and continue.</li>
+<li><code>Redirect { message }</code> — inject the user's alternative instructions and return to thinking so the model can re-plan.</li>
+</ul>
 
                     </main>
 

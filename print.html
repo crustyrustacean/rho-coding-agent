@@ -236,7 +236,7 @@ default_model = "deepseek-v4-flash"
 provider = "openrouter"
 </code></pre>
 <h3 id="no-configuration"><a class="header" href="#no-configuration">No configuration?</a></h3>
-<p>If you run rho with no local server and no configured provider, rho will print an error telling you to configure a provider and model. Set them in config or pass <code>--endpoint &lt;url&gt; --model &lt;id&gt;</code> on the command line.</p>
+<p>If you run rho with no local server and no configured provider, rho falls back to a built-in default model (<code>anthropic/claude-sonnet-4</code> via OpenRouter). This requires an OpenRouter API key — set <code>OPENROUTER_API_KEY</code> in your environment or configure a provider explicitly. Set the model in config or pass <code>--endpoint &lt;url&gt; --model &lt;id&gt;</code> on the command line.</p>
 <h2 id="build"><a class="header" href="#build">Build</a></h2>
 <pre><code class="language-sh">cargo build --release -p rho        # headless RPC agent
 </code></pre>
@@ -257,7 +257,7 @@ rho --ephemeral          # in-memory mode, no session file
 <li>Loads configuration from <code>~/.rho/config.toml</code> and <code>.rho/config.toml</code>.</li>
 <li>Scans for project context files (<code>AGENTS.md</code>, etc.) and auto-denies untrusted files in headless mode.</li>
 <li>Checks provider consent for external endpoints.</li>
-<li>Resolves the model from config (<code>agent.model</code>, <code>agent.provider</code>, or a provider's <code>default_model</code>) or CLI <code>--model</code>. No network calls at startup.</li>
+<li>Resolves the model from config (<code>agent.model</code>, <code>agent.provider</code>, or a provider's <code>default_model</code>) or CLI <code>--model</code>. Falls back to a built-in default model if none configured. No network calls at startup.</li>
 <li>Creates a session (persisted to <code>~/.rho/sessions/</code> by default, or in-memory with <code>--ephemeral</code>). If previous sessions exist, a hint is printed.</li>
 <li>Enters the RPC loop and waits for commands.</li>
 </ol>
@@ -295,22 +295,19 @@ rho --ephemeral          # in-memory mode, no session file
 <div style="break-before: page; page-break-before: always;"></div><h1 id="architecture"><a class="header" href="#architecture">Architecture</a></h1>
 <p>rho is organized as a layered workspace where dependencies flow downward only.</p>
 <pre><code class="language-text">┌─────────────────────────────────────────────────┐
-│                   rho (binary)                   │
+│                   rho (binary)                   │  ← Headless JSON-RPC 2.0 agent
 ├─────────────────────────────────────────────────┤
-│                   rho-ext                        │
+│  rho-ext          rho-tools                       │  ← Extensions   /  Built-in tools
 ├─────────────────────────────────────────────────┤
-│                   rho-tools                      │
+│            rho-memory      rho-highlight           │  ← Siblings of rho-tools
 ├─────────────────────────────────────────────────┤
-│                   rho-memory                     │
+│                   rho-core                       │  ← Agent kernel (loop, types, traits, data model)
 ├─────────────────────────────────────────────────┤
-│                   rho-highlight                  │
-├─────────────────────────────────────────────────┤
-│                   rho-core                       │
-├─────────────────────────────────────────────────┤
-│                   rho-ai                         │
+│                   rho-ai                         │  ← Unified LLM provider abstraction
 └─────────────────────────────────────────────────┘
 </code></pre>
-<p>The rule is simple: a crate may only depend on crates below it in the stack. <code>rho-ai</code> depends on nothing but external libraries; every other crate eventually depends on <code>rho-core</code> (and <code>rho-core</code> depends on <code>rho-ai</code>).</p>
+<p><code>rho-ai</code> is the lowest layer; it depends only on external libraries. <code>rho-core</code> depends on <code>rho-ai</code> for the <code>LlmService</code> trait. Every other crate eventually depends on <code>rho-core</code>.</p>
+<p><code>rho-ext</code>, <code>rho-tools</code>, <code>rho-memory</code>, and <code>rho-highlight</code> are all siblings sitting directly on <code>rho-core</code>. <code>rho-tools</code> additionally depends on <code>rho-memory</code> and <code>rho-highlight</code>; the others each depend only on <code>rho-core</code>.</p>
 <p>See also:</p>
 <ul>
 <li><a href="./architecture/workspace-layout.html">Workspace Layout</a></li>
@@ -336,6 +333,7 @@ rho --ephemeral          # in-memory mode, no session file
 │       ├── ext_observer.rs   # `CompositeObserver` — fans out to RPC observer + extension observers
 │       ├── rpc.rs            # JSON-RPC 2.0: `run_rpc`, `run_rpc_on`, observer, approval gate
 │       ├── rpc_wire.rs        # Typed wire-format structs (params, results, notifications)
+│       ├── transport.rs        # `Transport` trait, `StdioTransport` (newline-delimited JSON)
 │       └── presenter/
 │           └── rpc.rs        # `RpcPresenter` — diagnostic output to stderr
 ├── rho-ai/                 # Unified LLM provider abstraction
@@ -557,7 +555,7 @@ xtask ────────────────────────�
 <ul>
 <li><a href="./core-concepts/agent-loop.html">Agent Loop</a> — the state machine that drives the conversation, returning <code>AgentResult</code> with structured output</li>
 <li><a href="./core-concepts/tool-trait.html">Tool Trait</a> — the interface all tools implement</li>
-<li><a href="./core-concepts/chatclient-provider-trait.html">ChatClient Provider Trait</a> — provider-agnostic model access</li>
+<li><a href="./core-concepts/chatclient-provider-trait.html">Provider Architecture</a> — provider-agnostic model access</li>
 <li><a href="./core-concepts/approval-policy.html">Approval Policy</a> — the gate between tool calls and execution</li>
 <li><a href="./core-concepts/context-management.html">Context Management</a> — keeping the conversation within the context window</li>
 <li><a href="./core-concepts/sessions.html">Sessions</a> — persistent, tree-structured conversation state</li>
@@ -715,6 +713,7 @@ pub trait Tool: Send + Sync {
 <tr><td><code>Read</code></td><td>Cannot modify state</td><td>Auto-approved</td><td><code>ReadFile</code>, <code>ListDir</code>, <code>CargoCheck</code></td></tr>
 <tr><td><code>Write</code></td><td>May create or modify files</td><td>Requires approval</td><td><code>WriteFile</code>, <code>EditFile</code>, <code>CargoFix</code></td></tr>
 <tr><td><code>Destructive</code></td><td>May cause irreversible effects</td><td>Requires approval</td><td><code>RunCommand</code></td></tr>
+<tr><td><code>Network</code></td><td>Makes network requests</td><td>Requires approval</td><td>Extension tools that call <code>fetch()</code></td></tr>
 </tbody></table>
 </div>
 <p>The approval policy can override these defaults per-tool via config.</p>
@@ -805,9 +804,9 @@ let service = OpenAiService::new(rho_ai::ProviderConfig::new(
 <h3 id="authentication"><a class="header" href="#authentication">Authentication</a></h3>
 <p>When an API key is provided via <code>api_key_env</code> in config, it is sent as an <code>Authorization: Bearer &lt;key&gt;</code> header with every request. Local endpoints typically don't need this. See <a href="core-concepts/../providers.html">External Providers</a> for setup details.</p>
 <h3 id="provider-consent"><a class="header" href="#provider-consent">Provider consent</a></h3>
-<p>The binary (<code>rho</code>) checks whether the configured endpoint is local before connecting. Non-local endpoints (e.g., <code>api.openai.com</code>) trigger an interactive consent warning that lists the external provider(s) by name. If no local server is detected, the warning also notes this. Use <code>--accept-external-provider</code> to skip this in automated workflows, or <code>--endpoint</code> (which implies consent since the user explicitly chose the target).</p>
+<p>The binary (<code>rho</code>) checks whether the configured endpoint is local before connecting. Non-local endpoints (e.g., <code>api.openai.com</code>) trigger a consent warning that lists the external provider(s) by name and exits with an error unless the user passes <code>--accept-external-provider</code> or <code>--endpoint</code> (which implies consent since the user explicitly chose the target). This is a headless consent gate — there is no interactive prompt.</p>
 <h3 id="model-picker"><a class="header" href="#model-picker">Model picker</a></h3>
-<p>When no model can be resolved from config or CLI, rho reports an error at startup. Set <code>--model &lt;id&gt;</code>, <code>agent.model</code>, or <code>agent.provider</code> with a <code>default_model</code> on the provider to ensure a model is always available.</p>
+<p>When no model can be resolved from config or CLI, rho falls back to a built-in default model (<code>anthropic/claude-sonnet-4</code> via OpenRouter). Set <code>--model &lt;id&gt;</code>, <code>agent.model</code>, or <code>agent.provider</code> with a <code>default_model</code> on the provider to use a specific model. The built-in default requires an OpenRouter API key or a configured provider.</p>
 <h2 id="model-resolution"><a class="header" href="#model-resolution">Model resolution</a></h2>
 <p>The model identifier is resolved in priority order:</p>
 <ol>
@@ -876,6 +875,7 @@ run_command = "ask"   # always ask
 <tr><td><code>Read</code></td><td>Auto</td></tr>
 <tr><td><code>Write</code></td><td>Ask</td></tr>
 <tr><td><code>Destructive</code></td><td>Ask</td></tr>
+<tr><td><code>Network</code></td><td>Ask</td></tr>
 </tbody></table>
 </div>
 <h2 id="gate-rpcapprovalgate"><a class="header" href="#gate-rpcapprovalgate">Gate: <code>RpcApprovalGate</code></a></h2>
@@ -889,9 +889,15 @@ run_command = "ask"   # always ask
 </span><span class="boring">fn main() {
 </span>#[async_trait]
 pub trait ApprovalGate: Send + Sync {
-    async fn request_approval(&amp;self, call: &amp;ModelToolCall, risk: ToolRisk) -&gt; bool;
+    async fn request_approval(&amp;self, call: &amp;ModelToolCall, risk: ToolRisk) -&gt; ApprovalDecision;
 }
 <span class="boring">}</span></code></pre></pre>
+<p><code>ApprovalDecision</code> has three variants:</p>
+<ul>
+<li><code>Approved</code> — proceed with execution.</li>
+<li><code>Denied</code> — inject a generic denial error and continue.</li>
+<li><code>Redirect { message }</code> — inject the user's alternative instructions and return to thinking so the model can re-plan.</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="context-management"><a class="header" href="#context-management">Context Management</a></h1>
 <p>The context manager is responsible for fitting the conversation within the model's context window. It decides which messages to keep, which to evict, and how to render compacted entries — using graduated resolution, phase-aware summaries, and selective eviction to maximize useful context.</p>
 <h2 id="the-problem"><a class="header" href="#the-problem">The problem</a></h2>
@@ -1643,7 +1649,7 @@ default_model = "gpt-4o"
 rho --accept-external-provider
 </code></pre>
 <h2 id="provider-consent-1"><a class="header" href="#provider-consent-1">Provider consent</a></h2>
-<p>When connecting to a non-local endpoint, rho displays an interactive consent warning before any data leaves your machine:</p>
+<p>When connecting to a non-local endpoint, rho checks for external providers before starting. If external providers are configured and neither <code>--accept-external-provider</code> nor <code>--endpoint</code> is passed, rho prints a warning to stderr and exits with an error:</p>
 <pre><code class="language-text">  ⚠  No local model server detected
   ⚠  External provider(s) configured:
       - openrouter
@@ -1652,10 +1658,10 @@ rho --accept-external-provider
       This may expose proprietary code, secrets, or other
       sensitive data to the providers and any intermediaries.
 
-      Continue? [y/N]
+  Aborting. Use --accept-external-provider to skip this prompt.
 </code></pre>
 <p>If rho also has a local provider (e.g. LM Studio is running alongside an external provider), the "No local model server detected" header is omitted.</p>
-<p>The consent prompt fires automatically for config-driven external endpoints. It is <strong>skipped</strong> when you use <code>--endpoint</code> on the CLI (explicit endpoint implies consent) or <code>--accept-external-provider</code>.</p>
+<p>The consent gate fires automatically for config-driven external endpoints. It is <strong>skipped</strong> when you use <code>--endpoint</code> on the CLI (explicit endpoint implies consent) or <code>--accept-external-provider</code>.</p>
 <h2 id="specifying-the-model"><a class="header" href="#specifying-the-model">Specifying the model</a></h2>
 <p>There are several ways to set the model, in priority order:</p>
 <ol>
@@ -1875,6 +1881,7 @@ type = "openrouter"
 <tr><td><code>tool/result</code></td><td><code>{name, is_error, output}</code></td><td>Tool finished executing</td></tr>
 <tr><td><code>tool/denied</code></td><td><code>{name}</code></td><td>Tool call denied by approval gate</td></tr>
 <tr><td><code>approval/request</code></td><td><code>{tool, arguments, risk}</code></td><td>Approval required — send <code>approvalResponse</code></td></tr>
+<tr><td><code>usage</code></td><td><code>{iteration, usage, context}</code></td><td>Per-iteration token/cost delta and live context snapshot</td></tr>
 </tbody></table>
 </div>
 <h3 id="error-codes"><a class="header" href="#error-codes">Error codes</a></h3>
@@ -1908,7 +1915,7 @@ type = "openrouter"
 <div class="table-wrapper"><table><thead><tr><th>Phase</th><th>Headless behavior</th></tr></thead><tbody>
 <tr><td>Provider consent</td><td>Requires <code>--accept-external-provider</code> flag (returns an error if missing)</td></tr>
 <tr><td>Context file trust</td><td>Already-trusted files load silently; new or changed files are auto-denied</td></tr>
-<tr><td>Model picker</td><td>Requires <code>--model</code> flag (returns an error instead of interactive selection)</td></tr>
+<tr><td>Model picker</td><td>Resolves from config (<code>agent.model</code>, <code>agent.provider</code>, provider <code>default_model</code>) or CLI <code>--model</code>. Falls back to built-in default. No network calls at startup</td></tr>
 </tbody></table>
 </div>
 <h2 id="session-management"><a class="header" href="#session-management">Session management</a></h2>
@@ -2262,10 +2269,10 @@ cargo xtask test -p rho-core -- --nocapture  # Single crate
 <tr><td><code>clap-cargo</code></td><td>Manual <code>cargo_metadata</code> integration avoided; <code>--version</code> from <code>clap</code> derive</td></tr>
 </tbody></table>
 </div><div style="break-before: page; page-break-before: always;"></div><h1 id="roadmap"><a class="header" href="#roadmap">Roadmap</a></h1>
-<p>rho is developed in phases, each building on the last. The current version is <strong>0.84.2</strong>.</p>
+<p>rho is developed in phases, each building on the last. The current version is <strong>0.84.7</strong>.</p>
 <h2 id="phase-summary"><a class="header" href="#phase-summary">Phase summary</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Phase</th><th>Status</th><th>Summary</th></tr></thead><tbody>
-<tr><td>1a: The Agent Loop</td><td>✅ Complete</td><td>Agent loop, tool registry, <code>ChatClient</code> trait, conversation management</td></tr>
+<tr><td>1a: The Agent Loop</td><td>✅ Complete</td><td>Agent loop, tool registry, <code>LlmService</code> trait, conversation management</td></tr>
 <tr><td>1b: Security Surface</td><td>✅ Complete</td><td>Approval gate, file sandbox, context-file trust, secret redaction, untrusted-data framing</td></tr>
 <tr><td>2: Shell, File Tools &amp; Cross-Platform</td><td>✅ Complete</td><td>PowerShell-native shell, file tools, config loader, command denylist, cross-platform</td></tr>
 <tr><td>2.5: Adaptive-Resolution Context</td><td>✅ Complete</td><td>Session tree, resolution levels, calibrated budget, tool-result bounding, amnesia fix, JSONL persistence</td></tr>

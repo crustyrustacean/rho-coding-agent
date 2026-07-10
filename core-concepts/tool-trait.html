@@ -212,6 +212,7 @@ pub trait Tool: Send + Sync {
 <tr><td><code>Read</code></td><td>Cannot modify state</td><td>Auto-approved</td><td><code>ReadFile</code>, <code>ListDir</code>, <code>CargoCheck</code></td></tr>
 <tr><td><code>Write</code></td><td>May create or modify files</td><td>Requires approval</td><td><code>WriteFile</code>, <code>EditFile</code>, <code>CargoFix</code></td></tr>
 <tr><td><code>Destructive</code></td><td>May cause irreversible effects</td><td>Requires approval</td><td><code>RunCommand</code></td></tr>
+<tr><td><code>Network</code></td><td>Makes network requests</td><td>Requires approval</td><td>Extension tools that call <code>fetch()</code></td></tr>
 </tbody></table>
 </div>
 <p>The approval policy can override these defaults per-tool via config.</p>

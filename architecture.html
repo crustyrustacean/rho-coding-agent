@@ -182,22 +182,19 @@
                         <h1 id="architecture"><a class="header" href="#architecture">Architecture</a></h1>
 <p>rho is organized as a layered workspace where dependencies flow downward only.</p>
 <pre><code class="language-text">┌─────────────────────────────────────────────────┐
-│                   rho (binary)                   │
+│                   rho (binary)                   │  ← Headless JSON-RPC 2.0 agent
 ├─────────────────────────────────────────────────┤
-│                   rho-ext                        │
+│  rho-ext          rho-tools                       │  ← Extensions   /  Built-in tools
 ├─────────────────────────────────────────────────┤
-│                   rho-tools                      │
+│            rho-memory      rho-highlight           │  ← Siblings of rho-tools
 ├─────────────────────────────────────────────────┤
-│                   rho-memory                     │
+│                   rho-core                       │  ← Agent kernel (loop, types, traits, data model)
 ├─────────────────────────────────────────────────┤
-│                   rho-highlight                  │
-├─────────────────────────────────────────────────┤
-│                   rho-core                       │
-├─────────────────────────────────────────────────┤
-│                   rho-ai                         │
+│                   rho-ai                         │  ← Unified LLM provider abstraction
 └─────────────────────────────────────────────────┘
 </code></pre>
-<p>The rule is simple: a crate may only depend on crates below it in the stack. <code>rho-ai</code> depends on nothing but external libraries; every other crate eventually depends on <code>rho-core</code> (and <code>rho-core</code> depends on <code>rho-ai</code>).</p>
+<p><code>rho-ai</code> is the lowest layer; it depends only on external libraries. <code>rho-core</code> depends on <code>rho-ai</code> for the <code>LlmService</code> trait. Every other crate eventually depends on <code>rho-core</code>.</p>
+<p><code>rho-ext</code>, <code>rho-tools</code>, <code>rho-memory</code>, and <code>rho-highlight</code> are all siblings sitting directly on <code>rho-core</code>. <code>rho-tools</code> additionally depends on <code>rho-memory</code> and <code>rho-highlight</code>; the others each depend only on <code>rho-core</code>.</p>
 <p>See also:</p>
 <ul>
 <li><a href="./architecture/workspace-layout.html">Workspace Layout</a></li>

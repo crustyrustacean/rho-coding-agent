@@ -230,6 +230,7 @@
 <tr><td><code>tool/result</code></td><td><code>{name, is_error, output}</code></td><td>Tool finished executing</td></tr>
 <tr><td><code>tool/denied</code></td><td><code>{name}</code></td><td>Tool call denied by approval gate</td></tr>
 <tr><td><code>approval/request</code></td><td><code>{tool, arguments, risk}</code></td><td>Approval required — send <code>approvalResponse</code></td></tr>
+<tr><td><code>usage</code></td><td><code>{iteration, usage, context}</code></td><td>Per-iteration token/cost delta and live context snapshot</td></tr>
 </tbody></table>
 </div>
 <h3 id="error-codes"><a class="header" href="#error-codes">Error codes</a></h3>
@@ -263,7 +264,7 @@
 <div class="table-wrapper"><table><thead><tr><th>Phase</th><th>Headless behavior</th></tr></thead><tbody>
 <tr><td>Provider consent</td><td>Requires <code>--accept-external-provider</code> flag (returns an error if missing)</td></tr>
 <tr><td>Context file trust</td><td>Already-trusted files load silently; new or changed files are auto-denied</td></tr>
-<tr><td>Model picker</td><td>Requires <code>--model</code> flag (returns an error instead of interactive selection)</td></tr>
+<tr><td>Model picker</td><td>Resolves from config (<code>agent.model</code>, <code>agent.provider</code>, provider <code>default_model</code>) or CLI <code>--model</code>. Falls back to built-in default. No network calls at startup</td></tr>
 </tbody></table>
 </div>
 <h2 id="session-management"><a class="header" href="#session-management">Session management</a></h2>
