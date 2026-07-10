@@ -1,3 +1,8 @@
+## [0.85.1] - 2026-07-10
+
+### 🐛 Bug Fixes
+
+- *(xtask)* Unbreak release/ci tooling (toml 1.0, git-cliff, Windows lock)
 ## [0.85.0] - 2026-07-10
 
 ### 🚀 Features
