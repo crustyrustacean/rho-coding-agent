@@ -1460,6 +1460,20 @@ auto_compact_threshold = 0
 # When "llm", the model generates narrative notes for compacted entries.
 compaction_mode = "mechanical"
 
+# Maximum seconds to wait for the FIRST stream event before aborting and
+# retrying (default: 90, 0 = disabled).
+# Guards against hung requests where the server (or an upstream proxy) accepts
+# the request but never emits a token — otherwise the loop blocks until the
+# upstream's own timeout drops the connection, often as a silent empty reply.
+# On timeout the request is retried with backoff. Raise this for slow
+# reasoning models.
+first_token_timeout_secs = 90
+
+# Maximum gap (seconds) allowed between stream events once streaming has
+# started before aborting and retrying (default: 60, 0 = disabled).
+# A long gap mid-stream indicates a dead connection.
+stream_idle_timeout_secs = 60
+
 # ── Providers ────────────────────────────────────────────────────
 # Use the [[providers]] array format for single or multiple providers.
 # The legacy [provider] single-table format still works but [[providers]]
