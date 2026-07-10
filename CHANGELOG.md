@@ -1,3 +1,21 @@
+## [0.85.0] - 2026-07-10
+
+### 🚀 Features
+
+- *(core)* Add stream timeouts that convert hung LLM streams into retryable errors
+- *(core)* Persist finish_reason and terminal errors on the session
+
+### 🐛 Bug Fixes
+
+- *(ai)* Propagate mid-stream SSE errors so truncated responses retry
+
+### 📚 Documentation
+
+- Align documentation with codebase
+
+### ⚙️ Miscellaneous Tasks
+
+- Update README.md to hint at community
 ## [0.84.3] - 2026-07-01
 
 ### 🐛 Bug Fixes
