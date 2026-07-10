@@ -30,20 +30,30 @@ fn spawn(label: &str, cmd: &str, args: &[&str]) -> Result<()> {
 }
 
 /// Read the current workspace version from Cargo.toml.
+///
+/// Scans for the `version` line under `[workspace.package]` instead of
+/// parsing the whole document. This is robust to `toml` crate API churn
+/// (a 1.0 bump broke the previous `parse::<toml::Value>()` call) and is all
+/// that's needed for this one well-defined field.
 fn read_workspace_version() -> Result<String> {
     let root = workspace_root();
     let cargo_toml_path = format!("{root}/Cargo.toml");
     let contents = fs::read_to_string(&cargo_toml_path)
         .with_context(|| format!("failed to read {cargo_toml_path}"))?;
-    let doc: toml::Value = contents
-        .parse::<toml::Value>()
-        .with_context(|| format!("failed to parse {cargo_toml_path}"))?;
-    doc.get("workspace")
-        .and_then(|w| w.get("package"))
-        .and_then(|p| p.get("version"))
-        .and_then(|v| v.as_str())
-        .map(String::from)
-        .ok_or_else(|| anyhow::anyhow!("could not find workspace.package.version in Cargo.toml"))
+    let mut in_workspace_package = false;
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_workspace_package = trimmed == "[workspace.package]";
+            continue;
+        }
+        if in_workspace_package && trimmed.starts_with("version") {
+            if let Some((_, value)) = trimmed.split_once('=') {
+                return Ok(value.trim().trim_matches('"').to_owned());
+            }
+        }
+    }
+    bail!("could not find workspace.package.version in {cargo_toml_path}");
 }
 
 /// Write the workspace version in Cargo.toml, replacing only the version value.
@@ -52,11 +62,6 @@ fn write_workspace_version(new_version: &str) -> Result<()> {
     let cargo_toml_path = format!("{root}/Cargo.toml");
     let contents = fs::read_to_string(&cargo_toml_path)
         .with_context(|| format!("failed to read {cargo_toml_path}"))?;
-
-    // Parse to validate it's valid TOML first.
-    let _doc: toml::Value = contents
-        .parse::<toml::Value>()
-        .with_context(|| format!("failed to parse {cargo_toml_path}"))?;
 
     // Find the [workspace.package] version line and replace it.
     let mut found = false;
@@ -157,6 +162,8 @@ pub fn lint() -> Result<()> {
         &[
             "clippy",
             "--workspace",
+            "--exclude",
+            "xtask",
             "--all-targets",
             "--",
             "-D",
@@ -167,7 +174,9 @@ pub fn lint() -> Result<()> {
 
 /// `cargo xtask build [--release]` — build all workspace crates.
 pub fn build(release: bool) -> Result<()> {
-    let mut args = vec!["build", "--workspace"];
+    // --exclude xtask: xtask can't rebuild its own running binary on Windows
+    // (the OS holds an exclusive lock on the executing .exe).
+    let mut args = vec!["build", "--workspace", "--exclude", "xtask"];
     if release {
         args.push("--release");
     }
@@ -181,7 +190,7 @@ pub fn test(release: bool, extra_args: &[String]) -> Result<()> {
     let use_nextest = which::which("cargo-nextest").is_ok();
 
     if use_nextest {
-        let mut args: Vec<&str> = vec!["nextest", "run", "--workspace"];
+        let mut args: Vec<&str> = vec!["nextest", "run", "--workspace", "--exclude", "xtask"];
         if release {
             args.push("--release");
         }
@@ -191,7 +200,7 @@ pub fn test(release: bool, extra_args: &[String]) -> Result<()> {
         spawn("test", "cargo", &args)
     } else {
         eprintln!("note: cargo-nextest not found, falling back to cargo test");
-        let mut args: Vec<&str> = vec!["test", "--workspace"];
+        let mut args: Vec<&str> = vec!["test", "--workspace", "--exclude", "xtask"];
         if release {
             args.push("--release");
         }
@@ -238,7 +247,14 @@ pub fn changelog() -> Result<()> {
     spawn(
         "changelog",
         "git",
-        &["cliff", "--tag", &tag, "--prepend", "CHANGELOG.md"],
+        &[
+            "cliff",
+            "--unreleased",
+            "--tag",
+            &tag,
+            "--prepend",
+            "CHANGELOG.md",
+        ],
     )?;
     println!("✅ CHANGELOG.md updated (existing entries preserved).");
     Ok(())
@@ -249,8 +265,8 @@ pub fn changelog() -> Result<()> {
 /// 1. Run CI (unless --skip-ci).
 /// 2. Bump version in workspace Cargo.toml.
 /// 3. Generate changelog entry via git-cliff --prepend.
-/// 4. Create a `v<version>` git tag.
-/// 5. Commit with `chore(release): prepare <version>`.
+/// 4. Commit with `chore(release): prepare <version>`.
+/// 5. Create a `v<version>` git tag on the release commit.
 pub fn release(version_spec: &str, skip_ci: bool) -> Result<()> {
     let current_version = read_workspace_version()?;
     let new_version = resolve_version(version_spec, &current_version)?;
@@ -270,19 +286,28 @@ pub fn release(version_spec: &str, skip_ci: bool) -> Result<()> {
     println!("📦 Bumping version to {new_version}…");
     write_workspace_version(&new_version)?;
 
+    // Refresh Cargo.lock so the workspace crates' versions stay consistent
+    // with the bumped Cargo.toml. `--offline` keeps it to the local cache so
+    // the release commit only reflects the version bump, not unrelated bumps.
+    println!("🔒 Refreshing Cargo.lock…");
+    spawn("lock", "cargo", &["update", "--workspace", "--offline"])?;
+
     // Step 3: Changelog.
     println!("📝 Generating changelog…");
     spawn(
         "changelog",
         "git",
-        &["cliff", "--tag", &tag, "--prepend", "CHANGELOG.md"],
+        &[
+            "cliff",
+            "--unreleased",
+            "--tag",
+            &tag,
+            "--prepend",
+            "CHANGELOG.md",
+        ],
     )?;
 
-    // Step 4: Tag.
-    println!("🏷️  Creating tag {tag}…");
-    spawn("tag", "git", &["tag", &tag])?;
-
-    // Step 5: Commit.
+    // Step 4: Commit.
     println!("💾 Committing…");
     spawn("commit", "git", &["add", "-A"])?;
     spawn(
@@ -294,6 +319,10 @@ pub fn release(version_spec: &str, skip_ci: bool) -> Result<()> {
             &format!("chore(release): prepare {new_version}"),
         ],
     )?;
+
+    // Step 5: Tag the release commit.
+    println!("🏷️  Creating tag {tag}…");
+    spawn("tag", "git", &["tag", &tag])?;
 
     println!();
     println!("✅ Release {tag} prepared!");
