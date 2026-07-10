@@ -47,6 +47,26 @@ pub enum ClientError {
     /// model server).
     #[error("retry budget exhausted after {0} attempts: {1}")]
     RetryBudgetExhausted(u32, Box<ClientError>),
+
+    /// The model stream stalled: no data arrived within the configured timeout.
+    ///
+    /// This guards against hung connections where the model server (or an
+    /// upstream proxy) accepts the request but never emits a first token, or
+    /// stalls partway through a response. Without this, the agent loop would
+    /// block indefinitely — in practice until the upstream's own idle timeout
+    /// closes the connection, often surfacing downstream as a silent
+    /// empty response.
+    ///
+    /// Always retryable: a stall is transient and the request can be resent
+    /// after backoff.
+    #[error("stream timed out waiting for {phase} after {elapsed_secs}s")]
+    StreamTimeout {
+        /// What the stream was waiting for when it timed out
+        /// (e.g. `"first token"`, `"next chunk"`).
+        phase: &'static str,
+        /// How long we waited before giving up.
+        elapsed_secs: u64,
+    },
 }
 
 impl ClientError {
@@ -94,6 +114,8 @@ impl Retryable for ClientError {
             ClientError::HttpError { status, .. } => {
                 matches!(status, 429 | 500 | 502 | 503 | 504)
             }
+            // A stream stall is transient — the request can be resent after backoff.
+            ClientError::StreamTimeout { .. } => true,
             ClientError::Json(_)
             | ClientError::RetryBudgetExhausted(_, _)
             | ClientError::UrlParse(_) => false,
@@ -191,6 +213,17 @@ mod tests {
         let http_error = ClientError::http_error(503, "Service Unavailable".to_string());
         let error = ClientError::retry_budget_exhausted(5, http_error);
         assert!(!error.is_retryable());
+    }
+
+    #[test]
+    fn test_stream_timeout_is_retryable() {
+        let error = ClientError::StreamTimeout {
+            phase: "first token",
+            elapsed_secs: 90,
+        };
+        assert!(error.is_retryable());
+        assert!(error.to_string().contains("first token"));
+        assert!(error.to_string().contains("90s"));
     }
 
     #[test]

@@ -520,6 +520,12 @@ pub struct AgentConfig {
     /// When `"llm"`, the agent uses the LLM to generate narrative summaries
     /// during compaction.
     pub compaction_mode: String,
+    /// Maximum seconds to wait for the first stream event before aborting
+    /// the attempt and retrying. 0 disables the timeout.
+    pub first_token_timeout_secs: u64,
+    /// Maximum seconds allowed between consecutive stream events before
+    /// aborting the attempt and retrying. 0 disables the timeout.
+    pub stream_idle_timeout_secs: u64,
 }
 
 impl std::fmt::Debug for AgentConfig {
@@ -534,6 +540,8 @@ impl std::fmt::Debug for AgentConfig {
             .field("show_reasoning", &self.show_reasoning)
             .field("auto_compact_threshold", &self.auto_compact_threshold)
             .field("compaction_mode", &self.compaction_mode)
+            .field("first_token_timeout_secs", &self.first_token_timeout_secs)
+            .field("stream_idle_timeout_secs", &self.stream_idle_timeout_secs)
             .finish()
     }
 }
@@ -550,6 +558,8 @@ impl Default for AgentConfig {
             show_reasoning: false,
             auto_compact_threshold: 0,
             compaction_mode: "mechanical".to_owned(),
+            first_token_timeout_secs: 90,
+            stream_idle_timeout_secs: 60,
         }
     }
 }
@@ -571,6 +581,8 @@ impl AgentConfig {
             show_reasoning: config.agent.show_reasoning,
             auto_compact_threshold: config.agent.auto_compact_threshold,
             compaction_mode: config.agent.compaction_mode.clone(),
+            first_token_timeout_secs: config.agent.first_token_timeout_secs,
+            stream_idle_timeout_secs: config.agent.stream_idle_timeout_secs,
         }
     }
 }
@@ -1364,7 +1376,11 @@ impl LoopContext<'_> {
                 crate::error::RhoError::Client(crate::client::error::ClientError::from(e))
             })?;
 
-        let events = consume_stream(event_stream, self.params.observer).await?;
+        let timeouts = StreamTimeouts {
+            first_token: secs_to_duration(self.params.config.first_token_timeout_secs),
+            idle: secs_to_duration(self.params.config.stream_idle_timeout_secs),
+        };
+        let events = consume_stream(event_stream, self.params.observer, timeouts).await?;
         debug!("Stream ended with {} events", events.len());
 
         let acc = rho_ai::StreamEvent::accumulate(&events);
@@ -1514,20 +1530,97 @@ fn build_tool_calls_from_accumulated(
 
 // ── Stream consumption ────────────────────────────────────────────────────────
 
+/// Timeouts applied while consuming a model event stream.
+///
+/// Both fields are `Option`s: `None` disables that particular timeout and the
+/// stream may block indefinitely. Use [`StreamTimeouts::none()`] to disable
+/// both (e.g. for background LLM calls like compaction that don't loop through
+/// the retry-aware `send_streaming` path).
+///
+/// # Why two timeouts
+///
+/// Reasoning models (DeepSeek-R1, Qwen3, o1-style) can legitimately spend a
+/// long time before emitting the **first** token, but once streaming starts
+/// the events arrive steadily. Separating the two lets you give the first
+/// token a generous budget while still catching mid-stream stalls quickly.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct StreamTimeouts {
+    /// Maximum wait from the start of consumption until the first event.
+    /// Guards against hung first-token requests.
+    pub first_token: Option<std::time::Duration>,
+    /// Maximum gap between consecutive events once streaming has started.
+    /// Guards against a connection that stalls mid-response.
+    pub idle: Option<std::time::Duration>,
+}
+
+impl StreamTimeouts {
+    /// Disable both timeouts: the stream may block indefinitely.
+    ///
+    /// Equivalent to [`StreamTimeouts::default()`] but makes intent explicit
+    /// at call sites.
+    pub(crate) fn none() -> Self {
+        Self {
+            first_token: None,
+            idle: None,
+        }
+    }
+}
+
+/// Translate a configured whole-seconds timeout into a `Duration`, treating
+/// `0` as "disabled" (`None`).
+fn secs_to_duration(secs: u64) -> Option<std::time::Duration> {
+    (secs > 0).then_some(std::time::Duration::from_secs(secs))
+}
+
+/// Build a retryable [`RhoError`] for a stream stall.
+fn stream_timeout_error(phase: &'static str, elapsed: std::time::Duration) -> RhoError {
+    RhoError::Client(crate::client::error::ClientError::StreamTimeout {
+        phase,
+        elapsed_secs: elapsed.as_secs(),
+    })
+}
+
 /// Consume an event stream, forwarding text/reasoning deltas to the observer
 /// and collecting all events into a vector.
+///
+/// `timeouts` bounds how long the loop will wait:
+/// - [`StreamTimeouts::first_token`] caps the wait for the first event.
+/// - [`StreamTimeouts::idle`] caps the gap between consecutive events.
+///
+/// A stall beyond either bound returns a retryable
+/// [`ClientError::StreamTimeout`](crate::client::error::ClientError::StreamTimeout)
+/// so the caller (e.g. [`send_with_retry`](LoopContext::send_with_retry)) can
+/// back off and try again instead of blocking forever.
 ///
 /// Returns `Err` on the first stream error, converting the
 /// [`ProviderError`](rho_ai::ProviderError) into a [`RhoError`].
 pub(crate) async fn consume_stream(
     event_stream: rho_ai::EventStream,
     observer: &dyn AgentObserver,
+    timeouts: StreamTimeouts,
 ) -> Result<Vec<rho_ai::StreamEvent>> {
     let mut events: Vec<rho_ai::StreamEvent> = Vec::new();
     let mut stream = std::pin::pin!(event_stream);
-    while let Some(result) = stream.next().await {
-        match result {
-            Ok(event) => {
+    let mut first = true;
+    loop {
+        // Pick the applicable limit *before* polling so the borrow taken by
+        // `stream.next()` is released before the next iteration.
+        let (limit, phase) = if first {
+            first = false;
+            (timeouts.first_token, "first token")
+        } else {
+            (timeouts.idle, "next chunk")
+        };
+        let item = match limit {
+            Some(limit) => match tokio::time::timeout(limit, stream.next()).await {
+                Ok(item) => item,
+                Err(_) => return Err(stream_timeout_error(phase, limit)),
+            },
+            None => stream.next().await,
+        };
+        match item {
+            None => break,
+            Some(Ok(event)) => {
                 match &event {
                     rho_ai::StreamEvent::Text(delta) => observer.on_text_delta(delta).await,
                     rho_ai::StreamEvent::Reasoning(delta) => {
@@ -1537,7 +1630,7 @@ pub(crate) async fn consume_stream(
                 }
                 events.push(event);
             }
-            Err(e) => {
+            Some(Err(e)) => {
                 return Err(RhoError::Client(crate::client::error::ClientError::from(e)));
             }
         }
@@ -1832,7 +1925,9 @@ mod tests {
         ];
         let stream: rho_ai::EventStream = Box::pin(futures::stream::iter(events));
         let observer = RecordingObserver::default();
-        let collected = consume_stream(stream, &observer).await.unwrap();
+        let collected = consume_stream(stream, &observer, StreamTimeouts::none())
+            .await
+            .unwrap();
         assert_eq!(collected.len(), 3);
         assert_eq!(
             *observer.text_deltas.lock().unwrap(),
@@ -1851,7 +1946,9 @@ mod tests {
         ];
         let stream: rho_ai::EventStream = Box::pin(futures::stream::iter(events));
         let observer = RecordingObserver::default();
-        let _ = consume_stream(stream, &observer).await.unwrap();
+        let _ = consume_stream(stream, &observer, StreamTimeouts::none())
+            .await
+            .unwrap();
         assert_eq!(*observer.reasoning_deltas.lock().unwrap(), vec!["thinking"]);
     }
 
@@ -1863,8 +1960,81 @@ mod tests {
             })];
         let stream: rho_ai::EventStream = Box::pin(futures::stream::iter(events));
         let observer = RecordingObserver::default();
-        let result = consume_stream(stream, &observer).await;
+        let result = consume_stream(stream, &observer, StreamTimeouts::none()).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn consume_stream_first_token_timeout_is_retryable_error() {
+        // A stream that never yields any events simulates a hung first-token
+        // request (the exact failure mode observed in the wild).
+        let stream: rho_ai::EventStream = Box::pin(futures::stream::pending::<
+            std::result::Result<rho_ai::StreamEvent, rho_ai::ProviderError>,
+        >());
+        let observer = RecordingObserver::default();
+        let timeouts = StreamTimeouts {
+            first_token: Some(std::time::Duration::from_millis(50)),
+            idle: None,
+        };
+        let result = consume_stream(stream, &observer, timeouts).await;
+        let err = result.expect_err("should time out");
+        assert!(err.is_retryable(), "stream timeout must be retryable");
+        assert!(matches!(
+            err,
+            RhoError::Client(crate::client::error::ClientError::StreamTimeout {
+                phase: "first token",
+                elapsed_secs: 0,
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn consume_stream_idle_timeout_fires_after_first_event() {
+        // One event arrives, then the stream stalls forever. The idle timeout
+        // (not the first-token timeout) should fire.
+        let first = Ok(rho_ai::StreamEvent::Text("hello".into()));
+        let stalled = futures::stream::pending::<
+            std::result::Result<rho_ai::StreamEvent, rho_ai::ProviderError>,
+        >();
+        let stream: rho_ai::EventStream = Box::pin(futures::stream::iter([first]).chain(stalled));
+        let observer = RecordingObserver::default();
+        let timeouts = StreamTimeouts {
+            first_token: None,
+            idle: Some(std::time::Duration::from_millis(50)),
+        };
+        let result = consume_stream(stream, &observer, timeouts).await;
+        let err = result.expect_err("should time out after the first event");
+        assert!(err.is_retryable());
+        assert!(matches!(
+            err,
+            RhoError::Client(crate::client::error::ClientError::StreamTimeout {
+                phase: "next chunk",
+                elapsed_secs: 0,
+            })
+        ));
+        // The first event was still delivered to the observer.
+        assert_eq!(
+            *observer.text_deltas.lock().unwrap(),
+            vec!["hello".to_owned()]
+        );
+    }
+
+    #[tokio::test]
+    async fn consume_stream_disabled_timeouts_block_until_completion() {
+        // With both timeouts disabled, a finite stream completes normally.
+        let events = vec![
+            Ok(rho_ai::StreamEvent::Text("hi".into())),
+            Ok(rho_ai::StreamEvent::Done {
+                reason: rho_ai::StopReason::EndTurn,
+                usage: rho_ai::StreamUsage::default(),
+            }),
+        ];
+        let stream: rho_ai::EventStream = Box::pin(futures::stream::iter(events));
+        let observer = RecordingObserver::default();
+        let collected = consume_stream(stream, &observer, StreamTimeouts::none())
+            .await
+            .unwrap();
+        assert_eq!(collected.len(), 2);
     }
 
     // ── route_response tests ─────────────────────────────────────────────

@@ -417,7 +417,7 @@ impl Session {
         &mut self,
         client: &dyn rho_ai::LlmService,
     ) -> crate::error::Result<crate::conversation::AssistantResponse> {
-        use crate::agent::{consume_stream, route_response};
+        use crate::agent::{StreamTimeouts, consume_stream, route_response};
 
         self.prepare_context();
         let fitted = self.path_messages();
@@ -440,7 +440,12 @@ impl Session {
             crate::error::RhoError::Client(crate::client::error::ClientError::from(e))
         })?;
 
-        let events = consume_stream(event_stream, &crate::agent::NopObserver).await?;
+        let events = consume_stream(
+            event_stream,
+            &crate::agent::NopObserver,
+            StreamTimeouts::none(),
+        )
+        .await?;
         let acc = rho_ai::StreamEvent::accumulate(&events);
 
         // Calibrate estimator if the API returned prompt_tokens.

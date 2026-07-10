@@ -162,6 +162,30 @@ pub struct AgentLoopConfig {
     /// no reasoning parameter is sent (default).
     #[serde(default)]
     pub reasoning_effort: Option<String>,
+    /// Maximum seconds to wait for the **first** stream event after sending
+    /// a request (a "first-token" timeout). Defaults to 90. Set to 0 to
+    /// disable.
+    ///
+    /// This guards against hung connections where the model server (or an
+    /// upstream proxy) accepts the request but never emits a first token — a
+    /// failure mode that otherwise blocks the agent loop until the upstream's
+    /// own idle timeout closes the connection (often surfacing as a silent
+    /// empty response). On timeout the request is retried with backoff.
+    ///
+    /// Reasoning models (DeepSeek-R1, Qwen3, o1-style) can legitimately
+    /// spend a long time before the first token; raise this if you see
+    /// spurious `StreamTimeout` retries on such models.
+    #[serde(default = "default_first_token_timeout_secs")]
+    pub first_token_timeout_secs: u64,
+    /// Maximum gap (seconds) allowed between consecutive stream events once
+    /// streaming has started (an "idle" timeout). Defaults to 60. Set to 0
+    /// to disable.
+    ///
+    /// During healthy generation, events arrive steadily (sub-second to a
+    /// few seconds apart). A long gap indicates a dead or stalled
+    /// connection; on timeout the request is retried with backoff.
+    #[serde(default = "default_stream_idle_timeout_secs")]
+    pub stream_idle_timeout_secs: u64,
 }
 
 impl Default for AgentLoopConfig {
@@ -180,6 +204,8 @@ impl Default for AgentLoopConfig {
             auto_compact_threshold: default_auto_compact_threshold(),
             compaction_mode: default_compaction_mode(),
             reasoning_effort: None,
+            first_token_timeout_secs: default_first_token_timeout_secs(),
+            stream_idle_timeout_secs: default_stream_idle_timeout_secs(),
         }
     }
 }
@@ -231,6 +257,24 @@ fn default_auto_compact_threshold() -> u8 {
 /// Default value for `compaction_mode`.
 fn default_compaction_mode() -> String {
     "mechanical".to_owned()
+}
+
+/// Default value for `first_token_timeout_secs`.
+///
+/// 90 seconds is below the common 120-second idle timeout imposed by many
+/// upstream proxies/load balancers, so rho aborts and retries a hung request
+/// *before* the connection is silently dropped. Generous enough for most
+/// reasoning models' first-token latency.
+fn default_first_token_timeout_secs() -> u64 {
+    90
+}
+
+/// Default value for `stream_idle_timeout_secs`.
+///
+/// Once streaming has started, events arrive steadily; a 60-second gap
+/// indicates a dead connection worth retrying.
+fn default_stream_idle_timeout_secs() -> u64 {
+    60
 }
 
 // ── ProviderConfig ────────────────────────────────────────────────────────────
@@ -715,6 +759,12 @@ struct WireAgentLoopConfig {
     /// Reasoning effort for thinking-capable models.
     #[serde(default)]
     reasoning_effort: Option<String>,
+    /// First-token stream timeout in seconds.
+    #[serde(default)]
+    first_token_timeout_secs: Option<u64>,
+    /// Inter-chunk idle stream timeout in seconds.
+    #[serde(default)]
+    stream_idle_timeout_secs: Option<u64>,
 }
 
 // ── Provider presets ───────────────────────────────────────────────────────
@@ -995,6 +1045,14 @@ impl ConfigLoader {
                     .reasoning_effort
                     .clone()
                     .or(user_agent.reasoning_effort.clone()),
+                first_token_timeout_secs: project_agent
+                    .first_token_timeout_secs
+                    .or(user_agent.first_token_timeout_secs)
+                    .unwrap_or(default_first_token_timeout_secs()),
+                stream_idle_timeout_secs: project_agent
+                    .stream_idle_timeout_secs
+                    .or(user_agent.stream_idle_timeout_secs)
+                    .unwrap_or(default_stream_idle_timeout_secs()),
             },
             provider: {
                 // New `[[providers]]` format takes precedence over legacy `[provider]`.
