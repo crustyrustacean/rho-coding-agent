@@ -700,8 +700,16 @@ impl Stream for OpenAiSseStream {
                     return Poll::Ready(Some(Ok(self.pending.pop().unwrap())));
                 }
                 Poll::Ready(Some(Err(e))) => {
-                    warn!("SSE byte stream error: {e}");
-                    return Poll::Ready(None);
+                    // Propagate the error instead of treating it as a clean end.
+                    // A mid-stream failure — e.g. an upstream proxy severing
+                    // the connection at its idle timeout, surfacing as
+                    // "error decoding response body" — must reach the consumer
+                    // as an error so it can retry, rather than being silently
+                    // accumulated as a truncated (often reasoning-only, empty
+                    // answer) success.
+                    let message = format!("SSE byte stream error: {e}");
+                    warn!("{message}");
+                    return Poll::Ready(Some(Err(ProviderError::Sse { message })));
                 }
                 Poll::Ready(None) => {
                     // Inner stream exhausted.

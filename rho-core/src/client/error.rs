@@ -67,6 +67,22 @@ pub enum ClientError {
         /// How long we waited before giving up.
         elapsed_secs: u64,
     },
+
+    /// A streaming response failed mid-stream (the connection was dropped or
+    /// the body was malformed).
+    ///
+    /// This is the failure mode behind "empty reply" incidents: an upstream
+    /// proxy severs the SSE connection at its own idle timeout (often ~120s),
+    /// reqwest reports a body-decode error, and the partial response —
+    /// frequently reasoning-only with no answer text — must be retried rather
+    /// than surfaced as a truncated success.
+    ///
+    /// Always retryable: a mid-stream break is transient.
+    #[error("stream error: {message}")]
+    StreamError {
+        /// Description of the stream failure.
+        message: String,
+    },
 }
 
 impl ClientError {
@@ -115,7 +131,7 @@ impl Retryable for ClientError {
                 matches!(status, 429 | 500 | 502 | 503 | 504)
             }
             // A stream stall is transient — the request can be resent after backoff.
-            ClientError::StreamTimeout { .. } => true,
+            ClientError::StreamTimeout { .. } | ClientError::StreamError { .. } => true,
             ClientError::Json(_)
             | ClientError::RetryBudgetExhausted(_, _)
             | ClientError::UrlParse(_) => false,
@@ -144,7 +160,7 @@ impl From<rho_ai::ProviderError> for ClientError {
                 // Note: retryable is preserved at the ProviderError level.
                 // ClientError::Retryable checks the status code.
             }
-            rho_ai::ProviderError::Sse { message } => ClientError::HttpError { status: 0, message },
+            rho_ai::ProviderError::Sse { message } => ClientError::StreamError { message },
             rho_ai::ProviderError::Response { message, .. } => {
                 ClientError::HttpError { status: 0, message }
             }
@@ -224,6 +240,29 @@ mod tests {
         assert!(error.is_retryable());
         assert!(error.to_string().contains("first token"));
         assert!(error.to_string().contains("90s"));
+    }
+
+    #[test]
+    fn test_stream_error_is_retryable() {
+        let error = ClientError::StreamError {
+            message: "SSE byte stream error: error decoding response body".to_owned(),
+        };
+        assert!(error.is_retryable());
+        assert!(error.to_string().contains("error decoding response body"));
+    }
+
+    #[test]
+    fn test_provider_sse_error_maps_to_retryable_stream_error() {
+        // The actual incident: an upstream proxy severs the SSE connection,
+        // reqwest reports a body-decode error, rho-ai surfaces it as
+        // ProviderError::Sse. It must map to a retryable ClientError so the
+        // agent loop retries instead of silently emitting a truncated reply.
+        let provider_err = rho_ai::ProviderError::Sse {
+            message: "error decoding response body".to_owned(),
+        };
+        let client_err: ClientError = provider_err.into();
+        assert!(matches!(client_err, ClientError::StreamError { .. }));
+        assert!(client_err.is_retryable());
     }
 
     #[test]
