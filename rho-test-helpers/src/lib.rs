@@ -776,6 +776,7 @@ pub async fn single_text_turn(
         gate: &AutoApproveGate,
         observer: &NopObserver,
         compaction_client: None,
+        steering: None,
     };
     run_loop(session, user_text, &params).await.unwrap().reply
 }
@@ -809,6 +810,7 @@ pub async fn single_tool_turn(
         gate: &AutoApproveGate,
         observer: &NopObserver,
         compaction_client: None,
+        steering: None,
     };
     let _ = run_loop(session, user_text, &params).await.unwrap();
 }

@@ -605,9 +605,20 @@ impl AgentConfig {
 ///     gate: &approval_gate,
 ///     observer: &observer,
 ///     compaction_client: None,
+///     steering: None,
 /// };
 /// let reply = run_loop(&mut session, "hello", &params).await?;
 /// ```
+/// Source of mid-turn steering messages.
+///
+/// Drained at the seam between tool-batch completion and the next thinking
+/// step. Synchronous (draining a queue needs no `await`), which keeps the
+/// trait dyn-safe without `#[async_trait]`.
+pub trait SteeringSource: Send + Sync {
+    /// Drain and return all currently-queued steering messages, in order.
+    fn drain(&self) -> Vec<String>;
+}
+
 pub struct LoopParams<'a> {
     /// The LLM service that talks to the model.
     pub client: &'a dyn rho_ai::LlmService,
@@ -627,6 +638,10 @@ pub struct LoopParams<'a> {
     /// client to generate narrative summaries. The caller should provide an
     /// `Arc` wrapping the same provider used for the main loop.
     pub compaction_client: Option<std::sync::Arc<dyn rho_ai::LlmService>>,
+
+    /// Optional source of mid-turn steering messages — drained between
+    /// tool-batch completion and the next thinking step (see [`SteeringSource`]).
+    pub steering: Option<&'a dyn SteeringSource>,
 }
 
 // ── Internal state machine ────────────────────────────────────────────────────

@@ -523,6 +523,7 @@ async fn handle_prompt(
         gate: &gate,
         observer: &composite,
         compaction_client,
+        steering: None,
     };
     match run_agent_turn(&mut app.session, &message, &loop_params).await {
         TurnResult::Done(result) => {
