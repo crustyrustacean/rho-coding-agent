@@ -88,11 +88,15 @@ use crate::rpc_wire::{
 use crate::transport::{ReadResult, StdioTransport, Transport};
 use anyhow::Result;
 use async_trait::async_trait;
-use rho_core::{AgentObserver, ChatMessage, ContentBlock, ModelToolCall, ToolResult};
+use rho_core::{
+    AgentObserver, ChatMessage, ContentBlock, ModelToolCall, ToolResult, agent::SteeringQueue,
+    tool::CancellationToken,
+};
 use serde_json::{Value, json};
 use std::io;
 use std::sync::Arc;
 use std::time::Instant;
+use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
 // ── JSON-RPC 2.0 Error codes ───────────────────────────────────────────────────
@@ -260,11 +264,23 @@ impl AgentObserver for RpcObserver {
 
 // ── RpcApprovalGate ───────────────────────────────────────────────────────────
 
-/// Writes an `approval/request` notification and reads an `approvalResponse`
-/// request from the transport.
+/// A shared, single-consumer receiver for `approvalResponse` messages.
+///
+/// The reader task pushes every `approvalResponse` here; the approval gate
+/// (one in flight at a time) locks and receives. Wrapped in
+/// [`tokio::sync::Mutex`] because [`mpsc::UnboundedReceiver::recv`] needs
+/// `&mut self`, and in [`Arc`] so each turn's gate can hold a clone.
+type ApprovalReceiver = Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<Value>>>;
+
+/// Writes an `approval/request` notification and awaits the matching
+/// `approvalResponse` on the [`ApprovalReceiver`] (fed by the reader task),
+/// rather than reading the transport directly — so the reader keeps ownership
+/// of all transport reads.
 struct RpcApprovalGate {
-    /// Shared transport handle.
+    /// Shared transport handle (used only to write the request notification).
     transport: Arc<dyn Transport>,
+    /// Approval-response channel fed by the concurrent reader.
+    approval_rx: ApprovalReceiver,
 }
 
 #[async_trait]
@@ -286,10 +302,16 @@ impl rho_core::ApprovalGate for RpcApprovalGate {
             ))
             .await;
 
-        match self.transport.read_message().await {
-            ReadResult::Message(v) => {
-                let approved = v["params"]["approved"].as_bool().unwrap_or(false);
-                let message = v["params"]["message"].as_str().map(String::from);
+        // Await the response on the channel the reader feeds. A response that
+        // arrives before the gate awaits is buffered by the unbounded channel,
+        // so there is no race with the reader. EOF (sender gone) → deny.
+        let response = self.approval_rx.lock().await.recv().await;
+        match response {
+            // `response` is the `approvalResponse` params object
+            // (`{approved, message?}`), forwarded by the reader.
+            Some(v) => {
+                let approved = v["approved"].as_bool().unwrap_or(false);
+                let message = v["message"].as_str().map(String::from);
                 if approved {
                     rho_core::ApprovalDecision::Approved
                 } else if let Some(msg) = message {
@@ -298,7 +320,7 @@ impl rho_core::ApprovalGate for RpcApprovalGate {
                     rho_core::ApprovalDecision::Denied
                 }
             }
-            _ => rho_core::ApprovalDecision::Denied,
+            None => rho_core::ApprovalDecision::Denied,
         }
     }
 }
@@ -320,9 +342,13 @@ pub async fn run_rpc(app: App) -> Result<()> {
 
 /// Core JSON-RPC loop — transport-agnostic.
 ///
-/// Emits a `ready` notification, then reads JSON-RPC requests from the
-/// transport one message at a time. Each request is dispatched to the
-/// appropriate handler. Exits cleanly on transport disconnect.
+/// Emits a `ready` notification, then spins up a **concurrent reader task**
+/// that owns the transport and demuxes every inbound message (see
+/// [`demux_request`]). Time-sensitive messages — steering nudges,
+/// `approvalResponse`, and `abort` — are routed to side channels so they are
+/// handled even while a turn is running; ordinary prompts and queries are
+/// queued as [`WorkItem`]s for this task, which owns `&mut App` and processes
+/// them serially. Exits cleanly on transport disconnect.
 ///
 /// # Errors
 ///
@@ -331,56 +357,186 @@ pub(crate) async fn run_rpc_on(mut app: App, transport: Arc<dyn Transport>) -> R
     send(&*transport, &notification("ready", &ReadyParams {})).await;
     info!("RPC server started, emitting ready notification");
 
-    loop {
-        let request = match transport.read_message().await {
-            ReadResult::Message(v) => v,
-            ReadResult::ParseError(e) => {
-                warn!(error = %e, "JSON-RPC parse error");
-                send(
+    let steering = SteeringQueue::new();
+    let (work_tx, mut work_rx) = mpsc::unbounded_channel::<WorkItem>();
+    let (approval_tx, approval_rx) = mpsc::unbounded_channel::<Value>();
+    let approval_rx: ApprovalReceiver = Arc::new(tokio::sync::Mutex::new(approval_rx));
+    let cancel = app.cancel.clone();
+
+    // Concurrent reader: owns the transport, classifies every inbound message,
+    // and routes it. It never touches `&mut App` — only the main task below does
+    // — which keeps the borrow rules sane while allowing steering/approval/
+    // abort messages to arrive mid-turn.
+    let reader = tokio::spawn({
+        let transport = Arc::clone(&transport);
+        let steering = steering.clone();
+        async move {
+            loop {
+                let request = match transport.read_message().await {
+                    ReadResult::Message(v) => v,
+                    ReadResult::ParseError(e) => {
+                        warn!(error = %e, "JSON-RPC parse error");
+                        send(
+                            &*transport,
+                            &error_response(
+                                &Value::Null,
+                                PARSE_ERROR,
+                                &format!("Parse error: {e}"),
+                            ),
+                        )
+                        .await;
+                        continue;
+                    }
+                    ReadResult::Eof => {
+                        debug!("transport EOF received, shutting down reader");
+                        break;
+                    }
+                };
+                demux_request(
+                    &request,
+                    &work_tx,
+                    &approval_tx,
+                    &steering,
+                    &cancel,
                     &*transport,
-                    &error_response(&Value::Null, PARSE_ERROR, &format!("Parse error: {e}")),
                 )
                 .await;
-                continue;
             }
-            ReadResult::Eof => {
-                debug!("transport EOF received, shutting down");
-                app.session.close("transport EOF");
-                break;
-            }
-        };
-
-        // Extract required fields.
-        let jsonrpc = request.get("jsonrpc").and_then(|v| v.as_str());
-        let method = request.get("method").and_then(|v| v.as_str());
-        let id = request.get("id").cloned().unwrap_or(Value::Null);
-        let params = request.get("params").cloned().unwrap_or(json!({}));
-
-        // Validate jsonrpc version.
-        if jsonrpc != Some("2.0") {
-            send(
-                &*transport,
-                &error_response(&id, INVALID_REQUEST, "Invalid JSON-RPC version"),
-            )
-            .await;
-            continue;
         }
+    });
 
-        // Validate method.
-        let Some(method) = method else {
-            send(
-                &*transport,
-                &error_response(&id, INVALID_REQUEST, "Missing method field"),
-            )
-            .await;
-            continue;
-        };
-
-        // Dispatch.
-        dispatch_request(&mut app, method, params, &id, Arc::clone(&transport)).await;
+    // Main task: process turns and commands serially. The reader keeps routing
+    // messages to the steering/approval channels while a turn is awaited here.
+    while let Some(item) = work_rx.recv().await {
+        match item {
+            WorkItem::Turn { params, id } => {
+                handle_prompt(
+                    &mut app,
+                    params,
+                    &id,
+                    Arc::clone(&transport),
+                    &steering,
+                    &approval_rx,
+                )
+                .await;
+            }
+            WorkItem::Command { method, params, id } => {
+                dispatch_request(&mut app, &method, params, &id, Arc::clone(&transport)).await;
+            }
+        }
     }
 
+    // The reader hit EOF and dropped `work_tx`; shut down.
+    let _ = reader.await;
+    app.session.close("transport EOF");
     Ok(())
+}
+
+// ── Concurrent reader / message demux ─────────────────────────────────────────
+
+/// A unit of work the main RPC task processes serially.
+///
+/// The reader demuxes every inbound message; time-sensitive messages (steer /
+/// `approvalResponse` / `abort`) are routed to side channels, while everything
+/// else becomes a `WorkItem` queued for the main task, which owns `&mut App`.
+enum WorkItem {
+    /// Start a new agent turn for a (non-steering) `prompt`.
+    Turn {
+        /// Deserialized prompt params.
+        params: PromptParams,
+        /// JSON-RPC request id, used in the response.
+        id: Value,
+    },
+    /// Any non-prompt, non-concurrent method (`getState`, `clear`, …) to be
+    /// dispatched normally.
+    Command {
+        /// The JSON-RPC method name.
+        method: String,
+        /// The raw params value.
+        params: Value,
+        /// JSON-RPC request id.
+        id: Value,
+    },
+}
+
+/// Classify one inbound JSON-RPC message and route it.
+///
+/// Time-sensitive messages are handled inline so they take effect even while a
+/// turn is running on the main task:
+/// - `prompt` with `steer: true` → push onto the steering queue.
+/// - `approvalResponse` → forward to the approval-response channel.
+/// - `abort` → cancel the active turn's token.
+///
+/// Everything else is queued as a [`WorkItem`] for serial processing by the
+/// main task (which owns `&mut App`).
+async fn demux_request(
+    request: &Value,
+    work_tx: &mpsc::UnboundedSender<WorkItem>,
+    approval_tx: &mpsc::UnboundedSender<Value>,
+    steering: &SteeringQueue,
+    cancel: &CancellationToken,
+    transport: &dyn Transport,
+) {
+    let jsonrpc = request.get("jsonrpc").and_then(|v| v.as_str());
+    let method = request.get("method").and_then(|v| v.as_str());
+    let id = request.get("id").cloned().unwrap_or(Value::Null);
+    let params = request.get("params").cloned().unwrap_or(json!({}));
+
+    if jsonrpc != Some("2.0") {
+        send(
+            transport,
+            &error_response(&id, INVALID_REQUEST, "Invalid JSON-RPC version"),
+        )
+        .await;
+        return;
+    }
+    let Some(method) = method else {
+        send(
+            transport,
+            &error_response(&id, INVALID_REQUEST, "Missing method field"),
+        )
+        .await;
+        return;
+    };
+
+    match method {
+        "abort" => {
+            cancel.cancel();
+            send(transport, &success_response(&id, EmptyResult {})).await;
+        }
+        "approvalResponse" => {
+            // Consumed by the approval gate via the channel; no wire ack
+            // (matches the prior direct-read behavior).
+            let _ = approval_tx.send(params);
+        }
+        "prompt" => match serde_json::from_value::<PromptParams>(params) {
+            Ok(p) if p.steer && !p.message.is_empty() => {
+                steering.push(p.message);
+                send(transport, &success_response(&id, EmptyResult {})).await;
+            }
+            Ok(p) if !p.message.is_empty() => {
+                let _ = work_tx.send(WorkItem::Turn { params: p, id });
+            }
+            _ => {
+                send(
+                    transport,
+                    &error_response(
+                        &id,
+                        INVALID_PARAMS,
+                        "prompt requires a non-empty 'message' param",
+                    ),
+                )
+                .await;
+            }
+        },
+        other => {
+            let _ = work_tx.send(WorkItem::Command {
+                method: other.to_owned(),
+                params,
+                id,
+            });
+        }
+    }
 }
 
 // ── Request dispatch ─────────────────────────────────────────────────────────
@@ -395,26 +551,8 @@ async fn dispatch_request(
 ) {
     debug!(method = %method, id = %id, "dispatching RPC request");
     match method {
-        "prompt" => match serde_json::from_value::<PromptParams>(params) {
-            Ok(p) if !p.message.is_empty() => {
-                handle_prompt(app, p, id, Arc::clone(&transport)).await;
-            }
-            _ => {
-                send(
-                    &*transport,
-                    &error_response(
-                        id,
-                        INVALID_PARAMS,
-                        "prompt requires a non-empty 'message' param",
-                    ),
-                )
-                .await;
-            }
-        },
-        "abort" => {
-            app.cancel.cancel();
-            send(&*transport, &success_response(id, EmptyResult {})).await;
-        }
+        // `prompt`, `abort`, and `approvalResponse` are routed by the reader
+        // task (see `demux_request`) and never reach this dispatch.
         "clear" => handle_clear(app, id, &*transport).await,
         "getState" => handle_get_state(app, id, &*transport).await,
         "getMessages" => handle_get_messages(app, id, &*transport).await,
@@ -454,11 +592,6 @@ async fn dispatch_request(
             }
         },
         "listTools" => handle_list_tools(app, id, &*transport).await,
-        "approvalResponse" => {
-            // Handled synchronously during approval flow, but if we see it here,
-            // acknowledge it (shouldn't normally happen outside approval flow).
-            send(&*transport, &success_response(id, EmptyResult {})).await;
-        }
         _ => {
             debug!(method = %method, "unknown RPC method");
             send(
@@ -478,6 +611,8 @@ async fn handle_prompt(
     params: PromptParams,
     id: &Value,
     transport: Arc<dyn Transport>,
+    steering: &SteeringQueue,
+    approval_rx: &ApprovalReceiver,
 ) {
     let message = params.message;
 
@@ -506,6 +641,7 @@ async fn handle_prompt(
     });
     let gate = RpcApprovalGate {
         transport: Arc::clone(&transport),
+        approval_rx: Arc::clone(approval_rx),
     };
     let client = app.active_provider().clone_boxed_service();
     let compaction_client = if app.config.compaction_mode == "llm" {
@@ -523,7 +659,7 @@ async fn handle_prompt(
         gate: &gate,
         observer: &composite,
         compaction_client,
-        steering: None,
+        steering: Some(steering),
     };
     match run_agent_turn(&mut app.session, &message, &loop_params).await {
         TurnResult::Done(result) => {
@@ -946,13 +1082,14 @@ mod tests {
     use super::*;
     use rho_core::{
         AgentConfig, AgentState, ChatMessage, ContentBlock, ModelToolCall, ProviderRegistry,
-        Session, ToolCallFunction, ToolCallId, ToolName, ToolRegistry, ToolRisk,
+        Session, Tool, ToolCallFunction, ToolCallId, ToolName, ToolOutcome, ToolRegistry, ToolRisk,
         tool::CancellationToken,
     };
     use rho_test_helpers::{
         FixedResponseTool, MockChatClient, TestProvider, text_events, tool_call_events,
     };
     use std::io::{Cursor, Write};
+    use tokio::sync::{Notify, mpsc};
 
     // ═══════════════════════════════════════════════════════════════════════
     // Test infrastructure
@@ -2067,5 +2204,179 @@ mod tests {
             .collect();
         assert!(names.contains(&"echo_tool"));
         assert!(names.contains(&"new_ext_tool"));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 8. Mid-turn steering
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Shared synchronization state for [`SyncTool`].
+    ///
+    /// The tool signals [`SyncToolState::started`] when it begins executing,
+    /// then blocks on [`SyncToolState::release`] so a test can inject messages
+    /// strictly mid-turn (after the tool runs, before the next tool-batch seam).
+    #[derive(Default)]
+    struct SyncToolState {
+        /// Notified once when the tool begins executing.
+        started: Notify,
+        /// The tool blocks until this is notified.
+        release: Notify,
+    }
+
+    /// A tool that blocks until released, letting a test control exactly when a
+    /// tool-call iteration completes. Used to inject steering messages
+    /// deterministically mid-turn.
+    struct SyncTool {
+        /// Shared state, cloned from the test harness.
+        state: Arc<SyncToolState>,
+    }
+
+    #[async_trait]
+    impl Tool for SyncTool {
+        fn name(&self) -> ToolName {
+            ToolName::from("sync_tool")
+        }
+
+        fn description(&self) -> &str {
+            "synchronizing test tool"
+        }
+
+        fn parameters_schema(&self) -> Value {
+            json!({"type": "object", "properties": {}})
+        }
+
+        fn risk(&self) -> ToolRisk {
+            ToolRisk::Read
+        }
+
+        async fn execute(
+            &self,
+            _arguments: Value,
+            _cancel: CancellationToken,
+        ) -> rho_core::Result<ToolOutcome> {
+            self.state.started.notify_one();
+            self.state.release.notified().await;
+            Ok(ToolOutcome::Immediate(ToolResult::success("sync done")))
+        }
+    }
+
+    /// A transport backed by an mpsc channel of inbound messages and a captured
+    /// buffer for outbound writes.
+    ///
+    /// Unlike [`StdioTransport`] over a [`Cursor`] (which yields every line up
+    /// front), `ChannelTransport` lets a test control *when* each message
+    /// becomes readable — essential for injecting a steering message strictly
+    /// mid-turn. Dropping the sender yields [`ReadResult::Eof`].
+    struct ChannelTransport {
+        /// Inbound messages; `recv` returning `None` (sender dropped) is EOF.
+        inbound: tokio::sync::Mutex<mpsc::UnboundedReceiver<Value>>,
+        /// Captured outbound writes (newline-delimited JSON).
+        outbound: Arc<std::sync::Mutex<Vec<u8>>>,
+    }
+
+    #[async_trait]
+    impl Transport for ChannelTransport {
+        async fn read_message(&self) -> ReadResult {
+            match self.inbound.lock().await.recv().await {
+                Some(v) => ReadResult::Message(v),
+                None => ReadResult::Eof,
+            }
+        }
+
+        async fn write_message(&self, value: &Value) -> anyhow::Result<()> {
+            let mut guard = self
+                .outbound
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            writeln!(guard, "{value}")?;
+            guard.flush()?;
+            Ok(())
+        }
+    }
+
+    /// A steering message (`prompt` with `steer: true`) injected mid-turn is
+    /// queued and drained at the tool-batch seam, so it reaches the next LLM
+    /// call — even though the turn was already running when it arrived.
+    ///
+    /// This exercises the concurrent reader: the message becomes readable while
+    /// a turn is in progress, so a single-threaded read loop could never see it
+    /// in time.
+    #[tokio::test]
+    async fn steer_message_injected_mid_turn() {
+        let sync = Arc::new(SyncToolState::default());
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(SyncTool {
+            state: Arc::clone(&sync),
+        }));
+
+        // Iteration 1: model calls the blocking tool. Iteration 2: model
+        // answers. A spare third response keeps the mock from panicking on the
+        // *pre-steering* code path, where the steer is misrouted as a second
+        // prompt — it is unused once the reader routes steers correctly.
+        let client = MockChatClient::new(vec![
+            tool_call_events("c1", "sync_tool", "{}"),
+            text_events("after steer"),
+            text_events("unused on green path"),
+        ]);
+        let probe = client.clone();
+
+        let (msg_tx, msg_rx) = mpsc::unbounded_channel::<Value>();
+        let transport: Arc<dyn Transport> = Arc::new(ChannelTransport {
+            inbound: tokio::sync::Mutex::new(msg_rx),
+            outbound: Arc::new(std::sync::Mutex::new(Vec::new())),
+        });
+        let app = test_app(client, registry);
+
+        // Drive the RPC loop concurrently with the injection script. `join!`
+        // polls both on this task (no `Send` requirement on `App`).
+        let rpc = run_rpc_on(app, Arc::clone(&transport));
+        let driver = async move {
+            // 1. Start the turn.
+            msg_tx
+                .send(json!({
+                    "jsonrpc": "2.0",
+                    "method": "prompt",
+                    "params": {"message": "do it"},
+                    "id": 1,
+                }))
+                .unwrap();
+            // 2. Wait until the tool is executing (genuinely mid-turn).
+            sync.started.notified().await;
+            // 3. Inject the steer.
+            msg_tx
+                .send(json!({
+                    "jsonrpc": "2.0",
+                    "method": "prompt",
+                    "params": {"message": "STEER MSG", "steer": true},
+                    "id": 2,
+                }))
+                .unwrap();
+            // Let the reader task drain the channel and enqueue the steer.
+            // (`#[tokio::test]` is single-threaded, so `yield_now` lets the
+            // spawned reader make progress between the driver's awaits.)
+            for _ in 0..16 {
+                tokio::task::yield_now().await;
+            }
+            // 4. Release the tool; the seam runs and drains the steer before
+            //    the next LLM call.
+            sync.release.notify_one();
+            // 5. Close the transport so the reader hits EOF and the loop exits.
+            drop(msg_tx);
+        };
+        let (rpc_result, ()) = tokio::join!(rpc, driver);
+        rpc_result.expect("run_rpc_on should complete");
+
+        // The steer must have reached the second LLM call.
+        let requests = probe.requests();
+        assert_eq!(
+            requests.len(),
+            2,
+            "expected exactly two LLM calls (one tool call + one steer-injected reply)"
+        );
+        let second = format!("{:?}", requests[1]);
+        assert!(
+            second.contains("STEER MSG"),
+            "steering message was not injected before the second LLM call; second request: {second}",
+        );
     }
 }
