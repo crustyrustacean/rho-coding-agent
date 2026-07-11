@@ -6,7 +6,7 @@
 use rho_core::{
     AgentConfig, ChatMessage, ContentBlock, ContextManager, NopObserver, RhoError, Session,
     ToolCallId, ToolName, ToolOutcome, ToolRegistry, ToolResult, ToolRisk,
-    agent::{LoopParams, run_loop},
+    agent::{LoopParams, SteeringSource, run_loop},
     config::RhoConfig,
     message::{ModelToolCall, ToolCallFunction},
     tool::{CancellationToken, Tool},
@@ -1440,4 +1440,57 @@ async fn test_chat_stream() {
         let event = event.unwrap();
         println!("{event:?}");
     }
+}
+
+// ── Mid-turn steering injection ──────────────────────────────────────────────
+
+/// A `SteeringSource` backed by a lockable queue; `drain` empties it.
+struct QueuedSteering(std::sync::Mutex<Vec<String>>);
+
+impl SteeringSource for QueuedSteering {
+    fn drain(&self) -> Vec<String> {
+        let mut g = self.0.lock().expect("steering queue poisoned");
+        std::mem::take(&mut *g)
+    }
+}
+
+/// A queued steering message is injected at the seam between tool-batch
+/// completion and the next thinking step, so the model sees it on its next
+/// LLM call (pi-style "steer before the next call").
+#[tokio::test]
+async fn steering_message_injected_at_tool_batch_seam() {
+    // Turn 1: model requests a tool. Turn 2: model answers.
+    let client = MockChatClient::new(vec![
+        tool_call_events("c1", "echo_tool", "{}"),
+        text_events("after steer"),
+    ]);
+    let registry = fixed_registry("echo_tool", "echo output".into(), ToolRisk::Read);
+    let config = AgentConfig::default();
+    let mut session = Session::in_memory("mock", None, registry.tool_definitions(), "/tmp");
+
+    let steer = QueuedSteering(std::sync::Mutex::new(vec!["STEER MSG".to_string()]));
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
+        cancel: CancellationToken::new(),
+        gate: &AutoApproveGate,
+        observer: &NopObserver,
+        compaction_client: None,
+        steering: Some(&steer),
+    };
+    let result = run_loop(&mut session, "do something", &params)
+        .await
+        .expect("run_loop should complete");
+    assert_eq!(result.reply, "after steer");
+
+    // The steering message must have reached the second LLM call (the one
+    // after the tool batch) — proving it was injected at the seam.
+    let requests = client.requests();
+    assert_eq!(requests.len(), 2, "expected exactly two LLM calls");
+    let second = format!("{:?}", requests[1]);
+    assert!(
+        second.contains("STEER MSG"),
+        "steering message was not injected before the second LLM call; second request: {second}",
+    );
 }

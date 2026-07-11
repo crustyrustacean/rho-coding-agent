@@ -1111,6 +1111,13 @@ impl LoopContext<'_> {
                 return state;
             }
         }
+        // Drain any queued steering messages and inject them as user messages,
+        // so the next thinking step re-plans with the user's mid-turn input.
+        if let Some(src) = self.params.steering {
+            for msg in src.drain() {
+                self.session.append_user_message(&msg);
+            }
+        }
         self.params
             .observer
             .on_state_change(AgentState::Thinking)
