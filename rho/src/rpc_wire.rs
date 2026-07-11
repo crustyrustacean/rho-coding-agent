@@ -25,7 +25,16 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptParams {
+    /// The user's message text.
     pub message: String,
+    /// Mid-turn steering nudge.
+    ///
+    /// When `true`, the message is queued and injected at the next tool-batch
+    /// seam (just before the following LLM call) instead of starting a new
+    /// turn — matching pi's `streamingBehavior: "steer"`. Defaults to `false`
+    /// so existing `prompt` payloads are unaffected.
+    #[serde(default)]
+    pub steer: bool,
 }
 
 /// Params for the `setModel` method.
