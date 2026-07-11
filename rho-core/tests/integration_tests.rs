@@ -6,7 +6,7 @@
 use rho_core::{
     AgentConfig, ChatMessage, ContentBlock, ContextManager, NopObserver, RhoError, Session,
     ToolCallId, ToolName, ToolOutcome, ToolRegistry, ToolResult, ToolRisk,
-    agent::{LoopParams, SteeringSource, run_loop},
+    agent::{LoopParams, SteeringQueue, SteeringSource, run_loop},
     config::RhoConfig,
     message::{ModelToolCall, ToolCallFunction},
     tool::{CancellationToken, Tool},
@@ -1493,4 +1493,13 @@ async fn steering_message_injected_at_tool_batch_seam() {
         second.contains("STEER MSG"),
         "steering message was not injected before the second LLM call; second request: {second}",
     );
+}
+
+#[test]
+fn steering_queue_drains_in_order_then_empties() {
+    let q = SteeringQueue::new();
+    q.push("first".into());
+    q.push("second".into());
+    assert_eq!(q.drain(), vec!["first".to_string(), "second".to_string()],);
+    assert!(q.drain().is_empty(), "drain should have emptied the queue");
 }

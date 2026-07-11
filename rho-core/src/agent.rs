@@ -619,6 +619,44 @@ pub trait SteeringSource: Send + Sync {
     fn drain(&self) -> Vec<String>;
 }
 
+/// A thread-safe, clonable backing store for [`SteeringSource`].
+///
+/// Intended for the RPC layer: the reader task pushes incoming steering
+/// messages via [`SteeringQueue::push`], and the agent loop drains them at
+/// the tool-batch seam through the [`SteeringSource`] impl.
+#[derive(Debug, Clone, Default)]
+pub struct SteeringQueue {
+    /// Lock-protected buffer of pending steering messages.
+    inner: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<String>>>,
+}
+
+impl SteeringQueue {
+    /// Create an empty queue.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Push a steering message onto the queue (called by the reader task).
+    ///
+    /// Silently dropped if the lock is poisoned (a holder panicked) — poison is
+    /// a catastrophic state where losing a steer is the least concern.
+    pub fn push(&self, msg: String) {
+        if let Ok(mut guard) = self.inner.lock() {
+            guard.push_back(msg);
+        }
+    }
+}
+
+impl SteeringSource for SteeringQueue {
+    fn drain(&self) -> Vec<String> {
+        self.inner
+            .lock()
+            .map(|mut guard| guard.drain(..).collect())
+            .unwrap_or_default()
+    }
+}
+
 pub struct LoopParams<'a> {
     /// The LLM service that talks to the model.
     pub client: &'a dyn rho_ai::LlmService,
