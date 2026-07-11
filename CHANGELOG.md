@@ -1,3 +1,16 @@
+## [0.86.0] - 2026-07-11
+
+### 🚀 Features
+
+- *(core)* Add SteeringSource plumbing for mid-turn steering
+- *(core)* Drain steering messages at the tool-batch seam
+- *(core)* Add SteeringQueue, a thread-safe SteeringSource backing store
+- *(rpc)* Add steer flag to PromptParams for mid-turn steering
+- *(rpc)* Concurrent reader demuxes steer/approval mid-turn
+
+### 🐛 Bug Fixes
+
+- *(xtask)* Collapse nested if to satisfy clippy collapsible_if lint; bump 0.85.2
 ## [0.85.1] - 2026-07-10
 
 ### 🐛 Bug Fixes
