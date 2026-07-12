@@ -1,6 +1,6 @@
 //! CLI argument parsing for `rho`.
 
-use clap::Parser;
+use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
 /// rho — a local coding agent (headless RPC mode).
@@ -99,6 +99,48 @@ pub struct Cli {
     /// don't want `.rho/sessions/` clutter.
     #[arg(long, conflicts_with_all = ["continue", "session"])]
     pub ephemeral: bool,
+
+    /// Optional subcommand. When absent, rho runs as the headless agent.
+    #[command(subcommand)]
+    pub command: Option<Command>,
+}
+
+/// Top-level subcommands for `rho`.
+///
+/// When `Cli::command` is `None`, rho runs as the headless agent with the
+/// flat CLI flags. When a subcommand is present, it is dispatched
+/// independently of the agent.
+#[derive(Debug, Clone, Subcommand)]
+pub enum Command {
+    /// Manage extensions (install, sync, remove, list).
+    Extension(ExtensionArgs),
+}
+
+/// Arguments for the `rho extension` subcommand.
+#[derive(Debug, Clone, Args)]
+pub struct ExtensionArgs {
+    /// The extension management command to execute.
+    #[command(subcommand)]
+    pub command: ExtensionCommand,
+}
+
+/// Extension management commands.
+#[derive(Debug, Clone, Subcommand)]
+pub enum ExtensionCommand {
+    /// Sync extensions from the manifest file.
+    Sync,
+    /// Install an extension from a URL.
+    Install {
+        /// URL or file path of the extension to install.
+        url: String,
+    },
+    /// Remove an installed extension.
+    Remove {
+        /// Name of the extension to remove.
+        name: String,
+    },
+    /// List installed extensions.
+    List,
 }
 
 #[cfg(test)]
@@ -127,5 +169,57 @@ mod tests {
     fn model_flag() {
         let cli = parse(&["--model", "gpt-4o"]).expect("--model");
         assert_eq!(cli.model.as_deref(), Some("gpt-4o"));
+    }
+
+    // ── Subcommand parsing tests ───────���────────────────────────
+
+    #[test]
+    fn extension_sync_parses() {
+        let cli = parse(&["extension", "sync"]).expect("extension sync");
+        assert!(cli.command.is_some());
+        let Command::Extension(args) = cli.command.unwrap();
+        assert!(matches!(args.command, ExtensionCommand::Sync));
+    }
+
+    #[test]
+    fn extension_install_parses() {
+        let cli = parse(&["extension", "install", "https://example.com/hello.ts"])
+            .expect("extension install");
+        let Command::Extension(args) = cli.command.unwrap();
+        let ExtensionCommand::Install { url } = args.command else {
+            panic!("expected Install command");
+        };
+        assert_eq!(url, "https://example.com/hello.ts");
+    }
+
+    #[test]
+    fn extension_remove_parses() {
+        let cli = parse(&["extension", "remove", "hello"]).expect("extension remove");
+        let Command::Extension(args) = cli.command.unwrap();
+        let ExtensionCommand::Remove { name } = args.command else {
+            panic!("expected Remove command");
+        };
+        assert_eq!(name, "hello");
+    }
+
+    #[test]
+    fn extension_list_parses() {
+        let cli = parse(&["extension", "list"]).expect("extension list");
+        let Command::Extension(args) = cli.command.unwrap();
+        assert!(matches!(args.command, ExtensionCommand::List));
+    }
+
+    #[test]
+    fn no_subcommand_yields_none() {
+        let cli = parse(&[]).expect("default parse");
+        assert!(cli.command.is_none());
+    }
+
+    #[test]
+    fn flat_flags_unchanged_with_no_subcommand() {
+        let cli = parse(&["--model", "gpt-4o", "--ephemeral"]).expect("flags");
+        assert!(cli.command.is_none());
+        assert_eq!(cli.model.as_deref(), Some("gpt-4o"));
+        assert!(cli.ephemeral);
     }
 }

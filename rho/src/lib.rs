@@ -6,6 +6,7 @@
 
 pub mod app;
 pub mod cli;
+pub mod ext_cli;
 pub(crate) mod ext_observer;
 pub(crate) mod model;
 pub(crate) mod presenter;

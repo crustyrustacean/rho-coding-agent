@@ -8,5 +8,8 @@ use clap::Parser;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = rho::cli::Cli::parse();
-    rho::app::App::build(cli).await?.run().await
+    match cli.command {
+        Some(rho::cli::Command::Extension(args)) => rho::ext_cli::run(args).await,
+        None => rho::app::App::build(cli).await?.run().await,
+    }
 }
