@@ -24,6 +24,13 @@ pub struct RhoAiClient {
     endpoint: String,
     /// Optional API key (used for authentication and display/debugging).
     api_key: Option<String>,
+    /// Optional models endpoint URL, used for model discovery.
+    ///
+    /// When set, [`list_models`](Self::list_models) uses this URL directly
+    /// instead of deriving one from the chat-completions endpoint. Some
+    /// providers (e.g. Z.ai) serve the models list at a different path prefix
+    /// than chat completions.
+    models_endpoint: Option<String>,
 }
 
 impl RhoAiClient {
@@ -32,6 +39,23 @@ impl RhoAiClient {
         Self {
             endpoint: endpoint.into(),
             api_key,
+            models_endpoint: None,
+        }
+    }
+
+    /// Create a new client with an explicit models endpoint.
+    ///
+    /// `models_endpoint` overrides the URL used for model discovery. When
+    /// `None`, the models URL is derived from the chat endpoint.
+    pub fn with_models_endpoint(
+        endpoint: impl Into<String>,
+        api_key: Option<String>,
+        models_endpoint: Option<String>,
+    ) -> Self {
+        Self {
+            endpoint: endpoint.into(),
+            api_key,
+            models_endpoint,
         }
     }
 
@@ -56,8 +80,9 @@ impl RhoAiClient {
 
     /// List models available at the server's models endpoint.
     ///
-    /// Derives the models URL from the configured chat-completions endpoint
-    /// by replacing the trailing `/chat/completions` with `/models`. This
+    /// If `models_endpoint` is set, uses that URL directly. Otherwise, derives
+    /// the models URL from the configured chat-completions endpoint by
+    /// replacing the trailing `/chat/completions` with `/models`. This
     /// preserves any provider-specific path prefix (e.g. `OpenRouter`'s
     /// `/api/v1/…` or `Groq`'s `/openai/v1/…`).
     ///
@@ -73,14 +98,20 @@ impl RhoAiClient {
     ///
     /// Panics if the `reqwest::Client` builder configuration is invalid.
     pub async fn list_models(&self) -> Result<ModelList> {
-        let mut models_url = url::Url::parse(&self.endpoint)
-            .map_err(|e| crate::error::RhoError::Client(ClientError::UrlParse(e)))?;
-        let path = models_url.path();
-        if let Some(base) = path.strip_suffix("/chat/completions") {
-            models_url.set_path(&format!("{base}/models"));
+        let models_url = if let Some(ref explicit) = self.models_endpoint {
+            url::Url::parse(explicit)
+                .map_err(|e| crate::error::RhoError::Client(ClientError::UrlParse(e)))?
         } else {
-            models_url.set_path("/v1/models");
-        }
+            let mut derived = url::Url::parse(&self.endpoint)
+                .map_err(|e| crate::error::RhoError::Client(ClientError::UrlParse(e)))?;
+            let path = derived.path();
+            if let Some(base) = path.strip_suffix("/chat/completions") {
+                derived.set_path(&format!("{base}/models"));
+            } else {
+                derived.set_path("/v1/models");
+            }
+            derived
+        };
         let client = reqwest::Client::builder()
             .connect_timeout(std::time::Duration::from_secs(15))
             .timeout(std::time::Duration::from_secs(30))
@@ -141,26 +172,115 @@ pub fn is_local_endpoint(endpoint: &str) -> bool {
 ///
 /// Fields beyond `id` use `#[serde(default)]` to accommodate providers
 /// (e.g. `OpenRouter`) that omit `object` and `owned_by` from their response.
+///
+/// Some providers (e.g. Z.ai) use `slug` instead of `id` as the model
+/// identifier. The custom `Deserialize` impl checks `id` first, then falls
+/// back to `slug`.
 #[derive(Clone, Debug, serde::Deserialize)]
-pub struct ModelInfo {
+#[serde(untagged)]
+pub enum ModelInfo {
+    /// Standard OpenAI-shaped model entry (has `id`).
+    Standard {
+        /// The model identifier (used in chat completion requests).
+        id: String,
+        /// The object type (always `"model"`).
+        #[serde(default)]
+        object: String,
+        /// Unix timestamp of creation.
+        #[serde(default)]
+        created: u64,
+        /// Who owns/created this model.
+        #[serde(default)]
+        owned_by: String,
+    },
+    /// Non-standard model entry that uses `slug` instead of `id`
+    /// (e.g. Z.ai's `{ "slug": "glm-5", ... }`).
+    SlugBased {
+        /// The model identifier, taken from `slug`.
+        #[serde(rename = "slug")]
+        id: String,
+        /// The object type (always `"model"`).
+        #[serde(default)]
+        object: String,
+        /// Unix timestamp of creation.
+        #[serde(default)]
+        created: u64,
+        /// Who owns/created this model.
+        #[serde(default)]
+        owned_by: String,
+    },
+}
+
+impl ModelInfo {
     /// The model identifier (used in chat completion requests).
-    pub id: String,
+    #[must_use]
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Standard { id, .. } | Self::SlugBased { id, .. } => id,
+        }
+    }
+
     /// The object type (always `"model"`).
-    #[serde(default)]
-    pub object: String,
+    #[must_use]
+    pub fn object(&self) -> &str {
+        match self {
+            Self::Standard { object, .. } | Self::SlugBased { object, .. } => object,
+        }
+    }
+
     /// Unix timestamp of creation.
-    #[serde(default)]
-    pub created: u64,
+    #[must_use]
+    pub fn created(&self) -> u64 {
+        match self {
+            Self::Standard { created, .. } | Self::SlugBased { created, .. } => *created,
+        }
+    }
+
     /// Who owns/created this model.
-    #[serde(default)]
-    pub owned_by: String,
+    #[must_use]
+    pub fn owned_by(&self) -> &str {
+        match self {
+            Self::Standard { owned_by, .. } | Self::SlugBased { owned_by, .. } => owned_by,
+        }
+    }
 }
 
 /// The response from the `/v1/models` endpoint.
+///
+/// Most OpenAI-compatible providers return `{ "data": [...] }`. Some
+/// providers (e.g. Z.ai) return `{ "models": [...] }` instead. The custom
+/// `Deserialize` impl tries `data` first, then falls back to `models`.
 #[derive(Clone, Debug, serde::Deserialize)]
-pub struct ModelList {
-    /// The list of available models.
-    pub data: Vec<ModelInfo>,
+#[serde(untagged)]
+pub enum ModelList {
+    /// Standard OpenAI-shaped response: `{ "data": [...] }`.
+    Standard {
+        /// The list of available models.
+        data: Vec<ModelInfo>,
+    },
+    /// Non-standard response with `models` key (e.g. Z.ai).
+    ModelsKeyed {
+        /// The list of available models.
+        models: Vec<ModelInfo>,
+    },
+}
+
+impl ModelList {
+    /// The list of available models, regardless of response shape.
+    #[must_use]
+    pub fn data(&self) -> &[ModelInfo] {
+        match self {
+            Self::Standard { data } | Self::ModelsKeyed { models: data } => data,
+        }
+    }
+
+    /// Consume into the list of available models.
+    #[must_use]
+    pub fn into_data(self) -> Vec<ModelInfo> {
+        match self {
+            Self::Standard { data } | Self::ModelsKeyed { models: data } => data,
+        }
+    }
 }
 
 #[cfg(test)]

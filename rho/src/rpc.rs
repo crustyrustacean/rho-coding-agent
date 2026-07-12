@@ -817,7 +817,7 @@ async fn handle_list_models(app: &App, id: &Value, transport: &dyn Transport) {
     let models: Vec<ModelEntry> = all
         .iter()
         .map(|(provider, info)| ModelEntry {
-            id: info.id.clone(),
+            id: info.id().to_owned(),
             provider: provider.to_string(),
         })
         .collect();

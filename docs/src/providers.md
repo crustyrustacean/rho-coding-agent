@@ -30,6 +30,7 @@ These providers expose an OpenAI-compatible API as their primary interface:
 | Ollama | `localhost:11434/v1/chat/completions` | Local server |
 | Together AI | `api.together.xyz/v1/chat/completions` | OpenAI-compatible path |
 | Fireworks | `api.fireworks.ai/inference/v1/chat/completions` | OpenAI-compatible path |
+| Z.ai | `api.z.ai/api/paas/v1/chat/completions` | OpenAI-compatible path (GLM models) |
 
 ### Providers that do **not** work directly
 
@@ -230,6 +231,31 @@ rho --endpoint https://api.deepinfra.com/v1/openai/chat/completions \
     --model meta-llama/Llama-3.3-70B-Instruct
 ```
 
+### Z.ai
+
+Z.ai provides GLM models (e.g. GLM-5.2) via an OpenAI-compatible API. The endpoint is at `api.z.ai/api/paas/v4/chat/completions` — note the `api.` subdomain and `/api/paas/v4/` path, which differs from the marketing site at `z.ai`.
+
+The `zai` preset also sets a `models_endpoint` at `https://api.z.ai/api/v1/models` (a different path prefix than the chat completions endpoint). This is used automatically — no manual configuration needed.
+
+```sh
+export ZAI_API_KEY="..."
+rho --endpoint https://api.z.ai/api/paas/v1/chat/completions \
+    --api-key-env ZAI_API_KEY \
+    --model glm-5.2
+```
+
+Or via config with a preset:
+
+```toml
+[agent]
+model = "glm-5.2"
+provider = "zai"
+
+[[providers]]
+preset = "zai"
+api_key_env = "ZAI_API_KEY"
+```
+
 ### Ollama (remote)
 
 If you run Ollama on a different machine, point the endpoint at it:
@@ -274,6 +300,7 @@ External models often have much larger context windows than local 8K models:
 | Anthropic (via proxy) | Claude Sonnet | 200K tokens |
 | Groq | Llama 3.3 70B | 128K tokens |
 | DeepInfra | Llama 3.3 70B | 128K tokens |
+| Z.ai | GLM-5.2 | 1M tokens |
 | Local | Qwen3 8B | Varies (often 32K) |
 
 rho defaults to `token_budget = 32768`. For models with larger windows, increase it:

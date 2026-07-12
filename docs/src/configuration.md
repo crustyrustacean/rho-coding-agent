@@ -46,13 +46,15 @@ Built-in presets:
 | `openrouter` | `https://openrouter.ai/api/v1/chat/completions` | `OPENROUTER_API_KEY` | Remote |
 | `openai` | `https://api.openai.com/v1/chat/completions` | `OPENAI_API_KEY` | Remote |
 | `groq` | `https://api.groq.com/openai/v1/chat/completions` | `GROQ_API_KEY` | Remote |
-| `zai` | `https://z.ai/v1/chat/completions` | `ZAI_API_KEY` | Remote |
+| `zai` | `https://api.z.ai/api/paas/v4/chat/completions` | `ZAI_API_KEY` | Remote; models endpoint at `/api/v1/models` |
 
 Resolution rules:
 
 - If `preset` is set and `endpoint` is also set → `endpoint` wins (preset is informational)
 - If `preset` is set and `name` is also set → `name` wins
 - If `preset` is set and `api_key_env` is not set → a hint is logged at startup (not auto-injected)
+- If `preset` is set and `models_endpoint` is also not set and the preset provides one → the preset's `models_endpoint` is used
+- If `preset` is set and `models_endpoint` is also set → `models_endpoint` wins (preset is informational)
 - Unknown presets → warning logged, treated as if no preset was set
 
 ## Full configuration reference
@@ -126,6 +128,8 @@ stream_idle_timeout_secs = 60
 #   endpoint       — explicit endpoint URL (overrides preset)
 #   api_key_env    — env var holding the API key (not auto-injected by presets)
 #   default_model  — model to use when selected via agent.provider
+#   models_endpoint — explicit models endpoint URL (overrides preset; used when
+#                   the provider serves models at a different path prefix)
 #   type           — informational label, has no effect on behavior
 
 # Example: LM Studio via preset (local, no API key needed)

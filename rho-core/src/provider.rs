@@ -100,6 +100,27 @@ impl OpenAiCompatibleProvider {
             is_external,
         }
     }
+
+    /// Create a provider with an explicit models endpoint.
+    ///
+    /// `models_endpoint` overrides the URL used for model discovery. When
+    /// `None`, the models URL is derived from the chat endpoint.
+    pub fn with_models_endpoint(
+        name: impl Into<String>,
+        endpoint: impl Into<String>,
+        api_key: Option<String>,
+        models_endpoint: Option<String>,
+    ) -> Self {
+        let endpoint_str = endpoint.into();
+        let is_external = !crate::client::is_local_endpoint(&endpoint_str);
+        let client =
+            RhoAiClient::with_models_endpoint(&endpoint_str, api_key, models_endpoint);
+        Self {
+            name: name.into(),
+            client,
+            is_external,
+        }
+    }
 }
 
 #[async_trait]
@@ -231,9 +252,14 @@ impl ProviderRegistry {
                         config.api_key_env.as_deref()
                     };
                     let api_key = api_key_env.and_then(|var| std::env::var(var).ok());
+                    let models_endpoint = config.models_endpoint.clone();
 
-                    Box::new(OpenAiCompatibleProvider::new(name, endpoint, api_key))
-                        as Box<dyn Provider>
+                    Box::new(OpenAiCompatibleProvider::with_models_endpoint(
+                        name,
+                        endpoint,
+                        api_key,
+                        models_endpoint,
+                    )) as Box<dyn Provider>
                 })
                 .collect()
         };
@@ -297,7 +323,7 @@ impl ProviderRegistry {
         for provider in &self.providers {
             match provider.list_models().await {
                 Ok(list) => {
-                    for model in list.data {
+                    for model in list.into_data() {
                         result.push((provider.name(), model));
                     }
                 }
@@ -316,7 +342,7 @@ impl ProviderRegistry {
     pub async fn find_model(&self, model_id: &str) -> Option<(&dyn Provider, ModelInfo)> {
         for provider in &self.providers {
             if let Ok(list) = provider.list_models().await
-                && let Some(model) = list.data.into_iter().find(|m| m.id == model_id)
+                && let Some(model) = list.into_data().into_iter().find(|m| m.id() == model_id)
             {
                 return Some((provider.as_ref(), model));
             }
@@ -332,7 +358,7 @@ impl ProviderRegistry {
     pub async fn find_model_index(&self, model_id: &str) -> Option<usize> {
         for (i, provider) in self.providers.iter().enumerate() {
             if let Ok(list) = provider.list_models().await
-                && list.data.iter().any(|m| m.id == model_id)
+                && list.data().iter().any(|m| m.id() == model_id)
             {
                 return Some(i);
             }

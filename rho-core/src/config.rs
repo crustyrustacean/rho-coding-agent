@@ -326,6 +326,15 @@ pub struct ProviderConfig {
     /// model resolution to route a model string to the correct provider.
     #[serde(default)]
     pub default_model: Option<String>,
+    /// Optional models endpoint URL, used for model discovery.
+    ///
+    /// When set, `list_models()` uses this URL directly instead of deriving
+    /// one from the chat-completions endpoint. Some providers (e.g. Z.ai)
+    /// serve the models list at a different path prefix than chat completions.
+    /// When unset, the models URL is derived by replacing `/chat/completions`
+    /// with `/models` in the chat endpoint.
+    #[serde(default)]
+    pub models_endpoint: Option<String>,
 }
 
 // ── ProviderSettings ──────────────────────────────────────────────────────────
@@ -780,6 +789,10 @@ struct ProviderPreset {
     endpoint: &'static str,
     /// Suggested env var for the API key (logged as a hint, not applied).
     api_key_env: &'static str,
+    /// Optional models endpoint URL, for providers whose models endpoint
+    /// is at a different path prefix than the chat-completions endpoint.
+    /// When empty, the models URL is derived from the chat endpoint.
+    models_endpoint: &'static str,
 }
 
 /// Built-in provider presets.
@@ -797,6 +810,7 @@ fn presets() -> &'static std::collections::HashMap<&'static str, ProviderPreset>
                 name: "lm-studio",
                 endpoint: "http://localhost:1234/v1/chat/completions",
                 api_key_env: "",
+                models_endpoint: "",
             },
         );
         m.insert(
@@ -805,6 +819,7 @@ fn presets() -> &'static std::collections::HashMap<&'static str, ProviderPreset>
                 name: "ollama",
                 endpoint: "http://localhost:11434/v1/chat/completions",
                 api_key_env: "",
+                models_endpoint: "",
             },
         );
         m.insert(
@@ -813,6 +828,7 @@ fn presets() -> &'static std::collections::HashMap<&'static str, ProviderPreset>
                 name: "openrouter",
                 endpoint: "https://openrouter.ai/api/v1/chat/completions",
                 api_key_env: "OPENROUTER_API_KEY",
+                models_endpoint: "",
             },
         );
         m.insert(
@@ -821,6 +837,7 @@ fn presets() -> &'static std::collections::HashMap<&'static str, ProviderPreset>
                 name: "openai",
                 endpoint: "https://api.openai.com/v1/chat/completions",
                 api_key_env: "OPENAI_API_KEY",
+                models_endpoint: "",
             },
         );
         m.insert(
@@ -829,14 +846,16 @@ fn presets() -> &'static std::collections::HashMap<&'static str, ProviderPreset>
                 name: "groq",
                 endpoint: "https://api.groq.com/openai/v1/chat/completions",
                 api_key_env: "GROQ_API_KEY",
+                models_endpoint: "",
             },
         );
         m.insert(
             "zai",
             ProviderPreset {
                 name: "zai",
-                endpoint: "https://z.ai/v1/chat/completions",
+                endpoint: "https://api.z.ai/api/paas/v4/chat/completions",
                 api_key_env: "ZAI_API_KEY",
+                models_endpoint: "https://api.z.ai/api/v1/models",
             },
         );
         m
@@ -867,6 +886,9 @@ fn resolve_presets(providers: &mut [ProviderConfig]) {
         }
         if p.name.is_none() {
             p.name = Some(preset.name.to_owned());
+        }
+        if p.models_endpoint.is_none() && !preset.models_endpoint.is_empty() {
+            p.models_endpoint = Some(preset.models_endpoint.to_owned());
         }
         if p.api_key_env.is_none() && !preset.api_key_env.is_empty() {
             tracing::info!(

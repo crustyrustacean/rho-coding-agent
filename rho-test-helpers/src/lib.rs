@@ -871,11 +871,11 @@ impl rho_core::Provider for TestProvider {
     }
 
     async fn list_models(&self) -> rho_core::Result<rho_core::ModelList> {
-        Ok(rho_core::ModelList {
+        Ok(rho_core::ModelList::Standard {
             data: self
                 .models
                 .iter()
-                .map(|id| rho_core::ModelInfo {
+                .map(|id| rho_core::ModelInfo::Standard {
                     id: id.clone(),
                     object: "model".to_owned(),
                     created: 0,
