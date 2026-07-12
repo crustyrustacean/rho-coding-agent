@@ -113,8 +113,7 @@ impl OpenAiCompatibleProvider {
     ) -> Self {
         let endpoint_str = endpoint.into();
         let is_external = !crate::client::is_local_endpoint(&endpoint_str);
-        let client =
-            RhoAiClient::with_models_endpoint(&endpoint_str, api_key, models_endpoint);
+        let client = RhoAiClient::with_models_endpoint(&endpoint_str, api_key, models_endpoint);
         Self {
             name: name.into(),
             client,
