@@ -202,6 +202,7 @@
 <tr><td>Ollama</td><td><code>localhost:11434/v1/chat/completions</code></td><td>Local server</td></tr>
 <tr><td>Together AI</td><td><code>api.together.xyz/v1/chat/completions</code></td><td>OpenAI-compatible path</td></tr>
 <tr><td>Fireworks</td><td><code>api.fireworks.ai/inference/v1/chat/completions</code></td><td>OpenAI-compatible path</td></tr>
+<tr><td>Z.ai</td><td><code>api.z.ai/api/paas/v1/chat/completions</code></td><td>OpenAI-compatible path (GLM models)</td></tr>
 </tbody></table>
 </div>
 <h3 id="providers-that-do-not-work-directly"><a class="header" href="#providers-that-do-not-work-directly">Providers that do <strong>not</strong> work directly</a></h3>
@@ -346,6 +347,23 @@ rho --endpoint https://api.deepinfra.com/v1/openai/chat/completions \
     --api-key-env DEEPINFRA_API_KEY \
     --model meta-llama/Llama-3.3-70B-Instruct
 </code></pre>
+<h3 id="zai"><a class="header" href="#zai">Z.ai</a></h3>
+<p>Z.ai provides GLM models (e.g. GLM-5.2) via an OpenAI-compatible API. The endpoint is at <code>api.z.ai/api/paas/v4/chat/completions</code> — note the <code>api.</code> subdomain and <code>/api/paas/v4/</code> path, which differs from the marketing site at <code>z.ai</code>.</p>
+<p>The <code>zai</code> preset also sets a <code>models_endpoint</code> at <code>https://api.z.ai/api/v1/models</code> (a different path prefix than the chat completions endpoint). This is used automatically — no manual configuration needed.</p>
+<pre><code class="language-sh">export ZAI_API_KEY="..."
+rho --endpoint https://api.z.ai/api/paas/v1/chat/completions \
+    --api-key-env ZAI_API_KEY \
+    --model glm-5.2
+</code></pre>
+<p>Or via config with a preset:</p>
+<pre><code class="language-toml">[agent]
+model = "glm-5.2"
+provider = "zai"
+
+[[providers]]
+preset = "zai"
+api_key_env = "ZAI_API_KEY"
+</code></pre>
 <h3 id="ollama-remote"><a class="header" href="#ollama-remote">Ollama (remote)</a></h3>
 <p>If you run Ollama on a different machine, point the endpoint at it:</p>
 <pre><code class="language-sh">rho --endpoint http://192.168.1.100:11434/v1/chat/completions --model llama3
@@ -375,6 +393,7 @@ source .env
 <tr><td>Anthropic (via proxy)</td><td>Claude Sonnet</td><td>200K tokens</td></tr>
 <tr><td>Groq</td><td>Llama 3.3 70B</td><td>128K tokens</td></tr>
 <tr><td>DeepInfra</td><td>Llama 3.3 70B</td><td>128K tokens</td></tr>
+<tr><td>Z.ai</td><td>GLM-5.2</td><td>1M tokens</td></tr>
 <tr><td>Local</td><td>Qwen3 8B</td><td>Varies (often 32K)</td></tr>
 </tbody></table>
 </div>

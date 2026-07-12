@@ -1406,7 +1406,7 @@ api_key_env = "OPENROUTER_API_KEY"
 <tr><td><code>openrouter</code></td><td><code>https://openrouter.ai/api/v1/chat/completions</code></td><td><code>OPENROUTER_API_KEY</code></td><td>Remote</td></tr>
 <tr><td><code>openai</code></td><td><code>https://api.openai.com/v1/chat/completions</code></td><td><code>OPENAI_API_KEY</code></td><td>Remote</td></tr>
 <tr><td><code>groq</code></td><td><code>https://api.groq.com/openai/v1/chat/completions</code></td><td><code>GROQ_API_KEY</code></td><td>Remote</td></tr>
-<tr><td><code>zai</code></td><td><code>https://z.ai/v1/chat/completions</code></td><td><code>ZAI_API_KEY</code></td><td>Remote</td></tr>
+<tr><td><code>zai</code></td><td><code>https://api.z.ai/api/paas/v4/chat/completions</code></td><td><code>ZAI_API_KEY</code></td><td>Remote; models endpoint at <code>/api/v1/models</code></td></tr>
 </tbody></table>
 </div>
 <p>Resolution rules:</p>
@@ -1414,6 +1414,8 @@ api_key_env = "OPENROUTER_API_KEY"
 <li>If <code>preset</code> is set and <code>endpoint</code> is also set → <code>endpoint</code> wins (preset is informational)</li>
 <li>If <code>preset</code> is set and <code>name</code> is also set → <code>name</code> wins</li>
 <li>If <code>preset</code> is set and <code>api_key_env</code> is not set → a hint is logged at startup (not auto-injected)</li>
+<li>If <code>preset</code> is set and <code>models_endpoint</code> is also not set and the preset provides one → the preset's <code>models_endpoint</code> is used</li>
+<li>If <code>preset</code> is set and <code>models_endpoint</code> is also set → <code>models_endpoint</code> wins (preset is informational)</li>
 <li>Unknown presets → warning logged, treated as if no preset was set</li>
 </ul>
 <h2 id="full-configuration-reference"><a class="header" href="#full-configuration-reference">Full configuration reference</a></h2>
@@ -1485,6 +1487,8 @@ stream_idle_timeout_secs = 60
 #   endpoint       — explicit endpoint URL (overrides preset)
 #   api_key_env    — env var holding the API key (not auto-injected by presets)
 #   default_model  — model to use when selected via agent.provider
+#   models_endpoint — explicit models endpoint URL (overrides preset; used when
+#                   the provider serves models at a different path prefix)
 #   type           — informational label, has no effect on behavior
 
 # Example: LM Studio via preset (local, no API key needed)
@@ -1618,6 +1622,7 @@ api_key_env = "OPENAI_API_KEY"
 <tr><td>Ollama</td><td><code>localhost:11434/v1/chat/completions</code></td><td>Local server</td></tr>
 <tr><td>Together AI</td><td><code>api.together.xyz/v1/chat/completions</code></td><td>OpenAI-compatible path</td></tr>
 <tr><td>Fireworks</td><td><code>api.fireworks.ai/inference/v1/chat/completions</code></td><td>OpenAI-compatible path</td></tr>
+<tr><td>Z.ai</td><td><code>api.z.ai/api/paas/v1/chat/completions</code></td><td>OpenAI-compatible path (GLM models)</td></tr>
 </tbody></table>
 </div>
 <h3 id="providers-that-do-not-work-directly"><a class="header" href="#providers-that-do-not-work-directly">Providers that do <strong>not</strong> work directly</a></h3>
@@ -1762,6 +1767,23 @@ rho --endpoint https://api.deepinfra.com/v1/openai/chat/completions \
     --api-key-env DEEPINFRA_API_KEY \
     --model meta-llama/Llama-3.3-70B-Instruct
 </code></pre>
+<h3 id="zai"><a class="header" href="#zai">Z.ai</a></h3>
+<p>Z.ai provides GLM models (e.g. GLM-5.2) via an OpenAI-compatible API. The endpoint is at <code>api.z.ai/api/paas/v4/chat/completions</code> — note the <code>api.</code> subdomain and <code>/api/paas/v4/</code> path, which differs from the marketing site at <code>z.ai</code>.</p>
+<p>The <code>zai</code> preset also sets a <code>models_endpoint</code> at <code>https://api.z.ai/api/v1/models</code> (a different path prefix than the chat completions endpoint). This is used automatically — no manual configuration needed.</p>
+<pre><code class="language-sh">export ZAI_API_KEY="..."
+rho --endpoint https://api.z.ai/api/paas/v1/chat/completions \
+    --api-key-env ZAI_API_KEY \
+    --model glm-5.2
+</code></pre>
+<p>Or via config with a preset:</p>
+<pre><code class="language-toml">[agent]
+model = "glm-5.2"
+provider = "zai"
+
+[[providers]]
+preset = "zai"
+api_key_env = "ZAI_API_KEY"
+</code></pre>
 <h3 id="ollama-remote"><a class="header" href="#ollama-remote">Ollama (remote)</a></h3>
 <p>If you run Ollama on a different machine, point the endpoint at it:</p>
 <pre><code class="language-sh">rho --endpoint http://192.168.1.100:11434/v1/chat/completions --model llama3
@@ -1791,6 +1813,7 @@ source .env
 <tr><td>Anthropic (via proxy)</td><td>Claude Sonnet</td><td>200K tokens</td></tr>
 <tr><td>Groq</td><td>Llama 3.3 70B</td><td>128K tokens</td></tr>
 <tr><td>DeepInfra</td><td>Llama 3.3 70B</td><td>128K tokens</td></tr>
+<tr><td>Z.ai</td><td>GLM-5.2</td><td>1M tokens</td></tr>
 <tr><td>Local</td><td>Qwen3 8B</td><td>Varies (often 32K)</td></tr>
 </tbody></table>
 </div>

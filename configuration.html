@@ -213,7 +213,7 @@ api_key_env = "OPENROUTER_API_KEY"
 <tr><td><code>openrouter</code></td><td><code>https://openrouter.ai/api/v1/chat/completions</code></td><td><code>OPENROUTER_API_KEY</code></td><td>Remote</td></tr>
 <tr><td><code>openai</code></td><td><code>https://api.openai.com/v1/chat/completions</code></td><td><code>OPENAI_API_KEY</code></td><td>Remote</td></tr>
 <tr><td><code>groq</code></td><td><code>https://api.groq.com/openai/v1/chat/completions</code></td><td><code>GROQ_API_KEY</code></td><td>Remote</td></tr>
-<tr><td><code>zai</code></td><td><code>https://z.ai/v1/chat/completions</code></td><td><code>ZAI_API_KEY</code></td><td>Remote</td></tr>
+<tr><td><code>zai</code></td><td><code>https://api.z.ai/api/paas/v4/chat/completions</code></td><td><code>ZAI_API_KEY</code></td><td>Remote; models endpoint at <code>/api/v1/models</code></td></tr>
 </tbody></table>
 </div>
 <p>Resolution rules:</p>
@@ -221,6 +221,8 @@ api_key_env = "OPENROUTER_API_KEY"
 <li>If <code>preset</code> is set and <code>endpoint</code> is also set → <code>endpoint</code> wins (preset is informational)</li>
 <li>If <code>preset</code> is set and <code>name</code> is also set → <code>name</code> wins</li>
 <li>If <code>preset</code> is set and <code>api_key_env</code> is not set → a hint is logged at startup (not auto-injected)</li>
+<li>If <code>preset</code> is set and <code>models_endpoint</code> is also not set and the preset provides one → the preset's <code>models_endpoint</code> is used</li>
+<li>If <code>preset</code> is set and <code>models_endpoint</code> is also set → <code>models_endpoint</code> wins (preset is informational)</li>
 <li>Unknown presets → warning logged, treated as if no preset was set</li>
 </ul>
 <h2 id="full-configuration-reference"><a class="header" href="#full-configuration-reference">Full configuration reference</a></h2>
@@ -292,6 +294,8 @@ stream_idle_timeout_secs = 60
 #   endpoint       — explicit endpoint URL (overrides preset)
 #   api_key_env    — env var holding the API key (not auto-injected by presets)
 #   default_model  — model to use when selected via agent.provider
+#   models_endpoint — explicit models endpoint URL (overrides preset; used when
+#                   the provider serves models at a different path prefix)
 #   type           — informational label, has no effect on behavior
 
 # Example: LM Studio via preset (local, no API key needed)
