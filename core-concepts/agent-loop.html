@@ -191,8 +191,8 @@ Thinking ──► AwaitingApproval ──► ExecutingTool ──┘
 Idle (done)
 </code></pre>
 <ul>
-<li><strong>Thinking</strong>: send the session to the model and wait for a response.</li>
-<li><strong>AwaitingApproval</strong>: if a tool call requires human confirmation, ask the user. On denial, feed a synthetic "denied" result and return to Thinking.</li>
+<li><strong>Thinking</strong>: send the session to the model and wait for a response. Stream timeouts (<code>first_token_timeout_secs</code>, <code>stream_idle_timeout_secs</code>) convert hung streams into retryable errors.</li>
+<li><strong>AwaitingApproval</strong>: if a tool call requires human confirmation, ask the user. On denial, feed a synthetic "denied" result and return to Thinking. On redirect (<code>approved: false</code> with a <code>message</code>), inject the user's instructions as a new turn and return to Thinking — the tool batch is abandoned.</li>
 <li><strong>ExecutingTool</strong>: run the tool and append the result to the session.</li>
 <li><strong>Idle</strong>: the model returned a text reply — the loop is done.</li>
 </ul>
@@ -229,6 +229,17 @@ Idle (done)
 </li>
 </ol>
 <p>All tool calls in a single model response are executed <strong>sequentially</strong>. Each result is appended before the session is re-sent to the model. Parallel execution is a future optimisation.</p>
+<h2 id="mid-turn-steering"><a class="header" href="#mid-turn-steering">Mid-turn steering</a></h2>
+<p>A <code>SteeringSource</code> can be provided via <code>LoopParams.steering</code>. At the tool-batch seam — after all tool calls in a batch have executed and before returning to Thinking — the loop drains any queued steering messages and injects each as a user message. This lets the user provide course corrections mid-turn without interrupting the active execution. In RPC mode, the concurrent reader task routes <code>prompt</code> messages with <code>steer: true</code> to a <code>SteeringQueue</code> that backs the <code>SteeringSource</code>.</p>
+<h2 id="stream-timeouts"><a class="header" href="#stream-timeouts">Stream timeouts</a></h2>
+<p>The loop applies two configurable timeouts when consuming the model's stream:</p>
+<ul>
+<li><strong><code>first_token_timeout_secs</code></strong> (default 90) — maximum wait for the first stream event. Guards against hung requests where the server accepts the connection but never emits a token.</li>
+<li><strong>stream_idle_timeout_secs</strong> (default 60) — maximum gap between consecutive stream events once streaming has started. Guards against mid-stream stalls.</li>
+</ul>
+<p>Both return a retryable <code>ClientError::StreamTimeout</code> so the existing exponential-backoff retry loop handles them. Set to 0 to disable either timeout. Compaction's LLM call always uses <code>StreamTimeouts::none()</code> (it has its own mechanical fallback).</p>
+<h2 id="finish_reason-persistence"><a class="header" href="#finish_reason-persistence">finish_reason persistence</a></h2>
+<p>Every assistant message records an optional <code>FinishReason</code> (<code>Stop</code>, <code>ToolCalls</code>, <code>Length</code>, <code>ContentFilter</code>), serialized OpenAI-style (snake_case) and omitted when <code>None</code> for backward compatibility with existing session files. Terminal errors (e.g. retry budget exhausted) are recorded as <code>Attached</code> custom-state entries (kind <code>rho.turn_error.v1</code>) so silent failures leave a diagnostic trace on disk.</p>
 <h2 id="phase-tracking"><a class="header" href="#phase-tracking">Phase tracking</a></h2>
 <p>The loop tracks the current <code>SessionPhase</code> (Exploration, Execution, Verification, Conclusion) and transitions on each tool execution:</p>
 <ul>

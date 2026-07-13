@@ -202,7 +202,7 @@
 <tr><td>Ollama</td><td><code>localhost:11434/v1/chat/completions</code></td><td>Local server</td></tr>
 <tr><td>Together AI</td><td><code>api.together.xyz/v1/chat/completions</code></td><td>OpenAI-compatible path</td></tr>
 <tr><td>Fireworks</td><td><code>api.fireworks.ai/inference/v1/chat/completions</code></td><td>OpenAI-compatible path</td></tr>
-<tr><td>Z.ai</td><td><code>api.z.ai/api/paas/v1/chat/completions</code></td><td>OpenAI-compatible path (GLM models)</td></tr>
+<tr><td>Z.ai</td><td><code>api.z.ai/api/paas/v4/chat/completions</code></td><td>OpenAI-compatible path (GLM models)</td></tr>
 </tbody></table>
 </div>
 <h3 id="providers-that-do-not-work-directly"><a class="header" href="#providers-that-do-not-work-directly">Providers that do <strong>not</strong> work directly</a></h3>
@@ -351,7 +351,7 @@ rho --endpoint https://api.deepinfra.com/v1/openai/chat/completions \
 <p>Z.ai provides GLM models (e.g. GLM-5.2) via an OpenAI-compatible API. The endpoint is at <code>api.z.ai/api/paas/v4/chat/completions</code> — note the <code>api.</code> subdomain and <code>/api/paas/v4/</code> path, which differs from the marketing site at <code>z.ai</code>.</p>
 <p>The <code>zai</code> preset also sets a <code>models_endpoint</code> at <code>https://api.z.ai/api/v1/models</code> (a different path prefix than the chat completions endpoint). This is used automatically — no manual configuration needed.</p>
 <pre><code class="language-sh">export ZAI_API_KEY="..."
-rho --endpoint https://api.z.ai/api/paas/v1/chat/completions \
+rho --endpoint https://api.z.ai/api/paas/v4/chat/completions \
     --api-key-env ZAI_API_KEY \
     --model glm-5.2
 </code></pre>

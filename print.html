@@ -573,8 +573,8 @@ Thinking ──► AwaitingApproval ──► ExecutingTool ──┘
 Idle (done)
 </code></pre>
 <ul>
-<li><strong>Thinking</strong>: send the session to the model and wait for a response.</li>
-<li><strong>AwaitingApproval</strong>: if a tool call requires human confirmation, ask the user. On denial, feed a synthetic "denied" result and return to Thinking.</li>
+<li><strong>Thinking</strong>: send the session to the model and wait for a response. Stream timeouts (<code>first_token_timeout_secs</code>, <code>stream_idle_timeout_secs</code>) convert hung streams into retryable errors.</li>
+<li><strong>AwaitingApproval</strong>: if a tool call requires human confirmation, ask the user. On denial, feed a synthetic "denied" result and return to Thinking. On redirect (<code>approved: false</code> with a <code>message</code>), inject the user's instructions as a new turn and return to Thinking — the tool batch is abandoned.</li>
 <li><strong>ExecutingTool</strong>: run the tool and append the result to the session.</li>
 <li><strong>Idle</strong>: the model returned a text reply — the loop is done.</li>
 </ul>
@@ -611,6 +611,17 @@ Idle (done)
 </li>
 </ol>
 <p>All tool calls in a single model response are executed <strong>sequentially</strong>. Each result is appended before the session is re-sent to the model. Parallel execution is a future optimisation.</p>
+<h2 id="mid-turn-steering"><a class="header" href="#mid-turn-steering">Mid-turn steering</a></h2>
+<p>A <code>SteeringSource</code> can be provided via <code>LoopParams.steering</code>. At the tool-batch seam — after all tool calls in a batch have executed and before returning to Thinking — the loop drains any queued steering messages and injects each as a user message. This lets the user provide course corrections mid-turn without interrupting the active execution. In RPC mode, the concurrent reader task routes <code>prompt</code> messages with <code>steer: true</code> to a <code>SteeringQueue</code> that backs the <code>SteeringSource</code>.</p>
+<h2 id="stream-timeouts"><a class="header" href="#stream-timeouts">Stream timeouts</a></h2>
+<p>The loop applies two configurable timeouts when consuming the model's stream:</p>
+<ul>
+<li><strong><code>first_token_timeout_secs</code></strong> (default 90) — maximum wait for the first stream event. Guards against hung requests where the server accepts the connection but never emits a token.</li>
+<li><strong>stream_idle_timeout_secs</strong> (default 60) — maximum gap between consecutive stream events once streaming has started. Guards against mid-stream stalls.</li>
+</ul>
+<p>Both return a retryable <code>ClientError::StreamTimeout</code> so the existing exponential-backoff retry loop handles them. Set to 0 to disable either timeout. Compaction's LLM call always uses <code>StreamTimeouts::none()</code> (it has its own mechanical fallback).</p>
+<h2 id="finish_reason-persistence"><a class="header" href="#finish_reason-persistence">finish_reason persistence</a></h2>
+<p>Every assistant message records an optional <code>FinishReason</code> (<code>Stop</code>, <code>ToolCalls</code>, <code>Length</code>, <code>ContentFilter</code>), serialized OpenAI-style (snake_case) and omitted when <code>None</code> for backward compatibility with existing session files. Terminal errors (e.g. retry budget exhausted) are recorded as <code>Attached</code> custom-state entries (kind <code>rho.turn_error.v1</code>) so silent failures leave a diagnostic trace on disk.</p>
 <h2 id="phase-tracking"><a class="header" href="#phase-tracking">Phase tracking</a></h2>
 <p>The loop tracks the current <code>SessionPhase</code> (Exploration, Execution, Verification, Conclusion) and transitions on each tool execution:</p>
 <ul>
@@ -828,12 +839,14 @@ let service = OpenAiService::new(rho_ai::ProviderConfig::new(
 <h2 id="streaming"><a class="header" href="#streaming">Streaming</a></h2>
 <p><code>OpenAiService</code> uses SSE streaming (<code>stream: true</code>) for the Chat Completions API. Streaming events are returned as an <code>EventStream</code> that the agent loop consumes. <code>StreamEvent::Text</code> and <code>StreamEvent::Reasoning</code> events are forwarded to the <code>AgentObserver</code> in real time, enabling live progress output in the consumer.</p>
 <h2 id="multi-provider-support"><a class="header" href="#multi-provider-support">Multi-provider support</a></h2>
-<p>rho can manage multiple providers simultaneously via the <code>ProviderRegistry</code> and <code>Provider</code> trait:</p>
+<p>rho can manage multiple providers simultaneously via the <code>ProviderRegistry</code> and <code>Provider</code> trait. Each provider encapsulates identity, externality, model discovery, and access to an <code>LlmService</code>.</p>
 <ul>
 <li>Each provider has a name, endpoint, and optional API key (configured via <code>[[providers]]</code> with optional <code>preset</code>).</li>
+<li>Providers can set <code>models_endpoint</code> when the models listing is at a different path prefix than chat completions (e.g. Z.ai serves models at <code>/api/v1/models</code> but chat at <code>/api/paas/v4/</code>). When unset, the models URL is derived from the chat endpoint.</li>
+<li>Model list responses are parsed flexibly via <code>serde untagged</code> enums: <code>ModelList</code> accepts both <code>{"data": [...]}</code> (standard OpenAI) and <code>{"models": [...]}</code> (Z.ai). <code>ModelInfo</code> accepts both <code>id</code> and <code>slug</code> fields.</li>
 <li>The registry scans all providers to find which one serves a given model.</li>
-<li><code>/models</code> lists all models across all configured providers.</li>
-<li><code>/model &lt;id&gt;</code> switches to a model, <strong>automatically selecting the right provider</strong> based on which provider serves that model.</li>
+<li><code>listModels</code> lists all models across all configured providers.</li>
+<li><code>setModel</code> switches to a model, <strong>automatically selecting the right provider</strong> based on which provider serves that model.</li>
 <li>Project-level providers merge with user-level providers by name, so you can configure providers once globally and override selectively per project.</li>
 </ul>
 <p>Example with multiple providers:</p>
@@ -1622,7 +1635,7 @@ api_key_env = "OPENAI_API_KEY"
 <tr><td>Ollama</td><td><code>localhost:11434/v1/chat/completions</code></td><td>Local server</td></tr>
 <tr><td>Together AI</td><td><code>api.together.xyz/v1/chat/completions</code></td><td>OpenAI-compatible path</td></tr>
 <tr><td>Fireworks</td><td><code>api.fireworks.ai/inference/v1/chat/completions</code></td><td>OpenAI-compatible path</td></tr>
-<tr><td>Z.ai</td><td><code>api.z.ai/api/paas/v1/chat/completions</code></td><td>OpenAI-compatible path (GLM models)</td></tr>
+<tr><td>Z.ai</td><td><code>api.z.ai/api/paas/v4/chat/completions</code></td><td>OpenAI-compatible path (GLM models)</td></tr>
 </tbody></table>
 </div>
 <h3 id="providers-that-do-not-work-directly"><a class="header" href="#providers-that-do-not-work-directly">Providers that do <strong>not</strong> work directly</a></h3>
@@ -1771,7 +1784,7 @@ rho --endpoint https://api.deepinfra.com/v1/openai/chat/completions \
 <p>Z.ai provides GLM models (e.g. GLM-5.2) via an OpenAI-compatible API. The endpoint is at <code>api.z.ai/api/paas/v4/chat/completions</code> — note the <code>api.</code> subdomain and <code>/api/paas/v4/</code> path, which differs from the marketing site at <code>z.ai</code>.</p>
 <p>The <code>zai</code> preset also sets a <code>models_endpoint</code> at <code>https://api.z.ai/api/v1/models</code> (a different path prefix than the chat completions endpoint). This is used automatically — no manual configuration needed.</p>
 <pre><code class="language-sh">export ZAI_API_KEY="..."
-rho --endpoint https://api.z.ai/api/paas/v1/chat/completions \
+rho --endpoint https://api.z.ai/api/paas/v4/chat/completions \
     --api-key-env ZAI_API_KEY \
     --model glm-5.2
 </code></pre>
@@ -1887,7 +1900,7 @@ type = "openrouter"
 <h2 id="protocol"><a class="header" href="#protocol">Protocol</a></h2>
 <h3 id="methods-stdin--rho"><a class="header" href="#methods-stdin--rho">Methods (stdin → rho)</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Method</th><th>Params</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>prompt</code></td><td><code>{message: string}</code></td><td>Send a user message to the agent</td></tr>
+<tr><td><code>prompt</code></td><td><code>{message: string, steer?: boolean}</code></td><td>Send a user message to the agent (or a mid-turn steering nudge when <code>steer</code> is true)</td></tr>
 <tr><td><code>abort</code></td><td>—</td><td>Cancel the current operation</td></tr>
 <tr><td><code>clear</code></td><td>—</td><td>Clear conversation history</td></tr>
 <tr><td><code>getState</code></td><td>—</td><td>Return model, provider, and cwd</td></tr>
@@ -1902,7 +1915,7 @@ type = "openrouter"
 <tr><td><code>compact</code></td><td>—</td><td>Trigger context compaction</td></tr>
 <tr><td><code>resumeSession</code></td><td><code>{path: string}</code></td><td>Resume a previous session from JSONL</td></tr>
 <tr><td><code>listTools</code></td><td>—</td><td>List registered tools with schemas and risk levels</td></tr>
-<tr><td><code>approvalResponse</code></td><td><code>{approved: boolean}</code></td><td>Respond to an <code>approval/request</code> notification</td></tr>
+<tr><td><code>approvalResponse</code></td><td><code>{approved: boolean, message?: string}</code></td><td>Respond to an <code>approval/request</code>; when <code>approved</code> is false and <code>message</code> is set, the agent treats it as a redirect</td></tr>
 </tbody></table>
 </div>
 <h3 id="notifications-rho--stdout-no-id"><a class="header" href="#notifications-rho--stdout-no-id">Notifications (rho → stdout, no <code>id</code>)</a></h3>
@@ -1935,6 +1948,7 @@ type = "openrouter"
 <pre><code class="language-json">{"jsonrpc": "2.0", "method": "approvalResponse", "params": {"approved": true}, "id": 2}
 </code></pre>
 <p>Sending <code>approved: false</code> denies the tool call and lets the agent continue.</p>
+<p>When <code>approved: false</code> and <code>message</code> is provided, the agent treats it as a <strong>redirect</strong>: the user's alternative instructions are injected as a new conversation turn and the model returns to thinking to re-plan. No <code>tool/denied</code> notification is emitted for a redirect — the tool batch is abandoned and the model gets another turn.</p>
 <p>Example interaction with a destructive tool:</p>
 <pre><code class="language-json">→ {"jsonrpc":"2.0","method":"prompt","params":{"message":"delete the temp files"},"id":1}
 ← {"jsonrpc":"2.0","method":"agent/start"}
@@ -1963,8 +1977,15 @@ type = "openrouter"
 <li><code>--session &lt;path&gt;</code> — resume a specific session file</li>
 </ul>
 <p>Use <code>getSessionStats</code> to monitor context usage and <code>compact</code> to free space when the context fills up.</p>
+<h2 id="mid-turn-steering-1"><a class="header" href="#mid-turn-steering-1">Mid-turn steering</a></h2>
+<p>A <code>prompt</code> with <code>steer: true</code> is a <strong>steering nudge</strong> — it is queued and injected at the next tool-batch seam (between the last tool execution and the next LLM call), rather than starting a new turn. This lets the user provide course corrections while the agent is mid-turn without interrupting the active execution.</p>
+<pre><code class="language-json">→ {"jsonrpc":"2.0","method":"prompt","params":{"message":"also check the tests","steer":true},"id":3}
+← {"jsonrpc":"2.0","result":{},"id":3}
+</code></pre>
+<p>The steering message is drained at the tool-batch seam and appended as a user message before the next LLM call, so the model re-plans with the user's mid-turn input. If no tool batch is in flight, the message is still queued and will be drained at the next seam.</p>
+<p>Steering is backed by a concurrent reader architecture: a spawned reader task owns the transport and demuxes every inbound message. Time-sensitive messages (steering prompts, <code>approvalResponse</code>, <code>abort</code>) are routed inline so they arrive even while a turn is running on the main task. Ordinary prompts and all other methods are queued for serial processing.</p>
 <h2 id="testing"><a class="header" href="#testing">Testing</a></h2>
-<p>The RPC dispatch loop is decoupled from I/O via the <code>Transport</code> trait (<code>rho/src/transport.rs</code>). <code>StdioTransport</code> (newline-delimited JSON over stdin/stdout) is the default; in-process integration tests inject a <code>StdioTransport</code> wired to canned <code>Cursor&lt;Vec&lt;u8&gt;&gt;</code> readers and captured writers, without touching real file descriptors. Tests use <code>TestProvider</code> (from <code>rho-test-helpers</code>) to wrap a <code>MockChatClient</code> as a <code>Provider</code> and construct <code>App</code> directly, bypassing CLI startup. See <a href="./development/testing.html">Testing</a> for details.</p>
+<p>The RPC dispatch loop uses a concurrent reader architecture decoupled from I/O via the <code>Transport</code> trait (<code>rho/src/transport.rs</code>). <code>StdioTransport</code> (newline-delimited JSON over stdin/stdout) is the default; in-process integration tests use <code>ChannelTransport</code> (mpsc-backed, controls when each message becomes readable) and <code>SyncTool</code> (a tool that blocks until released) to inject messages deterministically mid-turn. Tests use <code>TestProvider</code> (from <code>rho-test-helpers</code>) to wrap a <code>MockChatClient</code> as a <code>Provider</code> and construct <code>App</code> directly, bypassing CLI startup. See <a href="./development/testing.html">Testing</a> for details.</p>
 <p>Run <code>cargo xtask schema</code> to update the version in the <code>OpenRPC</code> schema after a release.</p>
 <h3 id="example-test-session"><a class="header" href="#example-test-session">Example test session</a></h3>
 <pre><code class="language-text">stdin:  {"jsonrpc":"2.0","method":"prompt","params":{"message":"say hello"},"id":1}

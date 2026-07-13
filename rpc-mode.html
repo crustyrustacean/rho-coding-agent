@@ -199,7 +199,7 @@
 <h2 id="protocol"><a class="header" href="#protocol">Protocol</a></h2>
 <h3 id="methods-stdin--rho"><a class="header" href="#methods-stdin--rho">Methods (stdin → rho)</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Method</th><th>Params</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>prompt</code></td><td><code>{message: string}</code></td><td>Send a user message to the agent</td></tr>
+<tr><td><code>prompt</code></td><td><code>{message: string, steer?: boolean}</code></td><td>Send a user message to the agent (or a mid-turn steering nudge when <code>steer</code> is true)</td></tr>
 <tr><td><code>abort</code></td><td>—</td><td>Cancel the current operation</td></tr>
 <tr><td><code>clear</code></td><td>—</td><td>Clear conversation history</td></tr>
 <tr><td><code>getState</code></td><td>—</td><td>Return model, provider, and cwd</td></tr>
@@ -214,7 +214,7 @@
 <tr><td><code>compact</code></td><td>—</td><td>Trigger context compaction</td></tr>
 <tr><td><code>resumeSession</code></td><td><code>{path: string}</code></td><td>Resume a previous session from JSONL</td></tr>
 <tr><td><code>listTools</code></td><td>—</td><td>List registered tools with schemas and risk levels</td></tr>
-<tr><td><code>approvalResponse</code></td><td><code>{approved: boolean}</code></td><td>Respond to an <code>approval/request</code> notification</td></tr>
+<tr><td><code>approvalResponse</code></td><td><code>{approved: boolean, message?: string}</code></td><td>Respond to an <code>approval/request</code>; when <code>approved</code> is false and <code>message</code> is set, the agent treats it as a redirect</td></tr>
 </tbody></table>
 </div>
 <h3 id="notifications-rho--stdout-no-id"><a class="header" href="#notifications-rho--stdout-no-id">Notifications (rho → stdout, no <code>id</code>)</a></h3>
@@ -247,6 +247,7 @@
 <pre><code class="language-json">{"jsonrpc": "2.0", "method": "approvalResponse", "params": {"approved": true}, "id": 2}
 </code></pre>
 <p>Sending <code>approved: false</code> denies the tool call and lets the agent continue.</p>
+<p>When <code>approved: false</code> and <code>message</code> is provided, the agent treats it as a <strong>redirect</strong>: the user's alternative instructions are injected as a new conversation turn and the model returns to thinking to re-plan. No <code>tool/denied</code> notification is emitted for a redirect — the tool batch is abandoned and the model gets another turn.</p>
 <p>Example interaction with a destructive tool:</p>
 <pre><code class="language-json">→ {"jsonrpc":"2.0","method":"prompt","params":{"message":"delete the temp files"},"id":1}
 ← {"jsonrpc":"2.0","method":"agent/start"}
@@ -275,8 +276,15 @@
 <li><code>--session &lt;path&gt;</code> — resume a specific session file</li>
 </ul>
 <p>Use <code>getSessionStats</code> to monitor context usage and <code>compact</code> to free space when the context fills up.</p>
+<h2 id="mid-turn-steering"><a class="header" href="#mid-turn-steering">Mid-turn steering</a></h2>
+<p>A <code>prompt</code> with <code>steer: true</code> is a <strong>steering nudge</strong> — it is queued and injected at the next tool-batch seam (between the last tool execution and the next LLM call), rather than starting a new turn. This lets the user provide course corrections while the agent is mid-turn without interrupting the active execution.</p>
+<pre><code class="language-json">→ {"jsonrpc":"2.0","method":"prompt","params":{"message":"also check the tests","steer":true},"id":3}
+← {"jsonrpc":"2.0","result":{},"id":3}
+</code></pre>
+<p>The steering message is drained at the tool-batch seam and appended as a user message before the next LLM call, so the model re-plans with the user's mid-turn input. If no tool batch is in flight, the message is still queued and will be drained at the next seam.</p>
+<p>Steering is backed by a concurrent reader architecture: a spawned reader task owns the transport and demuxes every inbound message. Time-sensitive messages (steering prompts, <code>approvalResponse</code>, <code>abort</code>) are routed inline so they arrive even while a turn is running on the main task. Ordinary prompts and all other methods are queued for serial processing.</p>
 <h2 id="testing"><a class="header" href="#testing">Testing</a></h2>
-<p>The RPC dispatch loop is decoupled from I/O via the <code>Transport</code> trait (<code>rho/src/transport.rs</code>). <code>StdioTransport</code> (newline-delimited JSON over stdin/stdout) is the default; in-process integration tests inject a <code>StdioTransport</code> wired to canned <code>Cursor&lt;Vec&lt;u8&gt;&gt;</code> readers and captured writers, without touching real file descriptors. Tests use <code>TestProvider</code> (from <code>rho-test-helpers</code>) to wrap a <code>MockChatClient</code> as a <code>Provider</code> and construct <code>App</code> directly, bypassing CLI startup. See <a href="./development/testing.html">Testing</a> for details.</p>
+<p>The RPC dispatch loop uses a concurrent reader architecture decoupled from I/O via the <code>Transport</code> trait (<code>rho/src/transport.rs</code>). <code>StdioTransport</code> (newline-delimited JSON over stdin/stdout) is the default; in-process integration tests use <code>ChannelTransport</code> (mpsc-backed, controls when each message becomes readable) and <code>SyncTool</code> (a tool that blocks until released) to inject messages deterministically mid-turn. Tests use <code>TestProvider</code> (from <code>rho-test-helpers</code>) to wrap a <code>MockChatClient</code> as a <code>Provider</code> and construct <code>App</code> directly, bypassing CLI startup. See <a href="./development/testing.html">Testing</a> for details.</p>
 <p>Run <code>cargo xtask schema</code> to update the version in the <code>OpenRPC</code> schema after a release.</p>
 <h3 id="example-test-session"><a class="header" href="#example-test-session">Example test session</a></h3>
 <pre><code class="language-text">stdin:  {"jsonrpc":"2.0","method":"prompt","params":{"message":"say hello"},"id":1}

@@ -240,12 +240,14 @@ let service = OpenAiService::new(rho_ai::ProviderConfig::new(
 <h2 id="streaming"><a class="header" href="#streaming">Streaming</a></h2>
 <p><code>OpenAiService</code> uses SSE streaming (<code>stream: true</code>) for the Chat Completions API. Streaming events are returned as an <code>EventStream</code> that the agent loop consumes. <code>StreamEvent::Text</code> and <code>StreamEvent::Reasoning</code> events are forwarded to the <code>AgentObserver</code> in real time, enabling live progress output in the consumer.</p>
 <h2 id="multi-provider-support"><a class="header" href="#multi-provider-support">Multi-provider support</a></h2>
-<p>rho can manage multiple providers simultaneously via the <code>ProviderRegistry</code> and <code>Provider</code> trait:</p>
+<p>rho can manage multiple providers simultaneously via the <code>ProviderRegistry</code> and <code>Provider</code> trait. Each provider encapsulates identity, externality, model discovery, and access to an <code>LlmService</code>.</p>
 <ul>
 <li>Each provider has a name, endpoint, and optional API key (configured via <code>[[providers]]</code> with optional <code>preset</code>).</li>
+<li>Providers can set <code>models_endpoint</code> when the models listing is at a different path prefix than chat completions (e.g. Z.ai serves models at <code>/api/v1/models</code> but chat at <code>/api/paas/v4/</code>). When unset, the models URL is derived from the chat endpoint.</li>
+<li>Model list responses are parsed flexibly via <code>serde untagged</code> enums: <code>ModelList</code> accepts both <code>{"data": [...]}</code> (standard OpenAI) and <code>{"models": [...]}</code> (Z.ai). <code>ModelInfo</code> accepts both <code>id</code> and <code>slug</code> fields.</li>
 <li>The registry scans all providers to find which one serves a given model.</li>
-<li><code>/models</code> lists all models across all configured providers.</li>
-<li><code>/model &lt;id&gt;</code> switches to a model, <strong>automatically selecting the right provider</strong> based on which provider serves that model.</li>
+<li><code>listModels</code> lists all models across all configured providers.</li>
+<li><code>setModel</code> switches to a model, <strong>automatically selecting the right provider</strong> based on which provider serves that model.</li>
 <li>Project-level providers merge with user-level providers by name, so you can configure providers once globally and override selectively per project.</li>
 </ul>
 <p>Example with multiple providers:</p>
