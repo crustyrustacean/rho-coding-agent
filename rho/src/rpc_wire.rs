@@ -87,6 +87,15 @@ pub struct GetStateResult {
     pub model: String,
     pub provider: String,
     pub cwd: String,
+    /// Number of conversation messages on the active path.
+    ///
+    /// Duplicates `getSessionStats.messageCount` so a frontend can render a
+    /// banner with one round trip. Additive (`#[serde(default)]`); streaming
+    /// state is NOT here — it's event-driven (`agent/start` + `agent/end`),
+    /// since `getState` is processed serially and can't observe a turn
+    /// mid-flight.
+    #[serde(default)]
+    pub message_count: u64,
 }
 
 /// Result for `setModel`.

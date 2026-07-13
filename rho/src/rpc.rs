@@ -709,6 +709,7 @@ async fn handle_get_state(app: &App, id: &Value, transport: &dyn Transport) {
                 model: app.session.model().to_owned(),
                 provider: app.active_provider().name().to_owned(),
                 cwd: app.session.header().cwd.to_string_lossy().into_owned(),
+                message_count: app.session.context_stats().message_count as u64,
             },
         ),
     )
@@ -1389,6 +1390,48 @@ mod tests {
         assert_eq!(resp["result"]["model"], "test-model");
         assert_eq!(resp["result"]["provider"], "test");
         assert!(resp["result"]["cwd"].is_string());
+        assert!(
+            resp["result"]["messageCount"].is_u64(),
+            "getState should report messageCount",
+        );
+    }
+
+    #[tokio::test]
+    async fn get_state_message_count_reflects_conversation() {
+        // Fresh session: only the system prompt.
+        let fresh = rpc_run(
+            MockChatClient::new(vec![]),
+            echo_registry(),
+            &[r#"{"jsonrpc":"2.0","method":"getState","id":1}"#],
+        )
+        .await;
+        let fresh_count = responses(&fresh)[0]["result"]["messageCount"]
+            .as_u64()
+            .expect("messageCount present on fresh session");
+
+        // After a turn: user + assistant messages are added.
+        let after = rpc_run(
+            MockChatClient::new(vec![text_events("hello world")]),
+            echo_registry(),
+            &[
+                r#"{"jsonrpc":"2.0","method":"prompt","params":{"message":"say hello"},"id":1}"#,
+                r#"{"jsonrpc":"2.0","method":"getState","id":2}"#,
+            ],
+        )
+        .await;
+        let after_responses = responses(&after);
+        let after_resp = after_responses
+            .iter()
+            .find(|r| r["id"] == 2)
+            .expect("post-turn getState response");
+        let after_count = after_resp["result"]["messageCount"]
+            .as_u64()
+            .expect("messageCount present after turn");
+
+        assert!(
+            after_count > fresh_count,
+            "messageCount should grow after a turn: fresh={fresh_count}, after={after_count}",
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════════
