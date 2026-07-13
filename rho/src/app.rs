@@ -366,6 +366,47 @@ impl App {
         self.providers.providers()[self.active_provider_index].as_ref()
     }
 
+    /// Start a fresh session, preserving model/provider, tools, token budget,
+    /// redactor, reasoning effort, and system prompt.
+    ///
+    /// Unlike `clear` (which branches back to the root of the existing tree),
+    /// this creates a brand-new session with an empty conversation: a new JSONL
+    /// file for persisted sessions, or a fresh in-memory tree otherwise (mirrors
+    /// the current session's persistence mode so callers like tests that use
+    /// in-memory sessions don't write real files). The previous session's JSONL
+    /// is already fully on disk (it appends per entry), so no flush is needed.
+    ///
+    /// Returns the new `(session_id, path)`; `path` is empty for in-memory
+    /// sessions.
+    pub(crate) fn start_new_session(&mut self) -> (String, String) {
+        let model = self.session.model().to_owned();
+        let cwd = self.session.header().cwd.clone();
+        let budget = self.session.token_budget();
+        let redactor = self.session.redactor().clone();
+        let reasoning = self.session.reasoning_effort.clone();
+        let tool_schemas = self.registry.tool_definitions();
+        let system_prompt = self.session.system_prompt().map(str::to_owned);
+
+        let mut session = if self.session.save_path().is_some() {
+            rho_core::Session::new(&model, system_prompt.as_deref(), tool_schemas, cwd)
+        } else {
+            rho_core::Session::in_memory(&model, system_prompt.as_deref(), tool_schemas, cwd)
+        }
+        .with_token_budget(budget)
+        .with_redactor(redactor);
+        if let Some(effort) = reasoning {
+            session = session.with_reasoning_effort(&effort);
+        }
+
+        let path = session
+            .save_path()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let session_id = session.header().id.to_string();
+        self.session = session;
+        (session_id, path)
+    }
+
     /// Switch the active model.
     ///
     /// Accepts a bare model ID or `provider:model` syntax:

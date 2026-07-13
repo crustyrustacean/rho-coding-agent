@@ -266,6 +266,16 @@ pub struct ResumeSessionResult {
     pub entry_count: u64,
 }
 
+/// Result for `newSession`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewSessionResult {
+    /// The new session's unique id.
+    pub session_id: String,
+    /// Path to the new session's JSONL file (empty for in-memory sessions).
+    pub path: String,
+}
+
 /// Result for `getMessages`. Messages are pre-serialized `Value`s because
 /// the `ChatMessage` → JSON conversion has complex per-role shapes that
 /// don't map cleanly to a single struct without coupling `rho-core` to the
