@@ -79,12 +79,14 @@ rho does **not** call `/v1/models` at startup. The config file is the source of 
 
 ## Multi-provider support
 
-rho can manage multiple providers simultaneously via the `ProviderRegistry` and `Provider` trait:
+rho can manage multiple providers simultaneously via the `ProviderRegistry` and `Provider` trait. Each provider encapsulates identity, externality, model discovery, and access to an `LlmService`.
 
 - Each provider has a name, endpoint, and optional API key (configured via `[[providers]]` with optional `preset`).
+- Providers can set `models_endpoint` when the models listing is at a different path prefix than chat completions (e.g. Z.ai serves models at `/api/v1/models` but chat at `/api/paas/v4/`). When unset, the models URL is derived from the chat endpoint.
+- Model list responses are parsed flexibly via `serde untagged` enums: `ModelList` accepts both `{"data": [...]}` (standard OpenAI) and `{"models": [...]}` (Z.ai). `ModelInfo` accepts both `id` and `slug` fields.
 - The registry scans all providers to find which one serves a given model.
-- `/models` lists all models across all configured providers.
-- `/model <id>` switches to a model, **automatically selecting the right provider** based on which provider serves that model.
+- `listModels` lists all models across all configured providers.
+- `setModel` switches to a model, **automatically selecting the right provider** based on which provider serves that model.
 - Project-level providers merge with user-level providers by name, so you can configure providers once globally and override selectively per project.
 
 Example with multiple providers:

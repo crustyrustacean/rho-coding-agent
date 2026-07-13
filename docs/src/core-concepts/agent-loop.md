@@ -14,8 +14,8 @@ Thinking ──► AwaitingApproval ──► ExecutingTool ──┘
 Idle (done)
 ```
 
-- **Thinking**: send the session to the model and wait for a response.
-- **AwaitingApproval**: if a tool call requires human confirmation, ask the user. On denial, feed a synthetic "denied" result and return to Thinking.
+- **Thinking**: send the session to the model and wait for a response. Stream timeouts (`first_token_timeout_secs`, `stream_idle_timeout_secs`) convert hung streams into retryable errors.
+- **AwaitingApproval**: if a tool call requires human confirmation, ask the user. On denial, feed a synthetic "denied" result and return to Thinking. On redirect (`approved: false` with a `message`), inject the user's instructions as a new turn and return to Thinking — the tool batch is abandoned.
 - **ExecutingTool**: run the tool and append the result to the session.
 - **Idle**: the model returned a text reply — the loop is done.
 
@@ -52,6 +52,23 @@ The loop:
    - **Tool calls** → for each call, check approval, execute, record phase transition, append the result, then loop back to Thinking.
 
 All tool calls in a single model response are executed **sequentially**. Each result is appended before the session is re-sent to the model. Parallel execution is a future optimisation.
+
+## Mid-turn steering
+
+A `SteeringSource` can be provided via `LoopParams.steering`. At the tool-batch seam — after all tool calls in a batch have executed and before returning to Thinking — the loop drains any queued steering messages and injects each as a user message. This lets the user provide course corrections mid-turn without interrupting the active execution. In RPC mode, the concurrent reader task routes `prompt` messages with `steer: true` to a `SteeringQueue` that backs the `SteeringSource`.
+
+## Stream timeouts
+
+The loop applies two configurable timeouts when consuming the model's stream:
+
+- **`first_token_timeout_secs`** (default 90) — maximum wait for the first stream event. Guards against hung requests where the server accepts the connection but never emits a token.
+- **stream_idle_timeout_secs** (default 60) — maximum gap between consecutive stream events once streaming has started. Guards against mid-stream stalls.
+
+Both return a retryable `ClientError::StreamTimeout` so the existing exponential-backoff retry loop handles them. Set to 0 to disable either timeout. Compaction's LLM call always uses `StreamTimeouts::none()` (it has its own mechanical fallback).
+
+## finish_reason persistence
+
+Every assistant message records an optional `FinishReason` (`Stop`, `ToolCalls`, `Length`, `ContentFilter`), serialized OpenAI-style (snake_case) and omitted when `None` for backward compatibility with existing session files. Terminal errors (e.g. retry budget exhausted) are recorded as `Attached` custom-state entries (kind `rho.turn_error.v1`) so silent failures leave a diagnostic trace on disk.
 
 ## Phase tracking
 

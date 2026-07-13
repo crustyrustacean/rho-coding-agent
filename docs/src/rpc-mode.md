@@ -29,7 +29,7 @@ echo '{"jsonrpc":"2.0","method":"prompt","params":{"message":"explain this funct
 
 | Method | Params | Description |
 |---|---|---|
-| `prompt` | `{message: string}` | Send a user message to the agent |
+| `prompt` | `{message: string, steer?: boolean}` | Send a user message to the agent (or a mid-turn steering nudge when `steer` is true) |
 | `abort` | — | Cancel the current operation |
 | `clear` | — | Clear conversation history |
 | `getState` | — | Return model, provider, and cwd |
@@ -44,7 +44,7 @@ echo '{"jsonrpc":"2.0","method":"prompt","params":{"message":"explain this funct
 | `compact` | — | Trigger context compaction |
 | `resumeSession` | `{path: string}` | Resume a previous session from JSONL |
 | `listTools` | — | List registered tools with schemas and risk levels |
-| `approvalResponse` | `{approved: boolean}` | Respond to an `approval/request` notification |
+| `approvalResponse` | `{approved: boolean, message?: string}` | Respond to an `approval/request`; when `approved` is false and `message` is set, the agent treats it as a redirect |
 
 ### Notifications (rho → stdout, no `id`)
 
@@ -83,6 +83,9 @@ When rho emits an `approval/request` notification, it blocks until it reads an `
 
 Sending `approved: false` denies the tool call and lets the agent continue.
 
+When `approved: false` and `message` is provided, the agent treats it as a **redirect**: the user's alternative instructions are injected as a new conversation turn and the model returns to thinking to re-plan. No `tool/denied` notification is emitted for a redirect — the tool batch is abandoned and the model gets another turn.
+
+
 Example interaction with a destructive tool:
 
 ```json
@@ -118,9 +121,22 @@ RPC mode supports the same session options:
 
 Use `getSessionStats` to monitor context usage and `compact` to free space when the context fills up.
 
+## Mid-turn steering
+
+A `prompt` with `steer: true` is a **steering nudge** — it is queued and injected at the next tool-batch seam (between the last tool execution and the next LLM call), rather than starting a new turn. This lets the user provide course corrections while the agent is mid-turn without interrupting the active execution.
+
+```json
+→ {"jsonrpc":"2.0","method":"prompt","params":{"message":"also check the tests","steer":true},"id":3}
+← {"jsonrpc":"2.0","result":{},"id":3}
+```
+
+The steering message is drained at the tool-batch seam and appended as a user message before the next LLM call, so the model re-plans with the user's mid-turn input. If no tool batch is in flight, the message is still queued and will be drained at the next seam.
+
+Steering is backed by a concurrent reader architecture: a spawned reader task owns the transport and demuxes every inbound message. Time-sensitive messages (steering prompts, `approvalResponse`, `abort`) are routed inline so they arrive even while a turn is running on the main task. Ordinary prompts and all other methods are queued for serial processing.
+
 ## Testing
 
-The RPC dispatch loop is decoupled from I/O via the `Transport` trait (`rho/src/transport.rs`). `StdioTransport` (newline-delimited JSON over stdin/stdout) is the default; in-process integration tests inject a `StdioTransport` wired to canned `Cursor<Vec<u8>>` readers and captured writers, without touching real file descriptors. Tests use `TestProvider` (from `rho-test-helpers`) to wrap a `MockChatClient` as a `Provider` and construct `App` directly, bypassing CLI startup. See [Testing](./development/testing.md) for details.
+The RPC dispatch loop uses a concurrent reader architecture decoupled from I/O via the `Transport` trait (`rho/src/transport.rs`). `StdioTransport` (newline-delimited JSON over stdin/stdout) is the default; in-process integration tests use `ChannelTransport` (mpsc-backed, controls when each message becomes readable) and `SyncTool` (a tool that blocks until released) to inject messages deterministically mid-turn. Tests use `TestProvider` (from `rho-test-helpers`) to wrap a `MockChatClient` as a `Provider` and construct `App` directly, bypassing CLI startup. See [Testing](./development/testing.md) for details.
 
 Run `cargo xtask schema` to update the version in the `OpenRPC` schema after a release.
 

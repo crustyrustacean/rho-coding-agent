@@ -30,7 +30,7 @@ These providers expose an OpenAI-compatible API as their primary interface:
 | Ollama | `localhost:11434/v1/chat/completions` | Local server |
 | Together AI | `api.together.xyz/v1/chat/completions` | OpenAI-compatible path |
 | Fireworks | `api.fireworks.ai/inference/v1/chat/completions` | OpenAI-compatible path |
-| Z.ai | `api.z.ai/api/paas/v1/chat/completions` | OpenAI-compatible path (GLM models) |
+| Z.ai | `api.z.ai/api/paas/v4/chat/completions` | OpenAI-compatible path (GLM models) |
 
 ### Providers that do **not** work directly
 
@@ -239,7 +239,7 @@ The `zai` preset also sets a `models_endpoint` at `https://api.z.ai/api/v1/model
 
 ```sh
 export ZAI_API_KEY="..."
-rho --endpoint https://api.z.ai/api/paas/v1/chat/completions \
+rho --endpoint https://api.z.ai/api/paas/v4/chat/completions \
     --api-key-env ZAI_API_KEY \
     --model glm-5.2
 ```

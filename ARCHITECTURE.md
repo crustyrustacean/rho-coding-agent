@@ -175,7 +175,7 @@ echo '{"jsonrpc":"2.0","method":"prompt","params":{"message":"fix the bug"},"id"
 
 The dispatch loop is decoupled from I/O via the [`Transport`] trait (`rho/src/transport.rs`). `StdioTransport` (newline-delimited JSON over stdin/stdout) is the default, but any `Transport` implementation — WebSocket, Unix socket, TCP — works without touching the dispatch logic. The public entry point (`run_rpc`) constructs a real `StdioTransport`; in-process tests inject a `StdioTransport` wired to canned readers and captured writers.
 
-**Integration tests.** `rho/src/rpc.rs` ships a suite of end-to-end tests (30+ `#[tokio::test]` cases) covering the full JSON-RPC 2.0 protocol. Tests use `MockChatClient` via `TestProvider` (in `rho-test-helpers`) and construct `App` directly (bypassing CLI startup) to exercise the RPC adapter layer over the real agent loop.
+**Integration tests.** `rho/src/rpc.rs` ships a suite of end-to-end tests (70+ `#[tokio::test]` cases) covering the full JSON-RPC 2.0 protocol, including mid-turn steering and redirect approval flow. Tests use `MockChatClient` via `TestProvider` (in `rho-test-helpers`) and construct `App` directly (bypassing CLI startup). The concurrent reader architecture is tested via `ChannelTransport` (mpsc-backed) and `SyncTool` (a tool that blocks until released) to inject messages deterministically mid-turn.
 
 ### Protocol
 
@@ -183,7 +183,7 @@ The dispatch loop is decoupled from I/O via the [`Transport`] trait (`rho/src/tr
 
 | Method | Params | Description |
 |---|---|---|
-| `prompt` | `{message: string}` | Send a user message to the agent |
+| `prompt` | `{message: string, steer?: boolean}` | Send a user message (or mid-turn steering nudge when `steer` is true) |
 | `abort` | — | Cancel the current operation |
 | `clear` | — | Clear conversation history |
 | `getState` | — | Return model, provider, and cwd |
@@ -198,7 +198,7 @@ The dispatch loop is decoupled from I/O via the [`Transport`] trait (`rho/src/tr
 | `compact` | — | Trigger context compaction |
 | `resumeSession` | `{path: string}` | Resume a previous session |
 | `listTools` | — | List registered tools with schemas and risk levels |
-| `approvalResponse` | `{approved: boolean}` | Respond to an `approval/request` notification |
+| `approvalResponse` | `{approved: boolean, message?: string}` | Respond to `approval/request`; `message` with `approved: false` is a redirect |
 
 **Notifications (rho → stdout, no `id`):**
 
@@ -235,7 +235,7 @@ When rho emits an `approval/request` notification it blocks until it reads an `a
 {"jsonrpc": "2.0", "method": "approvalResponse", "params": {"approved": true}, "id": 2}
 ```
 
-Sending `approved: false` denies the tool call and lets the agent continue.
+Sending `approved: false` denies the tool call and lets the agent continue. When `approved: false` and `message` is set, the agent treats it as a **redirect**: the user's instructions are injected as a new turn and the model returns to thinking.
 
 ### Headless startup policy
 
@@ -273,6 +273,7 @@ let result: AgentResult = rho_core::run_loop(&mut session, "fix the bug", &LoopP
     gate: &AutoApproveGate,
     observer: &NopObserver,
     compaction_client: None,
+    steering: None,
 }).await?;
 ```
 
@@ -339,6 +340,7 @@ The agent uses defense-in-depth — no single layer is sufficient, but each rais
 | Command denylist | `CommandDenylist` | Blocks dangerous shell commands |
 | Retry with backoff | Exponential backoff | Handles transient HTTP errors |
 | Max iteration guard | Configurable limit | Prevents infinite tool-call loops |
+| Stream timeouts | `first_token_timeout_secs`, `stream_idle_timeout_secs` | Convert hung LLM streams into retryable errors |
 | Provider consent | `check_provider_consent()` | Warns before sending data to external servers |
 
 ## Project Layout
@@ -510,7 +512,9 @@ docs/rpc-schema/openrpc.json  # OpenRPC 1.3.1 schema (machine-readable API spec)
 | `ToolCallOutcome` | `agent.rs` | What happened to a tool call (`Success`, `Error`, `Denied`, `Blocked`) |
 | `LoopFinishReason` | `agent.rs` | Why `run_loop` terminated (`Stop`, `MaxIterations`, `Cancelled`, `RetryBudgetExhausted`, `ConsecutiveEmptyResponses`) |
 | `CollectingObserver` | `agent.rs` | Always-active observer that records tool call events into `ToolCallRecord`s |
-| `LoopParams` | `agent.rs` | Parameter bundle for `run_loop` (client, registry, config, cancel, gate, observer, compaction_client) |
+| `SteeringSource` | `agent.rs` | Trait for mid-turn steering message drain (sync, dyn-safe) |
+| `SteeringQueue` | `agent.rs` | Thread-safe `SteeringSource` impl (Arc-shared VecDeque, push/drain) |
+| `LoopParams` | `agent.rs` | Parameter bundle for `run_loop` (client, registry, config, cancel, gate, observer, compaction_client, steering) |
 
 ### Tools
 
@@ -538,8 +542,9 @@ docs/rpc-schema/openrpc.json  # OpenRPC 1.3.1 schema (machine-readable API spec)
 | `RhoAiClient` | `client.rs` | Wraps `LlmService` for use in the agent loop |
 | `Provider` | `provider.rs` | Trait: `name`, `is_external`, `list_models`, `clone_boxed_service`, `llm_service` |
 | `ProviderRegistry` | `provider.rs` | Ordered collection of `Box<dyn Provider>` |
-| `ModelInfo` | `client.rs` | A model entry from `/v1/models` |
-| `ProviderConfig` | `config.rs` | Provider config: name, preset, endpoint, API key env var, default_model |
+| `ModelInfo` | `client.rs` | A model entry from `/v1/models` (accepts both `id` and `slug` fields via untagged enum) |
+| `ModelList` | `client.rs` | Model list response (accepts both `data` array and `models` array via untagged enum) |
+| `ProviderConfig` | `config.rs` | Provider config: name, preset, endpoint, API key env var, default_model, models_endpoint |
 | `rho_ai::ProviderConfig` | `rho-ai/types.rs` | API key and base URL (model is per-request, not per-provider) |
 
 ### Session and context
