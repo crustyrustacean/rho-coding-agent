@@ -59,6 +59,17 @@ impl ModelCost {
             / 1_000_000.0;
         Some(cost)
     }
+
+    /// Whether this entry carries usable (non-sentinel) pricing.
+    ///
+    /// `OpenRouter` uses negative prices as an "unknown" sentinel (e.g. router
+    /// models like `openrouter/auto` carry `prompt: "-1"`). Such entries are
+    /// not usable for cost computation and should be skipped during model
+    /// resolution. A legitimately free model reports `0.0`, not negative.
+    #[must_use]
+    pub fn is_priced(&self) -> bool {
+        self.input >= 0.0 && self.output >= 0.0
+    }
 }
 
 /// Input modalities supported by a model.
@@ -142,6 +153,56 @@ impl Catalog {
     #[must_use]
     pub fn find_built_in(id: &str) -> Option<&'static Model> {
         BUILT_IN.iter().find(|m| m.id == id)
+    }
+
+    /// Resolve a model for pricing, tolerating native-provider bare ids.
+    ///
+    /// Resolution order:
+    /// 1. Exact id match (`OpenRouter` `provider/model` ids).
+    /// 2. Unique basename match — entries whose id suffix (after the last `/`)
+    ///    equals `model_id`. Resolves a bare native id like `gpt-4o-2024-08-06`
+    ///    to `openai/gpt-4o-2024-08-06` when unambiguous.
+    /// 3. Provider-hinted basename — when multiple match and `hint` matches one
+    ///    entry's provider slug, use it.
+    ///
+    /// Returns `None` when ambiguous without a hint, so the caller surfaces an
+    /// honest "cost n/a" rather than guessing. Sentinel-priced entries are
+    /// skipped in the basename path. Phase 2 will thread a provider hint
+    /// through `route_response` for disambiguation.
+    #[must_use]
+    pub fn resolve(hint: Option<&str>, model_id: &str) -> Option<&'static Model> {
+        Self::resolve_in(hint, model_id, &BUILT_IN)
+    }
+
+    /// Resolution core over an arbitrary model slice.
+    ///
+    /// Factored out of [`resolve`](Self::resolve) so the basename and
+    /// provider-hint disambiguation paths are unit-testable with synthetic
+    /// data (the built-in catalog currently has no ambiguous basenames).
+    fn resolve_in<'a>(
+        hint: Option<&str>,
+        model_id: &str,
+        models: &'a [Model],
+    ) -> Option<&'a Model> {
+        // 1. Exact id match.
+        if let Some(m) = models.iter().find(|m| m.id == model_id) {
+            return Some(m);
+        }
+        // 2/3. Basename = segment after the last '/'; a bare id is its own basename.
+        let basename = model_id.rsplit_once('/').map_or(model_id, |(_, base)| base);
+        let mut hits: Vec<&Model> = models
+            .iter()
+            .filter(|m| {
+                m.id.rsplit_once('/')
+                    .is_some_and(|(_, base)| base == basename)
+                    && m.cost.is_priced()
+            })
+            .collect();
+        match hits.len() {
+            0 => None,
+            1 => hits.pop(),
+            _ => hint.and_then(|h| hits.into_iter().find(|m| m.provider == h)),
+        }
     }
     /// Create a catalog from the built-in model list only.
     pub fn new() -> Self {
@@ -362,5 +423,131 @@ mod tests {
         let a = Catalog::find_built_in("anthropic/claude-sonnet-4");
         let b = Catalog::find_built_in("anthropic/claude-sonnet-4");
         assert!(std::ptr::eq(a.unwrap(), b.unwrap()));
+    }
+
+    // ── pricing eligibility + native-id resolution ───────────────────────
+
+    #[test]
+    fn is_priced_true_for_real_pricing() {
+        let cost = ModelCost {
+            input: 1.0,
+            output: 2.0,
+            cache_read: 0.5,
+            cache_write: 1.0,
+        };
+        assert!(cost.is_priced());
+    }
+
+    #[test]
+    fn is_priced_false_for_sentinel_pricing() {
+        // OpenRouter sentinel: negative prices mean "unknown".
+        let cost = ModelCost {
+            input: -1.0,
+            output: -1.0,
+            cache_read: 0.0,
+            cache_write: 0.0,
+        };
+        assert!(!cost.is_priced());
+    }
+
+    #[test]
+    fn resolve_exact_openrouter_id() {
+        let m = Catalog::resolve(None, "openai/gpt-4o-2024-08-06").expect("exact id present");
+        assert_eq!(m.provider, "openai");
+    }
+
+    #[test]
+    fn resolve_bare_basename_unique_matches_provider_entry() {
+        // A native provider sends the bare id; resolve it via basename.
+        let m = Catalog::resolve(None, "gpt-4o-2024-08-06").expect("basename should resolve");
+        assert_eq!(m.id, "openai/gpt-4o-2024-08-06");
+        assert_eq!(m.provider, "openai");
+    }
+
+    #[test]
+    fn resolve_unknown_id_is_none() {
+        assert!(Catalog::resolve(None, "no-such-vendor/totally-made-up-model").is_none());
+        assert!(Catalog::resolve(None, "totally-made-up-bare-id").is_none());
+    }
+
+    #[test]
+    fn resolve_sentinel_basename_is_filtered() {
+        // `openrouter/auto` is a sentinel router entry; its basename `auto`
+        // must not resolve (it would yield no usable pricing).
+        assert!(Catalog::resolve(None, "auto").is_none());
+    }
+
+    // ── resolve_in with synthetic models (disambiguation paths) ─────────
+
+    /// A realistically-priced synthetic model.
+    fn priced(id: &str, provider: &str) -> Model {
+        Model {
+            id: id.to_string(),
+            name: id.to_string(),
+            provider: provider.to_string(),
+            context_window: 128_000,
+            max_tokens: 4_096,
+            input: ModelInput::default(),
+            cost: ModelCost {
+                input: 1.0,
+                output: 2.0,
+                cache_read: 0.0,
+                cache_write: 0.0,
+            },
+            thinking: ModelThinking::default(),
+        }
+    }
+
+    /// A sentinel-priced synthetic model (`OpenRouter` "-1" convention).
+    fn sentinel(id: &str, provider: &str) -> Model {
+        Model {
+            cost: ModelCost {
+                input: -1.0,
+                output: -1.0,
+                cache_read: 0.0,
+                cache_write: 0.0,
+            },
+            ..priced(id, provider)
+        }
+    }
+
+    #[test]
+    fn resolve_in_exact_takes_precedence() {
+        let models = vec![priced("openai/gpt-4o", "openai")];
+        assert!(Catalog::resolve_in(None, "openai/gpt-4o", &models).is_some());
+    }
+
+    #[test]
+    fn resolve_in_ambiguous_basename_without_hint_is_none() {
+        let models = vec![priced("alpha/dupe", "alpha"), priced("beta/dupe", "beta")];
+        assert!(Catalog::resolve_in(None, "dupe", &models).is_none());
+    }
+
+    #[test]
+    fn resolve_in_ambiguous_basename_with_correct_hint_resolves() {
+        let models = vec![priced("alpha/dupe", "alpha"), priced("beta/dupe", "beta")];
+        let m = Catalog::resolve_in(Some("beta"), "dupe", &models).expect("hint disambiguates");
+        assert_eq!(m.provider, "beta");
+    }
+
+    #[test]
+    fn resolve_in_ambiguous_basename_with_wrong_hint_is_none() {
+        let models = vec![priced("alpha/dupe", "alpha"), priced("beta/dupe", "beta")];
+        assert!(Catalog::resolve_in(Some("gamma"), "dupe", &models).is_none());
+    }
+
+    #[test]
+    fn resolve_in_skips_solo_sentinel_basename() {
+        // Only a sentinel entry shares the basename → filtered → None.
+        let models = vec![sentinel("solo/special", "solo")];
+        assert!(Catalog::resolve_in(None, "special", &models).is_none());
+    }
+
+    #[test]
+    fn resolve_in_prefers_priced_over_sentinel_sharing_basename() {
+        // The sentinel is filtered, leaving one priced hit → resolves to beta.
+        let models = vec![sentinel("alpha/dupe", "alpha"), priced("beta/dupe", "beta")];
+        let m = Catalog::resolve_in(None, "dupe", &models).expect("priced entry resolves");
+        assert_eq!(m.provider, "beta");
     }
 }

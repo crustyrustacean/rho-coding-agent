@@ -1751,12 +1751,15 @@ pub(crate) fn route_response(
     //
     // Cost enrichment: providers other than OpenRouter don't send a dollar
     // cost in the usage object. When the provider left `cost` unset, fall back
-    // to the model catalog's per-million pricing. Sentinels (negatively-priced
+    // to the model catalog's per-million pricing. `Catalog::resolve` tolerates
+    // native-provider bare ids (e.g. `gpt-4o-2024-08-06`) via basename matching,
+    // so native OpenAI/Groq sessions accrue cost too; a provider hint for
+    // disambiguation is threaded in Phase 2. Sentinels (negatively-priced
     // router models) yield `None`, which surfaces downstream as "cost n/a"
     // rather than a misleading $0.00.
     let mut usage = acc.usage.clone();
     if usage.cost.is_none()
-        && let Some(model) = rho_ai::Catalog::find_built_in(&session.model)
+        && let Some(model) = rho_ai::Catalog::resolve(None, &session.model)
     {
         usage.cost = model.cost_for(&usage);
     }
@@ -2518,6 +2521,28 @@ mod tests {
         let _ = route_response(&acc, &mut session).unwrap();
         assert!(session.api_usage().total_cost.abs() < f64::EPSILON);
         assert_eq!(session.api_usage().request_count, 1);
+    }
+
+    #[test]
+    fn route_response_enriches_cost_for_native_bare_id() {
+        // A native provider (OpenAI direct) sends a bare, undated-ish model id
+        // with no `provider/` prefix and no dollar cost. Catalog basename
+        // resolution should still price it so the session accrues cost.
+        let mut session = test_session(None, &[], vec![]);
+        session.model = "gpt-4o-2024-08-06".to_string();
+        let acc = rho_ai::AccumulatedResponse {
+            text: "hi".into(),
+            reasoning: String::new(),
+            tool_calls: vec![],
+            stop_reason: rho_ai::StopReason::EndTurn,
+            usage: rho_ai::StreamUsage::new(1_000_000, 0),
+        };
+        let _ = route_response(&acc, &mut session).unwrap();
+        assert!(
+            session.api_usage().total_cost > 0.0,
+            "bare native id should resolve via catalog basename; got {}",
+            session.api_usage().total_cost,
+        );
     }
 
     // ── build_tool_calls_from_accumulated tests ──────────────────────────
