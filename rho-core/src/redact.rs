@@ -104,6 +104,7 @@ fn built_in_patterns() -> [Pattern; 5] {
 /// enabled toggle from configuration.
 ///
 /// When `enabled` is `false`, [`Redactor::redact`] returns the input unchanged.
+#[derive(Clone)]
 pub struct Redactor {
     /// Whether redaction is active. When `false`, `redact()` is a no-op.
     enabled: bool,
