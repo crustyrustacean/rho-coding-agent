@@ -323,9 +323,10 @@ impl ProviderRegistry {
         use futures::future::join_all;
 
         let results: Vec<(usize, Result<ModelList>)> = join_all(
-            self.providers.iter().enumerate().map(|(i, p)| async move {
-                (i, p.list_models().await)
-            }),
+            self.providers
+                .iter()
+                .enumerate()
+                .map(|(i, p)| async move { (i, p.list_models().await) }),
         )
         .await;
 
@@ -338,7 +339,10 @@ impl ProviderRegistry {
                     }
                 }
                 Err(e) => {
-                    tracing::warn!(provider = self.providers[i].name(), "failed to list models: {e}");
+                    tracing::warn!(
+                        provider = self.providers[i].name(),
+                        "failed to list models: {e}"
+                    );
                 }
             }
         }
@@ -355,9 +359,10 @@ impl ProviderRegistry {
         use futures::future::join_all;
 
         let results: Vec<(usize, Result<ModelList>)> = join_all(
-            self.providers.iter().enumerate().map(|(i, p)| async move {
-                (i, p.list_models().await)
-            }),
+            self.providers
+                .iter()
+                .enumerate()
+                .map(|(i, p)| async move { (i, p.list_models().await) }),
         )
         .await;
 
@@ -382,9 +387,10 @@ impl ProviderRegistry {
         use futures::future::join_all;
 
         let results: Vec<(usize, Result<ModelList>)> = join_all(
-            self.providers.iter().enumerate().map(|(i, p)| async move {
-                (i, p.list_models().await)
-            }),
+            self.providers
+                .iter()
+                .enumerate()
+                .map(|(i, p)| async move { (i, p.list_models().await) }),
         )
         .await;
 
@@ -418,9 +424,10 @@ impl ProviderRegistry {
         use futures::future::join_all;
 
         let results: Vec<(usize, Result<ModelList>)> = join_all(
-            self.providers.iter().enumerate().map(|(i, p)| async move {
-                (i, p.list_models().await)
-            }),
+            self.providers
+                .iter()
+                .enumerate()
+                .map(|(i, p)| async move { (i, p.list_models().await) }),
         )
         .await;
 
@@ -916,8 +923,16 @@ mod tests {
         // take ~400ms; concurrent queries take ~200ms. The 300ms threshold
         // distinguishes the two.
         let mut reg = ProviderRegistry::new();
-        reg.add(Box::new(MockProvider::new("alpha", &["alpha-model"], Duration::from_millis(200))));
-        reg.add(Box::new(MockProvider::new("beta", &["beta-model"], Duration::from_millis(200))));
+        reg.add(Box::new(MockProvider::new(
+            "alpha",
+            &["alpha-model"],
+            Duration::from_millis(200),
+        )));
+        reg.add(Box::new(MockProvider::new(
+            "beta",
+            &["beta-model"],
+            Duration::from_millis(200),
+        )));
         reg
     }
 
@@ -942,8 +957,16 @@ mod tests {
         // Both providers serve "shared-model" — the fast one (index 0)
         // must win, not whichever concurrent query finishes first.
         let mut reg = ProviderRegistry::new();
-        reg.add(Box::new(MockProvider::new("fast", &["shared-model"], Duration::ZERO)));
-        reg.add(Box::new(MockProvider::new("slow", &["shared-model"], Duration::from_millis(200))));
+        reg.add(Box::new(MockProvider::new(
+            "fast",
+            &["shared-model"],
+            Duration::ZERO,
+        )));
+        reg.add(Box::new(MockProvider::new(
+            "slow",
+            &["shared-model"],
+            Duration::from_millis(200),
+        )));
         let idx = reg.find_model_index("shared-model").await;
         assert_eq!(idx, Some(0));
     }
