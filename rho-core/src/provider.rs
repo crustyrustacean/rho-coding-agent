@@ -318,16 +318,27 @@ impl ProviderRegistry {
     /// Providers that are unreachable are silently skipped (with a warning
     /// logged). Returns an empty vec if all providers fail.
     pub async fn list_all_models(&self) -> Vec<(&str, ModelInfo)> {
+        // Fan out all providers concurrently so a slow or unreachable
+        // provider does not block model discovery on faster ones.
+        use futures::future::join_all;
+
+        let results: Vec<(usize, Result<ModelList>)> = join_all(
+            self.providers.iter().enumerate().map(|(i, p)| async move {
+                (i, p.list_models().await)
+            }),
+        )
+        .await;
+
         let mut result = Vec::new();
-        for provider in &self.providers {
-            match provider.list_models().await {
+        for (i, res) in results {
+            match res {
                 Ok(list) => {
                     for model in list.into_data() {
-                        result.push((provider.name(), model));
+                        result.push((self.providers[i].name(), model));
                     }
                 }
                 Err(e) => {
-                    tracing::warn!(provider = provider.name(), "failed to list models: {e}");
+                    tracing::warn!(provider = self.providers[i].name(), "failed to list models: {e}");
                 }
             }
         }
@@ -339,11 +350,22 @@ impl ProviderRegistry {
     /// Searches providers in order. Returns the first provider that has
     /// a model matching the given ID.
     pub async fn find_model(&self, model_id: &str) -> Option<(&dyn Provider, ModelInfo)> {
-        for provider in &self.providers {
-            if let Ok(list) = provider.list_models().await
+        // Query all providers concurrently, then pick the first (in
+        // registry order) that has the model.
+        use futures::future::join_all;
+
+        let results: Vec<(usize, Result<ModelList>)> = join_all(
+            self.providers.iter().enumerate().map(|(i, p)| async move {
+                (i, p.list_models().await)
+            }),
+        )
+        .await;
+
+        for (i, res) in results {
+            if let Ok(list) = res
                 && let Some(model) = list.into_data().into_iter().find(|m| m.id() == model_id)
             {
-                return Some((provider.as_ref(), model));
+                return Some((self.providers[i].as_ref(), model));
             }
         }
         None
@@ -355,8 +377,19 @@ impl ProviderRegistry {
     /// provider whose `list_models()` includes a model matching `model_id`,
     /// or `None` if no provider has it.
     pub async fn find_model_index(&self, model_id: &str) -> Option<usize> {
-        for (i, provider) in self.providers.iter().enumerate() {
-            if let Ok(list) = provider.list_models().await
+        // Query all providers concurrently, then pick the first (in
+        // registry order) that has the model.
+        use futures::future::join_all;
+
+        let results: Vec<(usize, Result<ModelList>)> = join_all(
+            self.providers.iter().enumerate().map(|(i, p)| async move {
+                (i, p.list_models().await)
+            }),
+        )
+        .await;
+
+        for (i, res) in results {
+            if let Ok(list) = res
                 && list.data().iter().any(|m| m.id() == model_id)
             {
                 return Some(i);
@@ -380,15 +413,26 @@ impl ProviderRegistry {
     /// reachability. Returns [`ProviderInfo`] structs suitable for
     /// display (e.g. the `/providers` REPL command).
     pub async fn list_providers(&self) -> Vec<ProviderInfo> {
+        // Probe all providers concurrently so a slow provider doesn't
+        // block the reachability check on faster ones.
+        use futures::future::join_all;
+
+        let results: Vec<(usize, Result<ModelList>)> = join_all(
+            self.providers.iter().enumerate().map(|(i, p)| async move {
+                (i, p.list_models().await)
+            }),
+        )
+        .await;
+
         let mut result = Vec::new();
-        for provider in &self.providers {
-            let name = provider.name();
-            match provider.list_models().await {
+        for (i, res) in results {
+            let name = self.providers[i].name();
+            match res {
                 Ok(_) => {
                     tracing::debug!(provider = %name, "provider reachable");
                     result.push(ProviderInfo {
                         name: name.to_owned(),
-                        is_external: provider.is_external(),
+                        is_external: self.providers[i].is_external(),
                         reachable: true,
                     });
                 }
@@ -396,7 +440,7 @@ impl ProviderRegistry {
                     tracing::warn!(provider = %name, error = %e, "provider unreachable");
                     result.push(ProviderInfo {
                         name: name.to_owned(),
-                        is_external: provider.is_external(),
+                        is_external: self.providers[i].is_external(),
                         reachable: false,
                     });
                 }
@@ -803,5 +847,133 @@ mod tests {
         };
         let provider = provider_factory(&config, None, None);
         assert_eq!(provider.name(), "my-provider");
+    }
+    // ── Concurrent model discovery ────────────────────────────────────────
+    //
+    // The registry must query all providers concurrently so a slow or
+    // unreachable provider does not block model discovery on faster ones.
+    // These tests use `DelayedTestProvider` to verify that the total wall
+    // time is bounded by the slowest single provider, not the sum of all.
+
+    use std::time::{Duration, Instant};
+
+    /// A mock provider that returns a fixed model list, optionally with a delay.
+    /// Used to verify that the registry queries providers concurrently.
+    struct MockProvider {
+        name: String,
+        models: Vec<String>,
+        delay: Duration,
+    }
+
+    impl MockProvider {
+        fn new(name: &str, models: &[&str], delay: Duration) -> Self {
+            Self {
+                name: name.to_owned(),
+                models: models.iter().map(|s| s.to_string()).collect(),
+                delay,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Provider for MockProvider {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn is_external(&self) -> bool {
+            false
+        }
+
+        async fn list_models(&self) -> Result<ModelList> {
+            if !self.delay.is_zero() {
+                tokio::time::sleep(self.delay).await;
+            }
+            Ok(ModelList::Standard {
+                data: self
+                    .models
+                    .iter()
+                    .map(|id| ModelInfo::Standard {
+                        id: id.clone(),
+                        object: "model".to_owned(),
+                        created: 0,
+                        owned_by: "test".to_owned(),
+                    })
+                    .collect(),
+            })
+        }
+
+        fn llm_service(&self) -> &dyn rho_ai::LlmService {
+            unimplemented!("MockProvider does not support LLM calls")
+        }
+
+        fn clone_boxed_service(&self) -> Box<dyn rho_ai::LlmService> {
+            unimplemented!("MockProvider does not support LLM calls")
+        }
+    }
+    fn registry_with_delayed_provider() -> ProviderRegistry {
+        // Both providers have a 200ms delay. Sequential queries would
+        // take ~400ms; concurrent queries take ~200ms. The 300ms threshold
+        // distinguishes the two.
+        let mut reg = ProviderRegistry::new();
+        reg.add(Box::new(MockProvider::new("alpha", &["alpha-model"], Duration::from_millis(200))));
+        reg.add(Box::new(MockProvider::new("beta", &["beta-model"], Duration::from_millis(200))));
+        reg
+    }
+
+    #[tokio::test]
+    async fn find_model_index_is_concurrent() {
+        let reg = registry_with_delayed_provider();
+        let start = Instant::now();
+        // Both providers have a 200ms delay. Sequential queries would
+        // take ~400ms; concurrent queries take ~200ms. The 300ms threshold
+        // distinguishes the two.
+        let idx = reg.find_model_index("beta-model").await;
+        let elapsed = start.elapsed();
+        assert_eq!(idx, Some(1));
+        assert!(
+            elapsed < Duration::from_millis(300),
+            "find_model_index should be concurrent: took {elapsed:?}",
+        );
+    }
+
+    #[tokio::test]
+    async fn find_model_index_returns_first_match_in_order() {
+        // Both providers serve "shared-model" — the fast one (index 0)
+        // must win, not whichever concurrent query finishes first.
+        let mut reg = ProviderRegistry::new();
+        reg.add(Box::new(MockProvider::new("fast", &["shared-model"], Duration::ZERO)));
+        reg.add(Box::new(MockProvider::new("slow", &["shared-model"], Duration::from_millis(200))));
+        let idx = reg.find_model_index("shared-model").await;
+        assert_eq!(idx, Some(0));
+    }
+
+    #[tokio::test]
+    async fn list_all_models_is_concurrent() {
+        let reg = registry_with_delayed_provider();
+        let start = Instant::now();
+        let models = reg.list_all_models().await;
+        let elapsed = start.elapsed();
+        // Should have models from both providers.
+        assert_eq!(models.len(), 2);
+        assert!(
+            elapsed < Duration::from_millis(300),
+            "list_all_models should be concurrent: took {elapsed:?}",
+        );
+    }
+
+    #[tokio::test]
+    async fn list_providers_is_concurrent() {
+        let reg = registry_with_delayed_provider();
+        let start = Instant::now();
+        let providers = reg.list_providers().await;
+        let elapsed = start.elapsed();
+        // Both providers should be reachable.
+        assert_eq!(providers.len(), 2);
+        assert!(providers.iter().all(|p| p.reachable));
+        assert!(
+            elapsed < Duration::from_millis(300),
+            "list_providers should be concurrent: took {elapsed:?}",
+        );
     }
 }
