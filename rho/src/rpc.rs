@@ -927,6 +927,7 @@ async fn handle_resume_session(
             session.set_model(&old_model);
             session.set_tools(app.registry.tool_definitions());
             session.set_token_budget(app.session.token_budget());
+            session.set_user_models(app.session.user_models.clone());
             let session_cwd = session.header().cwd.clone();
             let current_cwd = app.session.header().cwd.clone();
             if session_cwd != current_cwd {
@@ -1505,6 +1506,33 @@ mod tests {
             after_count < before_count,
             "newSession should reset the conversation: before={before_count}, after={after_count}",
         );
+    }
+
+    #[tokio::test]
+    async fn new_session_preserves_user_models() {
+        // User-defined pricing entries must carry over to a fresh session so
+        // cost resolution keeps working after /new.
+        let model = rho_ai::Model {
+            id: "custom/x".to_string(),
+            name: "custom/x".to_string(),
+            provider: "custom".to_string(),
+            context_window: 0,
+            max_tokens: 0,
+            input: rho_ai::ModelInput::default(),
+            cost: rho_ai::ModelCost {
+                input: 1.0,
+                output: 2.0,
+                cache_read: 0.0,
+                cache_write: 0.0,
+            },
+            thinking: rho_ai::ModelThinking::default(),
+        };
+        let mut app = test_app(MockChatClient::new(vec![]), echo_registry());
+        app.session.user_models = vec![model];
+        let (session_id, _path) = app.start_new_session();
+        assert!(!session_id.is_empty());
+        assert_eq!(app.session.user_models.len(), 1);
+        assert_eq!(app.session.user_models[0].id, "custom/x");
     }
 
     // ═══════════════════════════════════════════════════════════════════════
