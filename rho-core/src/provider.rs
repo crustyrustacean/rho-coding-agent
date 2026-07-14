@@ -876,7 +876,10 @@ mod tests {
         fn new(name: &str, models: &[&str], delay: Duration) -> Self {
             Self {
                 name: name.to_owned(),
-                models: models.iter().map(std::string::ToString::to_string).collect(),
+                models: models
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect(),
                 delay,
             }
         }
