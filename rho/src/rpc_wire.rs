@@ -87,6 +87,15 @@ pub struct GetStateResult {
     pub model: String,
     pub provider: String,
     pub cwd: String,
+    /// Number of conversation messages on the active path.
+    ///
+    /// Duplicates `getSessionStats.messageCount` so a frontend can render a
+    /// banner with one round trip. Additive (`#[serde(default)]`); streaming
+    /// state is NOT here — it's event-driven (`agent/start` + `agent/end`),
+    /// since `getState` is processed serially and can't observe a turn
+    /// mid-flight.
+    #[serde(default)]
+    pub message_count: u64,
 }
 
 /// Result for `setModel`.
@@ -255,6 +264,16 @@ pub struct ResumeSessionResult {
     pub model: String,
     pub cwd: String,
     pub entry_count: u64,
+}
+
+/// Result for `newSession`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewSessionResult {
+    /// The new session's unique id.
+    pub session_id: String,
+    /// Path to the new session's JSONL file (empty for in-memory sessions).
+    pub path: String,
 }
 
 /// Result for `getMessages`. Messages are pre-serialized `Value`s because

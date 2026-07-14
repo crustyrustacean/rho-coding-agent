@@ -79,9 +79,9 @@ use crate::rpc_wire::{
     AgentEndParams, AgentErrorParams, AgentStartParams, ApprovalRequestParams, EmptyResult,
     ExtensionEntry, GetMessagesResult, GetSessionStatsResult, GetStateResult, ListExtensionsResult,
     ListModelsResult, ListProvidersResult, ListSessionsResult, ListToolsResult, MessageDeltaParams,
-    ModelEntry, PromptErrorResult, PromptParams, PromptResult, ProviderEntry, ReadyParams,
-    ReasoningDeltaParams, ResumeSessionParams, ResumeSessionResult, SessionEntry, SetModelParams,
-    SetModelResult, StateChangeParams, ToolCallParams, ToolDeniedParams, ToolEntry,
+    ModelEntry, NewSessionResult, PromptErrorResult, PromptParams, PromptResult, ProviderEntry,
+    ReadyParams, ReasoningDeltaParams, ResumeSessionParams, ResumeSessionResult, SessionEntry,
+    SetModelParams, SetModelResult, StateChangeParams, ToolCallParams, ToolDeniedParams, ToolEntry,
     ToolResultParams, UsageContextWire, UsageDeltaWire, UsageParams, notification, risk_label,
     state_name,
 };
@@ -554,6 +554,7 @@ async fn dispatch_request(
         // `prompt`, `abort`, and `approvalResponse` are routed by the reader
         // task (see `demux_request`) and never reach this dispatch.
         "clear" => handle_clear(app, id, &*transport).await,
+        "newSession" => handle_new_session(app, id, &*transport).await,
         "getState" => handle_get_state(app, id, &*transport).await,
         "getMessages" => handle_get_messages(app, id, &*transport).await,
         "setModel" => match serde_json::from_value::<SetModelParams>(params) {
@@ -709,6 +710,7 @@ async fn handle_get_state(app: &App, id: &Value, transport: &dyn Transport) {
                 model: app.session.model().to_owned(),
                 provider: app.active_provider().name().to_owned(),
                 cwd: app.session.header().cwd.to_string_lossy().into_owned(),
+                message_count: app.session.context_stats().message_count as u64,
             },
         ),
     )
@@ -809,6 +811,23 @@ async fn handle_clear(app: &mut App, id: &Value, transport: &dyn Transport) {
         )
         .await;
     }
+}
+
+/// Start a fresh session, preserving model/provider/tools/budget.
+///
+/// Unlike `clear` (which branches back to the root of the existing tree),
+/// this begins a brand-new conversation: a new JSONL file for persisted
+/// sessions, or a fresh in-memory tree otherwise. The model, provider, tools,
+/// token budget, redactor, reasoning effort, and system prompt are carried
+/// over from the current session. See [`App::start_new_session`].
+async fn handle_new_session(app: &mut App, id: &Value, transport: &dyn Transport) {
+    info!("starting fresh session via RPC");
+    let (session_id, path) = app.start_new_session();
+    send(
+        transport,
+        &success_response(id, NewSessionResult { session_id, path }),
+    )
+    .await;
 }
 
 /// List available models from all providers.
@@ -1389,6 +1408,103 @@ mod tests {
         assert_eq!(resp["result"]["model"], "test-model");
         assert_eq!(resp["result"]["provider"], "test");
         assert!(resp["result"]["cwd"].is_string());
+        assert!(
+            resp["result"]["messageCount"].is_u64(),
+            "getState should report messageCount",
+        );
+    }
+
+    #[tokio::test]
+    async fn get_state_message_count_reflects_conversation() {
+        // Fresh session: only the system prompt.
+        let fresh = rpc_run(
+            MockChatClient::new(vec![]),
+            echo_registry(),
+            &[r#"{"jsonrpc":"2.0","method":"getState","id":1}"#],
+        )
+        .await;
+        let fresh_count = responses(&fresh)[0]["result"]["messageCount"]
+            .as_u64()
+            .expect("messageCount present on fresh session");
+
+        // After a turn: user + assistant messages are added.
+        let after = rpc_run(
+            MockChatClient::new(vec![text_events("hello world")]),
+            echo_registry(),
+            &[
+                r#"{"jsonrpc":"2.0","method":"prompt","params":{"message":"say hello"},"id":1}"#,
+                r#"{"jsonrpc":"2.0","method":"getState","id":2}"#,
+            ],
+        )
+        .await;
+        let after_responses = responses(&after);
+        let after_resp = after_responses
+            .iter()
+            .find(|r| r["id"] == 2)
+            .expect("post-turn getState response");
+        let after_count = after_resp["result"]["messageCount"]
+            .as_u64()
+            .expect("messageCount present after turn");
+
+        assert!(
+            after_count > fresh_count,
+            "messageCount should grow after a turn: fresh={fresh_count}, after={after_count}",
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 3b. Method: newSession
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn new_session_resets_conversation_preserving_model() {
+        // Run a turn (adds user + assistant messages), snapshot the count,
+        // start a fresh session, then snapshot the count again.
+        let events = rpc_run(
+            MockChatClient::new(vec![text_events("hello world")]),
+            echo_registry(),
+            &[
+                r#"{"jsonrpc":"2.0","method":"prompt","params":{"message":"say hello"},"id":1}"#,
+                r#"{"jsonrpc":"2.0","method":"getState","id":2}"#,
+                r#"{"jsonrpc":"2.0","method":"newSession","id":3}"#,
+                r#"{"jsonrpc":"2.0","method":"getState","id":4}"#,
+            ],
+        )
+        .await;
+
+        let resps = responses(&events);
+        let before = resps
+            .iter()
+            .find(|r| r["id"] == 2)
+            .expect("before getState");
+        let new_session = resps
+            .iter()
+            .find(|r| r["id"] == 3)
+            .expect("newSession response");
+        let after = resps.iter().find(|r| r["id"] == 4).expect("after getState");
+
+        // newSession returns a fresh, non-empty session id.
+        let session_id = new_session["result"]["sessionId"]
+            .as_str()
+            .expect("sessionId is a string");
+        assert!(!session_id.is_empty());
+
+        // The model is carried over to the new session.
+        assert_eq!(after["result"]["model"], "test-model");
+
+        // The conversation was reset: the post-newSession count is strictly
+        // smaller than the post-turn count (the turn's user/assistant messages
+        // are gone). Robust to whether the system prompt is counted.
+        let before_count = before["result"]["messageCount"]
+            .as_u64()
+            .expect("before messageCount");
+        let after_count = after["result"]["messageCount"]
+            .as_u64()
+            .expect("after messageCount");
+        assert!(
+            after_count < before_count,
+            "newSession should reset the conversation: before={before_count}, after={after_count}",
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════════
