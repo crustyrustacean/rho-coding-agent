@@ -161,6 +161,10 @@ pub struct Session {
     pub reasoning_effort: Option<String>,
     /// Tool schemas sent with every request.
     pub tools: Vec<rho_ai::ToolDefinition>,
+    /// User-defined model pricing entries (`[[models]]`), consulted by
+    /// `route_response` (exact id) before the built-in catalog so sessions
+    /// for unresolvable models still accrue cost.
+    pub user_models: Vec<rho_ai::Model>,
     /// Context window manager applied before each request.
     context_manager: Box<dyn ContextManager>,
     /// Token budget for the context manager.

@@ -76,6 +76,7 @@ impl Session {
             schema_overhead_cache: std::cell::Cell::new(None),
             persist: PersistState::with_path(save_path, 0),
             api_usage: crate::session::context_stats::ApiUsage::default(),
+            user_models: Vec::new(),
         }
     }
 
@@ -130,6 +131,7 @@ impl Session {
             schema_overhead_cache: std::cell::Cell::new(None),
             persist: PersistState::in_memory(),
             api_usage: crate::session::context_stats::ApiUsage::default(),
+            user_models: Vec::new(),
         }
     }
 
@@ -183,6 +185,7 @@ impl Session {
             schema_overhead_cache: std::cell::Cell::new(None),
             persist: persist_state,
             api_usage: crate::session::context_stats::ApiUsage::default(),
+            user_models: Vec::new(),
         }
     }
 
@@ -213,6 +216,14 @@ impl Session {
     #[must_use]
     pub fn with_reasoning_effort(mut self, effort: impl Into<String>) -> Self {
         self.reasoning_effort = Some(effort.into());
+        self
+    }
+
+    /// Set user-defined model pricing entries (consulted by `route_response`
+    /// before the built-in catalog).
+    #[must_use]
+    pub fn with_user_models(mut self, user_models: Vec<rho_ai::Model>) -> Self {
+        self.user_models = user_models;
         self
     }
 
@@ -247,6 +258,12 @@ impl Session {
     /// different redaction settings).
     pub fn set_redactor(&mut self, redactor: Redactor) {
         self.redactor = redactor;
+    }
+
+    /// Override the user-defined model pricing entries (useful when resuming
+    /// or starting a fresh session with the same pricing overrides).
+    pub fn set_user_models(&mut self, user_models: Vec<rho_ai::Model>) {
+        self.user_models = user_models;
     }
 }
 
@@ -285,6 +302,29 @@ mod tests {
         let session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
             .with_token_budget(TokenBudget::new(4096));
         assert_eq!(session.token_budget().context_window, 4096);
+    }
+
+    #[test]
+    fn with_user_models_sets_entries() {
+        let model = rho_ai::Model {
+            id: "custom/id".to_string(),
+            name: "custom/id".to_string(),
+            provider: "custom".to_string(),
+            context_window: 0,
+            max_tokens: 0,
+            input: rho_ai::ModelInput::default(),
+            cost: rho_ai::ModelCost {
+                input: 1.0,
+                output: 2.0,
+                cache_read: 0.0,
+                cache_write: 0.0,
+            },
+            thinking: rho_ai::ModelThinking::default(),
+        };
+        let session =
+            Session::in_memory("m", Some("sys"), vec![], "/tmp").with_user_models(vec![model]);
+        assert_eq!(session.user_models.len(), 1);
+        assert_eq!(session.user_models[0].id, "custom/id");
     }
 
     #[test]
