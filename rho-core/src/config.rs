@@ -55,6 +55,12 @@ pub struct RhoConfig {
     pub agent: AgentLoopConfig,
     /// Model provider settings (one or more providers).
     pub provider: ProviderSettings,
+    /// User-defined model pricing entries (`[[models]]`).
+    ///
+    /// Lets users supply pricing for models the built-in catalog can't
+    /// resolve (Groq `-instant` ids, self-hosted, fine-tunes) so cost
+    /// accrues instead of surfacing "cost n/a".
+    pub models: Vec<UserModelConfig>,
     /// Per-tool approval policies.
     pub approval: ApprovalConfig,
     /// Shell command safety settings.
@@ -354,6 +360,60 @@ pub struct ProviderSettings {
     /// Ordered list of provider configurations. The first entry is the
     /// default provider.
     pub providers: Vec<ProviderConfig>,
+}
+
+// ── UserModelConfig ───────────────────────────────────────────────────────────
+
+/// A user-defined model pricing entry (`[[models]]`).
+///
+/// Supplies per-million-token pricing for a model the built-in catalog
+/// can't resolve — e.g. a Groq `-instant` id, a self-hosted fine-tune, or
+/// any model whose id doesn't match the OpenRouter-derived catalog. Cost
+/// resolution consults these (by exact id) before the built-in catalog, so
+/// a session whose model matches an entry accrues cost instead of showing
+/// "cost n/a".
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct UserModelConfig {
+    /// Exact model id matched against the session's model string.
+    pub id: String,
+    /// Optional provider slug (informational; reserved for future
+    /// disambiguation).
+    #[serde(default)]
+    pub provider: Option<String>,
+    /// USD per million input tokens.
+    pub input_price: f64,
+    /// USD per million output tokens.
+    pub output_price: f64,
+    /// USD per million cached-read input tokens (prompt caching), if the
+    /// provider reports cache reads. Optional.
+    #[serde(default)]
+    pub cached_price: Option<f64>,
+}
+
+impl UserModelConfig {
+    /// Convert to a catalog [`rho_ai::Model`] for cost resolution.
+    ///
+    /// Only pricing-relevant fields are populated; context window, max
+    /// tokens, and modalities default, since cost computation uses `cost`
+    /// alone.
+    #[must_use]
+    pub fn to_catalog_model(&self) -> rho_ai::Model {
+        rho_ai::Model {
+            id: self.id.clone(),
+            name: self.id.clone(),
+            provider: self.provider.clone().unwrap_or_default(),
+            context_window: 0,
+            max_tokens: 0,
+            input: rho_ai::ModelInput::default(),
+            cost: rho_ai::ModelCost {
+                input: self.input_price,
+                output: self.output_price,
+                cache_read: self.cached_price.unwrap_or(0.0),
+                cache_write: 0.0,
+            },
+            thinking: rho_ai::ModelThinking::default(),
+        }
+    }
 }
 
 impl ProviderSettings {
@@ -668,6 +728,9 @@ struct WireConfig {
     /// New multi-provider config (`[[providers]]`).
     #[serde(default)]
     providers: Option<Vec<ProviderConfig>>,
+    /// User-defined model pricing (`[[models]]`).
+    #[serde(default)]
+    models: Option<Vec<UserModelConfig>>,
     /// Approval settings.
     #[serde(default)]
     approval: Option<ApprovalConfig>,
@@ -1100,6 +1163,20 @@ impl ConfigLoader {
                 resolve_presets(&mut entries);
 
                 ProviderSettings { providers: entries }
+            },
+            models: {
+                // Project-level overrides user-level by id; user-only
+                // entries are preserved.
+                let mut by_id: std::collections::HashMap<String, UserModelConfig> = user
+                    .models
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|m| (m.id.clone(), m))
+                    .collect();
+                for m in project.models.unwrap_or_default() {
+                    by_id.insert(m.id.clone(), m);
+                }
+                by_id.into_values().collect()
             },
             approval: project.approval.or(user.approval).unwrap_or_default(),
             shell: ShellConfig {
@@ -2413,5 +2490,88 @@ network = true
         let config = ConfigLoader::merge(Some(user_wire), None);
         assert_eq!(config.extensions.enabled, vec!["crates-search"]);
         assert_eq!(config.extensions.defaults.network, Some(true));
+    }
+
+    #[test]
+    fn models_section_parses_user_pricing() {
+        let wire: WireConfig = toml::from_str(
+            r#"
+[[models]]
+id = "llama-3.1-8b-instant"
+provider = "groq"
+input_price = 0.05
+output_price = 0.08
+cached_price = 0.01
+
+[[models]]
+id = "my-self-hosted"
+input_price = 0.0
+output_price = 0.0
+"#,
+        )
+        .unwrap();
+        let config = ConfigLoader::merge(Some(wire), None);
+        assert_eq!(config.models.len(), 2);
+        let groq = config
+            .models
+            .iter()
+            .find(|m| m.id == "llama-3.1-8b-instant")
+            .expect("groq model present");
+        assert_eq!(groq.provider.as_deref(), Some("groq"));
+        assert!((groq.input_price - 0.05).abs() < 1e-9);
+        assert_eq!(groq.cached_price, Some(0.01));
+        let self_hosted = config
+            .models
+            .iter()
+            .find(|m| m.id == "my-self-hosted")
+            .expect("self-hosted model present");
+        assert!(self_hosted.provider.is_none());
+        assert!(self_hosted.cached_price.is_none());
+    }
+
+    #[test]
+    fn models_project_overrides_user_by_id() {
+        let user_wire: WireConfig = toml::from_str(
+            r#"
+[[models]]
+id = "m"
+input_price = 1.0
+output_price = 2.0
+"#,
+        )
+        .unwrap();
+        let project_wire: WireConfig = toml::from_str(
+            r#"
+[[models]]
+id = "m"
+input_price = 9.0
+output_price = 9.0
+"#,
+        )
+        .unwrap();
+        let config = ConfigLoader::merge(Some(user_wire), Some(project_wire));
+        assert_eq!(config.models.len(), 1, "project overrides user by id");
+        let m = config.models.iter().find(|m| m.id == "m").unwrap();
+        assert!((m.input_price - 9.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn user_model_config_to_catalog_model_carries_pricing() {
+        let cfg = UserModelConfig {
+            id: "x".into(),
+            provider: Some("p".into()),
+            input_price: 3.0,
+            output_price: 4.0,
+            cached_price: Some(0.5),
+        };
+        let m = cfg.to_catalog_model();
+        assert_eq!(m.id, "x");
+        assert_eq!(m.provider, "p");
+        assert!((m.cost.input - 3.0).abs() < 1e-9);
+        assert!((m.cost.output - 4.0).abs() < 1e-9);
+        assert!((m.cost.cache_read - 0.5).abs() < 1e-9);
+        // Priced (not sentinel) → cost_for yields a usable value.
+        let usage = rho_ai::StreamUsage::new(1_000_000, 0);
+        assert!(m.cost_for(&usage).is_some());
     }
 }
