@@ -341,7 +341,14 @@ impl App {
             mode: session_mode,
         };
 
-        let session = build_session(session_config)?;
+        let mut session = build_session(session_config)?;
+        session.set_user_models(
+            config
+                .models
+                .iter()
+                .map(rho_core::config::UserModelConfig::to_catalog_model)
+                .collect(),
+        );
 
         // ── 17. Budget diagnostics ───────────────────────────────────────
         log_budget_diagnostics(&session);
@@ -386,6 +393,7 @@ impl App {
         let reasoning = self.session.reasoning_effort.clone();
         let tool_schemas = self.registry.tool_definitions();
         let system_prompt = self.session.system_prompt().map(str::to_owned);
+        let user_models = self.session.user_models.clone();
 
         let mut session = if self.session.save_path().is_some() {
             rho_core::Session::new(&model, system_prompt.as_deref(), tool_schemas, cwd)
@@ -393,7 +401,8 @@ impl App {
             rho_core::Session::in_memory(&model, system_prompt.as_deref(), tool_schemas, cwd)
         }
         .with_token_budget(budget)
-        .with_redactor(redactor);
+        .with_redactor(redactor)
+        .with_user_models(user_models);
         if let Some(effort) = reasoning {
             session = session.with_reasoning_effort(&effort);
         }

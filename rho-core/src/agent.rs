@@ -1751,17 +1751,20 @@ pub(crate) fn route_response(
     //
     // Cost enrichment: providers other than OpenRouter don't send a dollar
     // cost in the usage object. When the provider left `cost` unset, fall back
-    // to the model catalog's per-million pricing. `Catalog::resolve` tolerates
-    // native-provider bare ids (e.g. `gpt-4o-2024-08-06`) via basename matching,
-    // so native OpenAI/Groq sessions accrue cost too; a provider hint for
-    // disambiguation is threaded in Phase 2. Sentinels (negatively-priced
-    // router models) yield `None`, which surfaces downstream as "cost n/a"
-    // rather than a misleading $0.00.
+    // in order: (1) a user-defined `[[models]]` entry matching the model by
+    // exact id, then (2) the built-in catalog via `Catalog::resolve` (basename
+    // matching, tolerating native bare ids like `gpt-4o-2024-08-06`). User
+    // entries win so unresolvable models (Groq `-instant`, self-hosted) still
+    // accrue cost, and so users can override catalog pricing. Sentinels
+    // (negatively-priced router models) yield `None`, which surfaces
+    // downstream as "cost n/a" rather than a misleading $0.00.
     let mut usage = acc.usage.clone();
-    if usage.cost.is_none()
-        && let Some(model) = rho_ai::Catalog::resolve(None, &session.model)
-    {
-        usage.cost = model.cost_for(&usage);
+    if usage.cost.is_none() {
+        if let Some(user_model) = session.user_models.iter().find(|m| m.id == session.model) {
+            usage.cost = user_model.cost_for(&usage);
+        } else if let Some(model) = rho_ai::Catalog::resolve(None, &session.model) {
+            usage.cost = model.cost_for(&usage);
+        }
     }
     session.accumulate_usage(&usage);
 
@@ -2541,6 +2544,80 @@ mod tests {
         assert!(
             session.api_usage().total_cost > 0.0,
             "bare native id should resolve via catalog basename; got {}",
+            session.api_usage().total_cost,
+        );
+    }
+
+    #[test]
+    fn route_response_enriches_cost_from_user_defined_model() {
+        // A model the catalog can't resolve (invented id) is priced via a
+        // user-defined [[models]] entry instead of surfacing "cost n/a".
+        let mut session = test_session(None, &[], vec![]);
+        session.model = "groq/llama-3.1-8b-instant".to_string();
+        session.user_models = vec![rho_ai::Model {
+            id: "groq/llama-3.1-8b-instant".to_string(),
+            name: "groq/llama-3.1-8b-instant".to_string(),
+            provider: "groq".to_string(),
+            context_window: 0,
+            max_tokens: 0,
+            input: rho_ai::ModelInput::default(),
+            cost: rho_ai::ModelCost {
+                input: 0.05,
+                output: 0.08,
+                cache_read: 0.0,
+                cache_write: 0.0,
+            },
+            thinking: rho_ai::ModelThinking::default(),
+        }];
+        let acc = rho_ai::AccumulatedResponse {
+            text: "hi".into(),
+            reasoning: String::new(),
+            tool_calls: vec![],
+            stop_reason: rho_ai::StopReason::EndTurn,
+            usage: rho_ai::StreamUsage::new(1_000_000, 0),
+        };
+        let _ = route_response(&acc, &mut session).unwrap();
+        // 1M input @ $0.05/M = $0.05
+        assert!(
+            (session.api_usage().total_cost - 0.05).abs() < 1e-9,
+            "user-defined model should price the turn; got {}",
+            session.api_usage().total_cost,
+        );
+    }
+
+    #[test]
+    fn route_response_user_model_overrides_catalog() {
+        // When a user-defined entry shares the id with a catalog entry, the
+        // user's pricing wins (consulted first).
+        let mut session = test_session(None, &[], vec![]);
+        session.model = "z-ai/glm-5.2".to_string(); // catalog input is 1.4
+        session.user_models = vec![rho_ai::Model {
+            id: "z-ai/glm-5.2".to_string(),
+            name: "z-ai/glm-5.2".to_string(),
+            provider: "z-ai".to_string(),
+            context_window: 0,
+            max_tokens: 0,
+            input: rho_ai::ModelInput::default(),
+            cost: rho_ai::ModelCost {
+                input: 9.0,
+                output: 0.0,
+                cache_read: 0.0,
+                cache_write: 0.0,
+            },
+            thinking: rho_ai::ModelThinking::default(),
+        }];
+        let acc = rho_ai::AccumulatedResponse {
+            text: "hi".into(),
+            reasoning: String::new(),
+            tool_calls: vec![],
+            stop_reason: rho_ai::StopReason::EndTurn,
+            usage: rho_ai::StreamUsage::new(1_000_000, 0),
+        };
+        let _ = route_response(&acc, &mut session).unwrap();
+        // User's $9.0/M input wins, not the catalog's $1.4.
+        assert!(
+            (session.api_usage().total_cost - 9.0).abs() < 1e-9,
+            "user model pricing should override the catalog; got {}",
             session.api_usage().total_cost,
         );
     }
