@@ -416,32 +416,6 @@ impl App {
         (session_id, path)
     }
 
-    /// Switch the active model.
-    ///
-    /// Accepts a bare model ID or `provider:model` syntax:
-    ///
-    /// - **Bare `model_id`**: Discovers which provider serves the model via
-    ///   `/v1/models`, switches `active_provider_index`, then updates the
-    ///   session and extension observers.
-    ///
-    /// - **`provider:model_id`**: Switches to the named provider directly
-    ///   (no model discovery), then sets the model string. Useful when the
-    ///   target provider is slow to respond or doesn't support `/v1/models`.
-    ///
-    /// # Rejections
-    ///
-    /// A switch is **rejected** (returning [`SetModelError`]) and the session
-    /// is left untouched when the model cannot be routed to a real provider:
-    ///
-    /// - Bare `model_id` not advertised by any provider's `/v1/models`.
-    /// - `provider:model_id` where the named provider is not configured.
-    ///
-    /// Rejecting (rather than accepting the string verbatim) prevents the
-    /// frontend from reporting a successful switch that only fails on the
-    /// next prompt with an opaque HTTP error. Note that `provider:model_id`
-    /// with a *known* provider still trusts the user's assertion that the
-    /// model exists there, since discovery is intentionally skipped on that
-    /// path.
     pub(crate) async fn set_model(&mut self, spec: &str) -> Result<(), SetModelError> {
         // Parse optional `provider:model` syntax.
         let (explicit_provider, model_id) = if let Some((provider, model)) = spec.split_once(':') {
@@ -451,11 +425,6 @@ impl App {
         };
 
         if let Some(provider_name) = explicit_provider {
-            // Explicit provider selection — switch by name without model discovery.
-            // A known provider is trusted (the model string is set as-is, useful
-            // when the provider is slow or doesn't support /v1/models), but an
-            // unknown provider name is a hard error: there is nothing to route
-            // the request to.
             if let Some(index) = self.providers.index_of(provider_name) {
                 let old_provider = self.active_provider().name().to_owned();
                 self.active_provider_index = index;
@@ -501,8 +470,26 @@ impl App {
             });
         }
 
+        // Re-compute the token budget from the catalog so that switching to
+        // a model with a smaller context window immediately takes effect,
+        // rather than keeping the old model's larger budget.
+        let catalog_model = rho_ai::Catalog::find_built_in(model_id);
+        let new_budget = build_token_budget_for_model(
+            catalog_model,
+            self.session.token_budget().context_window,
+            self.session.token_budget().completion_reserve,
+        );
+        self.session.set_token_budget(new_budget);
+
         self.session.set_model(model_id);
         self.ext_loader.set_model_all(model_id).await;
+
+        tracing::info!(
+            model = %model_id,
+            context_window = new_budget.context_window,
+            completion_reserve = new_budget.completion_reserve,
+            "model switched, token budget updated"
+        );
         Ok(())
     }
 
@@ -733,6 +720,25 @@ fn build_token_budget(
 
     TokenBudget::with_reserve(context_window, completion_reserve)
 }
+
+/// Determine the token budget from a catalog model's context window, falling
+/// back to the config's token_budget setting.
+fn build_token_budget_for_model(
+    catalog_model: Option<&rho_ai::Model>,
+    current_context_window: usize,
+    current_completion_reserve: usize,
+) -> TokenBudget {
+    let context_window = catalog_model.map_or(
+        current_context_window,
+        |m| usize::try_from(m.context_window).unwrap_or(usize::MAX),
+    );
+    let completion_reserve = catalog_model.map_or_else(
+        || current_completion_reserve,
+        |m| current_completion_reserve.min(usize::try_from(m.max_tokens).unwrap_or(usize::MAX)),
+    );
+    TokenBudget::with_reserve(context_window, completion_reserve)
+}
+
 
 /// Construct the session.
 ///
