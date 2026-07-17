@@ -416,6 +416,18 @@ impl App {
         (session_id, path)
     }
 
+    /// Switch the active model at runtime, optionally targeting a specific provider.
+    ///
+    /// Accepts either a bare model id (resolved against all providers' `/v1/models`
+    /// listings) or `provider:model` syntax to explicitly select a provider. On
+    /// success, updates the session's model, recomputes the token budget from the
+    /// catalog, and propagates the new model id to all loaded extensions.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SetModelError::ModelNotFound`] if a bare model id is not
+    /// advertised by any provider, or [`SetModelError::UnknownProvider`] if the
+    /// `provider:` prefix names a provider that isn't configured.
     pub(crate) async fn set_model(&mut self, spec: &str) -> Result<(), SetModelError> {
         // Parse optional `provider:model` syntax.
         let (explicit_provider, model_id) = if let Some((provider, model)) = spec.split_once(':') {
@@ -722,23 +734,21 @@ fn build_token_budget(
 }
 
 /// Determine the token budget from a catalog model's context window, falling
-/// back to the config's token_budget setting.
+/// back to the config's `token_budget` setting.
 fn build_token_budget_for_model(
     catalog_model: Option<&rho_ai::Model>,
     current_context_window: usize,
     current_completion_reserve: usize,
 ) -> TokenBudget {
-    let context_window = catalog_model.map_or(
-        current_context_window,
-        |m| usize::try_from(m.context_window).unwrap_or(usize::MAX),
-    );
+    let context_window = catalog_model.map_or(current_context_window, |m| {
+        usize::try_from(m.context_window).unwrap_or(usize::MAX)
+    });
     let completion_reserve = catalog_model.map_or_else(
         || current_completion_reserve,
         |m| current_completion_reserve.min(usize::try_from(m.max_tokens).unwrap_or(usize::MAX)),
     );
     TokenBudget::with_reserve(context_window, completion_reserve)
 }
-
 
 /// Construct the session.
 ///
