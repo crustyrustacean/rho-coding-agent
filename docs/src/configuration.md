@@ -46,7 +46,8 @@ Built-in presets:
 | `openrouter` | `https://openrouter.ai/api/v1/chat/completions` | `OPENROUTER_API_KEY` | Remote |
 | `openai` | `https://api.openai.com/v1/chat/completions` | `OPENAI_API_KEY` | Remote |
 | `groq` | `https://api.groq.com/openai/v1/chat/completions` | `GROQ_API_KEY` | Remote |
-| `zai` | `https://api.z.ai/api/paas/v4/chat/completions` | `ZAI_API_KEY` | Remote; models endpoint at `/api/v1/models` |
+| `zai` | `https://api.z.ai/api/paas/v4/chat/completions` | `ZAI_API_KEY` | Z.ai **platform** (pay-as-you-go); models endpoint at `/api/v1/models` |
+| `zai-coding` | `https://api.z.ai/api/coding/paas/v4/chat/completions` | `ZAI_API_KEY` | Z.ai **Coding Plan** subscription; models endpoint derived (`/api/coding/paas/v4/models`) |
 
 Resolution rules:
 
@@ -55,6 +56,7 @@ Resolution rules:
 - If `preset` is set and `api_key_env` is not set → a hint is logged at startup (not auto-injected)
 - If `preset` is set and `models_endpoint` is also not set and the preset provides one → the preset's `models_endpoint` is used
 - If `preset` is set and `models_endpoint` is also set → `models_endpoint` wins (preset is informational)
+- If `preset` is set and `endpoint` is overridden to a **different** URL than the preset's → the preset's `models_endpoint` is **skipped** (it would target the wrong API), and the models URL is derived from the chat endpoint instead
 - Unknown presets → warning logged, treated as if no preset was set
 
 ## Full configuration reference
