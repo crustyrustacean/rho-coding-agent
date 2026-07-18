@@ -976,9 +976,7 @@ fn resolve_presets(providers: &mut [ProviderConfig]) {
         if p.name.is_none() {
             p.name = Some(preset.name.to_owned());
         }
-        if p.models_endpoint.is_none()
-            && !preset.models_endpoint.is_empty()
-            && !endpoint_overridden
+        if p.models_endpoint.is_none() && !preset.models_endpoint.is_empty() && !endpoint_overridden
         {
             p.models_endpoint = Some(preset.models_endpoint.to_owned());
         }
@@ -2277,9 +2275,7 @@ model = "gpt-4o"
         // derived from the coding chat endpoint instead.
         let mut providers = vec![ProviderConfig {
             preset: Some("zai".to_owned()),
-            endpoint: Some(
-                "https://api.z.ai/api/coding/paas/v4/chat/completions".to_owned(),
-            ),
+            endpoint: Some("https://api.z.ai/api/coding/paas/v4/chat/completions".to_owned()),
             ..Default::default()
         }];
         resolve_presets(&mut providers);
@@ -2311,9 +2307,7 @@ model = "gpt-4o"
         // as an override — the preset's models_endpoint still applies.
         let mut providers = vec![ProviderConfig {
             preset: Some("zai".to_owned()),
-            endpoint: Some(
-                "https://api.z.ai/api/paas/v4/chat/completions".to_owned(),
-            ),
+            endpoint: Some("https://api.z.ai/api/paas/v4/chat/completions".to_owned()),
             ..Default::default()
         }];
         resolve_presets(&mut providers);
