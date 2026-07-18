@@ -1419,7 +1419,8 @@ api_key_env = "OPENROUTER_API_KEY"
 <tr><td><code>openrouter</code></td><td><code>https://openrouter.ai/api/v1/chat/completions</code></td><td><code>OPENROUTER_API_KEY</code></td><td>Remote</td></tr>
 <tr><td><code>openai</code></td><td><code>https://api.openai.com/v1/chat/completions</code></td><td><code>OPENAI_API_KEY</code></td><td>Remote</td></tr>
 <tr><td><code>groq</code></td><td><code>https://api.groq.com/openai/v1/chat/completions</code></td><td><code>GROQ_API_KEY</code></td><td>Remote</td></tr>
-<tr><td><code>zai</code></td><td><code>https://api.z.ai/api/paas/v4/chat/completions</code></td><td><code>ZAI_API_KEY</code></td><td>Remote; models endpoint at <code>/api/v1/models</code></td></tr>
+<tr><td><code>zai</code></td><td><code>https://api.z.ai/api/paas/v4/chat/completions</code></td><td><code>ZAI_API_KEY</code></td><td>Z.ai <strong>platform</strong> (pay-as-you-go); models endpoint at <code>/api/v1/models</code></td></tr>
+<tr><td><code>zai-coding</code></td><td><code>https://api.z.ai/api/coding/paas/v4/chat/completions</code></td><td><code>ZAI_API_KEY</code></td><td>Z.ai <strong>Coding Plan</strong> subscription; models endpoint derived (<code>/api/coding/paas/v4/models</code>)</td></tr>
 </tbody></table>
 </div>
 <p>Resolution rules:</p>
@@ -1429,6 +1430,7 @@ api_key_env = "OPENROUTER_API_KEY"
 <li>If <code>preset</code> is set and <code>api_key_env</code> is not set → a hint is logged at startup (not auto-injected)</li>
 <li>If <code>preset</code> is set and <code>models_endpoint</code> is also not set and the preset provides one → the preset's <code>models_endpoint</code> is used</li>
 <li>If <code>preset</code> is set and <code>models_endpoint</code> is also set → <code>models_endpoint</code> wins (preset is informational)</li>
+<li>If <code>preset</code> is set and <code>endpoint</code> is overridden to a <strong>different</strong> URL than the preset's → the preset's <code>models_endpoint</code> is <strong>skipped</strong> (it would target the wrong API), and the models URL is derived from the chat endpoint instead</li>
 <li>Unknown presets → warning logged, treated as if no preset was set</li>
 </ul>
 <h2 id="full-configuration-reference"><a class="header" href="#full-configuration-reference">Full configuration reference</a></h2>
@@ -1797,6 +1799,19 @@ provider = "zai"
 preset = "zai"
 api_key_env = "ZAI_API_KEY"
 </code></pre>
+<h4 id="zai-coding-plan-subscription"><a class="header" href="#zai-coding-plan-subscription">Z.ai Coding Plan (subscription)</a></h4>
+<p>If you have a <strong>z.ai Coding Plan</strong> subscription (the one built for Claude Code / Cline / similar), use the <code>zai-coding</code> preset instead. It targets the subscription endpoint (<code>/api/coding/paas/v4/...</code>) and derives the models URL from it (<code>/api/coding/paas/v4/models</code>):</p>
+<pre><code class="language-toml">[agent]
+model = "glm-5-turbo"
+provider = "zai"
+
+[[providers]]
+preset = "zai-coding"
+api_key_env = "ZAI_API_KEY"
+</code></pre>
+<blockquote>
+<p><strong>Don't mix</strong> <code>preset = "zai"</code> with a Coding Plan <code>endpoint</code> override. If you do, rho now detects the mismatch and derives the models URL from your chat endpoint instead of the platform <code>/api/v1/models</code> — so it still works — but <code>zai-coding</code> is the cleaner choice.</p>
+</blockquote>
 <h3 id="ollama-remote"><a class="header" href="#ollama-remote">Ollama (remote)</a></h3>
 <p>If you run Ollama on a different machine, point the endpoint at it:</p>
 <pre><code class="language-sh">rho --endpoint http://192.168.1.100:11434/v1/chat/completions --model llama3
