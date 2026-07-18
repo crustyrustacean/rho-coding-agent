@@ -921,6 +921,20 @@ fn presets() -> &'static std::collections::HashMap<&'static str, ProviderPreset>
                 models_endpoint: "https://api.z.ai/api/v1/models",
             },
         );
+        m.insert(
+            "zai-coding",
+            ProviderPreset {
+                // Same `name` as the platform preset so `z.ai/...` model
+                // routing stays consistent; the two are mutually exclusive
+                // in practice (pay-as-you-go platform vs Coding Plan).
+                name: "zai",
+                endpoint: "https://api.z.ai/api/coding/paas/v4/chat/completions",
+                api_key_env: "ZAI_API_KEY",
+                // Empty so the models URL is derived from the coding chat
+                // endpoint → `/api/coding/paas/v4/models`.
+                models_endpoint: "",
+            },
+        );
         m
     })
 }
@@ -935,6 +949,11 @@ fn presets() -> &'static std::collections::HashMap<&'static str, ProviderPreset>
 /// - If the preset is unknown, log a warning and skip.
 /// - If both `preset` and `endpoint`/`name` are set, the explicit values
 ///   win (preset only fills gaps).
+/// - If `models_endpoint` is unset and the preset provides one, it's used —
+///   *unless* `endpoint` was explicitly set to a different URL than the
+///   preset's, in which case the preset's `models_endpoint` is skipped (it
+///   would target the wrong API, e.g. z.ai's Coding Plan vs platform API)
+///   and the models URL is derived from the chat endpoint instead.
 fn resolve_presets(providers: &mut [ProviderConfig]) {
     for p in providers {
         let Some(preset_name) = &p.preset else {
@@ -944,13 +963,23 @@ fn resolve_presets(providers: &mut [ProviderConfig]) {
             tracing::warn!(preset = %preset_name, "unknown provider preset");
             continue;
         };
+        // A user-provided endpoint that differs from the preset's means the
+        // provider has been pointed elsewhere (e.g. z.ai's Coding Plan uses
+        // `/api/coding/...` vs the platform `/api/paas/v4/...`). The preset's
+        // `models_endpoint` would then target the wrong API, so skip it and
+        // let the models URL be derived from the actual chat endpoint.
+        let endpoint_overridden =
+            p.endpoint.is_some() && p.endpoint.as_deref() != Some(preset.endpoint);
         if p.endpoint.is_none() {
             p.endpoint = Some(preset.endpoint.to_owned());
         }
         if p.name.is_none() {
             p.name = Some(preset.name.to_owned());
         }
-        if p.models_endpoint.is_none() && !preset.models_endpoint.is_empty() {
+        if p.models_endpoint.is_none()
+            && !preset.models_endpoint.is_empty()
+            && !endpoint_overridden
+        {
             p.models_endpoint = Some(preset.models_endpoint.to_owned());
         }
         if p.api_key_env.is_none() && !preset.api_key_env.is_empty() {
@@ -2211,6 +2240,86 @@ model = "gpt-4o"
         assert_eq!(
             providers[0].endpoint.as_deref(),
             Some("http://custom:1234/v1")
+        );
+    }
+
+    #[test]
+    fn preset_zai_coding_resolves_endpoint_and_name() {
+        let mut providers = vec![ProviderConfig {
+            preset: Some("zai-coding".to_owned()),
+            ..Default::default()
+        }];
+        resolve_presets(&mut providers);
+        assert_eq!(providers[0].name.as_deref(), Some("zai"));
+        assert_eq!(
+            providers[0].endpoint.as_deref(),
+            Some("https://api.z.ai/api/coding/paas/v4/chat/completions")
+        );
+    }
+
+    #[test]
+    fn preset_zai_coding_leaves_models_endpoint_none() {
+        // models_endpoint is derived from the chat endpoint at request time,
+        // so the coding preset must NOT fill it.
+        let mut providers = vec![ProviderConfig {
+            preset: Some("zai-coding".to_owned()),
+            ..Default::default()
+        }];
+        resolve_presets(&mut providers);
+        assert!(providers[0].models_endpoint.is_none());
+    }
+
+    #[test]
+    fn preset_models_endpoint_skipped_when_endpoint_overridden() {
+        // The user's actual config: platform `zai` preset but the Coding Plan
+        // endpoint. The preset's `/api/v1/models` must NOT be applied — it
+        // would 401 with a Coding-Plan key. It stays None so the models URL is
+        // derived from the coding chat endpoint instead.
+        let mut providers = vec![ProviderConfig {
+            preset: Some("zai".to_owned()),
+            endpoint: Some(
+                "https://api.z.ai/api/coding/paas/v4/chat/completions".to_owned(),
+            ),
+            ..Default::default()
+        }];
+        resolve_presets(&mut providers);
+        assert_eq!(
+            providers[0].endpoint.as_deref(),
+            Some("https://api.z.ai/api/coding/paas/v4/chat/completions")
+        );
+        assert!(providers[0].models_endpoint.is_none());
+    }
+
+    #[test]
+    fn preset_models_endpoint_applied_when_endpoint_inherited() {
+        // Standard zai (no endpoint override) still gets the preset's
+        // /api/v1/models models endpoint.
+        let mut providers = vec![ProviderConfig {
+            preset: Some("zai".to_owned()),
+            ..Default::default()
+        }];
+        resolve_presets(&mut providers);
+        assert_eq!(
+            providers[0].models_endpoint.as_deref(),
+            Some("https://api.z.ai/api/v1/models")
+        );
+    }
+
+    #[test]
+    fn preset_models_endpoint_applied_when_endpoint_equals_preset() {
+        // An explicit endpoint that matches the preset exactly is not treated
+        // as an override — the preset's models_endpoint still applies.
+        let mut providers = vec![ProviderConfig {
+            preset: Some("zai".to_owned()),
+            endpoint: Some(
+                "https://api.z.ai/api/paas/v4/chat/completions".to_owned(),
+            ),
+            ..Default::default()
+        }];
+        resolve_presets(&mut providers);
+        assert_eq!(
+            providers[0].models_endpoint.as_deref(),
+            Some("https://api.z.ai/api/v1/models")
         );
     }
 

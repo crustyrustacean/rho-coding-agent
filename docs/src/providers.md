@@ -256,6 +256,22 @@ preset = "zai"
 api_key_env = "ZAI_API_KEY"
 ```
 
+#### Z.ai Coding Plan (subscription)
+
+If you have a **z.ai Coding Plan** subscription (the one built for Claude Code / Cline / similar), use the `zai-coding` preset instead. It targets the subscription endpoint (`/api/coding/paas/v4/...`) and derives the models URL from it (`/api/coding/paas/v4/models`):
+
+```toml
+[agent]
+model = "glm-5-turbo"
+provider = "zai"
+
+[[providers]]
+preset = "zai-coding"
+api_key_env = "ZAI_API_KEY"
+```
+
+> **Don't mix** `preset = "zai"` with a Coding Plan `endpoint` override. If you do, rho now detects the mismatch and derives the models URL from your chat endpoint instead of the platform `/api/v1/models` — so it still works — but `zai-coding` is the cleaner choice.
+
 ### Ollama (remote)
 
 If you run Ollama on a different machine, point the endpoint at it:
