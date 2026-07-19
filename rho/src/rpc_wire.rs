@@ -99,11 +99,18 @@ pub struct GetStateResult {
 }
 
 /// Result for `setModel`.
+///
+/// Beyond the resolved model/provider, carries the post-switch context-window
+/// stats so clients can refresh their footer in the same round-trip (no
+/// separate `getSessionStats` needed just to reflect the new model's window).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetModelResult {
     pub model: String,
     pub provider: String,
+    pub context_window: u64,
+    pub estimated_used: u64,
+    pub utilization_percent: u64,
 }
 
 /// Result for `getSessionStats`.
