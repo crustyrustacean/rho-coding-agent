@@ -278,7 +278,10 @@ mod tests {
         // window is picked up — not left at the 32K default. Previously budget
         // resolution used exact-only `find`, which missed bare ids that
         // `resolve` (used for cost) matches by basename.
-        let config = config_with(None, vec![provider("openrouter", Some("deepseek-v4-flash"))]);
+        let config = config_with(
+            None,
+            vec![provider("openrouter", Some("deepseek-v4-flash"))],
+        );
         let resolved = resolve_model(&config, None);
         assert_eq!(resolved.id, "deepseek-v4-flash");
         let catalog_model = resolved
