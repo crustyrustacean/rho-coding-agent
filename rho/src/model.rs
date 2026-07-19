@@ -73,7 +73,7 @@ pub(crate) fn resolve_model(config: &RhoConfig, cli_model: Option<&String>) -> R
     // 1. CLI flag takes highest priority.
     if let Some(model) = cli_model {
         P::model_from_source(model, "--model", "cli");
-        let catalog_model = Catalog::new().find(model).cloned();
+        let catalog_model = Catalog::resolve(None, model).cloned();
         emit_catalog_info(catalog_model.as_ref());
         return ResolvedModel {
             id: model.clone(),
@@ -87,7 +87,7 @@ pub(crate) fn resolve_model(config: &RhoConfig, cli_model: Option<&String>) -> R
     if let Some(model) = config.agent.model.as_deref() {
         let provider = resolve_provider_for_model(model, config);
         P::model_from_source(model, "config", provider.as_deref().unwrap_or("default"));
-        let catalog_model = Catalog::new().find(model).cloned();
+        let catalog_model = Catalog::resolve(None, model).cloned();
         emit_catalog_info(catalog_model.as_ref());
         return ResolvedModel {
             id: model.to_owned(),
@@ -107,7 +107,7 @@ pub(crate) fn resolve_model(config: &RhoConfig, cli_model: Option<&String>) -> R
         {
             if let Some(model) = provider_config.default_model.as_deref() {
                 P::model_from_source(model, "config", provider_name);
-                let catalog_model = Catalog::new().find(model).cloned();
+                let catalog_model = Catalog::resolve(None, model).cloned();
                 emit_catalog_info(catalog_model.as_ref());
                 return ResolvedModel {
                     id: model.to_owned(),
@@ -137,7 +137,7 @@ pub(crate) fn resolve_model(config: &RhoConfig, cli_model: Option<&String>) -> R
             .and_then(|p| p.name.as_deref())
             .unwrap_or("default");
         P::model_auto_detected(default, provider_name);
-        let catalog_model = Catalog::new().find(default).cloned();
+        let catalog_model = Catalog::resolve(None, default).cloned();
         emit_catalog_info(catalog_model.as_ref());
         return ResolvedModel {
             id: default.to_owned(),
@@ -153,7 +153,7 @@ pub(crate) fn resolve_model(config: &RhoConfig, cli_model: Option<&String>) -> R
     // 5. RHO_MODEL environment variable.
     if let Ok(env_model) = std::env::var("RHO_MODEL") {
         P::model_from_source(&env_model, "RHO_MODEL env", "auto");
-        let catalog_model = Catalog::new().find(&env_model).cloned();
+        let catalog_model = Catalog::resolve(None, &env_model).cloned();
         emit_catalog_info(catalog_model.as_ref());
         return ResolvedModel {
             id: env_model,
@@ -171,7 +171,7 @@ pub(crate) fn resolve_model(config: &RhoConfig, cli_model: Option<&String>) -> R
     // serve it.
     let default_id = rho_ai::catalog::DEFAULT_MODEL_ID;
     P::model_from_source(default_id, "built-in default", "auto");
-    let catalog_model = Catalog::new().find(default_id).cloned();
+    let catalog_model = Catalog::resolve(None, default_id).cloned();
     emit_catalog_info(catalog_model.as_ref());
     ResolvedModel {
         id: default_id.to_owned(),
@@ -269,6 +269,26 @@ mod tests {
         assert_eq!(resolved.id, "qwen2.5-coder:7b");
         // Provider resolved by matching default_model.
         assert_eq!(resolved.provider, Some("local".to_owned()));
+    }
+
+    #[test]
+    fn bare_default_model_resolves_catalog_context_window() {
+        // Regression: a bare native id configured as a provider's default_model
+        // must resolve to its catalog entry (basename match) so the context
+        // window is picked up — not left at the 32K default. Previously budget
+        // resolution used exact-only `find`, which missed bare ids that
+        // `resolve` (used for cost) matches by basename.
+        let config = config_with(
+            None,
+            vec![provider("openrouter", Some("deepseek-v4-flash"))],
+        );
+        let resolved = resolve_model(&config, None);
+        assert_eq!(resolved.id, "deepseek-v4-flash");
+        let catalog_model = resolved
+            .catalog_model
+            .expect("bare default_model should resolve via basename");
+        assert_eq!(catalog_model.id, "deepseek/deepseek-v4-flash");
+        assert_eq!(catalog_model.context_window, 1_048_576);
     }
 
     #[test]

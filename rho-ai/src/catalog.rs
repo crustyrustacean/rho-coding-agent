@@ -465,6 +465,20 @@ mod tests {
     }
 
     #[test]
+    fn resolve_bare_native_id_carries_full_context_window() {
+        // Concrete regression: a bare native id (no `provider/` prefix) must
+        // resolve to its catalog entry with the real context window, not be
+        // missed by exact-only lookup. `deepseek-v4-flash` is a 1M-window
+        // model; exact `find_built_in` does not match the bare id, which is
+        // why budget resolution must use `resolve` (basename-aware).
+        let m = Catalog::resolve(None, "deepseek-v4-flash").expect("bare id should resolve");
+        assert_eq!(m.id, "deepseek/deepseek-v4-flash");
+        assert_eq!(m.context_window, 1_048_576);
+        // Documents the gap: exact-only lookup misses the bare id.
+        assert!(Catalog::find_built_in("deepseek-v4-flash").is_none());
+    }
+
+    #[test]
     fn resolve_unknown_id_is_none() {
         assert!(Catalog::resolve(None, "no-such-vendor/totally-made-up-model").is_none());
         assert!(Catalog::resolve(None, "totally-made-up-bare-id").is_none());

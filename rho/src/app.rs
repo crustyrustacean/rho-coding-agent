@@ -485,7 +485,7 @@ impl App {
         // Re-compute the token budget from the catalog so that switching to
         // a model with a smaller context window immediately takes effect,
         // rather than keeping the old model's larger budget.
-        let catalog_model = rho_ai::Catalog::find_built_in(model_id);
+        let catalog_model = rho_ai::Catalog::resolve(None, model_id);
         let new_budget = build_token_budget_for_model(
             catalog_model,
             self.session.token_budget().context_window,
