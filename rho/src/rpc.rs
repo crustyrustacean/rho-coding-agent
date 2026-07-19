@@ -751,17 +751,28 @@ async fn handle_set_model(
         Ok(()) => {
             let provider = app.active_provider().name().to_owned();
             let model = app.session.model().to_owned();
+            let stats = app.session.context_stats();
             info!(
                 old_model = %old_model,
                 old_provider = %old_provider,
                 new_model = %model,
                 new_provider = %provider,
                 spec = %spec,
+                context_window = stats.context_window,
                 "model switched"
             );
             send(
                 transport,
-                &success_response(id, SetModelResult { model, provider }),
+                &success_response(
+                    id,
+                    SetModelResult {
+                        model,
+                        provider,
+                        context_window: stats.context_window as u64,
+                        estimated_used: stats.estimated_used as u64,
+                        utilization_percent: u64::from(stats.utilization_percent()),
+                    },
+                ),
             )
             .await;
         }
@@ -1812,6 +1823,13 @@ mod tests {
         // setModel response: model switched to beta-1, provider switched to beta.
         assert_eq!(all_resps[0]["result"]["model"], "beta-1");
         assert_eq!(all_resps[0]["result"]["provider"], "beta");
+
+        // setModel response also carries the post-switch context-window stats,
+        // so clients can refresh their footer in the same round-trip (no
+        // separate getSessionStats needed just to reflect the new window).
+        assert!(all_resps[0]["result"]["contextWindow"].is_number());
+        assert!(all_resps[0]["result"]["estimatedUsed"].is_number());
+        assert!(all_resps[0]["result"]["utilizationPercent"].is_number());
 
         // getState confirms the switch persisted.
         assert_eq!(all_resps[1]["result"]["provider"], "beta");
