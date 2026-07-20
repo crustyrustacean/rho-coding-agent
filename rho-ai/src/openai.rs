@@ -49,8 +49,18 @@ struct ChatCompletionRequest {
     /// to `Vertex`/`Bedrock`) default to the model's full `max_tokens` when this
     /// is absent, which causes `input + max_tokens > context_limit` rejections
     /// even when rho left ample headroom. Omitted from the wire when `None`.
+    ///
+    /// Exactly one of `max_tokens` and `max_completion_tokens` is set per
+    /// request — see [`requires_max_completion_tokens`].
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<usize>,
+    /// `max_completion_tokens` — `OpenAI`'s replacement for `max_tokens`.
+    ///
+    /// Required by the reasoning models that reject `max_tokens` (the `o`-series
+    /// and the `gpt-5` family). Set in place of `max_tokens` for those models;
+    /// omitted otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_completion_tokens: Option<usize>,
 }
 
 /// `stream_options` to request usage in the final streaming chunk.
@@ -309,6 +319,37 @@ fn completions_url(base_url: &str) -> String {
     format!("{base}/chat/completions")
 }
 
+/// Whether a model requires `max_completion_tokens` instead of `max_tokens`.
+///
+/// `OpenAI`'s reasoning models reject the legacy `max_tokens` parameter with a
+/// `400` and require `max_completion_tokens`. Legacy chat models and most
+/// OpenAI-compatible servers still use `max_tokens`, so we cannot send
+/// `max_completion_tokens` unconditionally. The decision is driven by the model
+/// id (basename, ignoring any `provider/` prefix) so it also works through
+/// proxies such as `OpenRouter` (`openai/o3-mini`).
+///
+/// Recognized reasoning families: the `o`-series (`o1`, `o3`, `o4-mini`, …)
+/// and `gpt-5` and later (`gpt-5`, `gpt-5-mini`, …).
+fn requires_max_completion_tokens(model: &str) -> bool {
+    // Basename: ignore any `provider/` prefix (e.g. OpenRouter's
+    // `openai/o3-mini`).
+    let name = model.rsplit_once('/').map_or(model, |(_, base)| base);
+    let lower = name.to_ascii_lowercase();
+    let bytes = lower.as_bytes();
+
+    // o-series reasoning models: o1, o1-mini, o1-preview, o3, o3-mini,
+    // o3-pro, o4-mini, … — `o` followed by a digit.
+    let is_o_series = lower.starts_with('o') && bytes.get(1).is_some_and(u8::is_ascii_digit);
+
+    // gpt-5 and later: gpt-5, gpt-5-mini, gpt-5-nano, gpt-5-chat, gpt-6, …
+    let is_gpt5_plus = lower
+        .strip_prefix("gpt-")
+        .and_then(|rest| rest.as_bytes().first())
+        .is_some_and(|&b| (b'5'..=b'9').contains(&b));
+
+    is_o_series || is_gpt5_plus
+}
+
 // ── Stream parser ─────────────────────────────────────────────────────────────
 
 /// Accumulator for tool call arguments across SSE deltas.
@@ -540,6 +581,10 @@ impl OpenAiService {
             });
         }
 
+        // OpenAI reasoning models (o-series, gpt-5) reject `max_tokens` and
+        // require `max_completion_tokens`. Route the completion budget to the
+        // field the model actually accepts.
+        let use_completion_tokens = requires_max_completion_tokens(&model);
         let body = ChatCompletionRequest {
             model,
             messages: wire_messages,
@@ -549,7 +594,16 @@ impl OpenAiService {
                 include_usage: true,
             }),
             reasoning_effort: request.reasoning_effort.clone(),
-            max_tokens: request.max_tokens,
+            max_tokens: if use_completion_tokens {
+                None
+            } else {
+                request.max_tokens
+            },
+            max_completion_tokens: if use_completion_tokens {
+                request.max_tokens
+            } else {
+                None
+            },
         };
 
         let url = completions_url(&self.config.base_url);
@@ -897,6 +951,7 @@ mod tests {
             }),
             reasoning_effort: None,
             max_tokens: Some(2048),
+            max_completion_tokens: None,
         };
         let json = serde_json::to_value(&req).unwrap();
         assert_eq!(json["model"], "gpt-4o");
@@ -921,6 +976,7 @@ mod tests {
             }),
             reasoning_effort: Some("medium".into()),
             max_tokens: None,
+            max_completion_tokens: None,
         };
         let json = serde_json::to_value(&req).unwrap();
         assert_eq!(json["reasoning_effort"], "medium");
@@ -938,6 +994,7 @@ mod tests {
             }),
             reasoning_effort: None,
             max_tokens: None,
+            max_completion_tokens: None,
         };
         let json = serde_json::to_value(&req).unwrap();
         assert!(json.get("reasoning_effort").is_none());
@@ -956,9 +1013,11 @@ mod tests {
             }),
             reasoning_effort: None,
             max_tokens: None,
+            max_completion_tokens: None,
         };
         let json = serde_json::to_value(&req).unwrap();
         assert!(json.get("max_tokens").is_none());
+        assert!(json.get("max_completion_tokens").is_none());
     }
 
     #[test]
@@ -973,9 +1032,80 @@ mod tests {
             }),
             reasoning_effort: None,
             max_tokens: Some(8192),
+            max_completion_tokens: None,
         };
         let json = serde_json::to_value(&req).unwrap();
         assert_eq!(json["max_tokens"], 8192);
+    }
+
+    #[test]
+    fn requires_max_completion_tokens_for_reasoning_models() {
+        // o-series
+        for model in [
+            "o1",
+            "o1-mini",
+            "o1-preview",
+            "o3",
+            "o3-mini",
+            "o3-pro",
+            "o4-mini",
+        ] {
+            assert!(
+                requires_max_completion_tokens(model),
+                "{model} should require max_completion_tokens"
+            );
+        }
+        // gpt-5 family
+        for model in ["gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-5-chat"] {
+            assert!(
+                requires_max_completion_tokens(model),
+                "{model} should require max_completion_tokens"
+            );
+        }
+        // provider-prefixed (OpenRouter) and case-insensitive
+        assert!(requires_max_completion_tokens("openai/o3-mini"));
+        assert!(requires_max_completion_tokens("openai/gpt-5"));
+        assert!(requires_max_completion_tokens("O4-Mini"));
+    }
+
+    #[test]
+    fn prefers_max_tokens_for_legacy_and_non_openai_models() {
+        for model in [
+            "gpt-4o",
+            "gpt-4o-mini",
+            "gpt-4.1",
+            "gpt-4-turbo",
+            "claude-sonnet-4",
+            "deepseek-v4-flash",
+            "qwen2.5-coder:7b",
+        ] {
+            assert!(
+                !requires_max_completion_tokens(model),
+                "{model} should use max_tokens"
+            );
+        }
+        // `o`-prefixed but not an o-series reasoning model
+        assert!(!requires_max_completion_tokens("orca-mini"));
+        assert!(!requires_max_completion_tokens("opt-125m"));
+    }
+
+    #[test]
+    fn max_completion_tokens_serializes_for_reasoning_models() {
+        let req = ChatCompletionRequest {
+            model: "o3-mini".to_string(),
+            messages: vec![],
+            tools: vec![],
+            stream: true,
+            stream_options: Some(StreamOptions {
+                include_usage: true,
+            }),
+            reasoning_effort: Some("medium".into()),
+            max_tokens: None,
+            max_completion_tokens: Some(8192),
+        };
+        let json = serde_json::to_value(&req).unwrap();
+        assert_eq!(json["max_completion_tokens"], 8192);
+        assert!(json.get("max_tokens").is_none());
     }
 
     #[test]
