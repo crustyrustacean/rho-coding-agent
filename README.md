@@ -112,6 +112,14 @@ echo '{"jsonrpc":"2.0","method":"prompt","params":{"message":"list the source fi
 
 Output is a stream of JSON-RPC responses and notifications (`ready`, `agent/start`, `message/delta`, `tool/call`, `tool/result`, `agent/end`, etc.). See [ARCHITECTURE.md](ARCHITECTURE.md) for the full protocol reference, or [docs/rpc-schema/openrpc.json](docs/rpc-schema/openrpc.json) for the machine-readable `OpenRPC` schema.
 
+## Frontends
+
+`rho` is headless by design, so you can drive it from any UI that speaks its
+JSON-RPC 2.0 protocol. Two frontends are available:
+
+- **[rho-code](https://github.com/crustyrustacean/rho-code)** — an interactive terminal UI (TUI) that spawns `rho` in headless JSON-RPC mode and renders a chat over the stream.
+- **[rho-ui](https://github.com/crustyrustacean/rho-ui)** — a native desktop UI for `rho`, built with [Makepad](https://makepad.nl/).
+
 ## Configuration
 
 rho loads config from two TOML files, with project-level overrides taking precedence:
