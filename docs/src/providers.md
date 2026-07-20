@@ -367,14 +367,18 @@ type = "openrouter"
 
 If `type` is set to a known non-OpenAI-compatible provider name (e.g. `"anthropic"`, `"google"`, `"bedrock"`), rho will print a warning at startup. This is a safety net — the real check is that your endpoint accepts and returns the OpenAI Chat Completions format.
 
-## Connection timeouts
+## Connection & stream timeouts
 
-The HTTP client uses sensible defaults to prevent indefinite hangs when a provider is unreachable:
+rho applies timeouts at two layers:
 
-- **Connect timeout**: 30 seconds — how long to wait for the initial TCP/TLS connection
-- **Request timeout**: 2 minutes — total time allowed for the entire request (including streaming response)
+**HTTP client (hardcoded, not configurable):** a connect timeout (30s) and an overall request timeout (2m) on the underlying client.
 
-These are hardcoded and not currently configurable. If you frequently hit these timeouts with a slow local server, ensure the server is running before starting rho.
+**Stream (configurable under `[agent]`):** these guard the SSE response itself and are the ones to tune for slow or reasoning models:
+
+- **`first_token_timeout_secs`** (default 90) — max wait for the *first* stream event before aborting and retrying. Kept below the common 120s upstream-proxy idle timeout so rho aborts a hung request before the proxy silently drops it. Raise it for models with slow first-token latency (large reasoning models).
+- **`stream_idle_timeout_secs`** (default 60) — max gap between stream events once streaming has started before aborting and retrying.
+
+Both stream timeouts trigger a retry with backoff. See [Configuration](./configuration.md).
 
 ## Small-model robustness
 
@@ -384,6 +388,15 @@ rho includes safeguards for models that struggle with tool-use tasks:
 - **Sandbox path hints** — when a tool call fails with a sandbox path error, rho appends an actionable hint (sandbox root, correct path format) so the model can self-correct instead of repeating the same mistake.
 
 Both features are configured under `[agent]` — see [Configuration](./configuration.md) for details.
+
+## Reasoning models (o-series, gpt-5)
+
+OpenAI's reasoning models have two wire-format quirks that rho handles automatically by detecting the model id (basename, so it also works through proxies like OpenRouter):
+
+- **`max_completion_tokens` instead of `max_tokens`.** The o-series (`o1`, `o3`, `o4-mini`, …) and the gpt-5 family (`gpt-5`, `gpt-5-mini`, …) reject the legacy `max_tokens` parameter. rho sends `max_completion_tokens` for these and `max_tokens` for everything else (other OpenAI-compatible servers still require the legacy field).
+- **`reasoning_effort` forced to `"none"` for gpt-5 with tools.** OpenAI's `/v1/chat/completions` rejects `reasoning_effort` (other than `"none"`) combined with function tools for the gpt-5 family. Since rho always sends tools, it sets `reasoning_effort: "none"` for gpt-5 models on tool-bearing turns regardless of your config. The o-series supports reasoning + tools and is left untouched.
+
+**Consequence:** gpt-5 models cannot reason and use tools in the same turn on `/v1/chat/completions` — reasoning is disabled during tool-use turns. Reasoning + tools together requires the `/v1/responses` API, which rho does not yet speak. You can still set `reasoning_effort` in `[agent]` config; it applies to non-tool turns and to the o-series.
 
 ## Privacy considerations
 

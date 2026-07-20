@@ -59,6 +59,25 @@ Resolution rules:
 - If `preset` is set and `endpoint` is overridden to a **different** URL than the preset's → the preset's `models_endpoint` is **skipped** (it would target the wrong API), and the models URL is derived from the chat endpoint instead
 - Unknown presets → warning logged, treated as if no preset was set
 
+## User-defined model pricing (`[[models]]`)
+
+rho ships a built-in model catalog (context window, max output tokens, and
+pricing) generated from OpenRouter. For models it can't resolve — a self-hosted
+fine-tune, a provider-specific id, or anything outside the catalog — cost shows
+as `n/a` and the context window falls back to `token_budget`. The `[[models]]`
+array lets you supply per-model pricing for these:
+
+```toml
+[[models]]
+id = "my-custom-model"        # matched exactly against the session's model string
+input_price = 0.50            # USD per 1M input tokens
+output_price = 1.50           # USD per 1M output tokens
+# cached_price = 0.25         # optional: USD per 1M cached-read input tokens
+```
+
+Entries are consulted before the built-in catalog, so a matching id accrues
+cost instead of showing `n/a`. For local/free models, set the prices to `0.0`.
+
 ## Full configuration reference
 
 ```toml
@@ -94,7 +113,10 @@ show_reasoning = false
 # Reasoning effort for thinking-capable models (optional)
 # Common values: "low", "medium", "high".
 # Sent as `reasoning_effort` in every Chat Completions request.
-# Non-reasoning models silently ignore this.
+# Non-reasoning models silently ignore this. NOTE: for the gpt-5 family, rho
+# forces reasoning_effort="none" on tool-bearing turns regardless of this
+# setting (the API rejects reasoning + tools on /v1/chat/completions). See
+# [External Providers](./providers.md) → "Reasoning models".
 # reasoning_effort = "medium"
 
 # Context utilization threshold for auto-compaction (default: 0 = disabled)

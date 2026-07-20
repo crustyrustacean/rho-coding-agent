@@ -32,9 +32,10 @@ echo '{"jsonrpc":"2.0","method":"prompt","params":{"message":"explain this funct
 | `prompt` | `{message: string, steer?: boolean}` | Send a user message to the agent (or a mid-turn steering nudge when `steer` is true) |
 | `abort` | — | Cancel the current operation |
 | `clear` | — | Clear conversation history |
+| `newSession` | — | Start a fresh session (new JSONL), keeping the active model/provider; returns `{sessionId, path}` |
 | `getState` | — | Return model, provider, and cwd |
 | `getMessages` | — | Return all messages on active path |
-| `setModel` | `{model: string}` | Switch model (`id` or `provider:id`) |
+| `setModel` | `{model: string}` | Switch model (`id` or `provider:id`); response includes the resolved `context_window` |
 | `listModels` | — | List available models from providers |
 | `listProviders` | — | List configured providers with reachability |
 | `getSessionStats` | — | Return token budget / usage info |
