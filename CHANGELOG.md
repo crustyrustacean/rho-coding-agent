@@ -1,3 +1,63 @@
+## [0.89.0] - 2026-07-20
+
+### 🚀 Features
+
+- *(config)* Add zai-coding preset + guard preset models_endpoint
+- *(rpc)* Include context-window stats in setModel response
+
+### 🐛 Bug Fixes
+
+- *(rho)* Add missing doc comment and fix formatting in app.rs
+- *(core)* Resolve bare model ids for context window (find → resolve)
+- *(ai)* Send max_completion_tokens for OpenAI reasoning models
+- *(ai)* Suppress reasoning_effort for gpt-5 family when tools are present
+
+### 🎨 Styling
+
+- Cargo fmt config.rs after web merge
+- Cargo fmt model.rs test
+## [0.88.3] - 2026-07-15
+
+### 🚀 Features
+
+- *(cli)* Add optional subcommand support for extension management
+- Resolve native-provider bare model ids for cost enrichment
+- *(rpc)* Report message count in getState
+- *(rpc)* Add newSession method
+- *(core)* Concurrent provider model discovery
+- *(core)* Parse [[models]] user-pricing config
+- *(core)* Hold user-defined models on Session
+- *(core)* Resolve user-defined model pricing in route_response
+- *(rpc)* Wire [[models]] user pricing into App build/new/resume
+- *(core)* Recalculate token budget on model switch
+
+### 🐛 Bug Fixes
+
+- *(core)* Clippy redundant closure in MockProvider
+
+### 🚜 Refactor
+
+- *(core)* Make Redactor Clone
+
+### 🎨 Styling
+
+- Cargo fmt fixes for concurrent discovery code
+- Cargo fmt
+
+### ⚙️ Miscellaneous Tasks
+
+- *(schema)* Sync OpenRPC schema with wire-format types
+- Bump 0.88.3
+## [0.87.2] - 2026-07-13
+
+### 📚 Documentation
+
+- Update docs for mid-turn steering, redirect approval, Z.ai provider; bump 0.87.2
+## [0.87.1] - 2026-07-12
+
+### 🚀 Features
+
+- Fix Z.ai provider support — endpoint, models discovery, and response parsing
 ## [0.86.0] - 2026-07-11
 
 ### 🚀 Features
