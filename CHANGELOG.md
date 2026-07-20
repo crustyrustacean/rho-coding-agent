@@ -1,3 +1,12 @@
+## [0.89.1] - 2026-07-20
+
+### 🐛 Bug Fixes
+
+- *(ai)* Force reasoning_effort=none for gpt-5 family with tools
+
+### 📚 Documentation
+
+- *(readme)* Add Frontends section linking to rho-code and rho-ui
 ## [0.89.0] - 2026-07-20
 
 ### 🚀 Features
