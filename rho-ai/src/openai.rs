@@ -359,6 +359,26 @@ fn requires_max_completion_tokens(model: &str) -> bool {
     is_o_series(model) || is_gpt5_or_later(model)
 }
 
+/// Resolve the `reasoning_effort` to send on a chat-completions request.
+///
+/// The gpt-5 family disallows `reasoning_effort` together with function tools
+/// on `/v1/chat/completions`: the API requires `"none"`, and omitting the
+/// parameter is insufficient because gpt-5.6 defaults to reasoning-on and
+/// still rejects the request. When function tools are present, force `"none"`
+/// for gpt-5+ models; otherwise honor the configured value. The o-series
+/// supports `reasoning_effort` with tools and keeps its configured value.
+fn resolve_reasoning_effort(
+    model: &str,
+    has_tools: bool,
+    configured: Option<&str>,
+) -> Option<String> {
+    if has_tools && is_gpt5_or_later(model) {
+        Some("none".to_string())
+    } else {
+        configured.map(std::borrow::ToOwned::to_owned)
+    }
+}
+
 // ── Stream parser ─────────────────────────────────────────────────────────────
 
 /// Accumulator for tool call arguments across SSE deltas.
@@ -595,23 +615,22 @@ impl OpenAiService {
         // field the model actually accepts.
         let use_completion_tokens = requires_max_completion_tokens(&model);
 
-        // The gpt-5 family rejects `reasoning_effort` combined with function
-        // tools on /v1/chat/completions (it requires /v1/responses or
-        // `reasoning_effort=none`). rho always sends tools, so drop it for
-        // those models when tools are present. The o-series supports the combo
-        // and is left untouched.
-        let reasoning_effort = if !wire_tools.is_empty()
-            && is_gpt5_or_later(&model)
-            && request.reasoning_effort.is_some()
+        // The gpt-5 family disallows `reasoning_effort` with function tools on
+        // /v1/chat/completions; the API requires `"none"` (omitting it is
+        // insufficient — see [`resolve_reasoning_effort`]).
+        let reasoning_effort = resolve_reasoning_effort(
+            &model,
+            !wire_tools.is_empty(),
+            request.reasoning_effort.as_deref(),
+        );
+        if reasoning_effort.as_deref() == Some("none")
+            && request.reasoning_effort.as_deref() != Some("none")
         {
             tracing::debug!(
                 %model,
-                "reasoning_effort suppressed: gpt-5 family rejects it with function tools"
+                "reasoning_effort forced to 'none' for gpt-5 family with function tools"
             );
-            None
-        } else {
-            request.reasoning_effort.clone()
-        };
+        }
 
         let body = ChatCompletionRequest {
             model,
@@ -1115,6 +1134,50 @@ mod tests {
         // `o`-prefixed but not an o-series reasoning model
         assert!(!requires_max_completion_tokens("orca-mini"));
         assert!(!requires_max_completion_tokens("opt-125m"));
+    }
+
+    #[test]
+    fn resolve_reasoning_effort_forces_none_for_gpt5_with_tools() {
+        // gpt-5+ with tools → "none", regardless of the configured value.
+        assert_eq!(
+            resolve_reasoning_effort("gpt-5.6-luna", true, None),
+            Some("none".to_string())
+        );
+        assert_eq!(
+            resolve_reasoning_effort("gpt-5.6-luna", true, Some("medium")),
+            Some("none".to_string())
+        );
+        assert_eq!(
+            resolve_reasoning_effort("gpt-5", true, Some("high")),
+            Some("none".to_string())
+        );
+        assert_eq!(
+            resolve_reasoning_effort("openai/gpt-5.5", true, None),
+            Some("none".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_reasoning_effort_keeps_configured_without_tools_or_non_gpt5() {
+        // No tools → keep the configured value.
+        assert_eq!(
+            resolve_reasoning_effort("gpt-5.6-luna", false, Some("medium")),
+            Some("medium".to_string())
+        );
+        assert_eq!(resolve_reasoning_effort("gpt-5.6-luna", false, None), None);
+        // Non-gpt-5 keeps configured even with tools (o-series supports it).
+        assert_eq!(
+            resolve_reasoning_effort("o3-mini", true, Some("medium")),
+            Some("medium".to_string())
+        );
+        assert_eq!(
+            resolve_reasoning_effort("gpt-4o", true, Some("high")),
+            Some("high".to_string())
+        );
+        assert_eq!(
+            resolve_reasoning_effort("claude-sonnet-4", true, None),
+            None
+        );
     }
 
     #[test]
