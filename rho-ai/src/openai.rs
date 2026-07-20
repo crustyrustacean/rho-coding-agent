@@ -319,6 +319,31 @@ fn completions_url(base_url: &str) -> String {
     format!("{base}/chat/completions")
 }
 
+/// The basename of a model id, ignoring any `provider/` prefix
+/// (e.g. `openai/o3-mini` → `o3-mini`) so detection works through proxies.
+fn model_basename(model: &str) -> &str {
+    model.rsplit_once('/').map_or(model, |(_, base)| base)
+}
+
+/// Whether `model` is an `OpenAI` o-series reasoning model
+/// (`o1`, `o1-mini`, `o3`, `o3-mini`, `o4-mini`, …): basename starts with `o`
+/// followed by a digit.
+fn is_o_series(model: &str) -> bool {
+    let lower = model_basename(model).to_ascii_lowercase();
+    lower.starts_with('o') && lower.as_bytes().get(1).is_some_and(u8::is_ascii_digit)
+}
+
+/// Whether `model` is `gpt-5` or a later `gpt-N` family
+/// (`gpt-5`, `gpt-5-mini`, `gpt-5.5`, `gpt-5.6-luna`, `gpt-6`, …): basename is
+/// `gpt-` followed by a digit ≥ 5.
+fn is_gpt5_or_later(model: &str) -> bool {
+    model_basename(model)
+        .to_ascii_lowercase()
+        .strip_prefix("gpt-")
+        .and_then(|rest| rest.as_bytes().first())
+        .is_some_and(|&b| (b'5'..=b'9').contains(&b))
+}
+
 /// Whether a model requires `max_completion_tokens` instead of `max_tokens`.
 ///
 /// `OpenAI`'s reasoning models reject the legacy `max_tokens` parameter with a
@@ -331,23 +356,7 @@ fn completions_url(base_url: &str) -> String {
 /// Recognized reasoning families: the `o`-series (`o1`, `o3`, `o4-mini`, …)
 /// and `gpt-5` and later (`gpt-5`, `gpt-5-mini`, …).
 fn requires_max_completion_tokens(model: &str) -> bool {
-    // Basename: ignore any `provider/` prefix (e.g. OpenRouter's
-    // `openai/o3-mini`).
-    let name = model.rsplit_once('/').map_or(model, |(_, base)| base);
-    let lower = name.to_ascii_lowercase();
-    let bytes = lower.as_bytes();
-
-    // o-series reasoning models: o1, o1-mini, o1-preview, o3, o3-mini,
-    // o3-pro, o4-mini, … — `o` followed by a digit.
-    let is_o_series = lower.starts_with('o') && bytes.get(1).is_some_and(u8::is_ascii_digit);
-
-    // gpt-5 and later: gpt-5, gpt-5-mini, gpt-5-nano, gpt-5-chat, gpt-6, …
-    let is_gpt5_plus = lower
-        .strip_prefix("gpt-")
-        .and_then(|rest| rest.as_bytes().first())
-        .is_some_and(|&b| (b'5'..=b'9').contains(&b));
-
-    is_o_series || is_gpt5_plus
+    is_o_series(model) || is_gpt5_or_later(model)
 }
 
 // ── Stream parser ─────────────────────────────────────────────────────────────
@@ -585,6 +594,25 @@ impl OpenAiService {
         // require `max_completion_tokens`. Route the completion budget to the
         // field the model actually accepts.
         let use_completion_tokens = requires_max_completion_tokens(&model);
+
+        // The gpt-5 family rejects `reasoning_effort` combined with function
+        // tools on /v1/chat/completions (it requires /v1/responses or
+        // `reasoning_effort=none`). rho always sends tools, so drop it for
+        // those models when tools are present. The o-series supports the combo
+        // and is left untouched.
+        let reasoning_effort = if !wire_tools.is_empty()
+            && is_gpt5_or_later(&model)
+            && request.reasoning_effort.is_some()
+        {
+            tracing::debug!(
+                %model,
+                "reasoning_effort suppressed: gpt-5 family rejects it with function tools"
+            );
+            None
+        } else {
+            request.reasoning_effort.clone()
+        };
+
         let body = ChatCompletionRequest {
             model,
             messages: wire_messages,
@@ -593,7 +621,7 @@ impl OpenAiService {
             stream_options: Some(StreamOptions {
                 include_usage: true,
             }),
-            reasoning_effort: request.reasoning_effort.clone(),
+            reasoning_effort,
             max_tokens: if use_completion_tokens {
                 None
             } else {
@@ -1087,6 +1115,57 @@ mod tests {
         // `o`-prefixed but not an o-series reasoning model
         assert!(!requires_max_completion_tokens("orca-mini"));
         assert!(!requires_max_completion_tokens("opt-125m"));
+    }
+
+    #[test]
+    fn is_gpt5_or_later_detects_gpt5_family() {
+        for model in [
+            "gpt-5",
+            "gpt-5-mini",
+            "gpt-5-nano",
+            "gpt-5.5",
+            "gpt-5.6-luna",
+            "gpt-6",
+        ] {
+            assert!(is_gpt5_or_later(model), "{model} should be gpt-5+");
+        }
+        // provider-prefixed + case-insensitive
+        assert!(is_gpt5_or_later("openai/gpt-5"));
+        assert!(is_gpt5_or_later("GPT-5-Mini"));
+    }
+
+    #[test]
+    fn is_gpt5_or_later_excludes_legacy_and_o_series() {
+        for model in [
+            "gpt-4o",
+            "gpt-4o-mini",
+            "gpt-4.1",
+            "gpt-4-turbo",
+            "o3-mini",
+            "o1",
+            "claude-sonnet-4",
+        ] {
+            assert!(!is_gpt5_or_later(model), "{model} should NOT be gpt-5+");
+        }
+    }
+
+    #[test]
+    fn is_o_series_detects_o_models() {
+        for model in [
+            "o1",
+            "o1-mini",
+            "o1-preview",
+            "o3",
+            "o3-mini",
+            "o3-pro",
+            "o4-mini",
+        ] {
+            assert!(is_o_series(model), "{model} should be o-series");
+        }
+        assert!(is_o_series("openai/o4-mini"));
+        for model in ["gpt-5", "gpt-4o", "orca-mini", "opt-125m"] {
+            assert!(!is_o_series(model), "{model} should NOT be o-series");
+        }
     }
 
     #[test]
