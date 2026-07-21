@@ -451,6 +451,35 @@ mod tests {
     }
 
     #[test]
+    fn assistant_finish_reason_other_round_trips_through_json() {
+        // Regression for the session-resume bug: a non-standard finish reason
+        // (e.g. z.ai's `model_context_window_exceeded`) must survive a
+        // serialize → deserialize cycle so the session stays resumable.
+        let msg = ChatMessage::Assistant {
+            content: vec![],
+            tool_calls: vec![],
+            finish_reason: Some(crate::response::FinishReason::Other(
+                "model_context_window_exceeded".to_owned(),
+            )),
+        };
+        let v = serde_json::to_value(&msg).unwrap();
+        assert_eq!(v["finish_reason"], "model_context_window_exceeded");
+
+        let back: ChatMessage = serde_json::from_value(v).unwrap();
+        match back {
+            ChatMessage::Assistant { finish_reason, .. } => {
+                assert_eq!(
+                    finish_reason,
+                    Some(crate::response::FinishReason::Other(
+                        "model_context_window_exceeded".to_owned()
+                    ))
+                );
+            }
+            other => panic!("expected Assistant, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn assistant_without_finish_reason_omits_field() {
         // Legacy/synthetic messages (finish_reason: None) must not emit the
         // field, so old session files keep their shape and new files stay clean.
