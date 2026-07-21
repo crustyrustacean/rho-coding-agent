@@ -1,19 +1,19 @@
 //! [`RhoAiClient`] — the concrete LLM service client.
 //!
-//! [`RhoAiClient`] wraps [`rho_ai::openai::OpenAiService`] and implements
-//! [`LlmService`](rho_ai::LlmService). All HTTP communication and SSE parsing
-//! is delegated to `rho-ai`.
+//! [`RhoAiClient`] routes to rho-ai's Chat Completions or Responses service
+//! and implements [`LlmService`](rho_ai::LlmService). All HTTP communication
+//! and SSE parsing is delegated to `rho-ai`.
 
 pub mod error;
 
 use crate::client::error::ClientError;
-use crate::config::RhoConfig;
+use crate::config::{ApiProtocol, RhoConfig};
 use crate::error::Result;
 use async_trait::async_trait;
 
 // ── RhoAiClient ──────────────────────────────────────────────────────────────
 
-/// A [`LlmService`](rho_ai::LlmService) backed by [`rho_ai::openai::OpenAiService`].
+/// A [`LlmService`](rho_ai::LlmService) backed by a selected rho-ai transport.
 ///
 /// This is the sole client implementation. It delegates all HTTP communication
 /// and SSE parsing to `rho-ai`, adapting between rho-core's types and rho-ai's
@@ -27,19 +27,30 @@ pub struct RhoAiClient {
     /// Optional models endpoint URL, used for model discovery.
     ///
     /// When set, [`list_models`](Self::list_models) uses this URL directly
-    /// instead of deriving one from the chat-completions endpoint. Some
-    /// providers (e.g. Z.ai) serve the models list at a different path prefix
-    /// than chat completions.
+    /// instead of deriving one from the generation endpoint. Some providers
+    /// (e.g. Z.ai) serve models at a different path prefix.
     models_endpoint: Option<String>,
+    /// Wire protocol selected for generation requests.
+    protocol: ApiProtocol,
 }
 
 impl RhoAiClient {
     /// Create a new client.
     pub fn new(endpoint: impl Into<String>, api_key: Option<String>) -> Self {
+        Self::with_protocol(endpoint, api_key, ApiProtocol::ChatCompletions)
+    }
+
+    /// Create a new client with an explicit request protocol.
+    pub fn with_protocol(
+        endpoint: impl Into<String>,
+        api_key: Option<String>,
+        protocol: ApiProtocol,
+    ) -> Self {
         Self {
             endpoint: endpoint.into(),
             api_key,
             models_endpoint: None,
+            protocol,
         }
     }
 
@@ -52,18 +63,32 @@ impl RhoAiClient {
         api_key: Option<String>,
         models_endpoint: Option<String>,
     ) -> Self {
+        Self::with_models_endpoint_and_protocol(
+            endpoint,
+            api_key,
+            models_endpoint,
+            ApiProtocol::ChatCompletions,
+        )
+    }
+
+    /// Create a client with explicit model discovery and request protocol.
+    pub fn with_models_endpoint_and_protocol(
+        endpoint: impl Into<String>,
+        api_key: Option<String>,
+        models_endpoint: Option<String>,
+        protocol: ApiProtocol,
+    ) -> Self {
         Self {
             endpoint: endpoint.into(),
             api_key,
             models_endpoint,
+            protocol,
         }
     }
 
-    /// Build an `OpenAiService` for a specific request.
-    fn service(&self) -> rho_ai::openai::OpenAiService {
-        let api_key = self.api_key.clone().unwrap_or_default();
-        let config = rho_ai::ProviderConfig::new(api_key, &self.endpoint);
-        rho_ai::openai::OpenAiService::new(config)
+    /// Build rho-ai's shared provider configuration.
+    fn service_config(&self) -> rho_ai::ProviderConfig {
+        rho_ai::ProviderConfig::new(self.api_key.clone().unwrap_or_default(), &self.endpoint)
     }
 
     /// The configured endpoint URL.
@@ -78,16 +103,21 @@ impl RhoAiClient {
         &self.api_key
     }
 
+    /// The selected request protocol.
+    #[must_use]
+    pub fn protocol(&self) -> ApiProtocol {
+        self.protocol
+    }
+
     /// List models available at the server's models endpoint.
     ///
     /// If `models_endpoint` is set, uses that URL directly. Otherwise, derives
-    /// the models URL from the configured chat-completions endpoint by
-    /// replacing the trailing `/chat/completions` with `/models`. This
-    /// preserves any provider-specific path prefix (e.g. `OpenRouter`'s
-    /// `/api/v1/…` or `Groq`'s `/openai/v1/…`).
+    /// the models URL from the configured generation endpoint by replacing a
+    /// trailing `/chat/completions` or `/responses` with `/models`. This
+    /// preserves provider-specific path prefixes.
     ///
-    /// Falls back to `/v1/models` (origin-only) if the endpoint path
-    /// does not end with `/chat/completions`.
+    /// Falls back to `/v1/models` (origin-only) if the endpoint path does not
+    /// end with a recognized generation suffix.
     ///
     /// # Errors
     ///
@@ -105,7 +135,10 @@ impl RhoAiClient {
             let mut derived = url::Url::parse(&self.endpoint)
                 .map_err(|e| crate::error::RhoError::Client(ClientError::UrlParse(e)))?;
             let path = derived.path();
-            if let Some(base) = path.strip_suffix("/chat/completions") {
+            if let Some(base) = path
+                .strip_suffix("/chat/completions")
+                .or_else(|| path.strip_suffix("/responses"))
+            {
                 derived.set_path(&format!("{base}/models"));
             } else {
                 derived.set_path("/v1/models");
@@ -134,8 +167,19 @@ impl rho_ai::LlmService for RhoAiClient {
         &self,
         request: rho_ai::types::LlmRequest,
     ) -> std::result::Result<rho_ai::EventStream, rho_ai::ProviderError> {
-        let service = self.service();
-        service.chat_stream(request).await
+        let config = self.service_config();
+        match self.protocol {
+            ApiProtocol::ChatCompletions => {
+                rho_ai::openai::OpenAiService::new(config)
+                    .chat_stream(request)
+                    .await
+            }
+            ApiProtocol::Responses => {
+                rho_ai::responses::ResponsesService::new(config)
+                    .chat_stream(request)
+                    .await
+            }
+        }
     }
 }
 
@@ -307,6 +351,146 @@ mod tests {
                 providers: vec![pc],
             },
             ..Default::default()
+        }
+    }
+
+    /// Run one local HTTP fixture and return its origin plus captured request.
+    fn spawn_http_server(
+        response_body: &str,
+        content_type: &str,
+    ) -> (String, std::thread::JoinHandle<String>) {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::time::Duration;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind local fixture server");
+        let address = listener.local_addr().expect("fixture server address");
+        let response_body = response_body.to_owned();
+        let content_type = content_type.to_owned();
+        let handle = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().expect("accept fixture request");
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("set fixture read timeout");
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 4096];
+            let mut expected_length = None;
+            loop {
+                let read = socket.read(&mut buffer).expect("read fixture request");
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+                if expected_length.is_none()
+                    && let Some(header_end) = request.windows(4).position(|w| w == b"\r\n\r\n")
+                {
+                    let headers = String::from_utf8_lossy(&request[..header_end]);
+                    let content_length = headers
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().ok())
+                                .flatten()
+                        })
+                        .unwrap_or(0);
+                    expected_length = Some(header_end + 4 + content_length);
+                }
+                if expected_length.is_some_and(|length| request.len() >= length) {
+                    break;
+                }
+            }
+
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response_body}",
+                response_body.len()
+            );
+            socket
+                .write_all(response.as_bytes())
+                .expect("write fixture response");
+            String::from_utf8(request).expect("fixture request is UTF-8")
+        });
+        (format!("http://{address}"), handle)
+    }
+
+    #[test]
+    fn legacy_constructors_default_to_chat_completions() {
+        let basic = RhoAiClient::new("http://localhost:1234/v1", None);
+        let with_models = RhoAiClient::with_models_endpoint(
+            "http://localhost:1234/v1",
+            None,
+            Some("http://localhost:1234/v1/models".to_owned()),
+        );
+        assert_eq!(basic.protocol(), ApiProtocol::ChatCompletions);
+        assert_eq!(with_models.protocol(), ApiProtocol::ChatCompletions);
+    }
+
+    #[tokio::test]
+    async fn selected_protocol_routes_to_matching_endpoint_and_payload() {
+        use futures::StreamExt as _;
+        use rho_ai::LlmService as _;
+
+        let fixtures = [
+            (
+                ApiProtocol::ChatCompletions,
+                concat!(
+                    "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+                    "data: [DONE]\n\n"
+                ),
+                "/v1/chat/completions",
+                "messages",
+            ),
+            (
+                ApiProtocol::Responses,
+                "data: {\"type\":\"response.completed\",\"response\":{}}\n\n",
+                "/v1/responses",
+                "input",
+            ),
+        ];
+
+        for (protocol, response, expected_path, expected_field) in fixtures {
+            let (origin, request_handle) = spawn_http_server(response, "text/event-stream");
+            // Deliberately provide the opposite full endpoint suffix. The
+            // selected service must normalize it to its own path.
+            let configured_path = if protocol == ApiProtocol::Responses {
+                "/v1/chat/completions"
+            } else {
+                "/v1/responses"
+            };
+            let client = RhoAiClient::with_protocol(
+                format!("{origin}{configured_path}"),
+                Some("secret".to_owned()),
+                protocol,
+            );
+            let request = rho_ai::LlmRequest::new(
+                "test-model",
+                vec![rho_ai::LlmMessage::User("hello".to_owned())],
+            );
+            let events = client
+                .chat_stream(request)
+                .await
+                .expect("fixture request succeeds")
+                .collect::<Vec<_>>()
+                .await;
+            assert!(events.iter().all(std::result::Result::is_ok));
+
+            let raw = request_handle.join().expect("fixture server joins");
+            let (headers, body) = raw.split_once("\r\n\r\n").expect("request has body");
+            assert!(headers.starts_with(&format!("POST {expected_path} HTTP/1.1")));
+            let json: serde_json::Value = serde_json::from_str(body).expect("JSON request body");
+            assert!(json.get(expected_field).is_some());
+        }
+    }
+
+    #[tokio::test]
+    async fn model_discovery_derives_models_from_both_protocol_suffixes() {
+        for suffix in ["/v1/chat/completions", "/v1/responses"] {
+            let (origin, request_handle) = spawn_http_server(r#"{"data":[]}"#, "application/json");
+            let client = RhoAiClient::new(format!("{origin}{suffix}"), None);
+            let models = client.list_models().await.expect("models fixture succeeds");
+            assert!(models.data().is_empty());
+            let raw = request_handle.join().expect("fixture server joins");
+            assert!(raw.starts_with("GET /v1/models HTTP/1.1"));
         }
     }
 

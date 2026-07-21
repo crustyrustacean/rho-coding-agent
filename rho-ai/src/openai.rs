@@ -309,13 +309,15 @@ fn build_tools(tools: Vec<ToolDefinition>) -> Vec<WireTool> {
 
 /// Build the URL for the chat completions endpoint.
 ///
-/// Accepts either a base URL (e.g. `https://api.openai.com/v1`) or a full
-/// completions URL (e.g. `.../v1/chat/completions`).  In the latter case the
-/// redundant suffix is stripped so callers don't accidentally double up.
+/// Accepts a base URL or a full Chat Completions/Responses endpoint. Known
+/// generation suffixes are normalized so protocol selection can switch paths
+/// without requiring a matching endpoint rewrite in configuration.
 fn completions_url(base_url: &str) -> String {
-    let base = base_url
-        .trim_end_matches('/')
-        .trim_end_matches("/chat/completions");
+    let trimmed = base_url.trim_end_matches('/');
+    let base = trimmed
+        .strip_suffix("/chat/completions")
+        .or_else(|| trimmed.strip_suffix("/responses"))
+        .unwrap_or(trimmed);
     format!("{base}/chat/completions")
 }
 
@@ -954,6 +956,14 @@ mod tests {
     fn completions_url_appends_path() {
         assert_eq!(
             completions_url("https://api.openai.com/v1"),
+            "https://api.openai.com/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn completions_url_normalizes_responses_endpoint() {
+        assert_eq!(
+            completions_url("https://api.openai.com/v1/responses"),
             "https://api.openai.com/v1/chat/completions"
         );
     }

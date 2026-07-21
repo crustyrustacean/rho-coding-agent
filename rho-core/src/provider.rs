@@ -9,7 +9,7 @@
 //! providers.
 
 use crate::client::{ModelInfo, ModelList, RhoAiClient};
-use crate::config::ProviderSettings;
+use crate::config::{ApiProtocol, ProviderSettings};
 use crate::error::Result;
 use async_trait::async_trait;
 use tracing;
@@ -91,9 +91,19 @@ impl OpenAiCompatibleProvider {
         endpoint: impl Into<String>,
         api_key: Option<String>,
     ) -> Self {
+        Self::with_protocol(name, endpoint, api_key, ApiProtocol::ChatCompletions)
+    }
+
+    /// Create a provider with an explicit request protocol.
+    pub fn with_protocol(
+        name: impl Into<String>,
+        endpoint: impl Into<String>,
+        api_key: Option<String>,
+        protocol: ApiProtocol,
+    ) -> Self {
         let endpoint_str = endpoint.into();
         let is_external = !crate::client::is_local_endpoint(&endpoint_str);
-        let client = RhoAiClient::new(&endpoint_str, api_key);
+        let client = RhoAiClient::with_protocol(&endpoint_str, api_key, protocol);
         Self {
             name: name.into(),
             client,
@@ -111,9 +121,31 @@ impl OpenAiCompatibleProvider {
         api_key: Option<String>,
         models_endpoint: Option<String>,
     ) -> Self {
+        Self::with_models_endpoint_and_protocol(
+            name,
+            endpoint,
+            api_key,
+            models_endpoint,
+            ApiProtocol::ChatCompletions,
+        )
+    }
+
+    /// Create a provider with explicit model discovery and request protocol.
+    pub fn with_models_endpoint_and_protocol(
+        name: impl Into<String>,
+        endpoint: impl Into<String>,
+        api_key: Option<String>,
+        models_endpoint: Option<String>,
+        protocol: ApiProtocol,
+    ) -> Self {
         let endpoint_str = endpoint.into();
         let is_external = !crate::client::is_local_endpoint(&endpoint_str);
-        let client = RhoAiClient::with_models_endpoint(&endpoint_str, api_key, models_endpoint);
+        let client = RhoAiClient::with_models_endpoint_and_protocol(
+            &endpoint_str,
+            api_key,
+            models_endpoint,
+            protocol,
+        );
         Self {
             name: name.into(),
             client,
@@ -137,8 +169,7 @@ impl Provider for OpenAiCompatibleProvider {
     }
 
     fn llm_service(&self) -> &dyn rho_ai::LlmService {
-        // RhoAiClient implements LlmService by creating an OpenAiService
-        // per call.
+        // RhoAiClient creates the configured rho-ai transport per call.
         &self.client
     }
 
@@ -252,12 +283,14 @@ impl ProviderRegistry {
                     };
                     let api_key = api_key_env.and_then(|var| std::env::var(var).ok());
                     let models_endpoint = config.models_endpoint.clone();
+                    let protocol = config.api.unwrap_or_default();
 
-                    Box::new(OpenAiCompatibleProvider::with_models_endpoint(
+                    Box::new(OpenAiCompatibleProvider::with_models_endpoint_and_protocol(
                         name,
                         endpoint,
                         api_key,
                         models_endpoint,
+                        protocol,
                     )) as Box<dyn Provider>
                 })
                 .collect()
@@ -486,7 +519,15 @@ pub fn provider_factory(
         .and_then(|p| p.name.as_deref())
         .unwrap_or("local");
 
-    Box::new(OpenAiCompatibleProvider::new(name, endpoint, api_key))
+    let protocol = config
+        .provider
+        .default_provider()
+        .and_then(|provider| provider.api)
+        .unwrap_or_default();
+
+    Box::new(OpenAiCompatibleProvider::with_protocol(
+        name, endpoint, api_key, protocol,
+    ))
 }
 
 #[cfg(test)]
@@ -506,6 +547,18 @@ mod tests {
         );
         assert_eq!(p.name(), "local");
         assert!(!p.is_external());
+        assert_eq!(p.client.protocol(), ApiProtocol::ChatCompletions);
+    }
+
+    #[test]
+    fn provider_protocol_constructor_selects_responses() {
+        let p = OpenAiCompatibleProvider::with_protocol(
+            "openai",
+            "https://api.openai.com/v1/responses",
+            Some("sk-test".to_owned()),
+            ApiProtocol::Responses,
+        );
+        assert_eq!(p.client.protocol(), ApiProtocol::Responses);
     }
 
     #[test]

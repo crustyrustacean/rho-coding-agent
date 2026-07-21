@@ -101,9 +101,9 @@ pub use approval::{
 };
 pub use client::{ModelInfo, ModelList, RhoAiClient, is_local_endpoint, resolve_api_key};
 pub use config::{
-    AgentLoopConfig, ApprovalAction, ApprovalConfig, ConfigLoadError, ConfigLoader, ContextConfig,
-    ExtensionConfig, ExtensionPermissions, MemoryConfig, ProviderConfig, ProviderSettings,
-    RedactionConfig, RhoConfig, ShellConfig, SystemPromptConfig,
+    AgentLoopConfig, ApiProtocol, ApprovalAction, ApprovalConfig, ConfigLoadError, ConfigLoader,
+    ContextConfig, ExtensionConfig, ExtensionPermissions, MemoryConfig, ProviderConfig,
+    ProviderSettings, RedactionConfig, RhoConfig, ShellConfig, SystemPromptConfig,
 };
 pub use context::{ContextManager, SlidingWindowContextManager, TokenBudget};
 pub use context_files::{
