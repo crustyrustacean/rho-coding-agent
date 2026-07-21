@@ -14,7 +14,7 @@ A local coding agent written in Rust. `rho` runs as a headless process communica
 - 🐚 **PowerShell-native** — the shell is PowerShell (via `pwsh`); the model generates PowerShell commands, not bash
 - 📂 **Project-aware** — auto-detects project root, loads context files (`AGENTS.md`, `CLAUDE.md`, `.cursorrules`, etc.) with hash-verified trust
 - ⚙️ **Configurable** — two-tier TOML config (user-level `~/.rho/config.toml` + project-level `.rho/config.toml`), per-tool approval policies, command denylist
-- 🧠 **Local and remote models** — targets OpenAI-compatible endpoints (LM Studio, Ollama, OpenAI, Groq, OpenRouter, DeepInfra, and more) with named presets (`lm-studio`, `openrouter`, `openai`, `groq`, `ollama`, `zai`) and multi-provider support
+- 🧠 **Local and remote models** — native OpenAI Responses plus Chat Completions compatibility for LM Studio, Ollama, Groq, OpenRouter, DeepInfra, Z.ai, and custom endpoints, with named presets and multi-provider support
 - 🔌 **JSON-RPC 2.0** — headless protocol over stdin/stdout for embedding in editors, bots, and custom UIs. [OpenRPC schema](docs/rpc-schema/openrpc.json) available for client generation.
 
 ## Quick Start
@@ -74,7 +74,7 @@ A local coding agent written in Rust. `rho` runs as a headless process communica
 
    See [External Providers](docs/src/providers.md) for more providers (Groq, OpenRouter, DeepInfra) and detailed configuration.
 
-   **Note:** rho speaks the OpenAI Chat Completions wire format. Providers with their own API format (Anthropic, Google Gemini, AWS Bedrock) require an [OpenAI-compatible proxy](https://github.com/BerriAI/litellm) like LiteLLM or OpenRouter.
+   **Protocol note:** the `openai` preset uses OpenAI's native Responses API (`POST /v1/responses`). Other presets and custom providers use Chat Completions (`POST /v1/chat/completions`) unless `api = "responses"` is explicitly configured. Providers with unrelated native formats require an OpenAI-compatible proxy.
 
 ## CLI Options
 
@@ -151,16 +151,27 @@ denied_commands = ["Stop-Process"]
 enabled = true
 ```
 
-Example `.rho/config.toml` (OpenAI with preset):
+Example `.rho/config.toml` (OpenAI Responses via preset):
 
 ```toml
 [agent]
-model = "gpt-4o"
+model = "gpt-5"
 token_budget = 131072
+reasoning_effort = "medium"
 
 [[providers]]
-preset = "openai"
+preset = "openai" # selects api = "responses"
 api_key_env = "OPENAI_API_KEY"
+```
+
+A custom endpoint remains on Chat Completions by default. Opt into Responses only when the server supports its wire format:
+
+```toml
+[[providers]]
+name = "custom-responses"
+endpoint = "https://llm.example.com/v1/responses"
+api = "responses"
+api_key_env = "CUSTOM_API_KEY"
 ```
 
 API keys are **never** stored in config. Reference environment variables instead:

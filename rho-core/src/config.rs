@@ -163,9 +163,10 @@ pub struct AgentLoopConfig {
     pub compaction_mode: String,
     /// Reasoning effort for thinking-capable models.
     ///
-    /// Passed as `reasoning_effort` in every Chat Completions request.
-    /// Common values: `"low"`, `"medium"`, `"high"`. `None` means
-    /// no reasoning parameter is sent (default).
+    /// Passed as `reasoning_effort` for Chat Completions or as the Responses
+    /// `reasoning.effort` value with an automatic summary request.
+    /// Common values: `"low"`, `"medium"`, `"high"`. `None` means no
+    /// reasoning parameter is sent (default).
     #[serde(default)]
     pub reasoning_effort: Option<String>,
     /// Maximum seconds to wait for the **first** stream event after sending
@@ -285,6 +286,17 @@ fn default_stream_idle_timeout_secs() -> u64 {
 
 // ── ProviderConfig ────────────────────────────────────────────────────────────
 
+/// Wire protocol used for OpenAI-shaped model requests.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApiProtocol {
+    /// OpenAI-compatible `/v1/chat/completions` requests.
+    #[default]
+    ChatCompletions,
+    /// `OpenAI`'s native `/v1/responses` requests.
+    Responses,
+}
+
 /// Settings for a single model provider.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct ProviderConfig {
@@ -297,9 +309,8 @@ pub struct ProviderConfig {
     pub name: Option<String>,
     /// Provider preset name (e.g. `"lm-studio"`, `"openrouter"`, `"openai"`).
     ///
-    /// Fills in `endpoint` and `name` when not explicitly set. If both
-    /// `preset` and `endpoint` are set, `endpoint` wins (the preset is
-    /// informational only).
+    /// Fills in `endpoint`, `name`, and `api` when not explicitly set. If the
+    /// corresponding field is explicit, it wins over the preset.
     ///
     /// Built-in presets: `lm-studio`, `ollama`, `openrouter`, `openai`,
     /// `groq`, `zai`. An unknown preset logs a warning and is treated as
@@ -317,6 +328,12 @@ pub struct ProviderConfig {
     /// API endpoint URL.
     #[serde(default)]
     pub endpoint: Option<String>,
+    /// Request protocol.
+    ///
+    /// Missing values use Chat Completions unless a provider preset supplies
+    /// a different default. The built-in `openai` preset uses Responses.
+    #[serde(default)]
+    pub api: Option<ApiProtocol>,
     /// Environment variable name holding the API key.
     ///
     /// The key itself is never stored in config; this field names the env var
@@ -335,10 +352,9 @@ pub struct ProviderConfig {
     /// Optional models endpoint URL, used for model discovery.
     ///
     /// When set, `list_models()` uses this URL directly instead of deriving
-    /// one from the chat-completions endpoint. Some providers (e.g. Z.ai)
-    /// serve the models list at a different path prefix than chat completions.
-    /// When unset, the models URL is derived by replacing `/chat/completions`
-    /// with `/models` in the chat endpoint.
+    /// one from the generation endpoint. Some providers (e.g. Z.ai) serve the
+    /// models list at a different path prefix. When unset, the models URL is
+    /// derived by replacing `/chat/completions` or `/responses` with `/models`.
     #[serde(default)]
     pub models_endpoint: Option<String>,
 }
@@ -843,11 +859,13 @@ struct WireAgentLoopConfig {
 
 /// A named preset for a known model provider.
 ///
-/// Provides default endpoint and display name. The `api_key_env` is
-/// informational — used to log a hint at startup, **not** auto-injected.
+/// Provides default endpoint, display name, and request protocol. The
+/// `api_key_env` is informational—used to log a hint, **not** auto-injected.
 struct ProviderPreset {
     /// Display name (used when config omits `name`).
     name: &'static str,
+    /// Request protocol.
+    api: ApiProtocol,
     /// Default endpoint URL.
     endpoint: &'static str,
     /// Suggested env var for the API key (logged as a hint, not applied).
@@ -871,6 +889,7 @@ fn presets() -> &'static std::collections::HashMap<&'static str, ProviderPreset>
             "lm-studio",
             ProviderPreset {
                 name: "lm-studio",
+                api: ApiProtocol::ChatCompletions,
                 endpoint: "http://localhost:1234/v1/chat/completions",
                 api_key_env: "",
                 models_endpoint: "",
@@ -880,6 +899,7 @@ fn presets() -> &'static std::collections::HashMap<&'static str, ProviderPreset>
             "ollama",
             ProviderPreset {
                 name: "ollama",
+                api: ApiProtocol::ChatCompletions,
                 endpoint: "http://localhost:11434/v1/chat/completions",
                 api_key_env: "",
                 models_endpoint: "",
@@ -889,6 +909,7 @@ fn presets() -> &'static std::collections::HashMap<&'static str, ProviderPreset>
             "openrouter",
             ProviderPreset {
                 name: "openrouter",
+                api: ApiProtocol::ChatCompletions,
                 endpoint: "https://openrouter.ai/api/v1/chat/completions",
                 api_key_env: "OPENROUTER_API_KEY",
                 models_endpoint: "",
@@ -898,7 +919,8 @@ fn presets() -> &'static std::collections::HashMap<&'static str, ProviderPreset>
             "openai",
             ProviderPreset {
                 name: "openai",
-                endpoint: "https://api.openai.com/v1/chat/completions",
+                api: ApiProtocol::Responses,
+                endpoint: "https://api.openai.com/v1/responses",
                 api_key_env: "OPENAI_API_KEY",
                 models_endpoint: "",
             },
@@ -907,6 +929,7 @@ fn presets() -> &'static std::collections::HashMap<&'static str, ProviderPreset>
             "groq",
             ProviderPreset {
                 name: "groq",
+                api: ApiProtocol::ChatCompletions,
                 endpoint: "https://api.groq.com/openai/v1/chat/completions",
                 api_key_env: "GROQ_API_KEY",
                 models_endpoint: "",
@@ -916,6 +939,7 @@ fn presets() -> &'static std::collections::HashMap<&'static str, ProviderPreset>
             "zai",
             ProviderPreset {
                 name: "zai",
+                api: ApiProtocol::ChatCompletions,
                 endpoint: "https://api.z.ai/api/paas/v4/chat/completions",
                 api_key_env: "ZAI_API_KEY",
                 models_endpoint: "https://api.z.ai/api/v1/models",
@@ -928,6 +952,7 @@ fn presets() -> &'static std::collections::HashMap<&'static str, ProviderPreset>
                 // routing stays consistent; the two are mutually exclusive
                 // in practice (pay-as-you-go platform vs Coding Plan).
                 name: "zai",
+                api: ApiProtocol::ChatCompletions,
                 endpoint: "https://api.z.ai/api/coding/paas/v4/chat/completions",
                 api_key_env: "ZAI_API_KEY",
                 // Empty so the models URL is derived from the coding chat
@@ -944,6 +969,7 @@ fn presets() -> &'static std::collections::HashMap<&'static str, ProviderPreset>
 /// For each provider that has a `preset` set:
 /// - If `endpoint` is not set, use the preset's endpoint.
 /// - If `name` is not set, use the preset's name.
+/// - If `api` is not set, use the preset's protocol.
 /// - If `api_key_env` is not set and the preset suggests one, log a hint
 ///   (do **not** auto-inject — the user must explicitly set it).
 /// - If the preset is unknown, log a warning and skip.
@@ -976,6 +1002,9 @@ fn resolve_presets(providers: &mut [ProviderConfig]) {
         if p.name.is_none() {
             p.name = Some(preset.name.to_owned());
         }
+        if p.api.is_none() {
+            p.api = Some(preset.api);
+        }
         if p.models_endpoint.is_none() && !preset.models_endpoint.is_empty() && !endpoint_overridden
         {
             p.models_endpoint = Some(preset.models_endpoint.to_owned());
@@ -997,7 +1026,7 @@ fn resolve_presets(providers: &mut [ProviderConfig]) {
 /// `openrouter` preset for `anthropic/claude-sonnet-4`) without
 /// duplicating the preset's endpoint string.
 ///
-/// See [`presets`] for the list of built-in preset names.
+/// See the configuration guide for the list of built-in preset names.
 #[must_use]
 pub fn preset_endpoint(preset: &str) -> Option<&'static str> {
     presets().get(preset).map(|p| p.endpoint)
@@ -2182,6 +2211,62 @@ model = "gpt-4o"
     }
 
     #[test]
+    fn openai_preset_uses_responses_protocol() {
+        let mut providers = vec![ProviderConfig {
+            preset: Some("openai".to_owned()),
+            ..Default::default()
+        }];
+        resolve_presets(&mut providers);
+        assert_eq!(providers[0].api, Some(ApiProtocol::Responses));
+        assert_eq!(
+            providers[0].endpoint.as_deref(),
+            Some("https://api.openai.com/v1/responses")
+        );
+    }
+
+    #[test]
+    fn compatible_presets_keep_chat_completions() {
+        for preset in [
+            "lm-studio",
+            "ollama",
+            "openrouter",
+            "groq",
+            "zai",
+            "zai-coding",
+        ] {
+            let mut providers = vec![ProviderConfig {
+                preset: Some(preset.to_owned()),
+                ..Default::default()
+            }];
+            resolve_presets(&mut providers);
+            assert_eq!(
+                providers[0].api,
+                Some(ApiProtocol::ChatCompletions),
+                "unexpected protocol for {preset}"
+            );
+            assert!(
+                providers[0]
+                    .endpoint
+                    .as_deref()
+                    .is_some_and(|endpoint| endpoint.ends_with("/chat/completions")),
+                "unexpected endpoint for {preset}"
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_protocol_overrides_preset() {
+        let mut providers = vec![ProviderConfig {
+            preset: Some("openai".to_owned()),
+            api: Some(ApiProtocol::ChatCompletions),
+            endpoint: Some("https://api.openai.com/v1/chat/completions".to_owned()),
+            ..Default::default()
+        }];
+        resolve_presets(&mut providers);
+        assert_eq!(providers[0].api, Some(ApiProtocol::ChatCompletions));
+    }
+
+    #[test]
     fn preset_resolves_name() {
         let mut providers = vec![ProviderConfig {
             preset: Some("lm-studio".to_owned()),
@@ -2363,6 +2448,21 @@ api_key_env = "OLLAMA_KEY"
         .unwrap();
         assert_eq!(config.preset.as_deref(), Some("ollama"));
         assert_eq!(config.api_key_env.as_deref(), Some("OLLAMA_KEY"));
+    }
+
+    #[test]
+    fn provider_api_protocol_deserializes_and_defaults_safely() {
+        let missing: ProviderConfig = toml::from_str("name = \"custom\"").unwrap();
+        assert_eq!(
+            missing.api.unwrap_or_default(),
+            ApiProtocol::ChatCompletions
+        );
+
+        let responses: ProviderConfig = toml::from_str("api = \"responses\"").unwrap();
+        assert_eq!(responses.api, Some(ApiProtocol::Responses));
+
+        let chat: ProviderConfig = toml::from_str("api = \"chat_completions\"").unwrap();
+        assert_eq!(chat.api, Some(ApiProtocol::ChatCompletions));
     }
 
     #[test]

@@ -397,7 +397,7 @@ pub trait AgentObserver: Send + Sync {
     /// `route_response`), carrying the per-iteration delta and a live context
     /// snapshot. Observers can use this to render a live context/cost gauge
     /// during long multi-iteration turns, rather than only seeing the final
-    /// totals at [`on_run_end`](Self::on_run_end) / `agent/end`.
+    /// totals in the final `agent/end` notification.
     async fn on_usage(
         &self,
         _iteration: u32,

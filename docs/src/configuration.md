@@ -28,7 +28,7 @@ Project-level `[[providers]]` **merge** with user-level `[[providers]]` by name 
 
 ## Provider presets
 
-The `preset` field auto-fills `endpoint` and `name` from a built-in registry of known providers. This reduces config boilerplate and eliminates typo-prone URLs.
+The `preset` field auto-fills `endpoint`, `name`, and request `api` from a built-in registry of known providers. This reduces config boilerplate and eliminates typo-prone URLs.
 
 ```toml
 # Instead of writing out the full endpoint URL:
@@ -39,20 +39,22 @@ api_key_env = "OPENROUTER_API_KEY"
 
 Built-in presets:
 
-| Preset | Endpoint | API key env | Notes |
-|---|---|---|---|
-| `lm-studio` | `http://localhost:1234/v1/chat/completions` | *(none)* | Local, no key needed |
-| `ollama` | `http://localhost:11434/v1/chat/completions` | *(none)* | Local, no key needed |
-| `openrouter` | `https://openrouter.ai/api/v1/chat/completions` | `OPENROUTER_API_KEY` | Remote |
-| `openai` | `https://api.openai.com/v1/chat/completions` | `OPENAI_API_KEY` | Remote |
-| `groq` | `https://api.groq.com/openai/v1/chat/completions` | `GROQ_API_KEY` | Remote |
-| `zai` | `https://api.z.ai/api/paas/v4/chat/completions` | `ZAI_API_KEY` | Z.ai **platform** (pay-as-you-go); models endpoint at `/api/v1/models` |
-| `zai-coding` | `https://api.z.ai/api/coding/paas/v4/chat/completions` | `ZAI_API_KEY` | Z.ai **Coding Plan** subscription; models endpoint derived (`/api/coding/paas/v4/models`) |
+| Preset | Endpoint | Protocol | API key env | Notes |
+|---|---|---|---|---|
+| `lm-studio` | `http://localhost:1234/v1/chat/completions` | Chat Completions | *(none)* | Local, no key needed |
+| `ollama` | `http://localhost:11434/v1/chat/completions` | Chat Completions | *(none)* | Local, no key needed |
+| `openrouter` | `https://openrouter.ai/api/v1/chat/completions` | Chat Completions | `OPENROUTER_API_KEY` | Remote |
+| `openai` | `https://api.openai.com/v1/responses` | Responses | `OPENAI_API_KEY` | Native OpenAI reasoning plus tools |
+| `groq` | `https://api.groq.com/openai/v1/chat/completions` | Chat Completions | `GROQ_API_KEY` | Remote |
+| `zai` | `https://api.z.ai/api/paas/v4/chat/completions` | Chat Completions | `ZAI_API_KEY` | Z.ai **platform**; models endpoint at `/api/v1/models` |
+| `zai-coding` | `https://api.z.ai/api/coding/paas/v4/chat/completions` | Chat Completions | `ZAI_API_KEY` | Z.ai **Coding Plan**; models endpoint derived |
 
 Resolution rules:
 
-- If `preset` is set and `endpoint` is also set → `endpoint` wins (preset is informational)
+- If `preset` is set and `endpoint` is also set → `endpoint` wins; the preset's protocol still applies unless `api` is also explicit
 - If `preset` is set and `name` is also set → `name` wins
+- If `preset` is set and `api` is also set → explicit `api` wins
+- If `api` and `preset` are both absent → `chat_completions` is the safe default
 - If `preset` is set and `api_key_env` is not set → a hint is logged at startup (not auto-injected)
 - If `preset` is set and `models_endpoint` is also not set and the preset provides one → the preset's `models_endpoint` is used
 - If `preset` is set and `models_endpoint` is also set → `models_endpoint` wins (preset is informational)
@@ -93,8 +95,9 @@ show_reasoning = false
 
 # Reasoning effort for thinking-capable models (optional)
 # Common values: "low", "medium", "high".
-# Sent as `reasoning_effort` in every Chat Completions request.
-# Non-reasoning models silently ignore this.
+# Sent as `reasoning_effort` for Chat Completions. For Responses, sent as
+# reasoning = { effort = ..., summary = "auto" }, with summary deltas streamed.
+# Use only values supported by the selected model.
 # reasoning_effort = "medium"
 
 # Context utilization threshold for auto-compaction (default: 0 = disabled)
@@ -128,6 +131,8 @@ stream_idle_timeout_secs = 60
 #   name           — display name (shown in /models, consent prompt)
 #   preset         — built-in preset (fills endpoint/name automatically)
 #   endpoint       — explicit endpoint URL (overrides preset)
+#   api             — "chat_completions" or "responses"; missing defaults to
+#                     Chat Completions unless a preset supplies a value
 #   api_key_env    — env var holding the API key (not auto-injected by presets)
 #   default_model  — model to use when selected via agent.provider
 #   models_endpoint — explicit models endpoint URL (overrides preset; used when
@@ -138,7 +143,12 @@ stream_idle_timeout_secs = 60
 [[providers]]
 preset = "lm-studio"
 
-# Example: OpenRouter via preset
+# Example: OpenAI Responses via preset
+# [[providers]]
+# preset = "openai"
+# api_key_env = "OPENAI_API_KEY"
+#
+# Example: OpenRouter Chat Completions via preset
 # [[providers]]
 # preset = "openrouter"
 # api_key_env = "OPENROUTER_API_KEY"
@@ -150,6 +160,13 @@ preset = "lm-studio"
 # endpoint = "https://my-proxy.example.com/v1/chat/completions"
 # api_key_env = "MY_PROXY_KEY"
 
+# Example: custom Responses-compatible endpoint (explicit opt-in)
+# [[providers]]
+# name = "custom-responses"
+# endpoint = "https://llm.example.com/v1/responses"
+# api = "responses"
+# api_key_env = "CUSTOM_API_KEY"
+#
 # Example: multiple providers (local + remote)
 # [[providers]]
 # preset = "lm-studio"
@@ -232,9 +249,9 @@ api_key_env = "OPENAI_API_KEY"
 
 The provider reads the key from the environment variable at runtime. If the variable is not set, the key is silently omitted (local endpoints typically don't need one).
 
-## External providers
+## Provider protocols
 
-rho can connect to any OpenAI-compatible endpoint (OpenAI, Groq, OpenRouter, DeepInfra, etc.). See the [External Providers](./providers.md) page for setup instructions.
+The OpenAI preset uses native Responses with stateless requests and `store: false`. OpenRouter, Groq, Z.ai, Ollama, LM Studio, and custom unspecified providers retain Chat Completions. Set `api = "responses"` for a custom endpoint only when it implements the Responses request and SSE formats. See [External Providers](./providers.md) for details and limitations.
 
 ## CLI overrides
 
@@ -245,7 +262,8 @@ All config values can be overridden by CLI flags. CLI flags take highest priorit
 | `agent.model` | `--model` | Model identifier |
 | `agent.provider` | — | Provider name (uses its `default_model`) |
 | `agent.token_budget` | `--token-budget` | Context window token budget |
-| `provider.endpoint` | `--endpoint` | API endpoint URL |
+| `provider.endpoint` | `--endpoint` | API endpoint URL (does not change `api`) |
+| `provider.api` | — | Protocol is config-only |
 | `provider.api_key_env` | `--api-key-env` | Env var holding the API key |
 | `agent.max_iterations` | `--max-iterations` | Max agent loop iterations |
 | System prompt | `--system` | Override the system prompt |

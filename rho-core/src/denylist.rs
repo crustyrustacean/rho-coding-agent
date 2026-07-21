@@ -2,8 +2,8 @@
 //!
 //! [`CommandDenylist`] checks commands against a list of denied names,
 //! substrings, and flag combinations before execution. The built-in
-//! [`RunCommand`](rho_tools::RunCommand) tool and extension
-//! [`rho.runCommand()`] ops both use this to reject dangerous commands.
+//! `RunCommand` tool and extension `rho.runCommand()` ops both use this to
+//! reject dangerous commands.
 
 use crate::RhoConfig;
 use tracing::debug;

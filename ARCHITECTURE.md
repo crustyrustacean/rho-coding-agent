@@ -2,7 +2,7 @@
 
 ## Overview
 
-`rho` is a local coding agent that communicates with OpenAI-compatible model APIs. The workspace is a layered Rust crate structure where dependencies flow downward only.
+`rho` is a local coding agent that communicates through OpenAI's native Responses API or the OpenAI-compatible Chat Completions API. The workspace is a layered Rust crate structure where dependencies flow downward only.
 
 ## Dependency Graph
 
@@ -55,9 +55,9 @@ The foundation. Defines the contract everything else implements.
 - **Tool trait** — `Tool`: async, dyn-compatible, takes `CancellationToken`, returns `ToolOutcome`.
 - **Tool registry** — Maps tool names to `Box<dyn Tool>` implementations, each with a risk level.
 - **Approval policy** — `ApprovalPolicy` decides whether a tool call needs confirmation; `ApprovalGate` asks the user.
-- **LLM service** — `LlmService` trait (from `rho-ai`) abstracts the model API. `RhoAiClient` wraps it for use in the agent loop. `ProviderRegistry` manages one or more providers with CLI endpoint/key overrides. Provider-aware model resolution ensures `/model` switches to the correct provider automatically.
+- **LLM service** — `LlmService` trait (from `rho-ai`) abstracts the model API. `RhoAiClient` selects `OpenAiService` (Chat Completions) or `ResponsesService` from provider `ApiProtocol` configuration. `ProviderRegistry` manages one or more providers with CLI endpoint/key overrides. Provider-aware model resolution ensures `/model` switches to the correct provider automatically.
 - **Session** — Tree-shaped conversation model with adaptive resolution, JSONL persistence, token estimation.
-- **Config** — `RhoConfig` merged from user-level (`~/.rho/config.toml`) and project-level (`.rho/config.toml`). Supports `[[providers]]` array with named presets (`lm-studio`, `ollama`, `openrouter`, `openai`, `groq`, `zai`). Project-level providers merge with user-level by name — same name overrides, new names are added, unmatched user providers are preserved.
+- **Config** — `RhoConfig` merged from user-level (`~/.rho/config.toml`) and project-level (`.rho/config.toml`). Supports `[[providers]]`, protocol selection (`api = "chat_completions" | "responses"`), and named presets (`lm-studio`, `ollama`, `openrouter`, `openai`, `groq`, `zai`). The OpenAI preset uses Responses; other presets use Chat Completions. Project-level providers merge with user-level by name.
 - **File sandbox** — `SandboxRoot` validates all file paths stay within the project root.
 - **Secret redaction** — `Redactor` replaces known secret patterns in tool output.
 - **Context management** — `SlidingWindowContextManager` keeps the conversation within the model's context limit.
@@ -106,7 +106,9 @@ Currently ships the Rust grammar. PowerShell, TOML, and JSON grammars are future
 Provider-agnostic streaming interface for LLM communication.
 
 - **`LlmService` trait** — `chat_stream(LlmRequest) → EventStream`. All providers implement this.
-- **`OpenAiService`** — OpenAI-compatible HTTP client with SSE parsing and retry logic. Covers OpenAI, DeepSeek, OpenRouter, Groq, local servers (Ollama, LM Studio), and any OpenAI-compatible endpoint.
+- **`OpenAiService`** — Chat Completions HTTP/SSE client for OpenRouter, Groq, Z.ai, local servers (Ollama, LM Studio), and custom OpenAI-compatible endpoints.
+- **`ResponsesService`** — native OpenAI Responses HTTP/SSE client with text, reasoning-summary, function-call, terminal-state, and usage mapping.
+- **Unified contract** — both transports consume `LlmRequest` and emit the same `StreamEvent` values, so the agent loop, sessions, tools, and compaction never branch on protocol.
 - **Unified types** — `LlmMessage`, `LlmRequest`, `ToolDefinition`, `StreamEvent` (`Text`, `Reasoning`, `ToolUseStart/Delta/Complete`, `Done`), `AccumulatedResponse`.
 - **Model catalog** — `Catalog` (`catalog.rs`) is a built-in model registry generated from OpenRouter's public model list by `cargo xtask generate-models` (output: `catalog_generated.rs`), with manual overrides for thinking support and compatibility flags in `model-overrides.json`. `Model` entries carry context-window limits, thinking support, and `ModelCost` (per-million-token pricing for input, output, cache-read, cache-write). `Catalog::find`/`search`/`by_provider` resolve models for cost computation and `listModels`. Users extend the catalog with custom models via `[[models]]` provider config.
 - **Retry** — Exponential backoff on transient errors with configurable budget.
@@ -291,7 +293,7 @@ Before sending to the model, `rho` constructs a `ChatRequest` containing:
 
 #### B. Model Inference
 
-The request is sent via the `LlmService` trait to an OpenAI-compatible API (e.g., LM Studio, Ollama). The model returns either:
+The request is sent through the `LlmService` trait to the selected Responses or Chat Completions transport. The model returns either:
 1. **Text content** — A direct response (no more tools needed).
 2. **Tool calls** — One or more `ModelToolCall` values requesting tool execution.
 
@@ -364,7 +366,8 @@ rho-ai/             # Unified LLM provider abstraction
   src/
     lib.rs          # Re-exports: `LlmService`, `EventStream`, unified types
     service.rs      # `LlmService` trait
-    openai.rs       # `OpenAiService` — OpenAI-compatible HTTP + SSE
+    openai.rs       # `OpenAiService` — Chat Completions HTTP + SSE
+    responses.rs    # `ResponsesService` — OpenAI Responses HTTP + SSE
     sse.rs          # Server-sent event parser
     retry.rs        # Exponential backoff retry logic
     catalog.rs      # `Catalog`, `Model`, `ModelCost` — built-in + user model registry
@@ -533,7 +536,8 @@ docs/rpc-schema/openrpc.json  # OpenRPC 1.3.1 schema (machine-readable API spec)
 |---|---|---|
 | `LlmService` | `rho-ai/service.rs` | Trait: `chat_stream(LlmRequest) → EventStream` |
 | `LlmRequest` | `rho-ai/types.rs` | Request: model, messages, tools, max_tokens, reasoning_effort |
-| `OpenAiService` | `rho-ai/openai.rs` | OpenAI-compatible HTTP client with SSE streaming |
+| `OpenAiService` | `rho-ai/openai.rs` | Chat Completions HTTP client with SSE streaming |
+| `ResponsesService` | `rho-ai/responses.rs` | Native OpenAI Responses client with SSE streaming |
 | `StreamEvent` | `rho-ai/types.rs` | Streaming response event (`Text`, `Reasoning`, `ToolUse*`, `Done`) |
 | `AccumulatedResponse` | `rho-ai/types.rs` | Fully-accumulated response (text + tool calls + usage) |
 | `Catalog` | `rho-ai/catalog.rs` | Built-in + user model registry (find, search, by_provider) |
@@ -544,7 +548,8 @@ docs/rpc-schema/openrpc.json  # OpenRPC 1.3.1 schema (machine-readable API spec)
 | `ProviderRegistry` | `provider.rs` | Ordered collection of `Box<dyn Provider>` |
 | `ModelInfo` | `client.rs` | A model entry from `/v1/models` (accepts both `id` and `slug` fields via untagged enum) |
 | `ModelList` | `client.rs` | Model list response (accepts both `data` array and `models` array via untagged enum) |
-| `ProviderConfig` | `config.rs` | Provider config: name, preset, endpoint, API key env var, default_model, models_endpoint |
+| `ApiProtocol` | `config.rs` | Selects `chat_completions` or `responses` per provider |
+| `ProviderConfig` | `config.rs` | Provider config: name, preset, endpoint, API protocol, API key env var, default model, models endpoint |
 | `rho_ai::ProviderConfig` | `rho-ai/types.rs` | API key and base URL (model is per-request, not per-provider) |
 
 ### Session and context

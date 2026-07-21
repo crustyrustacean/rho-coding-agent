@@ -625,9 +625,9 @@ fn load_config(sandbox: &SandboxRoot) -> RhoConfig {
     })
 }
 
-/// Warn if any configured provider type is a known non-OpenAI provider.
+/// Warn if a configured provider type is not one of the OpenAI-shaped APIs.
 ///
-/// rho only speaks the `OpenAI` Chat Completions wire format. This check
+/// rho supports `OpenAI` Responses and compatible Chat Completions. This check
 /// fires early so the user gets a clear warning before any requests are made.
 fn check_provider_type(config: &RhoConfig) {
     const NON_OPENAI: &[&str] = &[

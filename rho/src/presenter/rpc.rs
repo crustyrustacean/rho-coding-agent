@@ -20,11 +20,11 @@ impl RpcPresenter {
         eprintln!("Warning: {msg} — using defaults");
     }
 
-    /// Provider type is not OpenAI-compatible.
+    /// Provider type is not supported by either OpenAI-shaped transport.
     pub fn provider_type_warning(provider_type: &str) {
         eprintln!(
             "warning: provider type \"{provider_type}\" was set, but rho only supports \
-             OpenAI-compatible endpoints. Requests may fail."
+             OpenAI Responses or Chat Completions endpoints. Requests may fail."
         );
     }
 

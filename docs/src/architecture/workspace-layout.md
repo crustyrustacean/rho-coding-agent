@@ -26,7 +26,8 @@ rho-coding-agent/
 │   └── src/
 │       ├── lib.rs           # Re-exports: `LlmService`, `EventStream`, unified types
 │       ├── service.rs       # `LlmService` trait
-│       ├── openai.rs        # `OpenAiService` — OpenAI-compatible HTTP + SSE
+│       ├── openai.rs        # `OpenAiService` — Chat Completions HTTP + SSE
+│       ├── responses.rs     # `ResponsesService` — OpenAI Responses HTTP + SSE
 │       ├── sse.rs           # Server-sent event parser
 │       ├── retry.rs         # Exponential backoff retry logic
 │       ├── catalog.rs       # `Catalog`, `Model`, `ModelCost` — model registry + pricing
