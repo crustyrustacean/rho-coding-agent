@@ -51,8 +51,7 @@ pub struct ModelChoice {
 ///
 /// Known variants map to the `OpenAI` spec. Unknown values from non-standard
 /// providers are captured as [`FinishReason::Other`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FinishReason {
     /// Standard stop — the response is complete.
     Stop,
@@ -64,6 +63,29 @@ pub enum FinishReason {
     ContentFilter,
     /// The model returned an unrecognised finish reason.
     Other(String),
+}
+
+/// Serialize as a plain string to match the wire format and the custom
+/// [`Deserialize`] impl.
+///
+/// A derived serializer would emit `{"other": "…"}` for [`FinishReason::Other`]
+/// (an externally-tagged newtype), which the deserializer — expecting a string —
+/// cannot read back. That asymmetry made any session containing a non-standard
+/// finish reason (e.g. `model_context_window_exceeded`) impossible to resume.
+impl Serialize for FinishReason {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let s = match self {
+            Self::Stop => "stop",
+            Self::ToolCalls => "tool_calls",
+            Self::Length => "length",
+            Self::ContentFilter => "content_filter",
+            Self::Other(other) => other.as_str(),
+        };
+        serializer.serialize_str(s)
+    }
 }
 
 impl<'de> Deserialize<'de> for FinishReason {
@@ -143,4 +165,37 @@ where
     D: serde::Deserializer<'de>,
 {
     Option::<String>::deserialize(deserializer).map(Option::unwrap_or_default)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finish_reason_other_serializes_as_plain_string() {
+        // Regression: `Other` used to serialize as `{"other": "…"}` (an
+        // object), which the string-expecting deserializer couldn't read —
+        // making any session with a non-standard finish reason unresumable.
+        let reason = FinishReason::Other("model_context_window_exceeded".to_owned());
+        let v = serde_json::to_value(&reason).unwrap();
+        assert_eq!(v, "model_context_window_exceeded");
+
+        let back: FinishReason = serde_json::from_value(v).unwrap();
+        assert_eq!(back, reason);
+    }
+
+    #[test]
+    fn finish_reason_known_variants_round_trip_as_strings() {
+        for (reason, expected) in [
+            (FinishReason::Stop, "stop"),
+            (FinishReason::ToolCalls, "tool_calls"),
+            (FinishReason::Length, "length"),
+            (FinishReason::ContentFilter, "content_filter"),
+        ] {
+            let v = serde_json::to_value(&reason).unwrap();
+            assert_eq!(v, expected);
+            let back: FinishReason = serde_json::from_value(v).unwrap();
+            assert_eq!(back, reason);
+        }
+    }
 }
