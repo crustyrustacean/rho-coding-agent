@@ -35,6 +35,7 @@ pub mod catalog;
 pub mod catalog_generated;
 pub mod error;
 pub mod openai;
+pub mod responses;
 pub mod retry;
 pub mod service;
 pub mod sse;
