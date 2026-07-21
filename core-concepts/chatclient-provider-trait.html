@@ -194,25 +194,28 @@ pub trait LlmService: Send + Sync {
 }
 <span class="boring">}</span></code></pre></pre>
 <p>All providers implement this trait. The agent loop consumes the <code>EventStream</code> (a <code>Pin&lt;Box&lt;dyn Stream&lt;Item = Result&lt;StreamEvent&gt;&gt;&gt;&gt;</code>) for streaming responses.</p>
-<h2 id="openaiservice"><a class="header" href="#openaiservice"><code>OpenAiService</code></a></h2>
-<p>The default implementation targets any OpenAI-compatible endpoint:</p>
+<h2 id="transport-services"><a class="header" href="#transport-services">Transport services</a></h2>
+<p><code>OpenAiService</code> targets Chat Completions-compatible endpoints:</p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>use rho_ai::OpenAiService;
+</span>use rho_ai::openai::OpenAiService;
 
-// Default: localhost
 let service = OpenAiService::new(rho_ai::ProviderConfig::new(
-    "",                          // no API key for local
-    "http://localhost:1234/v1",  // base URL
-));
-
-// Custom endpoint with API key
-let service = OpenAiService::new(rho_ai::ProviderConfig::new(
-    "sk-...",
-    "https://api.openai.com/v1",
+    "", // no API key for local
+    "http://localhost:1234/v1/chat/completions",
 ));
 <span class="boring">}</span></code></pre></pre>
-<p>The model is specified per-request via <code>LlmRequest::model</code>, not in the provider config. This ensures the model always comes from the session, never from a stale config value.</p>
+<p><code>ResponsesService</code> targets native OpenAI Responses:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use rho_ai::responses::ResponsesService;
+
+let service = ResponsesService::new(rho_ai::ProviderConfig::new(
+    "sk-...",
+    "https://api.openai.com/v1/responses",
+));
+<span class="boring">}</span></code></pre></pre>
+<p>Both implement <code>LlmService</code>, consume the same <code>LlmRequest</code>, and emit the same <code>StreamEvent</code> contract. <code>RhoAiClient</code> selects between them from each provider's <code>ApiProtocol</code>. The model is specified per request, never in the provider transport config.</p>
 <h3 id="authentication"><a class="header" href="#authentication">Authentication</a></h3>
 <p>When an API key is provided via <code>api_key_env</code> in config, it is sent as an <code>Authorization: Bearer &lt;key&gt;</code> header with every request. Local endpoints typically don't need this. See <a href="../providers.html">External Providers</a> for setup details.</p>
 <h3 id="provider-consent"><a class="header" href="#provider-consent">Provider consent</a></h3>
@@ -238,12 +241,12 @@ let service = OpenAiService::new(rho_ai::ProviderConfig::new(
 </tbody></table>
 </div>
 <h2 id="streaming"><a class="header" href="#streaming">Streaming</a></h2>
-<p><code>OpenAiService</code> uses SSE streaming (<code>stream: true</code>) for the Chat Completions API. Streaming events are returned as an <code>EventStream</code> that the agent loop consumes. <code>StreamEvent::Text</code> and <code>StreamEvent::Reasoning</code> events are forwarded to the <code>AgentObserver</code> in real time, enabling live progress output in the consumer.</p>
+<p>Both services use SSE streaming. Chat Completions deltas and Responses output/reasoning/function-call events are normalized into one <code>EventStream</code>. <code>StreamEvent::Text</code> and <code>StreamEvent::Reasoning</code> are forwarded to the <code>AgentObserver</code> in real time; tool events use the same approval and execution path regardless of transport.</p>
 <h2 id="multi-provider-support"><a class="header" href="#multi-provider-support">Multi-provider support</a></h2>
 <p>rho can manage multiple providers simultaneously via the <code>ProviderRegistry</code> and <code>Provider</code> trait. Each provider encapsulates identity, externality, model discovery, and access to an <code>LlmService</code>.</p>
 <ul>
-<li>Each provider has a name, endpoint, and optional API key (configured via <code>[[providers]]</code> with optional <code>preset</code>).</li>
-<li>Providers can set <code>models_endpoint</code> when the models listing is at a different path prefix than chat completions (e.g. Z.ai serves models at <code>/api/v1/models</code> but chat at <code>/api/paas/v4/</code>). When unset, the models URL is derived from the chat endpoint.</li>
+<li>Each provider has a name, endpoint, protocol, and optional API key (configured via <code>[[providers]]</code> with optional <code>preset</code>). Missing protocol values use Chat Completions; the OpenAI preset uses Responses.</li>
+<li>Providers can set <code>models_endpoint</code> when model listing uses a different path prefix. When unset, the models URL is derived from a trailing <code>/chat/completions</code> or <code>/responses</code> endpoint.</li>
 <li>Model list responses are parsed flexibly via <code>serde untagged</code> enums: <code>ModelList</code> accepts both <code>{"data": [...]}</code> (standard OpenAI) and <code>{"models": [...]}</code> (Z.ai). <code>ModelInfo</code> accepts both <code>id</code> and <code>slug</code> fields.</li>
 <li>The registry scans all providers to find which one serves a given model.</li>
 <li><code>listModels</code> lists all models across all configured providers.</li>

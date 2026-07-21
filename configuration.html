@@ -200,27 +200,29 @@
 <li><strong>No project providers</strong> → user providers preserved unchanged</li>
 </ul>
 <h2 id="provider-presets"><a class="header" href="#provider-presets">Provider presets</a></h2>
-<p>The <code>preset</code> field auto-fills <code>endpoint</code> and <code>name</code> from a built-in registry of known providers. This reduces config boilerplate and eliminates typo-prone URLs.</p>
+<p>The <code>preset</code> field auto-fills <code>endpoint</code>, <code>name</code>, and request <code>api</code> from a built-in registry of known providers. This reduces config boilerplate and eliminates typo-prone URLs.</p>
 <pre><code class="language-toml"># Instead of writing out the full endpoint URL:
 [[providers]]
 preset = "openrouter"
 api_key_env = "OPENROUTER_API_KEY"
 </code></pre>
 <p>Built-in presets:</p>
-<div class="table-wrapper"><table><thead><tr><th>Preset</th><th>Endpoint</th><th>API key env</th><th>Notes</th></tr></thead><tbody>
-<tr><td><code>lm-studio</code></td><td><code>http://localhost:1234/v1/chat/completions</code></td><td><em>(none)</em></td><td>Local, no key needed</td></tr>
-<tr><td><code>ollama</code></td><td><code>http://localhost:11434/v1/chat/completions</code></td><td><em>(none)</em></td><td>Local, no key needed</td></tr>
-<tr><td><code>openrouter</code></td><td><code>https://openrouter.ai/api/v1/chat/completions</code></td><td><code>OPENROUTER_API_KEY</code></td><td>Remote</td></tr>
-<tr><td><code>openai</code></td><td><code>https://api.openai.com/v1/chat/completions</code></td><td><code>OPENAI_API_KEY</code></td><td>Remote</td></tr>
-<tr><td><code>groq</code></td><td><code>https://api.groq.com/openai/v1/chat/completions</code></td><td><code>GROQ_API_KEY</code></td><td>Remote</td></tr>
-<tr><td><code>zai</code></td><td><code>https://api.z.ai/api/paas/v4/chat/completions</code></td><td><code>ZAI_API_KEY</code></td><td>Z.ai <strong>platform</strong> (pay-as-you-go); models endpoint at <code>/api/v1/models</code></td></tr>
-<tr><td><code>zai-coding</code></td><td><code>https://api.z.ai/api/coding/paas/v4/chat/completions</code></td><td><code>ZAI_API_KEY</code></td><td>Z.ai <strong>Coding Plan</strong> subscription; models endpoint derived (<code>/api/coding/paas/v4/models</code>)</td></tr>
+<div class="table-wrapper"><table><thead><tr><th>Preset</th><th>Endpoint</th><th>Protocol</th><th>API key env</th><th>Notes</th></tr></thead><tbody>
+<tr><td><code>lm-studio</code></td><td><code>http://localhost:1234/v1/chat/completions</code></td><td>Chat Completions</td><td><em>(none)</em></td><td>Local, no key needed</td></tr>
+<tr><td><code>ollama</code></td><td><code>http://localhost:11434/v1/chat/completions</code></td><td>Chat Completions</td><td><em>(none)</em></td><td>Local, no key needed</td></tr>
+<tr><td><code>openrouter</code></td><td><code>https://openrouter.ai/api/v1/chat/completions</code></td><td>Chat Completions</td><td><code>OPENROUTER_API_KEY</code></td><td>Remote</td></tr>
+<tr><td><code>openai</code></td><td><code>https://api.openai.com/v1/responses</code></td><td>Responses</td><td><code>OPENAI_API_KEY</code></td><td>Native OpenAI reasoning plus tools</td></tr>
+<tr><td><code>groq</code></td><td><code>https://api.groq.com/openai/v1/chat/completions</code></td><td>Chat Completions</td><td><code>GROQ_API_KEY</code></td><td>Remote</td></tr>
+<tr><td><code>zai</code></td><td><code>https://api.z.ai/api/paas/v4/chat/completions</code></td><td>Chat Completions</td><td><code>ZAI_API_KEY</code></td><td>Z.ai <strong>platform</strong>; models endpoint at <code>/api/v1/models</code></td></tr>
+<tr><td><code>zai-coding</code></td><td><code>https://api.z.ai/api/coding/paas/v4/chat/completions</code></td><td>Chat Completions</td><td><code>ZAI_API_KEY</code></td><td>Z.ai <strong>Coding Plan</strong>; models endpoint derived</td></tr>
 </tbody></table>
 </div>
 <p>Resolution rules:</p>
 <ul>
-<li>If <code>preset</code> is set and <code>endpoint</code> is also set → <code>endpoint</code> wins (preset is informational)</li>
+<li>If <code>preset</code> is set and <code>endpoint</code> is also set → <code>endpoint</code> wins; the preset's protocol still applies unless <code>api</code> is also explicit</li>
 <li>If <code>preset</code> is set and <code>name</code> is also set → <code>name</code> wins</li>
+<li>If <code>preset</code> is set and <code>api</code> is also set → explicit <code>api</code> wins</li>
+<li>If <code>api</code> and <code>preset</code> are both absent → <code>chat_completions</code> is the safe default</li>
 <li>If <code>preset</code> is set and <code>api_key_env</code> is not set → a hint is logged at startup (not auto-injected)</li>
 <li>If <code>preset</code> is set and <code>models_endpoint</code> is also not set and the preset provides one → the preset's <code>models_endpoint</code> is used</li>
 <li>If <code>preset</code> is set and <code>models_endpoint</code> is also set → <code>models_endpoint</code> wins (preset is informational)</li>
@@ -259,8 +261,9 @@ show_reasoning = false
 
 # Reasoning effort for thinking-capable models (optional)
 # Common values: "low", "medium", "high".
-# Sent as `reasoning_effort` in every Chat Completions request.
-# Non-reasoning models silently ignore this.
+# Sent as `reasoning_effort` for Chat Completions. For Responses, sent as
+# reasoning = { effort = ..., summary = "auto" }, with summary deltas streamed.
+# Use only values supported by the selected model.
 # reasoning_effort = "medium"
 
 # Context utilization threshold for auto-compaction (default: 0 = disabled)
@@ -294,6 +297,8 @@ stream_idle_timeout_secs = 60
 #   name           — display name (shown in /models, consent prompt)
 #   preset         — built-in preset (fills endpoint/name automatically)
 #   endpoint       — explicit endpoint URL (overrides preset)
+#   api             — "chat_completions" or "responses"; missing defaults to
+#                     Chat Completions unless a preset supplies a value
 #   api_key_env    — env var holding the API key (not auto-injected by presets)
 #   default_model  — model to use when selected via agent.provider
 #   models_endpoint — explicit models endpoint URL (overrides preset; used when
@@ -304,7 +309,12 @@ stream_idle_timeout_secs = 60
 [[providers]]
 preset = "lm-studio"
 
-# Example: OpenRouter via preset
+# Example: OpenAI Responses via preset
+# [[providers]]
+# preset = "openai"
+# api_key_env = "OPENAI_API_KEY"
+#
+# Example: OpenRouter Chat Completions via preset
 # [[providers]]
 # preset = "openrouter"
 # api_key_env = "OPENROUTER_API_KEY"
@@ -316,6 +326,13 @@ preset = "lm-studio"
 # endpoint = "https://my-proxy.example.com/v1/chat/completions"
 # api_key_env = "MY_PROXY_KEY"
 
+# Example: custom Responses-compatible endpoint (explicit opt-in)
+# [[providers]]
+# name = "custom-responses"
+# endpoint = "https://llm.example.com/v1/responses"
+# api = "responses"
+# api_key_env = "CUSTOM_API_KEY"
+#
 # Example: multiple providers (local + remote)
 # [[providers]]
 # preset = "lm-studio"
@@ -392,15 +409,16 @@ preset = "openai"
 api_key_env = "OPENAI_API_KEY"
 </code></pre>
 <p>The provider reads the key from the environment variable at runtime. If the variable is not set, the key is silently omitted (local endpoints typically don't need one).</p>
-<h2 id="external-providers"><a class="header" href="#external-providers">External providers</a></h2>
-<p>rho can connect to any OpenAI-compatible endpoint (OpenAI, Groq, OpenRouter, DeepInfra, etc.). See the <a href="./providers.html">External Providers</a> page for setup instructions.</p>
+<h2 id="provider-protocols"><a class="header" href="#provider-protocols">Provider protocols</a></h2>
+<p>The OpenAI preset uses native Responses with stateless requests and <code>store: false</code>. OpenRouter, Groq, Z.ai, Ollama, LM Studio, and custom unspecified providers retain Chat Completions. Set <code>api = "responses"</code> for a custom endpoint only when it implements the Responses request and SSE formats. See <a href="./providers.html">External Providers</a> for details and limitations.</p>
 <h2 id="cli-overrides"><a class="header" href="#cli-overrides">CLI overrides</a></h2>
 <p>All config values can be overridden by CLI flags. CLI flags take highest priority:</p>
 <div class="table-wrapper"><table><thead><tr><th>Config field</th><th>CLI flag</th><th>Description</th></tr></thead><tbody>
 <tr><td><code>agent.model</code></td><td><code>--model</code></td><td>Model identifier</td></tr>
 <tr><td><code>agent.provider</code></td><td>—</td><td>Provider name (uses its <code>default_model</code>)</td></tr>
 <tr><td><code>agent.token_budget</code></td><td><code>--token-budget</code></td><td>Context window token budget</td></tr>
-<tr><td><code>provider.endpoint</code></td><td><code>--endpoint</code></td><td>API endpoint URL</td></tr>
+<tr><td><code>provider.endpoint</code></td><td><code>--endpoint</code></td><td>API endpoint URL (does not change <code>api</code>)</td></tr>
+<tr><td><code>provider.api</code></td><td>—</td><td>Protocol is config-only</td></tr>
 <tr><td><code>provider.api_key_env</code></td><td><code>--api-key-env</code></td><td>Env var holding the API key</td></tr>
 <tr><td><code>agent.max_iterations</code></td><td><code>--max-iterations</code></td><td>Max agent loop iterations</td></tr>
 <tr><td>System prompt</td><td><code>--system</code></td><td>Override the system prompt</td></tr>

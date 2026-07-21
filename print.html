@@ -179,7 +179,7 @@
                     <main>
                         <h1 id="introduction"><a class="header" href="#introduction">Introduction</a></h1>
 <p><strong>rho</strong> is a Rust coding agent that runs against local and remote LLMs.</p>
-<p>It connects to OpenAI-compatible endpoints (LM Studio, Ollama, OpenAI, Groq, OpenRouter, DeepInfra, and more), gives the model access to tools for reading and writing files, executing shell commands, and running Rust tooling — then runs an autonomous agent loop that the user supervises through an approval gate.</p>
+<p>It connects through native OpenAI Responses or OpenAI-compatible Chat Completions endpoints (LM Studio, Ollama, Groq, OpenRouter, DeepInfra, Z.ai, and more), gives the model access to tools for reading and writing files, executing shell commands, and running Rust tooling—then runs an autonomous agent loop supervised through an approval gate.</p>
 <p>rho is a headless JSON-RPC 2.0 agent over stdin/stdout, suitable for embedding in editors, bots, and custom UIs.</p>
 <p>See <a href="./rpc-mode.html">RPC Mode</a> for the full protocol reference.</p>
 <p>Design priorities:</p>
@@ -340,7 +340,8 @@ rho --ephemeral          # in-memory mode, no session file
 │   └── src/
 │       ├── lib.rs           # Re-exports: `LlmService`, `EventStream`, unified types
 │       ├── service.rs       # `LlmService` trait
-│       ├── openai.rs        # `OpenAiService` — OpenAI-compatible HTTP + SSE
+│       ├── openai.rs        # `OpenAiService` — Chat Completions HTTP + SSE
+│       ├── responses.rs     # `ResponsesService` — OpenAI Responses HTTP + SSE
 │       ├── sse.rs           # Server-sent event parser
 │       ├── retry.rs         # Exponential backoff retry logic
 │       ├── catalog.rs       # `Catalog`, `Model`, `ModelCost` — model registry + pricing
@@ -793,25 +794,28 @@ pub trait LlmService: Send + Sync {
 }
 <span class="boring">}</span></code></pre></pre>
 <p>All providers implement this trait. The agent loop consumes the <code>EventStream</code> (a <code>Pin&lt;Box&lt;dyn Stream&lt;Item = Result&lt;StreamEvent&gt;&gt;&gt;&gt;</code>) for streaming responses.</p>
-<h2 id="openaiservice"><a class="header" href="#openaiservice"><code>OpenAiService</code></a></h2>
-<p>The default implementation targets any OpenAI-compatible endpoint:</p>
+<h2 id="transport-services"><a class="header" href="#transport-services">Transport services</a></h2>
+<p><code>OpenAiService</code> targets Chat Completions-compatible endpoints:</p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>use rho_ai::OpenAiService;
+</span>use rho_ai::openai::OpenAiService;
 
-// Default: localhost
 let service = OpenAiService::new(rho_ai::ProviderConfig::new(
-    "",                          // no API key for local
-    "http://localhost:1234/v1",  // base URL
-));
-
-// Custom endpoint with API key
-let service = OpenAiService::new(rho_ai::ProviderConfig::new(
-    "sk-...",
-    "https://api.openai.com/v1",
+    "", // no API key for local
+    "http://localhost:1234/v1/chat/completions",
 ));
 <span class="boring">}</span></code></pre></pre>
-<p>The model is specified per-request via <code>LlmRequest::model</code>, not in the provider config. This ensures the model always comes from the session, never from a stale config value.</p>
+<p><code>ResponsesService</code> targets native OpenAI Responses:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use rho_ai::responses::ResponsesService;
+
+let service = ResponsesService::new(rho_ai::ProviderConfig::new(
+    "sk-...",
+    "https://api.openai.com/v1/responses",
+));
+<span class="boring">}</span></code></pre></pre>
+<p>Both implement <code>LlmService</code>, consume the same <code>LlmRequest</code>, and emit the same <code>StreamEvent</code> contract. <code>RhoAiClient</code> selects between them from each provider's <code>ApiProtocol</code>. The model is specified per request, never in the provider transport config.</p>
 <h3 id="authentication"><a class="header" href="#authentication">Authentication</a></h3>
 <p>When an API key is provided via <code>api_key_env</code> in config, it is sent as an <code>Authorization: Bearer &lt;key&gt;</code> header with every request. Local endpoints typically don't need this. See <a href="core-concepts/../providers.html">External Providers</a> for setup details.</p>
 <h3 id="provider-consent"><a class="header" href="#provider-consent">Provider consent</a></h3>
@@ -837,12 +841,12 @@ let service = OpenAiService::new(rho_ai::ProviderConfig::new(
 </tbody></table>
 </div>
 <h2 id="streaming"><a class="header" href="#streaming">Streaming</a></h2>
-<p><code>OpenAiService</code> uses SSE streaming (<code>stream: true</code>) for the Chat Completions API. Streaming events are returned as an <code>EventStream</code> that the agent loop consumes. <code>StreamEvent::Text</code> and <code>StreamEvent::Reasoning</code> events are forwarded to the <code>AgentObserver</code> in real time, enabling live progress output in the consumer.</p>
+<p>Both services use SSE streaming. Chat Completions deltas and Responses output/reasoning/function-call events are normalized into one <code>EventStream</code>. <code>StreamEvent::Text</code> and <code>StreamEvent::Reasoning</code> are forwarded to the <code>AgentObserver</code> in real time; tool events use the same approval and execution path regardless of transport.</p>
 <h2 id="multi-provider-support"><a class="header" href="#multi-provider-support">Multi-provider support</a></h2>
 <p>rho can manage multiple providers simultaneously via the <code>ProviderRegistry</code> and <code>Provider</code> trait. Each provider encapsulates identity, externality, model discovery, and access to an <code>LlmService</code>.</p>
 <ul>
-<li>Each provider has a name, endpoint, and optional API key (configured via <code>[[providers]]</code> with optional <code>preset</code>).</li>
-<li>Providers can set <code>models_endpoint</code> when the models listing is at a different path prefix than chat completions (e.g. Z.ai serves models at <code>/api/v1/models</code> but chat at <code>/api/paas/v4/</code>). When unset, the models URL is derived from the chat endpoint.</li>
+<li>Each provider has a name, endpoint, protocol, and optional API key (configured via <code>[[providers]]</code> with optional <code>preset</code>). Missing protocol values use Chat Completions; the OpenAI preset uses Responses.</li>
+<li>Providers can set <code>models_endpoint</code> when model listing uses a different path prefix. When unset, the models URL is derived from a trailing <code>/chat/completions</code> or <code>/responses</code> endpoint.</li>
 <li>Model list responses are parsed flexibly via <code>serde untagged</code> enums: <code>ModelList</code> accepts both <code>{"data": [...]}</code> (standard OpenAI) and <code>{"models": [...]}</code> (Z.ai). <code>ModelInfo</code> accepts both <code>id</code> and <code>slug</code> fields.</li>
 <li>The registry scans all providers to find which one serves a given model.</li>
 <li><code>listModels</code> lists all models across all configured providers.</li>
@@ -1406,27 +1410,29 @@ enabled = false
 <li><strong>No project providers</strong> → user providers preserved unchanged</li>
 </ul>
 <h2 id="provider-presets"><a class="header" href="#provider-presets">Provider presets</a></h2>
-<p>The <code>preset</code> field auto-fills <code>endpoint</code> and <code>name</code> from a built-in registry of known providers. This reduces config boilerplate and eliminates typo-prone URLs.</p>
+<p>The <code>preset</code> field auto-fills <code>endpoint</code>, <code>name</code>, and request <code>api</code> from a built-in registry of known providers. This reduces config boilerplate and eliminates typo-prone URLs.</p>
 <pre><code class="language-toml"># Instead of writing out the full endpoint URL:
 [[providers]]
 preset = "openrouter"
 api_key_env = "OPENROUTER_API_KEY"
 </code></pre>
 <p>Built-in presets:</p>
-<div class="table-wrapper"><table><thead><tr><th>Preset</th><th>Endpoint</th><th>API key env</th><th>Notes</th></tr></thead><tbody>
-<tr><td><code>lm-studio</code></td><td><code>http://localhost:1234/v1/chat/completions</code></td><td><em>(none)</em></td><td>Local, no key needed</td></tr>
-<tr><td><code>ollama</code></td><td><code>http://localhost:11434/v1/chat/completions</code></td><td><em>(none)</em></td><td>Local, no key needed</td></tr>
-<tr><td><code>openrouter</code></td><td><code>https://openrouter.ai/api/v1/chat/completions</code></td><td><code>OPENROUTER_API_KEY</code></td><td>Remote</td></tr>
-<tr><td><code>openai</code></td><td><code>https://api.openai.com/v1/chat/completions</code></td><td><code>OPENAI_API_KEY</code></td><td>Remote</td></tr>
-<tr><td><code>groq</code></td><td><code>https://api.groq.com/openai/v1/chat/completions</code></td><td><code>GROQ_API_KEY</code></td><td>Remote</td></tr>
-<tr><td><code>zai</code></td><td><code>https://api.z.ai/api/paas/v4/chat/completions</code></td><td><code>ZAI_API_KEY</code></td><td>Z.ai <strong>platform</strong> (pay-as-you-go); models endpoint at <code>/api/v1/models</code></td></tr>
-<tr><td><code>zai-coding</code></td><td><code>https://api.z.ai/api/coding/paas/v4/chat/completions</code></td><td><code>ZAI_API_KEY</code></td><td>Z.ai <strong>Coding Plan</strong> subscription; models endpoint derived (<code>/api/coding/paas/v4/models</code>)</td></tr>
+<div class="table-wrapper"><table><thead><tr><th>Preset</th><th>Endpoint</th><th>Protocol</th><th>API key env</th><th>Notes</th></tr></thead><tbody>
+<tr><td><code>lm-studio</code></td><td><code>http://localhost:1234/v1/chat/completions</code></td><td>Chat Completions</td><td><em>(none)</em></td><td>Local, no key needed</td></tr>
+<tr><td><code>ollama</code></td><td><code>http://localhost:11434/v1/chat/completions</code></td><td>Chat Completions</td><td><em>(none)</em></td><td>Local, no key needed</td></tr>
+<tr><td><code>openrouter</code></td><td><code>https://openrouter.ai/api/v1/chat/completions</code></td><td>Chat Completions</td><td><code>OPENROUTER_API_KEY</code></td><td>Remote</td></tr>
+<tr><td><code>openai</code></td><td><code>https://api.openai.com/v1/responses</code></td><td>Responses</td><td><code>OPENAI_API_KEY</code></td><td>Native OpenAI reasoning plus tools</td></tr>
+<tr><td><code>groq</code></td><td><code>https://api.groq.com/openai/v1/chat/completions</code></td><td>Chat Completions</td><td><code>GROQ_API_KEY</code></td><td>Remote</td></tr>
+<tr><td><code>zai</code></td><td><code>https://api.z.ai/api/paas/v4/chat/completions</code></td><td>Chat Completions</td><td><code>ZAI_API_KEY</code></td><td>Z.ai <strong>platform</strong>; models endpoint at <code>/api/v1/models</code></td></tr>
+<tr><td><code>zai-coding</code></td><td><code>https://api.z.ai/api/coding/paas/v4/chat/completions</code></td><td>Chat Completions</td><td><code>ZAI_API_KEY</code></td><td>Z.ai <strong>Coding Plan</strong>; models endpoint derived</td></tr>
 </tbody></table>
 </div>
 <p>Resolution rules:</p>
 <ul>
-<li>If <code>preset</code> is set and <code>endpoint</code> is also set → <code>endpoint</code> wins (preset is informational)</li>
+<li>If <code>preset</code> is set and <code>endpoint</code> is also set → <code>endpoint</code> wins; the preset's protocol still applies unless <code>api</code> is also explicit</li>
 <li>If <code>preset</code> is set and <code>name</code> is also set → <code>name</code> wins</li>
+<li>If <code>preset</code> is set and <code>api</code> is also set → explicit <code>api</code> wins</li>
+<li>If <code>api</code> and <code>preset</code> are both absent → <code>chat_completions</code> is the safe default</li>
 <li>If <code>preset</code> is set and <code>api_key_env</code> is not set → a hint is logged at startup (not auto-injected)</li>
 <li>If <code>preset</code> is set and <code>models_endpoint</code> is also not set and the preset provides one → the preset's <code>models_endpoint</code> is used</li>
 <li>If <code>preset</code> is set and <code>models_endpoint</code> is also set → <code>models_endpoint</code> wins (preset is informational)</li>
@@ -1465,8 +1471,9 @@ show_reasoning = false
 
 # Reasoning effort for thinking-capable models (optional)
 # Common values: "low", "medium", "high".
-# Sent as `reasoning_effort` in every Chat Completions request.
-# Non-reasoning models silently ignore this.
+# Sent as `reasoning_effort` for Chat Completions. For Responses, sent as
+# reasoning = { effort = ..., summary = "auto" }, with summary deltas streamed.
+# Use only values supported by the selected model.
 # reasoning_effort = "medium"
 
 # Context utilization threshold for auto-compaction (default: 0 = disabled)
@@ -1500,6 +1507,8 @@ stream_idle_timeout_secs = 60
 #   name           — display name (shown in /models, consent prompt)
 #   preset         — built-in preset (fills endpoint/name automatically)
 #   endpoint       — explicit endpoint URL (overrides preset)
+#   api             — "chat_completions" or "responses"; missing defaults to
+#                     Chat Completions unless a preset supplies a value
 #   api_key_env    — env var holding the API key (not auto-injected by presets)
 #   default_model  — model to use when selected via agent.provider
 #   models_endpoint — explicit models endpoint URL (overrides preset; used when
@@ -1510,7 +1519,12 @@ stream_idle_timeout_secs = 60
 [[providers]]
 preset = "lm-studio"
 
-# Example: OpenRouter via preset
+# Example: OpenAI Responses via preset
+# [[providers]]
+# preset = "openai"
+# api_key_env = "OPENAI_API_KEY"
+#
+# Example: OpenRouter Chat Completions via preset
 # [[providers]]
 # preset = "openrouter"
 # api_key_env = "OPENROUTER_API_KEY"
@@ -1522,6 +1536,13 @@ preset = "lm-studio"
 # endpoint = "https://my-proxy.example.com/v1/chat/completions"
 # api_key_env = "MY_PROXY_KEY"
 
+# Example: custom Responses-compatible endpoint (explicit opt-in)
+# [[providers]]
+# name = "custom-responses"
+# endpoint = "https://llm.example.com/v1/responses"
+# api = "responses"
+# api_key_env = "CUSTOM_API_KEY"
+#
 # Example: multiple providers (local + remote)
 # [[providers]]
 # preset = "lm-studio"
@@ -1598,15 +1619,16 @@ preset = "openai"
 api_key_env = "OPENAI_API_KEY"
 </code></pre>
 <p>The provider reads the key from the environment variable at runtime. If the variable is not set, the key is silently omitted (local endpoints typically don't need one).</p>
-<h2 id="external-providers"><a class="header" href="#external-providers">External providers</a></h2>
-<p>rho can connect to any OpenAI-compatible endpoint (OpenAI, Groq, OpenRouter, DeepInfra, etc.). See the <a href="./providers.html">External Providers</a> page for setup instructions.</p>
+<h2 id="provider-protocols"><a class="header" href="#provider-protocols">Provider protocols</a></h2>
+<p>The OpenAI preset uses native Responses with stateless requests and <code>store: false</code>. OpenRouter, Groq, Z.ai, Ollama, LM Studio, and custom unspecified providers retain Chat Completions. Set <code>api = "responses"</code> for a custom endpoint only when it implements the Responses request and SSE formats. See <a href="./providers.html">External Providers</a> for details and limitations.</p>
 <h2 id="cli-overrides"><a class="header" href="#cli-overrides">CLI overrides</a></h2>
 <p>All config values can be overridden by CLI flags. CLI flags take highest priority:</p>
 <div class="table-wrapper"><table><thead><tr><th>Config field</th><th>CLI flag</th><th>Description</th></tr></thead><tbody>
 <tr><td><code>agent.model</code></td><td><code>--model</code></td><td>Model identifier</td></tr>
 <tr><td><code>agent.provider</code></td><td>—</td><td>Provider name (uses its <code>default_model</code>)</td></tr>
 <tr><td><code>agent.token_budget</code></td><td><code>--token-budget</code></td><td>Context window token budget</td></tr>
-<tr><td><code>provider.endpoint</code></td><td><code>--endpoint</code></td><td>API endpoint URL</td></tr>
+<tr><td><code>provider.endpoint</code></td><td><code>--endpoint</code></td><td>API endpoint URL (does not change <code>api</code>)</td></tr>
+<tr><td><code>provider.api</code></td><td>—</td><td>Protocol is config-only</td></tr>
 <tr><td><code>provider.api_key_env</code></td><td><code>--api-key-env</code></td><td>Env var holding the API key</td></tr>
 <tr><td><code>agent.max_iterations</code></td><td><code>--max-iterations</code></td><td>Max agent loop iterations</td></tr>
 <tr><td>System prompt</td><td><code>--system</code></td><td>Override the system prompt</td></tr>
@@ -1614,70 +1636,70 @@ api_key_env = "OPENAI_API_KEY"
 <tr><td>Provider consent</td><td><code>--accept-external-provider</code></td><td>Skip consent warning</td></tr>
 <tr><td>Session resume</td><td><code>--session</code> / <code>-c</code></td><td>Resume a previous session</td></tr>
 </tbody></table>
-</div><div style="break-before: page; page-break-before: always;"></div><h1 id="external-providers-1"><a class="header" href="#external-providers-1">External Providers</a></h1>
-<p>rho's <code>OpenAiService</code> (in <code>rho-ai</code>) speaks the <strong>OpenAI Chat Completions wire format</strong> (<code>POST /v1/chat/completions</code>). It works with any endpoint that implements this format — including local servers (LM Studio, Ollama) and external providers that offer an OpenAI-compatible API.</p>
-<h2 id="what-openai-compatible-means"><a class="header" href="#what-openai-compatible-means">What "OpenAI-compatible" means</a></h2>
-<p>The request body rho sends follows the OpenAI specification:</p>
+</div><div style="break-before: page; page-break-before: always;"></div><h1 id="external-providers"><a class="header" href="#external-providers">External Providers</a></h1>
+<p>rho supports two OpenAI-shaped streaming protocols behind the same internal <code>LlmService</code> contract:</p>
+<ul>
+<li><strong>Responses</strong> (<code>POST /v1/responses</code>) through <code>ResponsesService</code>, used by the built-in <code>openai</code> preset. This supports OpenAI reasoning and function tools in the same turn.</li>
+<li><strong>Chat Completions</strong> (<code>POST /v1/chat/completions</code>) through <code>OpenAiService</code>, used by every other built-in preset and by custom providers unless explicitly overridden.</li>
+</ul>
+<p>The agent loop, tools, sessions, and UIs receive the same text, reasoning, tool-call, usage, and completion events from either transport.</p>
+<h2 id="chat-completions-compatibility"><a class="header" href="#chat-completions-compatibility">Chat Completions compatibility</a></h2>
+<p>A Chat Completions request uses <code>messages</code> and nested function tools:</p>
 <pre><code class="language-json">{
   "model": "gpt-4o",
   "messages": [...],
-  "tools": [...],
-  "temperature": ...
+  "tools": [...]
 }
 </code></pre>
-<p>And rho expects the response to follow the same specification (choices with <code>finish_reason</code>, <code>message.content</code>, <code>message.tool_calls</code>, usage stats). <strong>Any endpoint that accepts and returns this format works.</strong></p>
-<h3 id="providers-that-work-natively"><a class="header" href="#providers-that-work-natively">Providers that work natively</a></h3>
-<p>These providers expose an OpenAI-compatible API as their primary interface:</p>
-<div class="table-wrapper"><table><thead><tr><th>Provider</th><th>Endpoint</th><th>Notes</th></tr></thead><tbody>
-<tr><td>OpenAI</td><td><code>api.openai.com/v1/chat/completions</code></td><td>Native OpenAI format</td></tr>
-<tr><td>OpenRouter</td><td><code>openrouter.ai/api/v1/chat/completions</code></td><td>Proxies 100+ models under one endpoint</td></tr>
-<tr><td>Groq</td><td><code>api.groq.com/openai/v1/chat/completions</code></td><td>OpenAI-compatible path</td></tr>
-<tr><td>DeepInfra</td><td><code>api.deepinfra.com/v1/openai/chat/completions</code></td><td>OpenAI-compatible path</td></tr>
-<tr><td>LM Studio</td><td><code>localhost:1234/v1/chat/completions</code></td><td>Local server</td></tr>
-<tr><td>Ollama</td><td><code>localhost:11434/v1/chat/completions</code></td><td>Local server</td></tr>
-<tr><td>Together AI</td><td><code>api.together.xyz/v1/chat/completions</code></td><td>OpenAI-compatible path</td></tr>
-<tr><td>Fireworks</td><td><code>api.fireworks.ai/inference/v1/chat/completions</code></td><td>OpenAI-compatible path</td></tr>
-<tr><td>Z.ai</td><td><code>api.z.ai/api/paas/v4/chat/completions</code></td><td>OpenAI-compatible path (GLM models)</td></tr>
+<p>Any endpoint that implements the OpenAI Chat Completions request, SSE, tool-call, and usage shapes can be used. This remains the safe default for unspecified custom providers.</p>
+<h2 id="native-openai-responses"><a class="header" href="#native-openai-responses">Native OpenAI Responses</a></h2>
+<p>A Responses request uses <code>input</code>, <code>instructions</code>, flat function tools, and <code>max_output_tokens</code>. rho operates statelessly: it sends the fitted conversation on every turn and explicitly sets <code>store: false</code>; it does not use <code>previous_response_id</code> or server-side Conversations. When <code>reasoning_effort</code> is configured, rho requests an automatic reasoning summary and streams summary deltas through the existing reasoning event path.</p>
+<p>Function calls and outputs round-trip as <code>function_call</code> and <code>function_call_output</code> items correlated by <code>call_id</code>. Encrypted reasoning items and assistant <code>phase</code> metadata are not persisted in this first implementation, so full hidden-reasoning continuity for zero-data-retention/Codex-style workflows is deferred.</p>
+<h3 id="supported-providers-and-defaults"><a class="header" href="#supported-providers-and-defaults">Supported providers and defaults</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Provider</th><th>Endpoint</th><th>Default protocol</th><th>Notes</th></tr></thead><tbody>
+<tr><td>OpenAI preset</td><td><code>api.openai.com/v1/responses</code></td><td>Responses</td><td>Native reasoning plus function calls</td></tr>
+<tr><td>OpenRouter</td><td><code>openrouter.ai/api/v1/chat/completions</code></td><td>Chat Completions</td><td>Proxies many model providers</td></tr>
+<tr><td>Groq</td><td><code>api.groq.com/openai/v1/chat/completions</code></td><td>Chat Completions</td><td>OpenAI-compatible path</td></tr>
+<tr><td>DeepInfra</td><td><code>api.deepinfra.com/v1/openai/chat/completions</code></td><td>Chat Completions</td><td>Custom configuration</td></tr>
+<tr><td>LM Studio</td><td><code>localhost:1234/v1/chat/completions</code></td><td>Chat Completions</td><td>Local server</td></tr>
+<tr><td>Ollama</td><td><code>localhost:11434/v1/chat/completions</code></td><td>Chat Completions</td><td>Local server</td></tr>
+<tr><td>Together AI</td><td><code>api.together.xyz/v1/chat/completions</code></td><td>Chat Completions</td><td>Custom configuration</td></tr>
+<tr><td>Fireworks</td><td><code>api.fireworks.ai/inference/v1/chat/completions</code></td><td>Chat Completions</td><td>Custom configuration</td></tr>
+<tr><td>Z.ai</td><td><code>api.z.ai/api/paas/v4/chat/completions</code></td><td>Chat Completions</td><td>GLM models</td></tr>
 </tbody></table>
 </div>
-<h3 id="providers-that-do-not-work-directly"><a class="header" href="#providers-that-do-not-work-directly">Providers that do <strong>not</strong> work directly</a></h3>
-<p>These providers use their own API format and <strong>cannot be used with rho</strong> without an OpenAI-compatible proxy:</p>
-<div class="table-wrapper"><table><thead><tr><th>Provider</th><th>Native endpoint</th><th>Why it doesn't work</th></tr></thead><tbody>
-<tr><td>Anthropic</td><td><code>/v1/messages</code></td><td>Uses the Messages API, not Chat Completions</td></tr>
-<tr><td>Google Gemini</td><td><code>/v1beta/models/...:generateContent</code></td><td>Uses GenerateContent, not Chat Completions</td></tr>
-<tr><td>AWS Bedrock</td><td><code>/model/.../converse</code></td><td>Uses the Converse API</td></tr>
-<tr><td>Cohere</td><td><code>/v2/chat</code></td><td>Different request/response format</td></tr>
-</tbody></table>
-</div>
-<p><strong>To use models from these providers</strong>, you need an <a href="https://github.com/BerriAI/litellm">OpenAI-compatible proxy</a> that translates between their native API and the OpenAI wire format. For example, LiteLLM or OpenRouter can proxy Claude models behind an OpenAI-compatible endpoint.</p>
-<p>rho detects common misconfigurations at startup and prints a warning if the endpoint path doesn't look OpenAI-compatible or if <code>provider.type</code> is set to a non-compatible provider name.</p>
+<p>OpenRouter, Groq, Z.ai, Ollama, LM Studio, and unspecified custom endpoints do <strong>not</strong> switch to Responses as a side effect of this feature.</p>
+<h3 id="providers-with-unrelated-native-formats"><a class="header" href="#providers-with-unrelated-native-formats">Providers with unrelated native formats</a></h3>
+<p>Native Anthropic Messages, Google GenerateContent, AWS Bedrock, Cohere, and other unrelated formats are not implemented directly. Use an OpenAI-compatible proxy such as LiteLLM or OpenRouter if it exposes a tested Chat Completions interface.</p>
 <h2 id="prerequisites-1"><a class="header" href="#prerequisites-1">Prerequisites</a></h2>
 <p>To use an external provider you need two things:</p>
 <ol>
 <li><strong>An API key</strong> from the provider</li>
-<li><strong>The provider's endpoint URL</strong> (must be OpenAI-compatible)</li>
+<li><strong>The provider's endpoint URL</strong> (matching the configured <code>api</code> protocol)</li>
 </ol>
 <p>That's it. Configure via config file or CLI flags — see below.</p>
 <h2 id="quick-start-openai"><a class="header" href="#quick-start-openai">Quick start: OpenAI</a></h2>
 <h3 id="via-cli-flags"><a class="header" href="#via-cli-flags">Via CLI flags</a></h3>
+<p>A CLI-only endpoint uses the backward-compatible Chat Completions default:</p>
 <pre><code class="language-sh">export OPENAI_API_KEY="sk-..."
 
 rho --endpoint https://api.openai.com/v1/chat/completions \
     --api-key-env OPENAI_API_KEY \
     --model gpt-4o
 </code></pre>
-<p><code>--endpoint</code> implies consent (the consent prompt is skipped since you explicitly chose the target).</p>
+<p><code>--endpoint</code> implies consent. There is no separate <code>--api</code> flag; use provider config below to select Responses.</p>
 <h3 id="via-config"><a class="header" href="#via-config">Via config</a></h3>
 <pre><code class="language-toml"># ~/.rho/config.toml
 [agent]
-model = "gpt-4o"
+model = "gpt-5"
 provider = "openai"
 token_budget = 131072
+reasoning_effort = "medium"
 
 [[providers]]
-preset = "openai"
+preset = "openai" # supplies api = "responses" and /v1/responses
 api_key_env = "OPENAI_API_KEY"
-default_model = "gpt-4o"
+default_model = "gpt-5"
 </code></pre>
 <pre><code class="language-sh">export OPENAI_API_KEY="sk-..."
 rho --accept-external-provider
@@ -1738,21 +1760,33 @@ rho --accept-external-provider
 <p>Priority: CLI flag → project config → user config → hardcoded default.</p>
 <h2 id="provider-examples"><a class="header" href="#provider-examples">Provider examples</a></h2>
 <h3 id="openai"><a class="header" href="#openai">OpenAI</a></h3>
-<pre><code class="language-sh">export OPENAI_API_KEY="sk-..."
-rho --endpoint https://api.openai.com/v1/chat/completions \
-    --api-key-env OPENAI_API_KEY \
-    --model gpt-4o
-</code></pre>
-<p>Or via config with a preset:</p>
+<p>Use the preset for native Responses, including reasoning plus function tools:</p>
 <pre><code class="language-toml">[agent]
-model = "gpt-4o"
+model = "gpt-5"
 provider = "openai"
+reasoning_effort = "medium"
 
 [[providers]]
 preset = "openai"
 api_key_env = "OPENAI_API_KEY"
-default_model = "gpt-4o"
+default_model = "gpt-5"
 </code></pre>
+<p>To force OpenAI Chat Completions for an older workflow, override both fields explicitly:</p>
+<pre><code class="language-toml">[[providers]]
+name = "openai-chat"
+endpoint = "https://api.openai.com/v1/chat/completions"
+api = "chat_completions"
+api_key_env = "OPENAI_API_KEY"
+</code></pre>
+<h3 id="custom-responses-compatible-endpoint"><a class="header" href="#custom-responses-compatible-endpoint">Custom Responses-compatible endpoint</a></h3>
+<p>Responses is opt-in for custom servers and proxies:</p>
+<pre><code class="language-toml">[[providers]]
+name = "custom-responses"
+endpoint = "https://llm.example.com/v1/responses"
+api = "responses"
+api_key_env = "CUSTOM_API_KEY"
+</code></pre>
+<p>Only select this when the endpoint implements OpenAI's Responses request items and SSE event taxonomy. Merely accepting Chat Completions is not sufficient.</p>
 <h3 id="openrouter"><a class="header" href="#openrouter">OpenRouter</a></h3>
 <p>OpenRouter proxies many models behind a single endpoint. Model names include the provider prefix (e.g. <code>anthropic/claude-sonnet-4-20250514</code>).</p>
 <pre><code class="language-sh">export OPENROUTER_API_KEY="sk-or-..."
@@ -1850,14 +1884,14 @@ source .env
 token_budget = 131072
 </code></pre>
 <p>Or via CLI: <code>--token-budget 131072</code>.</p>
-<p>The budget is split into a <strong>prompt budget</strong> (conversation + system prompt + tool schemas) and a <strong>completion reserve</strong> (room for the model's reply). The default reserve is 4096 tokens.</p>
+<p>The budget is split into a <strong>prompt budget</strong> (conversation + system prompt + tool schemas) and a <strong>completion reserve</strong> (room for the model's reply). The default reserve is 8192 tokens.</p>
 <p>Run rho with <code>RUST_LOG=info</code> to see budget diagnostics at startup:</p>
-<pre><code>budget: 131072T context, 4096T reserve, 126976T prompt (4700T system + 2000T schema = 6700T overhead, 120276T for conversation)
+<pre><code>budget: 131072T context, 8192T reserve, 122880T prompt (4700T system + 2000T schema = 6700T overhead, 116180T for conversation)
 </code></pre>
-<h2 id="the-type-name-and-preset-fields"><a class="header" href="#the-type-name-and-preset-fields">The <code>type</code>, <code>name</code>, and <code>preset</code> fields</a></h2>
-<p>The <code>type</code> field in a provider config is <strong>informational only</strong> — it has no effect on behavior. rho uses <code>endpoint</code> and <code>api_key_env</code> to determine how to connect; it doesn't branch on <code>type</code>.</p>
+<h2 id="the-type-name-preset-and-api-fields"><a class="header" href="#the-type-name-preset-and-api-fields">The <code>type</code>, <code>name</code>, <code>preset</code>, and <code>api</code> fields</a></h2>
+<p>The <code>type</code> field in a provider config is <strong>informational only</strong> — it has no effect on behavior. rho uses <code>endpoint</code>, <code>api</code>, and <code>api_key_env</code> to determine how to connect; it doesn't branch on <code>type</code>.</p>
 <p>The <code>name</code> field is used as the display name in the consent prompt, <code>/models</code> output, and provider switching. If not set, rho uses the <code>type</code> field, then the endpoint hostname, then the provider index.</p>
-<p>The <code>preset</code> field auto-fills <code>endpoint</code> and <code>name</code> from a built-in registry. See the <a href="./configuration.html#provider-presets">Configuration</a> page for the full list of presets.</p>
+<p>The <code>preset</code> field auto-fills <code>endpoint</code>, <code>name</code>, and <code>api</code> from a built-in registry. The <code>openai</code> preset selects Responses; all other presets select Chat Completions. An explicit <code>api</code> value overrides the preset. See the <a href="./configuration.html#provider-presets">Configuration</a> page for the full list.</p>
 <pre><code class="language-toml">[[providers]]
 # Explicit name (optional, set automatically by preset)
 name = "my-openrouter"
@@ -1868,6 +1902,9 @@ preset = "openrouter"
 # Explicit endpoint overrides preset (optional)
 endpoint = "https://..."
 
+# Protocol: "chat_completions" (default) or "responses"
+api = "chat_completions"
+
 # API key env var (required for remote providers)
 api_key_env = "OPENROUTER_API_KEY"
 
@@ -1877,7 +1914,7 @@ default_model = "anthropic/claude-sonnet-4-20250514"
 # Informational type label (has no effect on behavior)
 type = "openrouter"
 </code></pre>
-<p>If <code>type</code> is set to a known non-OpenAI-compatible provider name (e.g. <code>"anthropic"</code>, <code>"google"</code>, <code>"bedrock"</code>), rho will print a warning at startup. This is a safety net — the real check is that your endpoint accepts and returns the OpenAI Chat Completions format.</p>
+<p>If <code>type</code> is set to a known unsupported provider name, rho prints a warning at startup. This is a safety net—the real requirement is that the endpoint implements the selected Responses or Chat Completions wire format.</p>
 <h2 id="connection-timeouts"><a class="header" href="#connection-timeouts">Connection timeouts</a></h2>
 <p>The HTTP client uses sensible defaults to prevent indefinite hangs when a provider is unreachable:</p>
 <ul>
