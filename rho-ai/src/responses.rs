@@ -4,14 +4,19 @@
 //! `/v1/responses` wire format. Streaming response handling and HTTP routing
 //! are layered on top of these adapters.
 
-#![expect(
-    dead_code,
-    reason = "request adapters are wired into the HTTP service in Phase 2"
-)]
-
 use crate::error::ProviderError;
-use crate::types::{LlmMessage, LlmRequest, ToolDefinition};
-use serde::Serialize;
+use crate::service::{EventStream, LlmService};
+use crate::sse::SseParser;
+use crate::types::{
+    LlmMessage, LlmRequest, ProviderConfig, StopReason, StreamEvent, StreamUsage, ToolDefinition,
+};
+use async_trait::async_trait;
+use futures::Stream;
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use tracing::{debug, warn};
 
 /// Request body sent to the `OpenAI` Responses endpoint.
 #[derive(Debug, Serialize)]
@@ -212,6 +217,363 @@ fn build_request(request: &LlmRequest) -> Result<ResponsesRequest, ProviderError
     })
 }
 
+// ── Wire types (SSE response) ────────────────────────────────────────────────
+
+/// A Responses API streaming event consumed by rho.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type")]
+enum ResponsesEvent {
+    /// Incremental assistant text.
+    #[serde(rename = "response.output_text.delta")]
+    OutputTextDelta {
+        /// Text fragment.
+        delta: String,
+    },
+    /// Successful terminal response.
+    #[serde(rename = "response.completed")]
+    Completed {
+        /// Terminal response metadata.
+        response: ResponseEnvelope,
+    },
+    /// Terminal response stopped before normal completion.
+    #[serde(rename = "response.incomplete")]
+    Incomplete {
+        /// Terminal response metadata.
+        response: ResponseEnvelope,
+    },
+    /// Terminal response failure.
+    #[serde(rename = "response.failed")]
+    Failed {
+        /// Failed response metadata.
+        response: ResponseEnvelope,
+    },
+    /// Streaming API error.
+    #[serde(rename = "error")]
+    Error {
+        /// Provider error code.
+        #[serde(default)]
+        code: Option<String>,
+        /// Human-readable error message.
+        message: String,
+        /// Request parameter associated with the error.
+        #[serde(default)]
+        param: Option<String>,
+    },
+    /// Event types not needed by this implementation phase.
+    #[serde(other)]
+    Other,
+}
+
+/// Fields consumed from a terminal response object.
+#[derive(Debug, Default, Deserialize)]
+struct ResponseEnvelope {
+    /// Token usage, when reported.
+    #[serde(default)]
+    usage: Option<ResponseUsage>,
+    /// Why an incomplete response stopped.
+    #[serde(default)]
+    incomplete_details: Option<IncompleteDetails>,
+    /// Failure details for `response.failed`.
+    #[serde(default)]
+    error: Option<ResponseFailure>,
+}
+
+/// Token usage returned by the Responses API.
+#[derive(Debug, Default, Deserialize)]
+struct ResponseUsage {
+    /// Number of input tokens.
+    #[serde(default)]
+    input_tokens: u64,
+    /// Number of output tokens, including reasoning tokens.
+    #[serde(default)]
+    output_tokens: u64,
+    /// Detailed input-token accounting.
+    #[serde(default)]
+    input_tokens_details: InputTokenDetails,
+}
+
+/// Detailed input-token usage.
+#[derive(Debug, Default, Deserialize)]
+struct InputTokenDetails {
+    /// Number of cached input tokens.
+    #[serde(default)]
+    cached_tokens: u64,
+}
+
+/// Reason an incomplete response stopped.
+#[derive(Debug, Default, Deserialize)]
+struct IncompleteDetails {
+    /// Provider reason string.
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+/// Error embedded in a failed response.
+#[derive(Debug, Deserialize)]
+struct ResponseFailure {
+    /// Provider error code.
+    code: String,
+    /// Human-readable error message.
+    message: String,
+}
+
+impl ResponseUsage {
+    /// Convert provider usage into rho's unified usage type.
+    fn to_stream_usage(&self) -> StreamUsage {
+        StreamUsage::new(self.input_tokens, self.output_tokens)
+            .with_cached(self.input_tokens_details.cached_tokens)
+    }
+}
+
+impl ResponseEnvelope {
+    /// Convert optional provider usage, defaulting when it was omitted.
+    fn stream_usage(&self) -> StreamUsage {
+        self.usage
+            .as_ref()
+            .map_or_else(StreamUsage::default, ResponseUsage::to_stream_usage)
+    }
+}
+
+/// Convert an incomplete-detail reason into rho's unified stop reason.
+fn incomplete_stop_reason(details: Option<&IncompleteDetails>) -> StopReason {
+    match details.and_then(|details| details.reason.as_deref()) {
+        Some("max_output_tokens") => StopReason::Length,
+        Some("content_filter") => StopReason::ContentFilter,
+        Some(other) => StopReason::Other(other.to_owned()),
+        None => StopReason::Other("incomplete".to_owned()),
+    }
+}
+
+/// Format an API error while retaining its optional code and parameter.
+fn format_api_error(code: Option<&str>, message: &str, param: Option<&str>) -> String {
+    let mut formatted = code.map_or_else(String::new, |code| format!("{code}: "));
+    formatted.push_str(message);
+    if let Some(param) = param {
+        formatted.push_str(" (parameter: ");
+        formatted.push_str(param);
+        formatted.push(')');
+    }
+    formatted
+}
+
+// ── ResponsesService ─────────────────────────────────────────────────────────
+
+/// An [`LlmService`] backed by `OpenAI`'s native Responses API.
+#[derive(Clone, Debug)]
+pub struct ResponsesService {
+    /// Shared HTTP client.
+    http: Client,
+    /// Provider authentication and endpoint configuration.
+    config: ProviderConfig,
+}
+
+impl ResponsesService {
+    /// Create a Responses API service.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the `reqwest` client builder cannot initialize its TLS or
+    /// platform configuration.
+    #[must_use]
+    pub fn new(config: ProviderConfig) -> Self {
+        let http = Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(30))
+            .timeout(std::time::Duration::from_mins(2))
+            .build()
+            .expect("reqwest Client builder configuration is valid");
+        Self { http, config }
+    }
+
+    /// Build and send one streaming Responses request.
+    async fn send_streaming_request(
+        &self,
+        request: &LlmRequest,
+    ) -> Result<EventStream, ProviderError> {
+        let body = build_request(request)?;
+        let url = responses_url(&self.config.base_url);
+        let response = self
+            .http
+            .post(url)
+            .bearer_auth(&self.config.api_key)
+            .json(&body)
+            .send()
+            .await?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let status_code = status.as_u16();
+            let body = response.text().await.ok();
+            return Err(ProviderError::HttpStatus {
+                status: status_code,
+                body,
+                retryable: matches!(status_code, 429 | 500 | 502 | 503 | 504),
+            });
+        }
+
+        Ok(Box::pin(ResponsesSseStream::new(Box::pin(
+            response.bytes_stream(),
+        ))))
+    }
+}
+
+#[async_trait]
+impl LlmService for ResponsesService {
+    async fn chat_stream(&self, request: LlmRequest) -> Result<EventStream, ProviderError> {
+        self.send_streaming_request(&request).await
+    }
+}
+
+// ── SSE stream ────────────────────────────────────────────────────────────────
+
+/// A stream adapter from Responses SSE bytes to unified rho events.
+struct ResponsesSseStream {
+    /// HTTP response body byte stream.
+    byte_stream: Pin<Box<dyn Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send>>,
+    /// Shared SSE framing parser.
+    sse_parser: SseParser,
+    /// Parsed events waiting to be yielded.
+    pending: Vec<Result<StreamEvent, ProviderError>>,
+    /// Whether a terminal response or stream error has been observed.
+    done: bool,
+}
+
+impl ResponsesSseStream {
+    /// Wrap a streaming HTTP response body.
+    fn new(
+        byte_stream: Pin<Box<dyn Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send>>,
+    ) -> Self {
+        Self {
+            byte_stream,
+            sse_parser: SseParser::new(),
+            pending: Vec::new(),
+            done: false,
+        }
+    }
+
+    /// Parse one arbitrary text chunk, which may contain partial or multiple
+    /// SSE frames.
+    fn parse_chunk(&mut self, text: &str) -> Vec<Result<StreamEvent, ProviderError>> {
+        let mut events = Vec::new();
+        for sse_event in self.sse_parser.feed(text) {
+            if self.done {
+                break;
+            }
+            let data = sse_event.data.trim();
+            // The Responses API terminates with a typed response event. Ignore
+            // a compatibility sentinel if a proxy adds one.
+            if data == "[DONE]" {
+                continue;
+            }
+
+            let event = match serde_json::from_str::<ResponsesEvent>(data) {
+                Ok(event) => event,
+                Err(error) => {
+                    self.done = true;
+                    events.push(Err(ProviderError::Sse {
+                        message: format!(
+                            "failed to parse Responses event: {error}; payload: {}",
+                            &data[..data.len().min(200)]
+                        ),
+                    }));
+                    break;
+                }
+            };
+
+            match event {
+                ResponsesEvent::OutputTextDelta { delta } if !delta.is_empty() => {
+                    events.push(Ok(StreamEvent::Text(delta)));
+                }
+                ResponsesEvent::Completed { response } => {
+                    self.done = true;
+                    events.push(Ok(StreamEvent::Done {
+                        reason: StopReason::EndTurn,
+                        usage: response.stream_usage(),
+                    }));
+                }
+                ResponsesEvent::Incomplete { response } => {
+                    self.done = true;
+                    events.push(Ok(StreamEvent::Done {
+                        reason: incomplete_stop_reason(response.incomplete_details.as_ref()),
+                        usage: response.stream_usage(),
+                    }));
+                }
+                ResponsesEvent::Failed { response } => {
+                    self.done = true;
+                    let message = response.error.map_or_else(
+                        || "response failed without error details".to_owned(),
+                        |error| format!("{}: {}", error.code, error.message),
+                    );
+                    events.push(Err(ProviderError::Response { message, raw: None }));
+                }
+                ResponsesEvent::Error {
+                    code,
+                    message,
+                    param,
+                } => {
+                    self.done = true;
+                    events.push(Err(ProviderError::Response {
+                        message: format_api_error(code.as_deref(), &message, param.as_deref()),
+                        raw: None,
+                    }));
+                }
+                ResponsesEvent::OutputTextDelta { .. } | ResponsesEvent::Other => {}
+            }
+        }
+        events
+    }
+}
+
+impl Stream for ResponsesSseStream {
+    type Item = Result<StreamEvent, ProviderError>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if let Some(event) = self.pending.pop() {
+            return Poll::Ready(Some(event));
+        }
+        if self.done {
+            return Poll::Ready(None);
+        }
+
+        loop {
+            match self.byte_stream.as_mut().poll_next(cx) {
+                Poll::Ready(Some(Ok(bytes))) => {
+                    debug!(bytes = bytes.len(), "received Responses SSE bytes");
+                    let text = String::from_utf8_lossy(&bytes).into_owned();
+                    let events = self.parse_chunk(&text);
+                    if events.is_empty() {
+                        if self.done {
+                            return Poll::Ready(None);
+                        }
+                        continue;
+                    }
+                    events
+                        .into_iter()
+                        .rev()
+                        .for_each(|event| self.pending.push(event));
+                    return Poll::Ready(Some(
+                        self.pending
+                            .pop()
+                            .expect("non-empty event batch was buffered"),
+                    ));
+                }
+                Poll::Ready(Some(Err(error))) => {
+                    self.done = true;
+                    let message = format!("Responses SSE byte stream error: {error}");
+                    warn!("{message}");
+                    return Poll::Ready(Some(Err(ProviderError::Sse { message })));
+                }
+                Poll::Ready(None) => {
+                    self.done = true;
+                    return Poll::Ready(Some(Err(ProviderError::Sse {
+                        message: "Responses stream ended before a terminal event".to_owned(),
+                    })));
+                }
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -371,5 +733,221 @@ mod tests {
         let request = LlmRequest::new("", vec![LlmMessage::User("hello".into())]);
         let error = build_request(&request).expect_err("empty model must fail");
         assert!(error.to_string().contains("model identifier is empty"));
+    }
+
+    /// Build a Responses stream from deterministic byte chunks.
+    fn fixture_stream(chunks: Vec<&'static str>) -> ResponsesSseStream {
+        let bytes = chunks
+            .into_iter()
+            .map(|chunk| Ok::<_, reqwest::Error>(bytes::Bytes::from_static(chunk.as_bytes())));
+        ResponsesSseStream::new(Box::pin(futures::stream::iter(bytes)))
+    }
+
+    /// Start a one-shot local HTTP server and return its base URL plus a
+    /// handle that resolves to the raw request.
+    fn spawn_http_server(
+        status: &'static str,
+        response_body: &'static str,
+    ) -> (String, std::thread::JoinHandle<String>) {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::time::Duration;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind local fixture server");
+        let address = listener.local_addr().expect("fixture server address");
+        let handle = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().expect("accept fixture request");
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("set fixture read timeout");
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 4096];
+            let mut expected_length = None;
+            loop {
+                let read = socket.read(&mut buffer).expect("read fixture request");
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+                if expected_length.is_none()
+                    && let Some(header_end) = request.windows(4).position(|w| w == b"\r\n\r\n")
+                {
+                    let headers = String::from_utf8_lossy(&request[..header_end]);
+                    let content_length = headers
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().ok())
+                                .flatten()
+                        })
+                        .unwrap_or(0);
+                    expected_length = Some(header_end + 4 + content_length);
+                }
+                if expected_length.is_some_and(|length| request.len() >= length) {
+                    break;
+                }
+            }
+
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response_body}",
+                response_body.len()
+            );
+            socket
+                .write_all(response.as_bytes())
+                .expect("write fixture response");
+            String::from_utf8(request).expect("fixture request is UTF-8")
+        });
+        (format!("http://{address}/v1/chat/completions"), handle)
+    }
+
+    #[tokio::test]
+    async fn text_and_usage_fixture_maps_to_unified_events() {
+        use futures::StreamExt as _;
+
+        let fixture = include_str!("../tests/fixtures/responses/text-and-usage.sse");
+        let events = fixture_stream(vec![fixture])
+            .collect::<Vec<Result<StreamEvent, ProviderError>>>()
+            .await;
+        assert_eq!(events.len(), 3);
+        assert!(matches!(&events[0], Ok(StreamEvent::Text(text)) if text == "Hello"));
+        assert!(matches!(&events[1], Ok(StreamEvent::Text(text)) if text == " world"));
+        match &events[2] {
+            Ok(StreamEvent::Done { reason, usage }) => {
+                assert_eq!(*reason, StopReason::EndTurn);
+                assert_eq!(usage.input_tokens, 120);
+                assert_eq!(usage.output_tokens, 17);
+                assert_eq!(usage.cached_tokens, 40);
+            }
+            other => panic!("expected terminal usage event, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn incomplete_reasons_map_to_stop_reasons() {
+        use futures::StreamExt as _;
+
+        for (provider_reason, expected) in [
+            ("max_output_tokens", StopReason::Length),
+            ("content_filter", StopReason::ContentFilter),
+            (
+                "provider_specific",
+                StopReason::Other("provider_specific".into()),
+            ),
+        ] {
+            let payload = format!(
+                "data: {{\"type\":\"response.incomplete\",\"response\":{{\"incomplete_details\":{{\"reason\":\"{provider_reason}\"}}}}}}\n\n"
+            );
+            let leaked: &'static str = Box::leak(payload.into_boxed_str());
+            let events = fixture_stream(vec![leaked]).collect::<Vec<_>>().await;
+            assert!(matches!(
+                &events[..],
+                [Ok(StreamEvent::Done { reason, .. })] if *reason == expected
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn error_and_failed_events_surface_provider_errors() {
+        use futures::StreamExt as _;
+
+        let api_error = "data: {\"type\":\"error\",\"code\":\"bad_request\",\"message\":\"invalid value\",\"param\":\"input\"}\n\n";
+        let failed = "data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"server_error\",\"message\":\"generation failed\"}}}\n\n";
+        for (fixture, expected) in [(api_error, "bad_request"), (failed, "server_error")] {
+            let events = fixture_stream(vec![fixture]).collect::<Vec<_>>().await;
+            assert_eq!(events.len(), 1);
+            let error = events[0].as_ref().expect_err("fixture should fail");
+            assert!(error.to_string().contains(expected));
+        }
+    }
+
+    #[tokio::test]
+    async fn malformed_event_is_an_error() {
+        use futures::StreamExt as _;
+
+        let events = fixture_stream(vec!["data: {not-json}\n\n"])
+            .collect::<Vec<_>>()
+            .await;
+        assert_eq!(events.len(), 1);
+        assert!(matches!(&events[0], Err(ProviderError::Sse { .. })));
+    }
+
+    #[tokio::test]
+    async fn split_sse_chunks_reassemble_before_deserialization() {
+        use futures::StreamExt as _;
+
+        let events = fixture_stream(vec![
+            "data: {\"type\":\"response.output_",
+            "text.delta\",\"delta\":\"split\"}\n\n",
+            "data: {\"type\":\"response.completed\",\"response\":{}}\n\n",
+        ])
+        .collect::<Vec<_>>()
+        .await;
+        assert_eq!(events.len(), 2);
+        assert!(matches!(&events[0], Ok(StreamEvent::Text(text)) if text == "split"));
+        assert!(matches!(&events[1], Ok(StreamEvent::Done { .. })));
+    }
+
+    #[tokio::test]
+    async fn eof_before_terminal_event_is_an_error() {
+        use futures::StreamExt as _;
+
+        let events = fixture_stream(vec![
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n",
+        ])
+        .collect::<Vec<_>>()
+        .await;
+        assert_eq!(events.len(), 2);
+        assert!(matches!(&events[0], Ok(StreamEvent::Text(_))));
+        assert!(matches!(&events[1], Err(ProviderError::Sse { .. })));
+    }
+
+    #[tokio::test]
+    async fn service_posts_authenticated_request_and_streams_fixture() {
+        use futures::StreamExt as _;
+
+        let fixture = include_str!("../tests/fixtures/responses/text-and-usage.sse");
+        let (endpoint, request_handle) = spawn_http_server("200 OK", fixture);
+        let service = ResponsesService::new(ProviderConfig::new("secret-key", endpoint));
+        let request = LlmRequest::new("gpt-5", vec![LlmMessage::User("hello".into())]);
+        let events = service
+            .chat_stream(request)
+            .await
+            .expect("request succeeds")
+            .collect::<Vec<_>>()
+            .await;
+        assert_eq!(events.len(), 3);
+
+        let raw_request = request_handle.join().expect("fixture server joins");
+        let (headers, body) = raw_request
+            .split_once("\r\n\r\n")
+            .expect("HTTP request has headers and body");
+        assert!(headers.starts_with("POST /v1/responses HTTP/1.1"));
+        assert!(
+            headers
+                .to_ascii_lowercase()
+                .contains("authorization: bearer secret-key")
+        );
+        let json: serde_json::Value = serde_json::from_str(body).expect("request body is JSON");
+        assert_eq!(json["model"], "gpt-5");
+        assert_eq!(json["input"][0]["content"], "hello");
+        assert_eq!(json["store"], false);
+    }
+
+    #[tokio::test]
+    async fn service_classifies_retryable_http_status() {
+        let (endpoint, request_handle) = spawn_http_server("429 Too Many Requests", "rate limited");
+        let service = ResponsesService::new(ProviderConfig::new("key", endpoint));
+        let request = LlmRequest::new("gpt-5", vec![LlmMessage::User("hello".into())]);
+        let result = service.chat_stream(request).await;
+        assert!(matches!(
+            result,
+            Err(ProviderError::HttpStatus {
+                status: 429,
+                retryable: true,
+                ..
+            })
+        ));
+        request_handle.join().expect("fixture server joins");
     }
 }

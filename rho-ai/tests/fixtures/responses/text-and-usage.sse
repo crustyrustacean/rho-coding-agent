@@ -1,0 +1,12 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_fixture","status":"in_progress"},"sequence_number":0}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":"Hello","item_id":"msg_fixture","logprobs":[],"output_index":0,"sequence_number":1}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","content_index":0,"delta":" world","item_id":"msg_fixture","logprobs":[],"output_index":0,"sequence_number":2}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_fixture","status":"completed","usage":{"input_tokens":120,"input_tokens_details":{"cached_tokens":40,"cache_write_tokens":0},"output_tokens":17,"output_tokens_details":{"reasoning_tokens":7},"total_tokens":137}},"sequence_number":3}
+
