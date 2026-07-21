@@ -163,9 +163,10 @@ pub struct AgentLoopConfig {
     pub compaction_mode: String,
     /// Reasoning effort for thinking-capable models.
     ///
-    /// Passed as `reasoning_effort` in every Chat Completions request.
-    /// Common values: `"low"`, `"medium"`, `"high"`. `None` means
-    /// no reasoning parameter is sent (default).
+    /// Passed as `reasoning_effort` for Chat Completions or as the Responses
+    /// `reasoning.effort` value with an automatic summary request.
+    /// Common values: `"low"`, `"medium"`, `"high"`. `None` means no
+    /// reasoning parameter is sent (default).
     #[serde(default)]
     pub reasoning_effort: Option<String>,
     /// Maximum seconds to wait for the **first** stream event after sending
@@ -308,9 +309,8 @@ pub struct ProviderConfig {
     pub name: Option<String>,
     /// Provider preset name (e.g. `"lm-studio"`, `"openrouter"`, `"openai"`).
     ///
-    /// Fills in `endpoint` and `name` when not explicitly set. If both
-    /// `preset` and `endpoint` are set, `endpoint` wins (the preset is
-    /// informational only).
+    /// Fills in `endpoint`, `name`, and `api` when not explicitly set. If the
+    /// corresponding field is explicit, it wins over the preset.
     ///
     /// Built-in presets: `lm-studio`, `ollama`, `openrouter`, `openai`,
     /// `groq`, `zai`. An unknown preset logs a warning and is treated as
@@ -352,10 +352,9 @@ pub struct ProviderConfig {
     /// Optional models endpoint URL, used for model discovery.
     ///
     /// When set, `list_models()` uses this URL directly instead of deriving
-    /// one from the chat-completions endpoint. Some providers (e.g. Z.ai)
-    /// serve the models list at a different path prefix than chat completions.
-    /// When unset, the models URL is derived by replacing `/chat/completions`
-    /// with `/models` in the chat endpoint.
+    /// one from the generation endpoint. Some providers (e.g. Z.ai) serve the
+    /// models list at a different path prefix. When unset, the models URL is
+    /// derived by replacing `/chat/completions` or `/responses` with `/models`.
     #[serde(default)]
     pub models_endpoint: Option<String>,
 }
@@ -860,8 +859,8 @@ struct WireAgentLoopConfig {
 
 /// A named preset for a known model provider.
 ///
-/// Provides default endpoint and display name. The `api_key_env` is
-/// informational — used to log a hint at startup, **not** auto-injected.
+/// Provides default endpoint, display name, and request protocol. The
+/// `api_key_env` is informational—used to log a hint, **not** auto-injected.
 struct ProviderPreset {
     /// Display name (used when config omits `name`).
     name: &'static str,
@@ -970,6 +969,7 @@ fn presets() -> &'static std::collections::HashMap<&'static str, ProviderPreset>
 /// For each provider that has a `preset` set:
 /// - If `endpoint` is not set, use the preset's endpoint.
 /// - If `name` is not set, use the preset's name.
+/// - If `api` is not set, use the preset's protocol.
 /// - If `api_key_env` is not set and the preset suggests one, log a hint
 ///   (do **not** auto-inject — the user must explicitly set it).
 /// - If the preset is unknown, log a warning and skip.
@@ -1026,7 +1026,7 @@ fn resolve_presets(providers: &mut [ProviderConfig]) {
 /// `openrouter` preset for `anthropic/claude-sonnet-4`) without
 /// duplicating the preset's endpoint string.
 ///
-/// See [`presets`] for the list of built-in preset names.
+/// See the configuration guide for the list of built-in preset names.
 #[must_use]
 pub fn preset_endpoint(preset: &str) -> Option<&'static str> {
     presets().get(preset).map(|p| p.endpoint)

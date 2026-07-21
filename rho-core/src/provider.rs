@@ -28,7 +28,7 @@ pub trait Provider: Send + Sync {
 
     /// Whether this provider sends data to an external server.
     ///
-    /// `true` for remote APIs (`OpenRouter`, `OpenAI`, `Anthropic`, etc.).
+    /// `true` for remote APIs (`OpenRouter`, `OpenAI`, `Groq`, etc.).
     /// `false` for local servers (LM Studio, Ollama on localhost).
     fn is_external(&self) -> bool;
 
@@ -55,12 +55,11 @@ pub trait Provider: Send + Sync {
     fn clone_boxed_service(&self) -> Box<dyn rho_ai::LlmService>;
 }
 
-/// An OpenAI-compatible provider.
+/// A provider using an OpenAI-shaped API.
 ///
-/// Wraps a [`RhoAiClient`] and implements [`Provider`]. Supports any
-/// server that speaks the `OpenAI` Chat Completions wire format — local
-/// servers (`LM Studio`, `Ollama`) and external providers (`OpenRouter`,
-/// `OpenAI`, `Groq`, `DeepInfra`, etc.).
+/// Wraps a [`RhoAiClient`] and implements [`Provider`]. The configured
+/// [`ApiProtocol`] selects native `OpenAI` Responses or compatible Chat
+/// Completions. Legacy constructors default to Chat Completions.
 ///
 /// # Externality
 ///

@@ -18,27 +18,31 @@ pub trait LlmService: Send + Sync {
 
 All providers implement this trait. The agent loop consumes the `EventStream` (a `Pin<Box<dyn Stream<Item = Result<StreamEvent>>>>`) for streaming responses.
 
-## `OpenAiService`
+## Transport services
 
-The default implementation targets any OpenAI-compatible endpoint:
+`OpenAiService` targets Chat Completions-compatible endpoints:
 
 ```rust
-use rho_ai::OpenAiService;
+use rho_ai::openai::OpenAiService;
 
-// Default: localhost
 let service = OpenAiService::new(rho_ai::ProviderConfig::new(
-    "",                          // no API key for local
-    "http://localhost:1234/v1",  // base URL
-));
-
-// Custom endpoint with API key
-let service = OpenAiService::new(rho_ai::ProviderConfig::new(
-    "sk-...",
-    "https://api.openai.com/v1",
+    "", // no API key for local
+    "http://localhost:1234/v1/chat/completions",
 ));
 ```
 
-The model is specified per-request via `LlmRequest::model`, not in the provider config. This ensures the model always comes from the session, never from a stale config value.
+`ResponsesService` targets native OpenAI Responses:
+
+```rust
+use rho_ai::responses::ResponsesService;
+
+let service = ResponsesService::new(rho_ai::ProviderConfig::new(
+    "sk-...",
+    "https://api.openai.com/v1/responses",
+));
+```
+
+Both implement `LlmService`, consume the same `LlmRequest`, and emit the same `StreamEvent` contract. `RhoAiClient` selects between them from each provider's `ApiProtocol`. The model is specified per request, never in the provider transport config.
 
 ### Authentication
 
@@ -75,14 +79,14 @@ rho does **not** call `/v1/models` at startup. The config file is the source of 
 
 ## Streaming
 
-`OpenAiService` uses SSE streaming (`stream: true`) for the Chat Completions API. Streaming events are returned as an `EventStream` that the agent loop consumes. `StreamEvent::Text` and `StreamEvent::Reasoning` events are forwarded to the `AgentObserver` in real time, enabling live progress output in the consumer.
+Both services use SSE streaming. Chat Completions deltas and Responses output/reasoning/function-call events are normalized into one `EventStream`. `StreamEvent::Text` and `StreamEvent::Reasoning` are forwarded to the `AgentObserver` in real time; tool events use the same approval and execution path regardless of transport.
 
 ## Multi-provider support
 
 rho can manage multiple providers simultaneously via the `ProviderRegistry` and `Provider` trait. Each provider encapsulates identity, externality, model discovery, and access to an `LlmService`.
 
-- Each provider has a name, endpoint, and optional API key (configured via `[[providers]]` with optional `preset`).
-- Providers can set `models_endpoint` when the models listing is at a different path prefix than chat completions (e.g. Z.ai serves models at `/api/v1/models` but chat at `/api/paas/v4/`). When unset, the models URL is derived from the chat endpoint.
+- Each provider has a name, endpoint, protocol, and optional API key (configured via `[[providers]]` with optional `preset`). Missing protocol values use Chat Completions; the OpenAI preset uses Responses.
+- Providers can set `models_endpoint` when model listing uses a different path prefix. When unset, the models URL is derived from a trailing `/chat/completions` or `/responses` endpoint.
 - Model list responses are parsed flexibly via `serde untagged` enums: `ModelList` accepts both `{"data": [...]}` (standard OpenAI) and `{"models": [...]}` (Z.ai). `ModelInfo` accepts both `id` and `slug` fields.
 - The registry scans all providers to find which one serves a given model.
 - `listModels` lists all models across all configured providers.

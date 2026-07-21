@@ -1,7 +1,7 @@
 //! Server-Sent Events (SSE) parser.
 //!
 //! Converts a raw byte stream from `reqwest` into a stream of `data:` payloads.
-//! Used by all three provider modules to consume SSE responses.
+//! Shared by the Chat Completions and Responses transports.
 
 /// A parsed SSE event containing the data payload.
 #[derive(Debug, Clone)]

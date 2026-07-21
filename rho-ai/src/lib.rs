@@ -2,15 +2,16 @@
 //!
 //! Unified LLM provider abstraction for the rho coding agent.
 //!
-//! Provides a single [`LlmService`] trait backed by three provider families:
-//! - **OpenAI-compatible** — `OpenAI`, `DeepSeek`, `xAI`, `Groq`, `OpenRouter`, `Ollama`, `LM Studio`, etc.
-//! - **Anthropic** — `Claude` models via the Messages API
-//! - **Google** — `Gemini` models via the Generative AI API
+//! Provides one [`LlmService`] trait backed by two OpenAI-shaped transports:
+//! - **Chat Completions** — [`openai::OpenAiService`] for compatible providers
+//!   such as `OpenRouter`, `Groq`, Z.ai, `Ollama`, and `LM Studio`.
+//! - **Responses** — [`responses::ResponsesService`] for native `OpenAI` text,
+//!   reasoning-summary, and function-call streaming.
 //!
 //! ## Architecture
 //!
-//! Provider differences are confined to three modules (`openai`, `anthropic`, `google`).
-//! Everything else in the crate — and all consumers — uses the unified types from [`types`]:
+//! Transport differences are confined to `openai` and `responses`. Everything
+//! else in the crate—and all consumers—uses the unified types from [`types`]:
 //!
 //! - [`LlmMessage`] — chat messages (System, User, Assistant, Tool)
 //! - [`ToolCall`] — tool calls from the LLM
@@ -20,15 +21,15 @@
 //! ## Quick Start
 //!
 //! ```ignore
-//! use rho_ai::{openai::OpenAiService, types::*, service::LlmService};
+//! use rho_ai::{responses::ResponsesService, LlmMessage, LlmRequest,
+//!     LlmService, ProviderConfig};
 //!
-//! let service = OpenAiService::new(ProviderConfig::new(
-//!     "gpt-4o",
+//! let service = ResponsesService::new(ProviderConfig::new(
 //!     env::var("OPENAI_API_KEY").unwrap(),
-//!     "https://api.openai.com/v1",
+//!     "https://api.openai.com/v1/responses",
 //! ));
-//!
-//! let events = service.chat_stream_with_tools(messages, tools).await?;
+//! let request = LlmRequest::new("gpt-5", vec![LlmMessage::User("hello".into())]);
+//! let events = service.chat_stream(request).await?;
 //! ```
 
 pub mod catalog;
