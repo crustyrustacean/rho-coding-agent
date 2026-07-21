@@ -8,12 +8,14 @@ use crate::error::ProviderError;
 use crate::service::{EventStream, LlmService};
 use crate::sse::SseParser;
 use crate::types::{
-    LlmMessage, LlmRequest, ProviderConfig, StopReason, StreamEvent, StreamUsage, ToolDefinition,
+    LlmMessage, LlmRequest, ProviderConfig, StopReason, StreamEvent, StreamUsage, ToolCall,
+    ToolDefinition,
 };
 use async_trait::async_trait;
 use futures::Stream;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tracing::{debug, warn};
@@ -229,6 +231,50 @@ enum ResponsesEvent {
         /// Text fragment.
         delta: String,
     },
+    /// A new output item, including a function-call start.
+    #[serde(rename = "response.output_item.added")]
+    OutputItemAdded {
+        /// Position among all Responses output items.
+        output_index: usize,
+        /// Newly added output item.
+        item: OutputItem,
+    },
+    /// Incremental function-call arguments.
+    #[serde(rename = "response.function_call_arguments.delta")]
+    FunctionCallArgumentsDelta {
+        /// Position among all Responses output items.
+        output_index: usize,
+        /// Provider item identifier.
+        item_id: String,
+        /// JSON argument fragment.
+        delta: String,
+    },
+    /// Final function-call arguments.
+    #[serde(rename = "response.function_call_arguments.done")]
+    FunctionCallArgumentsDone {
+        /// Position among all Responses output items.
+        output_index: usize,
+        /// Provider item identifier.
+        item_id: String,
+        /// Function name.
+        name: String,
+        /// Complete JSON arguments.
+        arguments: String,
+    },
+    /// A completed output item, used as a function-call fallback terminal.
+    #[serde(rename = "response.output_item.done")]
+    OutputItemDone {
+        /// Position among all Responses output items.
+        output_index: usize,
+        /// Completed output item.
+        item: OutputItem,
+    },
+    /// Incremental model-generated reasoning summary.
+    #[serde(rename = "response.reasoning_summary_text.delta")]
+    ReasoningSummaryTextDelta {
+        /// Summary text fragment.
+        delta: String,
+    },
     /// Successful terminal response.
     #[serde(rename = "response.completed")]
     Completed {
@@ -260,6 +306,29 @@ enum ResponsesEvent {
         param: Option<String>,
     },
     /// Event types not needed by this implementation phase.
+    #[serde(other)]
+    Other,
+}
+
+/// A Responses output item relevant to rho.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type")]
+enum OutputItem {
+    /// A custom function call.
+    #[serde(rename = "function_call")]
+    FunctionCall {
+        /// Provider item identifier.
+        #[serde(default)]
+        id: Option<String>,
+        /// Stable identifier used for the function output round trip.
+        call_id: String,
+        /// Function name.
+        name: String,
+        /// Arguments accumulated so far.
+        #[serde(default)]
+        arguments: String,
+    },
+    /// Any output item rho does not need to interpret.
     #[serde(other)]
     Other,
 }
@@ -356,6 +425,215 @@ fn format_api_error(code: Option<&str>, message: &str, param: Option<&str>) -> S
     formatted
 }
 
+/// Construct a provider protocol error from inconsistent stream events.
+fn protocol_error(message: impl Into<String>) -> ProviderError {
+    ProviderError::Sse {
+        message: message.into(),
+    }
+}
+
+/// Stateful correlation of item-indexed Responses function-call events.
+#[derive(Debug, Default)]
+struct ToolCallAccumulator {
+    /// Calls keyed by the API's output index.
+    calls: HashMap<usize, AccumulatedToolCall>,
+    /// Next contiguous tool index exposed through rho's `StreamEvent` contract.
+    next_tool_index: usize,
+}
+
+/// One function call under construction.
+#[derive(Debug)]
+struct AccumulatedToolCall {
+    /// Contiguous index used by rho, independent of Responses output items.
+    tool_index: usize,
+    /// Provider output-item identifier.
+    item_id: Option<String>,
+    /// Stable call identifier sent back with function output.
+    call_id: String,
+    /// Function name.
+    name: String,
+    /// Accumulated JSON arguments.
+    arguments: String,
+    /// Whether `ToolUseStart` has been emitted.
+    started: bool,
+    /// Whether `ToolUseComplete` has been emitted.
+    completed: bool,
+}
+
+impl ToolCallAccumulator {
+    /// Register an output item and emit its start event once.
+    fn add_item(
+        &mut self,
+        output_index: usize,
+        item_id: Option<String>,
+        call_id: String,
+        name: String,
+        arguments: String,
+    ) -> Result<Vec<StreamEvent>, ProviderError> {
+        if let Some(existing) = self.calls.get(&output_index) {
+            if existing.call_id != call_id || existing.name != name {
+                return Err(protocol_error(format!(
+                    "function-call output index {output_index} was reused"
+                )));
+            }
+            return Ok(Vec::new());
+        }
+
+        let tool_index = self.next_tool_index;
+        self.next_tool_index += 1;
+        self.calls.insert(
+            output_index,
+            AccumulatedToolCall {
+                tool_index,
+                item_id,
+                call_id: call_id.clone(),
+                name: name.clone(),
+                arguments,
+                started: true,
+                completed: false,
+            },
+        );
+        Ok(vec![StreamEvent::ToolUseStart {
+            index: tool_index,
+            id: call_id,
+            name,
+        }])
+    }
+
+    /// Append one argument fragment to an existing function call.
+    fn add_delta(
+        &mut self,
+        output_index: usize,
+        item_id: &str,
+        delta: String,
+    ) -> Result<Vec<StreamEvent>, ProviderError> {
+        let call = self.calls.get_mut(&output_index).ok_or_else(|| {
+            protocol_error(format!(
+                "arguments delta arrived before function-call item {output_index}"
+            ))
+        })?;
+        Self::validate_item_id(call, output_index, item_id)?;
+        if call.completed {
+            return Err(protocol_error(format!(
+                "arguments delta arrived after function-call item {output_index} completed"
+            )));
+        }
+        call.arguments.push_str(&delta);
+        Ok(vec![StreamEvent::ToolUseInputDelta {
+            index: call.tool_index,
+            delta,
+        }])
+    }
+
+    /// Complete a function call from the authoritative arguments-done event.
+    fn complete_arguments(
+        &mut self,
+        output_index: usize,
+        item_id: &str,
+        name: &str,
+        arguments: String,
+    ) -> Result<Vec<StreamEvent>, ProviderError> {
+        let call = self.calls.get_mut(&output_index).ok_or_else(|| {
+            protocol_error(format!(
+                "arguments completion arrived before function-call item {output_index}"
+            ))
+        })?;
+        Self::validate_item_id(call, output_index, item_id)?;
+        if call.name != name {
+            return Err(protocol_error(format!(
+                "function name changed for output index {output_index}"
+            )));
+        }
+        call.arguments = arguments;
+        Self::complete(call)
+    }
+
+    /// Complete a function call from `output_item.done` when no argument-done
+    /// event was delivered.
+    fn complete_item(
+        &mut self,
+        output_index: usize,
+        item_id: Option<&str>,
+        call_id: &str,
+        name: &str,
+        arguments: &str,
+    ) -> Result<Vec<StreamEvent>, ProviderError> {
+        let mut events = self.add_item(
+            output_index,
+            item_id.map(str::to_owned),
+            call_id.to_owned(),
+            name.to_owned(),
+            arguments.to_owned(),
+        )?;
+        let call = self
+            .calls
+            .get_mut(&output_index)
+            .expect("function-call item was inserted or already present");
+        if let Some(item_id) = item_id {
+            Self::validate_item_id(call, output_index, item_id)?;
+        }
+        if call.call_id != call_id || call.name != name {
+            return Err(protocol_error(format!(
+                "completed function-call item disagrees at output index {output_index}"
+            )));
+        }
+        arguments.clone_into(&mut call.arguments);
+        events.extend(Self::complete(call)?);
+        Ok(events)
+    }
+
+    /// Determine the terminal stop reason, rejecting unfinished calls.
+    fn terminal_reason(&self) -> Result<StopReason, ProviderError> {
+        if let Some((output_index, _)) = self.calls.iter().find(|(_, call)| !call.completed) {
+            return Err(protocol_error(format!(
+                "response completed before function-call item {output_index}"
+            )));
+        }
+        if self.calls.is_empty() {
+            Ok(StopReason::EndTurn)
+        } else {
+            Ok(StopReason::ToolUse)
+        }
+    }
+
+    /// Ensure events for an output index consistently name the same item.
+    fn validate_item_id(
+        call: &mut AccumulatedToolCall,
+        output_index: usize,
+        item_id: &str,
+    ) -> Result<(), ProviderError> {
+        if let Some(existing) = call.item_id.as_deref() {
+            if existing != item_id {
+                return Err(protocol_error(format!(
+                    "item id changed for function-call output index {output_index}"
+                )));
+            }
+        } else {
+            call.item_id = Some(item_id.to_owned());
+        }
+        Ok(())
+    }
+
+    /// Emit one complete event, or nothing if already completed.
+    fn complete(call: &mut AccumulatedToolCall) -> Result<Vec<StreamEvent>, ProviderError> {
+        if call.completed {
+            return Ok(Vec::new());
+        }
+        if !call.started {
+            return Err(protocol_error("function call completed before it started"));
+        }
+        call.completed = true;
+        Ok(vec![StreamEvent::ToolUseComplete {
+            index: call.tool_index,
+            tool_call: ToolCall {
+                id: call.call_id.clone(),
+                name: call.name.clone(),
+                arguments: call.arguments.clone(),
+            },
+        }])
+    }
+}
+
 // ── ResponsesService ─────────────────────────────────────────────────────────
 
 /// An [`LlmService`] backed by `OpenAI`'s native Responses API.
@@ -433,6 +711,8 @@ struct ResponsesSseStream {
     sse_parser: SseParser,
     /// Parsed events waiting to be yielded.
     pending: Vec<Result<StreamEvent, ProviderError>>,
+    /// Item-indexed function-call correlation state.
+    tool_acc: ToolCallAccumulator,
     /// Whether a terminal response or stream error has been observed.
     done: bool,
 }
@@ -446,8 +726,119 @@ impl ResponsesSseStream {
             byte_stream,
             sse_parser: SseParser::new(),
             pending: Vec::new(),
+            tool_acc: ToolCallAccumulator::default(),
             done: false,
         }
+    }
+
+    /// Map one decoded Responses event into rho's stream contract.
+    fn map_event(&mut self, event: ResponsesEvent) -> Result<Vec<StreamEvent>, ProviderError> {
+        match event {
+            ResponsesEvent::OutputTextDelta { delta } if !delta.is_empty() => {
+                Ok(vec![StreamEvent::Text(delta)])
+            }
+            ResponsesEvent::ReasoningSummaryTextDelta { delta } if !delta.is_empty() => {
+                Ok(vec![StreamEvent::Reasoning(delta)])
+            }
+            ResponsesEvent::OutputItemAdded {
+                output_index,
+                item:
+                    OutputItem::FunctionCall {
+                        id,
+                        call_id,
+                        name,
+                        arguments,
+                    },
+            } => self
+                .tool_acc
+                .add_item(output_index, id, call_id, name, arguments),
+            ResponsesEvent::FunctionCallArgumentsDelta {
+                output_index,
+                item_id,
+                delta,
+            } => self.tool_acc.add_delta(output_index, &item_id, delta),
+            ResponsesEvent::FunctionCallArgumentsDone {
+                output_index,
+                item_id,
+                name,
+                arguments,
+            } => self
+                .tool_acc
+                .complete_arguments(output_index, &item_id, &name, arguments),
+            ResponsesEvent::OutputItemDone {
+                output_index,
+                item:
+                    OutputItem::FunctionCall {
+                        id,
+                        call_id,
+                        name,
+                        arguments,
+                    },
+            } => self.tool_acc.complete_item(
+                output_index,
+                id.as_deref(),
+                &call_id,
+                &name,
+                &arguments,
+            ),
+            ResponsesEvent::Completed { response } => self.map_completed(&response),
+            ResponsesEvent::Incomplete { response } => self.map_incomplete(&response),
+            ResponsesEvent::Failed { response } => {
+                self.done = true;
+                let message = response.error.map_or_else(
+                    || "response failed without error details".to_owned(),
+                    |error| format!("{}: {}", error.code, error.message),
+                );
+                Err(ProviderError::Response { message, raw: None })
+            }
+            ResponsesEvent::Error {
+                code,
+                message,
+                param,
+            } => {
+                self.done = true;
+                Err(ProviderError::Response {
+                    message: format_api_error(code.as_deref(), &message, param.as_deref()),
+                    raw: None,
+                })
+            }
+            ResponsesEvent::OutputTextDelta { .. }
+            | ResponsesEvent::ReasoningSummaryTextDelta { .. }
+            | ResponsesEvent::OutputItemAdded { .. }
+            | ResponsesEvent::OutputItemDone { .. }
+            | ResponsesEvent::Other => Ok(Vec::new()),
+        }
+    }
+
+    /// Map a successful terminal response.
+    fn map_completed(
+        &mut self,
+        response: &ResponseEnvelope,
+    ) -> Result<Vec<StreamEvent>, ProviderError> {
+        let reason = self.tool_acc.terminal_reason()?;
+        self.done = true;
+        Ok(vec![StreamEvent::Done {
+            reason,
+            usage: response.stream_usage(),
+        }])
+    }
+
+    /// Map an incomplete terminal response, preferring complete tool calls.
+    fn map_incomplete(
+        &mut self,
+        response: &ResponseEnvelope,
+    ) -> Result<Vec<StreamEvent>, ProviderError> {
+        let tool_reason = self.tool_acc.terminal_reason()?;
+        self.done = true;
+        let reason = if tool_reason == StopReason::ToolUse {
+            StopReason::ToolUse
+        } else {
+            incomplete_stop_reason(response.incomplete_details.as_ref())
+        };
+        Ok(vec![StreamEvent::Done {
+            reason,
+            usage: response.stream_usage(),
+        }])
     }
 
     /// Parse one arbitrary text chunk, which may contain partial or multiple
@@ -465,58 +856,21 @@ impl ResponsesSseStream {
                 continue;
             }
 
-            let event = match serde_json::from_str::<ResponsesEvent>(data) {
-                Ok(event) => event,
+            let mapped = serde_json::from_str::<ResponsesEvent>(data)
+                .map_err(|error| {
+                    protocol_error(format!(
+                        "failed to parse Responses event: {error}; payload: {}",
+                        &data[..data.len().min(200)]
+                    ))
+                })
+                .and_then(|event| self.map_event(event));
+            match mapped {
+                Ok(mapped_events) => events.extend(mapped_events.into_iter().map(Ok)),
                 Err(error) => {
                     self.done = true;
-                    events.push(Err(ProviderError::Sse {
-                        message: format!(
-                            "failed to parse Responses event: {error}; payload: {}",
-                            &data[..data.len().min(200)]
-                        ),
-                    }));
+                    events.push(Err(error));
                     break;
                 }
-            };
-
-            match event {
-                ResponsesEvent::OutputTextDelta { delta } if !delta.is_empty() => {
-                    events.push(Ok(StreamEvent::Text(delta)));
-                }
-                ResponsesEvent::Completed { response } => {
-                    self.done = true;
-                    events.push(Ok(StreamEvent::Done {
-                        reason: StopReason::EndTurn,
-                        usage: response.stream_usage(),
-                    }));
-                }
-                ResponsesEvent::Incomplete { response } => {
-                    self.done = true;
-                    events.push(Ok(StreamEvent::Done {
-                        reason: incomplete_stop_reason(response.incomplete_details.as_ref()),
-                        usage: response.stream_usage(),
-                    }));
-                }
-                ResponsesEvent::Failed { response } => {
-                    self.done = true;
-                    let message = response.error.map_or_else(
-                        || "response failed without error details".to_owned(),
-                        |error| format!("{}: {}", error.code, error.message),
-                    );
-                    events.push(Err(ProviderError::Response { message, raw: None }));
-                }
-                ResponsesEvent::Error {
-                    code,
-                    message,
-                    param,
-                } => {
-                    self.done = true;
-                    events.push(Err(ProviderError::Response {
-                        message: format_api_error(code.as_deref(), &message, param.as_deref()),
-                        raw: None,
-                    }));
-                }
-                ResponsesEvent::OutputTextDelta { .. } | ResponsesEvent::Other => {}
             }
         }
         events
@@ -577,7 +931,6 @@ impl Stream for ResponsesSseStream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::ToolCall;
 
     /// Serialize a unified request through the Responses adapter.
     fn request_json(request: &LlmRequest) -> serde_json::Value {
@@ -899,6 +1252,138 @@ mod tests {
         .await;
         assert_eq!(events.len(), 2);
         assert!(matches!(&events[0], Ok(StreamEvent::Text(_))));
+        assert!(matches!(&events[1], Err(ProviderError::Sse { .. })));
+    }
+
+    #[tokio::test]
+    async fn tool_call_fixture_accumulates_exact_call() {
+        use futures::StreamExt as _;
+
+        let fixture = include_str!("../tests/fixtures/responses/tool-call.sse");
+        let events = fixture_stream(vec![fixture])
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .expect("tool fixture parses");
+        let complete_count = events
+            .iter()
+            .filter(|event| matches!(event, StreamEvent::ToolUseComplete { .. }))
+            .count();
+        assert_eq!(complete_count, 1);
+
+        let accumulated = StreamEvent::accumulate(&events);
+        assert_eq!(accumulated.stop_reason, StopReason::ToolUse);
+        assert_eq!(accumulated.tool_calls.len(), 1);
+        assert_eq!(accumulated.tool_calls[0].id.as_deref(), Some("call_1"));
+        assert_eq!(
+            accumulated.tool_calls[0].function_name.as_deref(),
+            Some("read_file")
+        );
+        assert_eq!(
+            accumulated.tool_calls[0].arguments,
+            r#"{"path":"src/lib.rs"}"#
+        );
+        assert_eq!(accumulated.usage.cached_tokens, 10);
+    }
+
+    #[tokio::test]
+    async fn parallel_calls_use_contiguous_indexes_and_keep_interleaving() {
+        use futures::StreamExt as _;
+
+        let fixture = include_str!("../tests/fixtures/responses/parallel-tools-and-reasoning.sse");
+        let events = fixture_stream(vec![fixture])
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .expect("parallel fixture parses");
+        let starts: Vec<usize> = events
+            .iter()
+            .filter_map(|event| match event {
+                StreamEvent::ToolUseStart { index, .. } => Some(*index),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(starts, vec![0, 1]);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, StreamEvent::ToolUseComplete { .. }))
+                .count(),
+            2
+        );
+
+        let accumulated = StreamEvent::accumulate(&events);
+        assert_eq!(accumulated.reasoning, "I should inspect two paths.");
+        assert_eq!(accumulated.stop_reason, StopReason::ToolUse);
+        assert_eq!(accumulated.tool_calls.len(), 2);
+        assert_eq!(accumulated.tool_calls[0].id.as_deref(), Some("call_a"));
+        assert_eq!(accumulated.tool_calls[0].arguments, r#"{"path":"a.rs"}"#);
+        assert_eq!(accumulated.tool_calls[1].id.as_deref(), Some("call_b"));
+        assert_eq!(accumulated.tool_calls[1].arguments, r#"{"path":"src"}"#);
+    }
+
+    #[tokio::test]
+    async fn output_item_done_completes_call_as_fallback() {
+        use futures::StreamExt as _;
+
+        let fixture = concat!(
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":3,",
+            "\"item\":{\"type\":\"function_call\",\"id\":\"fc_fallback\",",
+            "\"call_id\":\"call_fallback\",\"name\":\"read_file\",",
+            "\"arguments\":\"{\\\"path\\\":\\\"fallback.rs\\\"}\"}}\n\n",
+            "data: {\"type\":\"response.completed\",\"response\":{}}\n\n"
+        );
+        let events = fixture_stream(vec![fixture])
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .expect("fallback fixture parses");
+        assert!(matches!(
+            &events[..],
+            [
+                StreamEvent::ToolUseStart { index: 0, .. },
+                StreamEvent::ToolUseComplete { index: 0, .. },
+                StreamEvent::Done {
+                    reason: StopReason::ToolUse,
+                    ..
+                }
+            ]
+        ));
+    }
+
+    #[tokio::test]
+    async fn mismatched_item_id_is_a_protocol_error() {
+        use futures::StreamExt as _;
+
+        let fixture = concat!(
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,",
+            "\"item\":{\"type\":\"function_call\",\"id\":\"fc_right\",",
+            "\"call_id\":\"call_1\",\"name\":\"read_file\",\"arguments\":\"\"}}\n\n",
+            "data: {\"type\":\"response.function_call_arguments.delta\",",
+            "\"output_index\":0,\"item_id\":\"fc_wrong\",\"delta\":\"{}\"}\n\n"
+        );
+        let events = fixture_stream(vec![fixture]).collect::<Vec<_>>().await;
+        assert_eq!(events.len(), 2);
+        assert!(matches!(&events[0], Ok(StreamEvent::ToolUseStart { .. })));
+        assert!(matches!(&events[1], Err(ProviderError::Sse { .. })));
+    }
+
+    #[tokio::test]
+    async fn terminal_event_rejects_unfinished_function_call() {
+        use futures::StreamExt as _;
+
+        let fixture = concat!(
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,",
+            "\"item\":{\"type\":\"function_call\",\"id\":\"fc_open\",",
+            "\"call_id\":\"call_open\",\"name\":\"read_file\",\"arguments\":\"\"}}\n\n",
+            "data: {\"type\":\"response.completed\",\"response\":{}}\n\n"
+        );
+        let events = fixture_stream(vec![fixture]).collect::<Vec<_>>().await;
+        assert_eq!(events.len(), 2);
+        assert!(matches!(&events[0], Ok(StreamEvent::ToolUseStart { .. })));
         assert!(matches!(&events[1], Err(ProviderError::Sse { .. })));
     }
 
