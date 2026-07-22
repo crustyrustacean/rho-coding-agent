@@ -268,7 +268,8 @@ rho --accept-external-provider
 <li><strong>Config model</strong> — <code>[agent] model = "gpt-4o"</code></li>
 <li><strong>Config provider</strong> — <code>[agent] provider = "openrouter"</code> uses that provider's <code>default_model</code></li>
 <li><strong>Provider default</strong> — the first provider's <code>default_model</code> if configured</li>
-<li><strong>CLI flags</strong> — <code>--endpoint &lt;url&gt; --model &lt;id&gt;</code> (no config needed)</li>
+<li><strong><code>RHO_MODEL</code> environment variable</strong></li>
+<li><strong>Built-in default</strong> — <code>anthropic/claude-sonnet-4</code> (synthesizes an OpenRouter provider)</li>
 </ol>
 <p>rho does <strong>not</strong> call <code>/v1/models</code> at startup. The config file is the source of truth — model names are accepted as-is, and misconfiguration surfaces as a clear HTTP error at request time.</p>
 <h3 id="listproviders-rpc-method"><a class="header" href="#listproviders-rpc-method"><code>listProviders</code> RPC method</a></h3>

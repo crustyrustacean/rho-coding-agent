@@ -229,6 +229,8 @@ let service = ResponsesService::new(rho_ai::ProviderConfig::new(
 <li><strong>Config model</strong> — <code>agent.model</code> in <code>.rho/config.toml</code> or <code>~/.rho/config.toml</code></li>
 <li><strong>Config provider</strong> — <code>agent.provider</code> selects a provider and uses its <code>default_model</code></li>
 <li><strong>Provider default</strong> — the first provider's <code>default_model</code> if configured</li>
+<li><strong><code>RHO_MODEL</code> environment variable</strong></li>
+<li><strong>Built-in default</strong> — <code>anthropic/claude-sonnet-4</code> (via OpenRouter; synthesizes an OpenRouter provider if no external provider is configured)</li>
 </ol>
 <p>rho does <strong>not</strong> call <code>/v1/models</code> at startup. The config file is the source of truth — model names are passed directly to the provider, and misconfiguration surfaces as a clear HTTP error at request time.</p>
 <h2 id="request--response"><a class="header" href="#request--response">Request / response</a></h2>
@@ -237,7 +239,7 @@ let service = ResponsesService::new(rho_ai::ProviderConfig::new(
 <tr><td><code>StreamEvent</code></td><td>Streaming response event (<code>Text</code>, <code>Reasoning</code>, <code>ToolUseStart/Delta/Complete</code>, <code>Done</code>)</td></tr>
 <tr><td><code>AccumulatedResponse</code></td><td>Fully-accumulated response (text + tool calls + usage)</td></tr>
 <tr><td><code>FinishReason</code></td><td><code>Stop</code> (text reply), <code>ToolCalls</code>, <code>Length</code> (truncated), <code>ContentFilter</code>, <code>Other</code></td></tr>
-<tr><td><code>LlmUsage</code></td><td><code>prompt_tokens</code>, <code>completion_tokens</code>, <code>total_tokens</code></td></tr>
+<tr><td><code>StreamUsage</code></td><td><code>input_tokens</code>, <code>output_tokens</code>, <code>cached_tokens</code></td></tr>
 </tbody></table>
 </div>
 <h2 id="streaming"><a class="header" href="#streaming">Streaming</a></h2>
