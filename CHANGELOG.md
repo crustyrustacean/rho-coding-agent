@@ -1,3 +1,24 @@
+## [0.90.1] - 2026-07-22
+
+### 🚀 Features
+
+- *(ai)* Add Responses API request adapters
+- *(ai)* Stream OpenAI Responses text and usage
+- *(ai)* Stream Responses tools and reasoning
+- *(core)* Route providers to Responses API
+
+### 🐛 Bug Fixes
+
+- *(core)* Serialize FinishReason as a plain string (resume regression)
+- *(rpc)* Reset cancel token after abort so next prompt recovers
+
+### 📚 Documentation
+
+- Explain Responses and Chat Completions routing
+
+### ⚙️ Miscellaneous Tasks
+
+- Bump version to 0.90.0
 ## [0.89.1] - 2026-07-20
 
 ### 🐛 Bug Fixes
