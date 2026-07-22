@@ -15,6 +15,7 @@
 ### 📚 Documentation
 
 - Explain Responses and Chat Completions routing
+- *(docs)* Align documentation with v0.90.1 codebase: fix extension `execute`/hooks signatures to match `rho.d.ts`, correct `onToolCall` interception description (notification-only), fix `LlmUsage` → `StreamUsage` in provider trait docs, add missing `newSession` RPC method to tables, add `RHO_MODEL` env var and built-in default to model resolution docs, fix README config description (sandbox toggle removed)
 
 ### ⚙️ Miscellaneous Tasks
 

@@ -121,7 +121,8 @@ There are several ways to set the model, in priority order:
 2. **Config model** — `[agent] model = "gpt-4o"`
 3. **Config provider** — `[agent] provider = "openrouter"` uses that provider's `default_model`
 4. **Provider default** — the first provider's `default_model` if configured
-5. **CLI flags** — `--endpoint <url> --model <id>` (no config needed)
+5. **`RHO_MODEL` environment variable**
+6. **Built-in default** — `anthropic/claude-sonnet-4` (synthesizes an OpenRouter provider)
 
 rho does **not** call `/v1/models` at startup. The config file is the source of truth — model names are accepted as-is, and misconfiguration surfaces as a clear HTTP error at request time.
 

@@ -199,6 +199,7 @@ The dispatch loop is decoupled from I/O via the [`Transport`] trait (`rho/src/tr
 | `reloadExtensions` | — | Reload extensions from disk |
 | `compact` | — | Trigger context compaction |
 | `resumeSession` | `{path: string}` | Resume a previous session |
+| `newSession` | — | Start a fresh session (preserves model, provider, tools) |
 | `listTools` | — | List registered tools with schemas and risk levels |
 | `approvalResponse` | `{approved: boolean, message?: string}` | Respond to `approval/request`; `message` with `approved: false` is a redirect |
 

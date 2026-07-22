@@ -127,7 +127,7 @@ rho loads config from two TOML files, with project-level overrides taking preced
 | Source | Path | Purpose |
 |---|---|---|
 | User-level | `~/.rho/config.toml` | Global defaults: default model, API endpoint |
-| Project-level | `.rho/config.toml` | Per-project: model, approval policies, command denylist, sandbox toggle |
+| Project-level | `.rho/config.toml` | Per-project: model, approval policies, command denylist, context files |
 
 Example `.rho/config.toml` (local model with preset):
 

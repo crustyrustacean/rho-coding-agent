@@ -64,6 +64,8 @@ The model identifier is resolved in priority order:
 2. **Config model** — `agent.model` in `.rho/config.toml` or `~/.rho/config.toml`
 3. **Config provider** — `agent.provider` selects a provider and uses its `default_model`
 4. **Provider default** — the first provider's `default_model` if configured
+5. **`RHO_MODEL` environment variable**
+6. **Built-in default** — `anthropic/claude-sonnet-4` (via OpenRouter; synthesizes an OpenRouter provider if no external provider is configured)
 
 rho does **not** call `/v1/models` at startup. The config file is the source of truth — model names are passed directly to the provider, and misconfiguration surfaces as a clear HTTP error at request time.
 
@@ -75,7 +77,7 @@ rho does **not** call `/v1/models` at startup. The config file is the source of 
 | `StreamEvent` | Streaming response event (`Text`, `Reasoning`, `ToolUseStart/Delta/Complete`, `Done`) |
 | `AccumulatedResponse` | Fully-accumulated response (text + tool calls + usage) |
 | `FinishReason` | `Stop` (text reply), `ToolCalls`, `Length` (truncated), `ContentFilter`, `Other` |
-| `LlmUsage` | `prompt_tokens`, `completion_tokens`, `total_tokens` |
+| `StreamUsage` | `input_tokens`, `output_tokens`, `cached_tokens` |
 
 ## Streaming
 

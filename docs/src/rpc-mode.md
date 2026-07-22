@@ -43,6 +43,7 @@ echo '{"jsonrpc":"2.0","method":"prompt","params":{"message":"explain this funct
 | `reloadExtensions` | — | Reload extensions from disk |
 | `compact` | — | Trigger context compaction |
 | `resumeSession` | `{path: string}` | Resume a previous session from JSONL |
+| `newSession` | — | Start a fresh session (preserves model, provider, tools) |
 | `listTools` | — | List registered tools with schemas and risk levels |
 | `approvalResponse` | `{approved: boolean, message?: string}` | Respond to an `approval/request`; when `approved` is false and `message` is set, the agent treats it as a redirect |
 

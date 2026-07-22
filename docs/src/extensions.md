@@ -23,7 +23,7 @@ Each extension gets its own V8 isolate on a dedicated OS thread. The extension's
 ## Extension format
 
 ```typescript
-/// <reference path="~/.rho/types/rho.d.ts" />
+/// <reference path="../types/rho.d.ts" />
 
 export default {
   name: "my-extension",
@@ -36,11 +36,12 @@ export default {
     parameters: {
       query: { type: "string", description: "Search query", required: true },
     },
-    async execute(args: { query: string }) {
-      const resp = await fetch(`https://docs.example.com/search?q=${encodeURIComponent(args.query)}`);
-      if (!resp.ok) return { error: `HTTP ${resp.status}` };
+    async execute(args: string) {
+      const { query } = JSON.parse(args);
+      const resp = await fetch(`https://docs.example.com/search?q=${encodeURIComponent(query)}`);
+      if (!resp.ok) return JSON.stringify({ error: `HTTP ${resp.status}` });
       const text = await resp.text();
-      return { output: text };
+      return text;
     },
   }],
 
@@ -48,15 +49,13 @@ export default {
     async onLoad() {
       rho.log("info", "my-extension loaded");
     },
-    async onToolCall(toolName: string, args: Record<string, unknown>) {
-      // Return { block: true, reason: "..." } to deny
-      rho.log("debug", `tool called: ${toolName}`);
+    async onToolCall(args: string) {
+      // Notification-only in the current implementation.
+      // Return-value interception (block/modify) is planned.
+      rho.log("debug", `tool called`);
     },
-    async onToolResult(toolName: string, result: ToolResult) {
-      // Can modify the result
-    },
-    async onBeforeModel(messages: unknown[]) {
-      return { inject: `Current time: ${new Date().toISOString()}` };
+    async onToolResult(args: string) {
+      // Notification-only.
     },
   },
 
@@ -65,6 +64,7 @@ export default {
     description: "Deploy to production",
     async handler(args: string) {
       rho.log("info", `Deploying: ${args || "default"}`);
+      return "deployed";
     },
   }],
 };
@@ -80,18 +80,18 @@ export default {
 ### rho host functions (the `rho` global)
 
 ```typescript
-declare namespace rho {
+declare const rho: {
   function log(level: "trace" | "debug" | "info" | "warn" | "error", message: string): void;
-  function readFile(path: string): Promise<string>;
-  function writeFile(path: string, content: string): Promise<boolean>;
-  function runCommand(command: string, args?: string[]): Promise<{
+  function readFile(path: string): string;
+  function writeFile(path: string, content: string): void;
+  function runCommand(command: string, args?: string[]): {
     stdout: string;
     stderr: string;
     exitCode: number;
-  }>;
+  };
   function getCwd(): string;
   function getModel(): string;
-}
+};
 ```
 
 ### Not available (by design)
@@ -167,7 +167,7 @@ The extension system is implemented in the `rho-ext` crate:
 
 ### Tool-call interception
 
-Extensions can block tool calls via the `onToolCall` hook. The `InterceptResult` enum (`Block`/`Allow`) is checked in `classify_call()` before the approval policy and execution. If any extension returns `Block`, the call is denied and an error result is fed to the model.
+Extensions can observe tool calls via the `onToolCall` hook. In the current implementation this hook is **notification-only** — it cannot block, modify, or rewrite tool calls. The `InterceptResult` enum (`Block`/`Allow`) exists at the Rust `AgentObserver` level, but `DenoObserver` does not yet bridge return values from JS hooks to the Rust interception path. Return-value interception (block/modify) is planned for a future release.
 
 ### Model propagation
 
@@ -197,16 +197,17 @@ export default {
     parameters: {
       code: { type: "string", description: "Error code (e.g. E0277)", required: true },
     },
-    async execute(args: { code: string }) {
-      const code = args.code.toUpperCase();
-      if (!/^E\d+$/.test(code)) {
-        return { error: "Invalid format. Use E followed by digits." };
+    async execute(args: string) {
+      const { code } = JSON.parse(args);
+      const upper = code.toUpperCase();
+      if (!/^E\d+$/.test(upper)) {
+        return JSON.stringify({ error: "Invalid format. Use E followed by digits." });
       }
-      const resp = await fetch(`https://doc.rust-lang.org/stable/error_codes/${code}.html`);
-      if (!resp.ok) return { error: `${code} not found` };
+      const resp = await fetch(`https://doc.rust-lang.org/stable/error_codes/${upper}.html`);
+      if (!resp.ok) return JSON.stringify({ error: `${upper} not found` });
       const html = await resp.text();
       const text = html.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
-      return { output: text };
+      return text;
     },
   }],
 };
@@ -218,11 +219,14 @@ export default {
 export default {
   name: "no-force",
   hooks: {
-    async onToolCall(toolName: string, args: Record<string, unknown>) {
+    async onToolCall(args: string) {
+      const { toolName, arguments } = JSON.parse(args);
       if (toolName !== "run_command") return;
-      const cmd = (args.command as string) ?? "";
+      const cmd = (arguments as string) ?? "";
       if (cmd.includes("-Force") || cmd.includes("--force")) {
-        return { block: true, reason: "Force flags blocked by no-force extension" };
+        rho.log("warn", "Force flags blocked by no-force extension");
+        // Note: onToolCall is notification-only in the current implementation.
+        // Return-value interception (Block) is planned but not yet wired.
       }
     },
   },
