@@ -272,6 +272,21 @@ impl AgentObserver for RpcObserver {
 /// `&mut self`, and in [`Arc`] so each turn's gate can hold a clone.
 type ApprovalReceiver = Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<Value>>>;
 
+/// A resettable shared cancellation token.
+///
+/// [`CancellationToken`] from `tokio_util` is a one-way ratchet — once
+/// `cancel()` fires it stays cancelled forever (there is no `reset`).
+/// Wrapping it in `Arc<Mutex<…>>` lets `handle_prompt` swap in a fresh
+/// token before each turn so that a prior `abort` doesn't poison every
+/// subsequent turn. Both the reader task (which fires `abort`) and
+/// `handle_prompt` (which feeds the token into `LoopParams`) hold clones
+/// of this `Arc`, so they always see the *live* token.
+///
+/// The `std::sync::Mutex` is safe here: the lock is never held across an
+/// `.await` (lock → check/swap → drop in one synchronous block), matching
+/// the pattern used for [`ApprovalReceiver`].
+type SharedCancel = Arc<std::sync::Mutex<CancellationToken>>;
+
 /// Writes an `approval/request` notification and awaits the matching
 /// `approvalResponse` on the [`ApprovalReceiver`] (fed by the reader task),
 /// rather than reading the transport directly — so the reader keeps ownership
@@ -361,7 +376,7 @@ pub(crate) async fn run_rpc_on(mut app: App, transport: Arc<dyn Transport>) -> R
     let (work_tx, mut work_rx) = mpsc::unbounded_channel::<WorkItem>();
     let (approval_tx, approval_rx) = mpsc::unbounded_channel::<Value>();
     let approval_rx: ApprovalReceiver = Arc::new(tokio::sync::Mutex::new(approval_rx));
-    let cancel = app.cancel.clone();
+    let cancel: SharedCancel = Arc::new(std::sync::Mutex::new(app.cancel.clone()));
 
     // Concurrent reader: owns the transport, classifies every inbound message,
     // and routes it. It never touches `&mut App` — only the main task below does
@@ -370,6 +385,7 @@ pub(crate) async fn run_rpc_on(mut app: App, transport: Arc<dyn Transport>) -> R
     let reader = tokio::spawn({
         let transport = Arc::clone(&transport);
         let steering = steering.clone();
+        let cancel = Arc::clone(&cancel);
         async move {
             loop {
                 let request = match transport.read_message().await {
@@ -417,6 +433,7 @@ pub(crate) async fn run_rpc_on(mut app: App, transport: Arc<dyn Transport>) -> R
                     Arc::clone(&transport),
                     &steering,
                     &approval_rx,
+                    Arc::clone(&cancel),
                 )
                 .await;
             }
@@ -474,7 +491,7 @@ async fn demux_request(
     work_tx: &mpsc::UnboundedSender<WorkItem>,
     approval_tx: &mpsc::UnboundedSender<Value>,
     steering: &SteeringQueue,
-    cancel: &CancellationToken,
+    cancel: &SharedCancel,
     transport: &dyn Transport,
 ) {
     let jsonrpc = request.get("jsonrpc").and_then(|v| v.as_str());
@@ -501,7 +518,7 @@ async fn demux_request(
 
     match method {
         "abort" => {
-            cancel.cancel();
+            cancel.lock().unwrap().cancel();
             send(transport, &success_response(&id, EmptyResult {})).await;
         }
         "approvalResponse" => {
@@ -614,6 +631,7 @@ async fn handle_prompt(
     transport: Arc<dyn Transport>,
     steering: &SteeringQueue,
     approval_rx: &ApprovalReceiver,
+    cancel: SharedCancel,
 ) {
     let message = params.message;
 
@@ -656,7 +674,13 @@ async fn handle_prompt(
         client: client.as_ref(),
         registry: &app.registry,
         config: &app.config,
-        cancel: app.cancel.clone(),
+        cancel: {
+            let mut guard = cancel.lock().unwrap();
+            if guard.is_cancelled() {
+                *guard = CancellationToken::new();
+            }
+            guard.clone()
+        },
         gate: &gate,
         observer: &composite,
         compaction_client,
@@ -1716,6 +1740,34 @@ mod tests {
 
         let resp = &responses(&events)[0];
         assert_eq!(resp["result"], json!({}));
+    }
+
+    #[tokio::test]
+    async fn abort_then_prompt_recovers() {
+        // Reproducer for the cancel-token ratchet bug: after `abort`, the
+        // CancellationToken stays cancelled forever. Every subsequent prompt
+        // hits `is_cancelled()` at the top of `handle_thinking` and dies.
+        let client = MockChatClient::new(vec![text_events("recovered")]);
+        let events = rpc_run(
+            client,
+            echo_registry(),
+            &[
+                r#"{"jsonrpc":"2.0","method":"abort","id":1}"#,
+                r#"{"jsonrpc":"2.0","method":"prompt","params":{"message":"hi"},"id":2}"#,
+            ],
+        )
+        .await;
+
+        // After abort, a new prompt should NOT produce an agent/error.
+        assert_eq!(
+            events_of_type(&events, "agent/error").len(),
+            0,
+            "prompt after abort should not error"
+        );
+        // It should complete normally.
+        let ends = events_of_type(&events, "agent/end");
+        assert_eq!(ends.len(), 1);
+        assert_eq!(ends[0]["params"]["reply"], "recovered");
     }
 
     #[tokio::test]
