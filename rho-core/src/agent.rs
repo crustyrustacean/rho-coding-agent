@@ -1787,10 +1787,17 @@ pub(crate) fn route_response(
             Ok(AssistantResponse::ToolCalls(tool_calls))
         }
         rho_ai::StopReason::Length => {
-            session.append_assistant_message(crate::ChatMessage::assistant_text_with_reason(
-                &acc.text,
-                finish.clone(),
-            ));
+            // Don't persist an empty assistant message. When the model returned
+            // no content and no tool calls, the truncation handler will retry.
+            // Persisting the empty message poisons the session tree — strict
+            // models (OpenAI, Moonshot, Anthropic) reject empty assistant
+            // messages with HTTP 400 on the next turn.
+            if !acc.text.is_empty() {
+                session.append_assistant_message(crate::ChatMessage::assistant_text_with_reason(
+                    &acc.text,
+                    finish.clone(),
+                ));
+            }
             Ok(AssistantResponse::LengthTruncated {
                 content: acc.text.clone(),
                 reasoning_content: acc.reasoning.clone(),
@@ -1806,10 +1813,8 @@ pub(crate) fn route_response(
             // attempt compaction and retry. ContentFilter is excluded
             // because retrying a filtered response is futile.
             if text.is_empty() && !matches!(acc.stop_reason, rho_ai::StopReason::ContentFilter) {
-                session.append_assistant_message(crate::ChatMessage::assistant_text_with_reason(
-                    &text,
-                    finish.clone(),
-                ));
+                // Don't persist the empty assistant message (see Length arm
+                // above for rationale).
                 return Ok(AssistantResponse::LengthTruncated {
                     content: text,
                     reasoning_content: reasoning,
@@ -2372,8 +2377,9 @@ mod tests {
     #[test]
     fn route_response_persists_finish_reason_for_empty_stop() {
         // The exact failure mode from the field: an empty reply that closed
-        // successfully. finish_reason must be recorded so the empty assistant
-        // message is no longer a silent mystery on disk.
+        // successfully. The empty assistant message must NOT be persisted
+        // — strict-validation models (OpenAI, Moonshot) reject it with HTTP 400.
+        // It still routes to LengthTruncated so the agent loop can retry.
         let mut session = test_session(None, &[], vec![]);
         let acc = rho_ai::AccumulatedResponse {
             text: String::new(),
@@ -2382,29 +2388,22 @@ mod tests {
             stop_reason: rho_ai::StopReason::EndTurn,
             usage: rho_ai::StreamUsage::default(),
         };
-        let _ = route_response(&acc, &mut session).unwrap();
+        let response = route_response(&acc, &mut session).unwrap();
+        assert!(
+            matches!(response, AssistantResponse::LengthTruncated { .. }),
+            "empty EndTurn should route to LengthTruncated, got {response:?}"
+        );
+        // The session should NOT contain the empty assistant message.
         let msgs = session.path_messages();
-        let last = msgs.last().expect("should have a message");
-        match last {
-            ChatMessage::Assistant {
-                content,
-                finish_reason,
-                ..
-            } => {
-                let text: String = content
-                    .iter()
-                    .map(|b| match b {
-                        crate::ContentBlock::Text { text } => text.as_str(),
-                    })
-                    .collect();
-                assert!(
-                    text.is_empty(),
-                    "content text should be empty, got {text:?}"
-                );
-                assert_eq!(*finish_reason, Some(crate::response::FinishReason::Stop));
-            }
-            other => panic!("expected Assistant message, got {other:?}"),
-        }
+        let assistant_msgs: Vec<_> = msgs
+            .iter()
+            .filter(|m| matches!(m, ChatMessage::Assistant { .. }))
+            .collect();
+        assert!(
+            assistant_msgs.is_empty(),
+            "empty EndTurn response should not be persisted, but found {} assistant message(s)",
+            assistant_msgs.len()
+        );
     }
 
     #[test]
@@ -2484,10 +2483,10 @@ mod tests {
             usage: rho_ai::StreamUsage::new(1_000_000, 0),
         };
         let _ = route_response(&acc, &mut session).unwrap();
-        // glm-5.2 input is $1.4/M → 1M tokens should cost $1.4.
+        // glm-5.2 input is $0.826/M → 1M tokens should cost $0.826.
         let cost = session.api_usage().total_cost;
         assert!(
-            (cost - 1.4).abs() < 1e-9,
+            (cost - 0.826).abs() < 1e-9,
             "expected catalog-derived cost, got {cost}"
         );
     }
@@ -2614,11 +2613,74 @@ mod tests {
             usage: rho_ai::StreamUsage::new(1_000_000, 0),
         };
         let _ = route_response(&acc, &mut session).unwrap();
-        // User's $9.0/M input wins, not the catalog's $1.4.
+        // User's $9.0/M input wins, not the catalog's $0.826.
         assert!(
             (session.api_usage().total_cost - 9.0).abs() < 1e-9,
             "user model pricing should override the catalog; got {}",
             session.api_usage().total_cost,
+        );
+    }
+
+    #[test]
+    fn route_response_empty_length_does_not_persist() {
+        // When the model returns finish_reason=length with empty content and no
+        // tool calls, the empty assistant message must NOT be persisted to the
+        // session. Persisting it poisons the session tree — strict-validation
+        // models (OpenAI, Moonshot, Anthropic) reject empty assistant messages
+        // with HTTP 400 on the next turn.
+        let mut session = test_session(None, &["hello"], vec![]);
+        let acc = rho_ai::AccumulatedResponse {
+            text: String::new(),
+            reasoning: String::new(),
+            tool_calls: vec![],
+            stop_reason: rho_ai::StopReason::Length,
+            usage: rho_ai::StreamUsage::default(),
+        };
+        let response = route_response(&acc, &mut session).unwrap();
+        // It should still return LengthTruncated so the agent loop can retry.
+        assert!(
+            matches!(response, AssistantResponse::LengthTruncated { .. }),
+            "empty Length should return LengthTruncated, got {response:?}"
+        );
+        // But the session should NOT contain the empty assistant message.
+        let msgs = session.path_messages();
+        let assistant_msgs: Vec<_> = msgs
+            .iter()
+            .filter(|m| matches!(m, ChatMessage::Assistant { .. }))
+            .collect();
+        assert!(
+            assistant_msgs.is_empty(),
+            "empty Length response should not be persisted, but found {} assistant message(s)",
+            assistant_msgs.len()
+        );
+    }
+
+    #[test]
+    fn route_response_empty_stop_does_not_persist() {
+        // Same bug, different path: empty EndTurn (llama.cpp workaround) should
+        // not persist an empty assistant message either.
+        let mut session = test_session(None, &["hello"], vec![]);
+        let acc = rho_ai::AccumulatedResponse {
+            text: String::new(),
+            reasoning: String::new(),
+            tool_calls: vec![],
+            stop_reason: rho_ai::StopReason::EndTurn,
+            usage: rho_ai::StreamUsage::default(),
+        };
+        let response = route_response(&acc, &mut session).unwrap();
+        assert!(
+            matches!(response, AssistantResponse::LengthTruncated { .. }),
+            "empty EndTurn should route to LengthTruncated, got {response:?}"
+        );
+        let msgs = session.path_messages();
+        let assistant_msgs: Vec<_> = msgs
+            .iter()
+            .filter(|m| matches!(m, ChatMessage::Assistant { .. }))
+            .collect();
+        assert!(
+            assistant_msgs.is_empty(),
+            "empty EndTurn response should not be persisted, but found {} assistant message(s)",
+            assistant_msgs.len()
         );
     }
 

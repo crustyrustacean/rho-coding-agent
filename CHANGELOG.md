@@ -1,3 +1,12 @@
+## [0.90.3] - 2026-07-23
+
+### 🐛 Bug Fixes
+
+- *(core)* Don't persist empty assistant messages from truncated responses
+
+### ⚙️ Miscellaneous Tasks
+
+- *(ai)* Update built-in model catalog from OpenRouter (318 models)
 ## [0.90.2] - 2026-07-23
 
 ### 🐛 Bug Fixes
