@@ -1,3 +1,12 @@
+## [0.90.2] - 2026-07-23
+
+### 🐛 Bug Fixes
+
+- *(rpc)* Replace unwrap() on cancel mutex with graceful error handling
+
+### 📚 Documentation
+
+- Align documentation with v0.90.1 codebase
 ## [0.90.1] - 2026-07-22
 
 ### 🚀 Features
