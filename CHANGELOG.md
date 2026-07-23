@@ -1,3 +1,9 @@
+## [0.90.4] - 2026-07-23
+
+### 🐛 Bug Fixes
+
+- *(core)* Sanitize orphaned tool calls before sending to the model
+- *(ai)* Make `name` optional in Responses `function_call_arguments.done`
 ## [0.90.3] - 2026-07-23
 
 ### 🐛 Bug Fixes
