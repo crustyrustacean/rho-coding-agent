@@ -1579,6 +1579,7 @@ fn record_turn_error(session: &mut Session, error: &RhoError) {
 /// `max_tokens` from the session's token budget.
 fn build_llm_request(session: &Session) -> rho_ai::LlmRequest {
     let fitted = session.path_messages();
+    let fitted = sanitize_tool_pairing(&fitted);
     let llm_messages: Vec<rho_ai::LlmMessage> =
         fitted.iter().map(ChatMessage::to_llm_message).collect();
 
@@ -1589,6 +1590,126 @@ fn build_llm_request(session: &Session) -> rho_ai::LlmRequest {
         max_tokens: Some(session.token_budget().completion_reserve),
         reasoning_effort: session.reasoning_effort.clone(),
     }
+}
+
+/// Repair tool-call/result pairing before messages are sent to the model.
+///
+/// The `OpenAI` Chat Completions spec — enforced by strict-validation providers
+/// (`OpenAI`, Moonshot, Anthropic; lenient providers tolerate violations) —
+/// requires:
+///
+/// 1. Every assistant `tool_call` to be answered by a `tool` message carrying
+///    the matching `tool_call_id`, and
+/// 2. those `tool` messages to form a contiguous run immediately following
+///    the assistant message that issued the calls.
+///
+/// Violations arise in real sessions: a turn aborted mid-tool-execution
+/// leaves the assistant's calls persisted with no results (Issue 4, observed
+/// as `HTTP 400: "No tool output found for function call …"` when switching
+/// to `openai/gpt-5.6-sol`), and context eviction can drop an assistant
+/// message while leaving its `tool` results behind.
+///
+/// Repairs, per offending message (each repair is warn-logged with the call
+/// id so the session corruption stays visible in `logs/rho.log`):
+///
+/// - **Orphaned tool calls** (no matching result in the contiguous run) are
+///   stripped from the assistant message, preserving any text content. If
+///   stripping leaves the assistant with neither text nor calls, the message
+///   is dropped (an empty assistant is itself invalid to strict APIs).
+/// - **Misplaced or dangling tool results** (not part of the contiguous run
+///   answering the preceding assistant) are dropped.
+///
+/// The session tree is **not** mutated — this runs per-request on the
+/// `path_messages()` snapshot, so no history is permanently lost.
+fn sanitize_tool_pairing(messages: &[ChatMessage]) -> Vec<ChatMessage> {
+    let mut out: Vec<ChatMessage> = Vec::with_capacity(messages.len());
+    let mut idx = 0;
+
+    while idx < messages.len() {
+        let msg = &messages[idx];
+        match msg {
+            ChatMessage::Assistant {
+                content,
+                tool_calls,
+                finish_reason,
+            } if !tool_calls.is_empty() => {
+                // Collect the contiguous run of Tool messages immediately
+                // following this assistant message.
+                let mut run: Vec<&ChatMessage> = Vec::new();
+                let mut next = idx + 1;
+                while let Some(tool_msg @ ChatMessage::Tool { .. }) = messages.get(next) {
+                    run.push(tool_msg);
+                    next += 1;
+                }
+                let answered: std::collections::HashSet<&ToolCallId> = run
+                    .iter()
+                    .map(|m| match m {
+                        ChatMessage::Tool { tool_call_id, .. } => tool_call_id,
+                        _ => unreachable!("run contains only Tool messages"),
+                    })
+                    .collect();
+
+                let mut kept_calls: Vec<ModelToolCall> = Vec::with_capacity(tool_calls.len());
+                let mut kept_ids: std::collections::HashSet<ToolCallId> =
+                    std::collections::HashSet::new();
+                for call in tool_calls {
+                    if answered.contains(&call.id) {
+                        kept_ids.insert(call.id.clone());
+                        kept_calls.push(call.clone());
+                    } else {
+                        warn!(
+                            tool_call_id = %call.id,
+                            tool = %call.function.name,
+                            "stripping orphaned tool call with no matching result"
+                        );
+                    }
+                }
+
+                if kept_calls.is_empty() && content.is_empty() {
+                    // Nothing valid remains — an empty assistant message is
+                    // itself rejected by strict-validation APIs.
+                    warn!("dropping assistant message left empty after orphan stripping");
+                } else {
+                    out.push(ChatMessage::Assistant {
+                        content: content.clone(),
+                        tool_calls: kept_calls,
+                        finish_reason: finish_reason.clone(),
+                    });
+                }
+
+                // Only Tool results answering a surviving call stay in place.
+                // Ids were cloned out above so this set is independent of
+                // the borrow on `out` that the pushes below mutate.
+                for tool_msg in run {
+                    let ChatMessage::Tool { tool_call_id, .. } = tool_msg else {
+                        unreachable!("run contains only Tool messages");
+                    };
+                    if kept_ids.contains(tool_call_id) {
+                        out.push(tool_msg.clone());
+                    } else {
+                        warn!(
+                            tool_call_id = %tool_call_id,
+                            "dropping tool result whose call was stripped"
+                        );
+                    }
+                }
+                idx = next;
+            }
+            ChatMessage::Tool { tool_call_id, .. } => {
+                warn!(
+                    tool_call_id = %tool_call_id,
+                    "dropping dangling tool result with no preceding assistant tool call"
+                );
+                idx += 1;
+            }
+            _ => {
+                out.push(msg.clone());
+                idx += 1;
+            }
+        }
+    }
+
+    out
 }
 
 /// Build typed tool calls from streaming accumulation.
@@ -2006,6 +2127,206 @@ mod tests {
             .with_token_budget(TokenBudget::with_reserve(4096, 2048));
         let req = build_llm_request(&session);
         assert_eq!(req.max_tokens, Some(2048));
+    }
+
+    // ── sanitize_tool_pairing tests (Issue 4: orphaned tool calls) ─────────
+    //
+    // Strict-validation APIs (OpenAI, Moonshot, Anthropic — e.g. gpt-5.6-sol
+    // via OpenRouter) reject a request with HTTP 400 when an assistant
+    // message carries a `tool_call` whose matching `tool` result is missing
+    // ("No tool output found for function call call_…"), or when a `tool`
+    // result has no matching call. Orphans arise when a turn is aborted
+    // mid-tool-execution, on a crash between persisting the assistant message
+    // and executing its tools, or when a stale Tool result is left behind
+    // after context eviction dropped the assistant side.
+    //
+    // `build_llm_request` must sanitize such histories per-request (the
+    // session tree itself is never mutated): orphaned calls are stripped,
+    // empty leftover assistant messages are dropped, and dangling tool
+    // results are dropped.
+
+    #[test]
+    fn sanitize_strips_orphaned_tool_call() {
+        // The exact gpt-5.6-sol failure: an assistant message with a tool
+        // call whose result never landed (aborted before execution).
+        let mut session = test_session(None, &["hello"], vec![]);
+        session.append_assistant_message(ChatMessage::Assistant {
+            content: vec![],
+            tool_calls: vec![ModelToolCall {
+                id: ToolCallId::from("call_orphan"),
+                call_type: "function".to_owned(),
+                function: ToolCallFunction {
+                    name: ToolName::from("read_file"),
+                    arguments: "{}".to_owned(),
+                },
+            }],
+            finish_reason: None,
+        });
+
+        let req = build_llm_request(&session);
+        let orphan = req.messages.iter().any(|m| {
+            matches!(m, rho_ai::LlmMessage::Assistant { tool_calls, .. }
+                if tool_calls.iter().any(|tc| tc.id == "call_orphan"))
+        });
+        assert!(
+            !orphan,
+            "orphaned tool call must not reach the wire: {:?}",
+            req.messages
+        );
+    }
+
+    #[test]
+    fn sanitize_keeps_paired_call_and_result() {
+        // A normal, healthy tool exchange must pass through untouched.
+        let mut session = test_session(None, &["hello"], vec![]);
+        session.append_assistant_message(ChatMessage::Assistant {
+            content: vec![],
+            tool_calls: vec![ModelToolCall {
+                id: ToolCallId::from("call_1"),
+                call_type: "function".to_owned(),
+                function: ToolCallFunction {
+                    name: ToolName::from("read_file"),
+                    arguments: "{}".to_owned(),
+                },
+            }],
+            finish_reason: None,
+        });
+        session.append_tool_result(ToolCallId::from("call_1"), &ToolResult::success("ok"));
+
+        let req = build_llm_request(&session);
+        let assistant = req.messages.iter().any(|m| {
+            matches!(m, rho_ai::LlmMessage::Assistant { tool_calls, .. }
+                if tool_calls.iter().any(|tc| tc.id == "call_1"))
+        });
+        let tool = req.messages.iter().any(|m| {
+            matches!(m, rho_ai::LlmMessage::Tool { tool_call_id, .. } if tool_call_id == "call_1")
+        });
+        assert!(assistant, "paired call must be kept: {:?}", req.messages);
+        assert!(tool, "paired result must be kept: {:?}", req.messages);
+    }
+
+    #[test]
+    fn sanitize_strips_only_the_orphaned_call() {
+        // Two calls, one result: the answered call stays, the orphan goes.
+        let mut session = test_session(None, &["hello"], vec![]);
+        session.append_assistant_message(ChatMessage::Assistant {
+            content: vec![],
+            tool_calls: vec![
+                ModelToolCall {
+                    id: ToolCallId::from("call_kept"),
+                    call_type: "function".to_owned(),
+                    function: ToolCallFunction {
+                        name: ToolName::from("read_file"),
+                        arguments: "{}".to_owned(),
+                    },
+                },
+                ModelToolCall {
+                    id: ToolCallId::from("call_orphan"),
+                    call_type: "function".to_owned(),
+                    function: ToolCallFunction {
+                        name: ToolName::from("edit_file"),
+                        arguments: "{}".to_owned(),
+                    },
+                },
+            ],
+            finish_reason: None,
+        });
+        session.append_tool_result(ToolCallId::from("call_kept"), &ToolResult::success("ok"));
+
+        let req = build_llm_request(&session);
+        let kept = req.messages.iter().any(|m| {
+            matches!(m, rho_ai::LlmMessage::Assistant { tool_calls, .. }
+                if tool_calls.iter().any(|tc| tc.id == "call_kept"))
+        });
+        let orphan = req.messages.iter().any(|m| {
+            matches!(m, rho_ai::LlmMessage::Assistant { tool_calls, .. }
+                if tool_calls.iter().any(|tc| tc.id == "call_orphan"))
+        });
+        assert!(kept, "paired call must be kept: {:?}", req.messages);
+        assert!(
+            !orphan,
+            "orphaned call must be stripped: {:?}",
+            req.messages
+        );
+    }
+
+    #[test]
+    fn sanitize_keeps_assistant_text_when_all_calls_orphaned() {
+        // Assistant said something AND made a call that never ran: the text
+        // must survive, only the orphaned call is stripped.
+        let mut session = test_session(None, &["hello"], vec![]);
+        session.append_assistant_message(ChatMessage::Assistant {
+            content: vec![crate::message::ContentBlock::Text {
+                text: "let me read that".to_owned(),
+            }],
+            tool_calls: vec![ModelToolCall {
+                id: ToolCallId::from("call_orphan"),
+                call_type: "function".to_owned(),
+                function: ToolCallFunction {
+                    name: ToolName::from("read_file"),
+                    arguments: "{}".to_owned(),
+                },
+            }],
+            finish_reason: None,
+        });
+
+        let req = build_llm_request(&session);
+        let text_kept = req.messages.iter().any(|m| {
+            matches!(m, rho_ai::LlmMessage::Assistant { content: Some(c), tool_calls }
+                if c == "let me read that" && tool_calls.is_empty())
+        });
+        assert!(
+            text_kept,
+            "assistant text must survive orphan stripping: {:?}",
+            req.messages
+        );
+    }
+
+    #[test]
+    fn sanitize_drops_dangling_tool_result() {
+        // A Tool result whose assistant message was evicted (or never
+        // existed) is just as invalid to strict APIs — drop it.
+        let mut session = test_session(None, &["hello"], vec![]);
+        session.append_tool_result(ToolCallId::from("call_ghost"), &ToolResult::success("ok"));
+
+        let req = build_llm_request(&session);
+        let dangling = req.messages.iter().any(|m| {
+            matches!(m, rho_ai::LlmMessage::Tool { tool_call_id, .. } if tool_call_id == "call_ghost")
+        });
+        assert!(
+            !dangling,
+            "dangling tool result must not reach the wire: {:?}",
+            req.messages
+        );
+    }
+
+    #[test]
+    fn sanitize_removes_empty_assistant_after_stripping() {
+        // Empty assistant messages are themselves invalid to strict APIs
+        // (Issue 3's failure mode), so an assistant left with no content and
+        // no calls after stripping must be dropped entirely.
+        let mut session = test_session(None, &["hello"], vec![]);
+        session.append_assistant_message(ChatMessage::Assistant {
+            content: vec![],
+            tool_calls: vec![ModelToolCall {
+                id: ToolCallId::from("call_orphan"),
+                call_type: "function".to_owned(),
+                function: ToolCallFunction {
+                    name: ToolName::from("read_file"),
+                    arguments: "{}".to_owned(),
+                },
+            }],
+            finish_reason: None,
+        });
+
+        let req = build_llm_request(&session);
+        // User only — the assistant message must be gone entirely.
+        assert_eq!(req.messages.len(), 1, "got: {:?}", req.messages);
+        let any_assistant = req
+            .messages
+            .iter()
+            .any(|m| matches!(m, rho_ai::LlmMessage::Assistant { .. }));
+        assert!(!any_assistant, "got: {:?}", req.messages);
     }
 
     // ── consume_stream tests ─────────────────────────────────────────────
