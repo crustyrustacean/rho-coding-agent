@@ -15,7 +15,7 @@
     clippy::excessive_precision,
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,
-    clippy::cast_possible_wrap
+    clippy::cast_possible_wrap,
 )]
 
 use super::catalog::{Model, ModelCost, ModelInput, ModelThinking};
@@ -24,19 +24,502 @@ use super::catalog::{Model, ModelCost, ModelInput, ModelThinking};
 pub fn built_in_models() -> Vec<Model> {
     vec![
         Model {
+            id: "poolside/laguna-s-2.1".to_string(),
+            name: "Poolside: Laguna S 2.1".to_string(),
+            provider: "poolside".to_string(),
+            context_window: 1048576,
+            max_tokens: 131072,
+            input: ModelInput { text: true, image: false },
+            cost: ModelCost {
+                input: 0.1000000000,
+                output: 0.2000000000,
+                cache_read: 0.0100000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "google/gemini-3.6-flash".to_string(),
+            name: "Google: Gemini 3.6 Flash".to_string(),
+            provider: "google".to_string(),
+            context_window: 1048576,
+            max_tokens: 65536,
+            input: ModelInput { text: true, image: true },
+            cost: ModelCost {
+                input: 1.5000000000,
+                output: 7.5000000000,
+                cache_read: 0.1500000000,
+                cache_write: 0.0833333333,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "google/gemini-3.5-flash-lite".to_string(),
+            name: "Google: Gemini 3.5 Flash Lite".to_string(),
+            provider: "google".to_string(),
+            context_window: 1048576,
+            max_tokens: 65536,
+            input: ModelInput { text: true, image: true },
+            cost: ModelCost {
+                input: 0.3000000000,
+                output: 2.5000000000,
+                cache_read: 0.0300000000,
+                cache_write: 0.0833333333,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "meituan/longcat-2.0".to_string(),
+            name: "Meituan: LongCat 2.0".to_string(),
+            provider: "meituan".to_string(),
+            context_window: 1048756,
+            max_tokens: 262144,
+            input: ModelInput { text: true, image: false },
+            cost: ModelCost {
+                input: 0.3000000000,
+                output: 1.2000000000,
+                cache_read: 0.0060000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "thinkingmachines/inkling".to_string(),
+            name: "Thinking Machines: Inkling".to_string(),
+            provider: "thinkingmachines".to_string(),
+            context_window: 524288,
+            max_tokens: 131072,
+            input: ModelInput { text: true, image: true },
+            cost: ModelCost {
+                input: 1.0000000000,
+                output: 4.0500000000,
+                cache_read: 0.1700000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "openrouter/auto-beta".to_string(),
+            name: "Auto Router (Beta)".to_string(),
+            provider: "openrouter".to_string(),
+            context_window: 2000000,
+            max_tokens: 500000,
+            input: ModelInput { text: true, image: true },
+            cost: ModelCost {
+                input: -1000000.0000000000,
+                output: -1000000.0000000000,
+                cache_read: 0.0000000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "moonshotai/kimi-k3".to_string(),
+            name: "MoonshotAI: Kimi K3".to_string(),
+            provider: "moonshotai".to_string(),
+            context_window: 1048576,
+            max_tokens: 262144,
+            input: ModelInput { text: true, image: true },
+            cost: ModelCost {
+                input: 3.0000000000,
+                output: 15.0000000000,
+                cache_read: 0.3000000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "meta/muse-spark-1.1".to_string(),
+            name: "Meta: Muse Spark 1.1".to_string(),
+            provider: "meta".to_string(),
+            context_window: 1048576,
+            max_tokens: 262144,
+            input: ModelInput { text: true, image: true },
+            cost: ModelCost {
+                input: 1.2500000000,
+                output: 4.2500000000,
+                cache_read: 0.1500000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "kwaipilot/kat-coder-air-v2.5".to_string(),
+            name: "Kwaipilot: KAT-Coder-Air V2.5".to_string(),
+            provider: "kwaipilot".to_string(),
+            context_window: 256000,
+            max_tokens: 80000,
+            input: ModelInput { text: true, image: false },
+            cost: ModelCost {
+                input: 0.1500000000,
+                output: 0.6000000000,
+                cache_read: 0.0300000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "kwaipilot/kat-coder-pro-v2.5".to_string(),
+            name: "Kwaipilot: KAT-Coder-Pro V2.5".to_string(),
+            provider: "kwaipilot".to_string(),
+            context_window: 256000,
+            max_tokens: 80000,
+            input: ModelInput { text: true, image: false },
+            cost: ModelCost {
+                input: 0.7400000000,
+                output: 2.9600000000,
+                cache_read: 0.1500000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "openai/gpt-5.6-luna-pro".to_string(),
+            name: "OpenAI: GPT-5.6 Luna Pro".to_string(),
+            provider: "openai".to_string(),
+            context_window: 1050000,
+            max_tokens: 128000,
+            input: ModelInput { text: true, image: true },
+            cost: ModelCost {
+                input: 1.0000000000,
+                output: 6.0000000000,
+                cache_read: 0.1000000000,
+                cache_write: 1.2500000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "openai/gpt-5.6-luna".to_string(),
+            name: "OpenAI: GPT-5.6 Luna".to_string(),
+            provider: "openai".to_string(),
+            context_window: 1050000,
+            max_tokens: 128000,
+            input: ModelInput { text: true, image: true },
+            cost: ModelCost {
+                input: 1.0000000000,
+                output: 6.0000000000,
+                cache_read: 0.1000000000,
+                cache_write: 1.2500000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "openai/gpt-5.6-terra-pro".to_string(),
+            name: "OpenAI: GPT-5.6 Terra Pro".to_string(),
+            provider: "openai".to_string(),
+            context_window: 1050000,
+            max_tokens: 128000,
+            input: ModelInput { text: true, image: true },
+            cost: ModelCost {
+                input: 2.5000000000,
+                output: 15.0000000000,
+                cache_read: 0.2500000000,
+                cache_write: 3.1250000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "openai/gpt-5.6-terra".to_string(),
+            name: "OpenAI: GPT-5.6 Terra".to_string(),
+            provider: "openai".to_string(),
+            context_window: 1050000,
+            max_tokens: 128000,
+            input: ModelInput { text: true, image: true },
+            cost: ModelCost {
+                input: 2.5000000000,
+                output: 15.0000000000,
+                cache_read: 0.2500000000,
+                cache_write: 3.1250000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "openai/gpt-5.6-sol-pro".to_string(),
+            name: "OpenAI: GPT-5.6 Sol Pro".to_string(),
+            provider: "openai".to_string(),
+            context_window: 1050000,
+            max_tokens: 128000,
+            input: ModelInput { text: true, image: true },
+            cost: ModelCost {
+                input: 5.0000000000,
+                output: 30.0000000000,
+                cache_read: 0.5000000000,
+                cache_write: 6.2500000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "openai/gpt-5.6-sol".to_string(),
+            name: "OpenAI: GPT-5.6 Sol".to_string(),
+            provider: "openai".to_string(),
+            context_window: 1050000,
+            max_tokens: 128000,
+            input: ModelInput { text: true, image: true },
+            cost: ModelCost {
+                input: 5.0000000000,
+                output: 30.0000000000,
+                cache_read: 0.5000000000,
+                cache_write: 6.2500000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "x-ai/grok-4.5".to_string(),
+            name: "xAI: Grok 4.5".to_string(),
+            provider: "x-ai".to_string(),
+            context_window: 500000,
+            max_tokens: 125000,
+            input: ModelInput { text: true, image: true },
+            cost: ModelCost {
+                input: 2.0000000000,
+                output: 6.0000000000,
+                cache_read: 0.3000000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "aion-labs/aion-3.0-mini".to_string(),
+            name: "AionLabs: Aion-3.0-Mini".to_string(),
+            provider: "aion-labs".to_string(),
+            context_window: 131072,
+            max_tokens: 32768,
+            input: ModelInput { text: true, image: false },
+            cost: ModelCost {
+                input: 0.7000000000,
+                output: 1.4000000000,
+                cache_read: 0.1800000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "aion-labs/aion-3.0".to_string(),
+            name: "AionLabs: Aion-3.0".to_string(),
+            provider: "aion-labs".to_string(),
+            context_window: 131072,
+            max_tokens: 32768,
+            input: ModelInput { text: true, image: false },
+            cost: ModelCost {
+                input: 3.0000000000,
+                output: 6.0000000000,
+                cache_read: 0.7500000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "tencent/hy3".to_string(),
+            name: "Tencent: Hy3".to_string(),
+            provider: "tencent".to_string(),
+            context_window: 262144,
+            max_tokens: 262144,
+            input: ModelInput { text: true, image: false },
+            cost: ModelCost {
+                input: 0.1400000000,
+                output: 0.5800000000,
+                cache_read: 0.0350000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "poolside/laguna-xs-2.1".to_string(),
+            name: "Poolside: Laguna XS 2.1".to_string(),
+            provider: "poolside".to_string(),
+            context_window: 262144,
+            max_tokens: 32768,
+            input: ModelInput { text: true, image: false },
+            cost: ModelCost {
+                input: 0.0600000000,
+                output: 0.1200000000,
+                cache_read: 0.0300000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "anthropic/claude-sonnet-5".to_string(),
+            name: "Anthropic: Claude Sonnet 5".to_string(),
+            provider: "anthropic".to_string(),
+            context_window: 1000000,
+            max_tokens: 128000,
+            input: ModelInput { text: true, image: true },
+            cost: ModelCost {
+                input: 2.0000000000,
+                output: 10.0000000000,
+                cache_read: 0.2000000000,
+                cache_write: 2.5000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "google/gemini-3.1-flash-lite-image".to_string(),
+            name: "Google: Nano Banana 2 Lite (Gemini 3.1 Flash Lite Image)".to_string(),
+            provider: "google".to_string(),
+            context_window: 65536,
+            max_tokens: 66000,
+            input: ModelInput { text: true, image: true },
+            cost: ModelCost {
+                input: 0.2500000000,
+                output: 1.5000000000,
+                cache_read: 0.0000000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "nex-agi/nex-n2-mini".to_string(),
+            name: "Nex AGI: Nex-N2-Mini".to_string(),
+            provider: "nex-agi".to_string(),
+            context_window: 262144,
+            max_tokens: 262144,
+            input: ModelInput { text: true, image: true },
+            cost: ModelCost {
+                input: 0.0250000000,
+                output: 0.1000000000,
+                cache_read: 0.0025000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "sakana/fugu-ultra".to_string(),
+            name: "Sakana: Fugu Ultra".to_string(),
+            provider: "sakana".to_string(),
+            context_window: 1000000,
+            max_tokens: 128000,
+            input: ModelInput { text: true, image: true },
+            cost: ModelCost {
+                input: 5.0000000000,
+                output: 30.0000000000,
+                cache_read: 0.5000000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "google/gemini-3.1-flash-image".to_string(),
+            name: "Google: Nano Banana 2 (Gemini 3.1 Flash Image)".to_string(),
+            provider: "google".to_string(),
+            context_window: 131072,
+            max_tokens: 32768,
+            input: ModelInput { text: true, image: true },
+            cost: ModelCost {
+                input: 0.5000000000,
+                output: 3.0000000000,
+                cache_read: 0.0000000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "google/gemini-3-pro-image".to_string(),
+            name: "Google: Nano Banana Pro (Gemini 3 Pro Image)".to_string(),
+            provider: "google".to_string(),
+            context_window: 131072,
+            max_tokens: 32768,
+            input: ModelInput { text: true, image: true },
+            cost: ModelCost {
+                input: 2.0000000000,
+                output: 12.0000000000,
+                cache_read: 0.2000000000,
+                cache_write: 0.3750000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
             id: "z-ai/glm-5.2".to_string(),
             name: "Z.ai: GLM 5.2".to_string(),
             provider: "z-ai".to_string(),
             context_window: 1048576,
             max_tokens: 131072,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
-                input: 1.4000000000,
-                output: 4.4000000000,
-                cache_read: 0.2600000000,
+                input: 0.8260000000,
+                output: 2.5960000000,
+                cache_read: 0.1534000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -50,10 +533,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openrouter".to_string(),
             context_window: 1000000,
             max_tokens: 250000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: -1000000.0000000000,
                 output: -1000000.0000000000,
@@ -71,13 +551,10 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "moonshotai".to_string(),
             context_window: 262144,
             max_tokens: 262144,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
-                input: 0.7500000000,
-                output: 3.5000000000,
+                input: 0.8200000000,
+                output: 3.7500000000,
                 cache_read: 0.1600000000,
                 cache_write: 0.0000000000,
             },
@@ -92,10 +569,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "anthropic".to_string(),
             context_window: 1000000,
             max_tokens: 128000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 10.0000000000,
                 output: 50.0000000000,
@@ -108,19 +582,34 @@ pub fn built_in_models() -> Vec<Model> {
             },
         },
         Model {
+            id: "nex-agi/nex-n2-pro".to_string(),
+            name: "Nex AGI: Nex-N2-Pro".to_string(),
+            provider: "nex-agi".to_string(),
+            context_window: 262144,
+            max_tokens: 262144,
+            input: ModelInput { text: true, image: true },
+            cost: ModelCost {
+                input: 0.2500000000,
+                output: 1.0000000000,
+                cache_read: 0.0250000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
             id: "nvidia/nemotron-3-ultra-550b-a55b".to_string(),
             name: "NVIDIA: Nemotron 3 Ultra".to_string(),
             provider: "nvidia".to_string(),
-            context_window: 1000000,
+            context_window: 512288,
             max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.5000000000,
-                output: 2.5000000000,
-                cache_read: 0.1500000000,
+                output: 2.2000000000,
+                cache_read: 0.1000000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -134,10 +623,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "qwen".to_string(),
             context_window: 1000000,
             max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.3200000000,
                 output: 1.2800000000,
@@ -155,10 +641,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "minimax".to_string(),
             context_window: 1048576,
             max_tokens: 512000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.3000000000,
                 output: 1.2000000000,
@@ -174,12 +657,9 @@ pub fn built_in_models() -> Vec<Model> {
             id: "stepfun/step-3.7-flash".to_string(),
             name: "StepFun: Step 3.7 Flash".to_string(),
             provider: "stepfun".to_string(),
-            context_window: 256000,
+            context_window: 262144,
             max_tokens: 256000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.2000000000,
                 output: 1.1500000000,
@@ -197,10 +677,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "anthropic".to_string(),
             context_window: 1000000,
             max_tokens: 128000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 10.0000000000,
                 output: 50.0000000000,
@@ -218,10 +695,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "anthropic".to_string(),
             context_window: 1000000,
             max_tokens: 128000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 5.0000000000,
                 output: 25.0000000000,
@@ -239,15 +713,12 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "qwen".to_string(),
             context_window: 1000000,
             max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
-                input: 1.2500000000,
-                output: 3.7500000000,
-                cache_read: 0.2500000000,
-                cache_write: 1.5625000000,
+                input: 1.4750000000,
+                output: 4.4250000000,
+                cache_read: 0.2950000000,
+                cache_write: 1.8437500000,
             },
             thinking: ModelThinking {
                 supported: false,
@@ -260,10 +731,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "x-ai".to_string(),
             context_window: 256000,
             max_tokens: 64000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 1.0000000000,
                 output: 2.0000000000,
@@ -281,10 +749,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "google".to_string(),
             context_window: 1048576,
             max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 1.5000000000,
                 output: 9.0000000000,
@@ -302,10 +767,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "anthropic".to_string(),
             context_window: 1000000,
             max_tokens: 128000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 30.0000000000,
                 output: 150.0000000000,
@@ -323,10 +785,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "perceptron".to_string(),
             context_window: 32768,
             max_tokens: 8192,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.1500000000,
                 output: 1.5000000000,
@@ -344,10 +803,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "inclusionai".to_string(),
             context_window: 262144,
             max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.0750000000,
                 output: 0.6250000000,
@@ -365,10 +821,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "google".to_string(),
             context_window: 1048576,
             max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.2500000000,
                 output: 1.5000000000,
@@ -386,10 +839,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 400000,
             max_tokens: 128000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 5.0000000000,
                 output: 30.0000000000,
@@ -407,10 +857,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "x-ai".to_string(),
             context_window: 1000000,
             max_tokens: 250000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 1.2500000000,
                 output: 2.5000000000,
@@ -428,10 +875,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "ibm-granite".to_string(),
             context_window: 131072,
             max_tokens: 131072,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.0500000000,
                 output: 0.1000000000,
@@ -449,10 +893,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "mistralai".to_string(),
             context_window: 262144,
             max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 1.5000000000,
                 output: 7.5000000000,
@@ -465,19 +906,16 @@ pub fn built_in_models() -> Vec<Model> {
             },
         },
         Model {
-            id: "openrouter/owl-alpha".to_string(),
-            name: "Owl Alpha".to_string(),
-            provider: "openrouter".to_string(),
-            context_window: 1048756,
-            max_tokens: 262144,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            id: "poolside/laguna-m.1".to_string(),
+            name: "Poolside: Laguna M.1".to_string(),
+            provider: "poolside".to_string(),
+            context_window: 262144,
+            max_tokens: 32768,
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
-                input: 0.0000000000,
-                output: 0.0000000000,
-                cache_read: 0.0000000000,
+                input: 0.2000000000,
+                output: 0.4000000000,
+                cache_read: 0.1000000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -491,10 +929,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "qwen".to_string(),
             context_window: 1000000,
             max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.3000000000,
                 output: 1.8000000000,
@@ -512,10 +947,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "qwen".to_string(),
             context_window: 1000000,
             max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.1875000000,
                 output: 1.1250000000,
@@ -533,14 +965,11 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "qwen".to_string(),
             context_window: 262144,
             max_tokens: 262144,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
-                input: 0.1500000000,
+                input: 0.1400000000,
                 output: 1.0000000000,
-                cache_read: 0.0500000000,
+                cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -554,10 +983,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "qwen".to_string(),
             context_window: 262144,
             max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 1.0400000000,
                 output: 6.2400000000,
@@ -574,15 +1000,12 @@ pub fn built_in_models() -> Vec<Model> {
             name: "Qwen: Qwen3.6 27B".to_string(),
             provider: "qwen".to_string(),
             context_window: 262144,
-            max_tokens: 262140,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            max_tokens: 262144,
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
-                input: 0.2885000000,
-                output: 3.1700000000,
-                cache_read: 0.0000000000,
+                input: 0.6000000000,
+                output: 3.6000000000,
+                cache_read: 0.1200000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -596,10 +1019,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 1050000,
             max_tokens: 128000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 30.0000000000,
                 output: 180.0000000000,
@@ -617,10 +1037,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 1050000,
             max_tokens: 128000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 5.0000000000,
                 output: 30.0000000000,
@@ -638,10 +1055,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "deepseek".to_string(),
             context_window: 1048576,
             max_tokens: 384000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.4350000000,
                 output: 0.8700000000,
@@ -659,14 +1073,11 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "deepseek".to_string(),
             context_window: 1048576,
             max_tokens: 262144,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.0980000000,
                 output: 0.1960000000,
-                cache_read: 0.0200000000,
+                cache_read: 0.0196000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -680,10 +1091,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "inclusionai".to_string(),
             context_window: 262144,
             max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.0750000000,
                 output: 0.6250000000,
@@ -700,15 +1108,12 @@ pub fn built_in_models() -> Vec<Model> {
             name: "Tencent: Hy3 preview".to_string(),
             provider: "tencent".to_string(),
             context_window: 262144,
-            max_tokens: 262144,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            max_tokens: 65536,
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
-                input: 0.0660000000,
-                output: 0.2600000000,
-                cache_read: 0.0290000000,
+                input: 0.0630000000,
+                output: 0.2100000000,
+                cache_read: 0.0210000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -720,12 +1125,9 @@ pub fn built_in_models() -> Vec<Model> {
             id: "xiaomi/mimo-v2.5-pro".to_string(),
             name: "Xiaomi: MiMo-V2.5-Pro".to_string(),
             provider: "xiaomi".to_string(),
-            context_window: 1048576,
+            context_window: 1050000,
             max_tokens: 131072,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.4350000000,
                 output: 0.8700000000,
@@ -741,12 +1143,9 @@ pub fn built_in_models() -> Vec<Model> {
             id: "xiaomi/mimo-v2.5".to_string(),
             name: "Xiaomi: MiMo-V2.5".to_string(),
             provider: "xiaomi".to_string(),
-            context_window: 1048576,
+            context_window: 1050000,
             max_tokens: 131072,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.1400000000,
                 output: 0.2800000000,
@@ -764,10 +1163,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 272000,
             max_tokens: 128000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 8.0000000000,
                 output: 15.0000000000,
@@ -785,10 +1181,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "inclusionai".to_string(),
             context_window: 262144,
             max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.0100000000,
                 output: 0.0300000000,
@@ -806,10 +1199,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openrouter".to_string(),
             context_window: 2000000,
             max_tokens: 500000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: -1000000.0000000000,
                 output: -1000000.0000000000,
@@ -826,15 +1216,12 @@ pub fn built_in_models() -> Vec<Model> {
             name: "MoonshotAI: Kimi K2.6".to_string(),
             provider: "moonshotai".to_string(),
             context_window: 262144,
-            max_tokens: 262142,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            max_tokens: 262144,
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
-                input: 0.6800000000,
-                output: 3.4100000000,
-                cache_read: 0.3400000000,
+                input: 0.6840000000,
+                output: 3.4200000000,
+                cache_read: 0.1440000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -848,10 +1235,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "anthropic".to_string(),
             context_window: 1000000,
             max_tokens: 128000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 5.0000000000,
                 output: 25.0000000000,
@@ -864,40 +1248,16 @@ pub fn built_in_models() -> Vec<Model> {
             },
         },
         Model {
-            id: "anthropic/claude-opus-4.6-fast".to_string(),
-            name: "Anthropic: Claude Opus 4.6 (Fast)".to_string(),
-            provider: "anthropic".to_string(),
-            context_window: 1000000,
-            max_tokens: 128000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
-            cost: ModelCost {
-                input: 30.0000000000,
-                output: 150.0000000000,
-                cache_read: 3.0000000000,
-                cache_write: 37.5000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
             id: "z-ai/glm-5.1".to_string(),
             name: "Z.ai: GLM 5.1".to_string(),
             provider: "z-ai".to_string(),
-            context_window: 202752,
-            max_tokens: 50688,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            context_window: 204800,
+            max_tokens: 128000,
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
-                input: 0.9800000000,
-                output: 3.0800000000,
-                cache_read: 0.1820000000,
+                input: 0.9660000000,
+                output: 3.0360000000,
+                cache_read: 0.1794000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -910,15 +1270,12 @@ pub fn built_in_models() -> Vec<Model> {
             name: "Google: Gemma 4 26B A4B ".to_string(),
             provider: "google".to_string(),
             context_window: 262144,
-            max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            max_tokens: 262144,
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
-                input: 0.0600000000,
-                output: 0.3300000000,
-                cache_read: 0.0000000000,
+                input: 0.1200000000,
+                output: 0.3500000000,
+                cache_read: 0.0500000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -932,10 +1289,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "google".to_string(),
             context_window: 262144,
             max_tokens: 262144,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.1200000000,
                 output: 0.3500000000,
@@ -953,10 +1307,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "qwen".to_string(),
             context_window: 1000000,
             max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.3250000000,
                 output: 1.9500000000,
@@ -969,18 +1320,33 @@ pub fn built_in_models() -> Vec<Model> {
             },
         },
         Model {
+            id: "z-ai/glm-5v-turbo".to_string(),
+            name: "Z.ai: GLM 5V Turbo".to_string(),
+            provider: "z-ai".to_string(),
+            context_window: 202752,
+            max_tokens: 131072,
+            input: ModelInput { text: true, image: true },
+            cost: ModelCost {
+                input: 1.2000000000,
+                output: 4.0000000000,
+                cache_read: 0.2400000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
             id: "arcee-ai/trinity-large-thinking".to_string(),
             name: "Arcee AI: Trinity Large Thinking".to_string(),
             provider: "arcee-ai".to_string(),
             context_window: 262144,
-            max_tokens: 262144,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            max_tokens: 80000,
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
-                input: 0.2200000000,
-                output: 0.8500000000,
+                input: 0.2500000000,
+                output: 0.8000000000,
                 cache_read: 0.0600000000,
                 cache_write: 0.0000000000,
             },
@@ -995,10 +1361,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "x-ai".to_string(),
             context_window: 2000000,
             max_tokens: 500000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 1.2500000000,
                 output: 2.5000000000,
@@ -1016,10 +1379,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "x-ai".to_string(),
             context_window: 2000000,
             max_tokens: 500000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 1.2500000000,
                 output: 2.5000000000,
@@ -1037,10 +1397,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "google".to_string(),
             context_window: 1048576,
             max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.0000000000,
                 output: 0.0000000000,
@@ -1058,10 +1415,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "google".to_string(),
             context_window: 1048576,
             max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.0000000000,
                 output: 0.0000000000,
@@ -1077,12 +1431,9 @@ pub fn built_in_models() -> Vec<Model> {
             id: "kwaipilot/kat-coder-pro-v2".to_string(),
             name: "Kwaipilot: KAT-Coder-Pro V2".to_string(),
             provider: "kwaipilot".to_string(),
-            context_window: 256000,
+            context_window: 262144,
             max_tokens: 80000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.3000000000,
                 output: 1.2000000000,
@@ -1100,10 +1451,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "rekaai".to_string(),
             context_window: 16384,
             max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.1000000000,
                 output: 0.1000000000,
@@ -1121,10 +1469,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "minimax".to_string(),
             context_window: 204800,
             max_tokens: 131072,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.2500000000,
                 output: 1.0000000000,
@@ -1142,10 +1487,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 400000,
             max_tokens: 128000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.2000000000,
                 output: 1.2500000000,
@@ -1163,10 +1505,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 400000,
             max_tokens: 128000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.7500000000,
                 output: 4.5000000000,
@@ -1184,10 +1523,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "mistralai".to_string(),
             context_window: 262144,
             max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.1500000000,
                 output: 0.6000000000,
@@ -1203,12 +1539,9 @@ pub fn built_in_models() -> Vec<Model> {
             id: "z-ai/glm-5-turbo".to_string(),
             name: "Z.ai: GLM 5 Turbo".to_string(),
             provider: "z-ai".to_string(),
-            context_window: 262144,
+            context_window: 202752,
             max_tokens: 131072,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 1.2000000000,
                 output: 4.0000000000,
@@ -1226,12 +1559,9 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "nvidia".to_string(),
             context_window: 1000000,
             max_tokens: 250000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
-                input: 0.0900000000,
+                input: 0.0800000000,
                 output: 0.4500000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
@@ -1247,10 +1577,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "bytedance-seed".to_string(),
             context_window: 262144,
             max_tokens: 131072,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.2500000000,
                 output: 2.0000000000,
@@ -1268,10 +1595,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "qwen".to_string(),
             context_window: 262144,
             max_tokens: 262144,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.1000000000,
                 output: 0.1500000000,
@@ -1289,10 +1613,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 1050000,
             max_tokens: 128000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 30.0000000000,
                 output: 180.0000000000,
@@ -1310,10 +1631,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 1050000,
             max_tokens: 128000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 2.5000000000,
                 output: 15.0000000000,
@@ -1331,10 +1649,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "inception".to_string(),
             context_window: 128000,
             max_tokens: 50000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.2500000000,
                 output: 0.7500000000,
@@ -1352,10 +1667,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 128000,
             max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 1.7500000000,
                 output: 14.0000000000,
@@ -1373,10 +1685,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "google".to_string(),
             context_window: 1048576,
             max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.2500000000,
                 output: 1.5000000000,
@@ -1394,10 +1703,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "bytedance-seed".to_string(),
             context_window: 262144,
             max_tokens: 131072,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.1000000000,
                 output: 0.4000000000,
@@ -1415,10 +1721,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "google".to_string(),
             context_window: 131072,
             max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.5000000000,
                 output: 3.0000000000,
@@ -1435,15 +1738,12 @@ pub fn built_in_models() -> Vec<Model> {
             name: "Qwen: Qwen3.5-35B-A3B".to_string(),
             provider: "qwen".to_string(),
             context_window: 262144,
-            max_tokens: 81920,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            max_tokens: 262144,
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.1400000000,
                 output: 1.0000000000,
-                cache_read: 0.0500000000,
+                cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -1456,14 +1756,11 @@ pub fn built_in_models() -> Vec<Model> {
             name: "Qwen: Qwen3.5-27B".to_string(),
             provider: "qwen".to_string(),
             context_window: 262144,
-            max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            max_tokens: 81920,
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
-                input: 0.1950000000,
-                output: 1.5600000000,
+                input: 0.2600000000,
+                output: 2.6000000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
@@ -1477,11 +1774,8 @@ pub fn built_in_models() -> Vec<Model> {
             name: "Qwen: Qwen3.5-122B-A10B".to_string(),
             provider: "qwen".to_string(),
             context_window: 262144,
-            max_tokens: 262144,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            max_tokens: 65536,
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.2600000000,
                 output: 2.0800000000,
@@ -1499,10 +1793,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "qwen".to_string(),
             context_window: 1000000,
             max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.0650000000,
                 output: 0.2600000000,
@@ -1515,36 +1806,12 @@ pub fn built_in_models() -> Vec<Model> {
             },
         },
         Model {
-            id: "liquid/lfm-2-24b-a2b".to_string(),
-            name: "LiquidAI: LFM2-24B-A2B".to_string(),
-            provider: "liquid".to_string(),
-            context_window: 128000,
-            max_tokens: 32000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
-            cost: ModelCost {
-                input: 0.0300000000,
-                output: 0.1200000000,
-                cache_read: 0.0000000000,
-                cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
             id: "google/gemini-3.1-pro-preview-customtools".to_string(),
             name: "Google: Gemini 3.1 Pro Preview Custom Tools".to_string(),
             provider: "google".to_string(),
-            context_window: 1048756,
+            context_window: 1048576,
             max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 2.0000000000,
                 output: 12.0000000000,
@@ -1562,10 +1829,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 400000,
             max_tokens: 128000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 1.7500000000,
                 output: 14.0000000000,
@@ -1583,10 +1847,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "aion-labs".to_string(),
             context_window: 131072,
             max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.8000000000,
                 output: 1.6000000000,
@@ -1604,10 +1865,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "google".to_string(),
             context_window: 1048576,
             max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 2.0000000000,
                 output: 12.0000000000,
@@ -1625,10 +1883,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "anthropic".to_string(),
             context_window: 1000000,
             max_tokens: 128000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 3.0000000000,
                 output: 15.0000000000,
@@ -1646,10 +1901,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "qwen".to_string(),
             context_window: 1000000,
             max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.2600000000,
                 output: 1.5600000000,
@@ -1665,15 +1917,12 @@ pub fn built_in_models() -> Vec<Model> {
             id: "qwen/qwen3.5-397b-a17b".to_string(),
             name: "Qwen: Qwen3.5 397B A17B".to_string(),
             provider: "qwen".to_string(),
-            context_window: 256000,
-            max_tokens: 64000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            context_window: 262144,
+            max_tokens: 65536,
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
-                input: 0.3850000000,
-                output: 2.4500000000,
+                input: 0.3900000000,
+                output: 2.3400000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
@@ -1688,10 +1937,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "minimax".to_string(),
             context_window: 204800,
             max_tokens: 196608,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.1500000000,
                 output: 0.9000000000,
@@ -1707,16 +1953,13 @@ pub fn built_in_models() -> Vec<Model> {
             id: "z-ai/glm-5".to_string(),
             name: "Z.ai: GLM 5".to_string(),
             provider: "z-ai".to_string(),
-            context_window: 202752,
-            max_tokens: 50688,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            context_window: 204800,
+            max_tokens: 131072,
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
-                input: 0.6000000000,
-                output: 1.9200000000,
-                cache_read: 0.1200000000,
+                input: 0.9500000000,
+                output: 2.5500000000,
+                cache_read: 0.2000000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -1730,10 +1973,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "qwen".to_string(),
             context_window: 262144,
             max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.7800000000,
                 output: 3.9000000000,
@@ -1751,10 +1991,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "anthropic".to_string(),
             context_window: 1000000,
             max_tokens: 128000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 5.0000000000,
                 output: 25.0000000000,
@@ -1772,10 +2009,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "qwen".to_string(),
             context_window: 262144,
             max_tokens: 262144,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.1100000000,
                 output: 0.8000000000,
@@ -1793,10 +2027,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openrouter".to_string(),
             context_window: 200000,
             max_tokens: 50000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.0000000000,
                 output: 0.0000000000,
@@ -1813,15 +2044,12 @@ pub fn built_in_models() -> Vec<Model> {
             name: "StepFun: Step 3.5 Flash".to_string(),
             provider: "stepfun".to_string(),
             context_window: 262144,
-            max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            max_tokens: 65536,
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
-                input: 0.0900000000,
+                input: 0.1000000000,
                 output: 0.3000000000,
-                cache_read: 0.0200000000,
+                cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -1834,15 +2062,12 @@ pub fn built_in_models() -> Vec<Model> {
             name: "MoonshotAI: Kimi K2.5".to_string(),
             provider: "moonshotai".to_string(),
             context_window: 262144,
-            max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            max_tokens: 262144,
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
-                input: 0.3750000000,
-                output: 2.0250000000,
-                cache_read: 0.0000000000,
+                input: 0.5700000000,
+                output: 2.8500000000,
+                cache_read: 0.0950000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -1856,10 +2081,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "upstage".to_string(),
             context_window: 128000,
             max_tokens: 32000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.1500000000,
                 output: 0.6000000000,
@@ -1877,10 +2099,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "minimax".to_string(),
             context_window: 65536,
             max_tokens: 2048,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.3000000000,
                 output: 1.2000000000,
@@ -1898,10 +2117,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "writer".to_string(),
             context_window: 1040000,
             max_tokens: 8192,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.6000000000,
                 output: 6.0000000000,
@@ -1919,10 +2135,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 128000,
             max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 2.5000000000,
                 output: 10.0000000000,
@@ -1940,10 +2153,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 128000,
             max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.6000000000,
                 output: 2.4000000000,
@@ -1961,10 +2171,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "z-ai".to_string(),
             context_window: 202752,
             max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.0600000000,
                 output: 0.4000000000,
@@ -1982,10 +2189,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 400000,
             max_tokens: 128000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 1.7500000000,
                 output: 14.0000000000,
@@ -2003,10 +2207,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "bytedance-seed".to_string(),
             context_window: 262144,
             max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.0750000000,
                 output: 0.3000000000,
@@ -2024,10 +2225,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "bytedance-seed".to_string(),
             context_window: 262144,
             max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.2500000000,
                 output: 2.0000000000,
@@ -2044,14 +2242,11 @@ pub fn built_in_models() -> Vec<Model> {
             name: "MiniMax: MiniMax M2.1".to_string(),
             provider: "minimax".to_string(),
             context_window: 204800,
-            max_tokens: 196608,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            max_tokens: 131072,
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
-                input: 0.2900000000,
-                output: 0.9500000000,
+                input: 0.3000000000,
+                output: 1.2000000000,
                 cache_read: 0.0300000000,
                 cache_write: 0.0000000000,
             },
@@ -2064,12 +2259,9 @@ pub fn built_in_models() -> Vec<Model> {
             id: "z-ai/glm-4.7".to_string(),
             name: "Z.ai: GLM 4.7".to_string(),
             provider: "z-ai".to_string(),
-            context_window: 202752,
+            context_window: 204800,
             max_tokens: 131072,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.4000000000,
                 output: 1.7500000000,
@@ -2086,11 +2278,8 @@ pub fn built_in_models() -> Vec<Model> {
             name: "Google: Gemini 3 Flash Preview".to_string(),
             provider: "google".to_string(),
             context_window: 1048576,
-            max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            max_tokens: 65535,
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.5000000000,
                 output: 3.0000000000,
@@ -2103,36 +2292,12 @@ pub fn built_in_models() -> Vec<Model> {
             },
         },
         Model {
-            id: "xiaomi/mimo-v2-flash".to_string(),
-            name: "Xiaomi: MiMo-V2-Flash".to_string(),
-            provider: "xiaomi".to_string(),
-            context_window: 262144,
-            max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
-            cost: ModelCost {
-                input: 0.1000000000,
-                output: 0.3000000000,
-                cache_read: 0.0100000000,
-                cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
             id: "nvidia/nemotron-3-nano-30b-a3b".to_string(),
             name: "NVIDIA: Nemotron 3 Nano 30B A3B".to_string(),
             provider: "nvidia".to_string(),
             context_window: 262144,
             max_tokens: 228000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.0500000000,
                 output: 0.2000000000,
@@ -2150,10 +2315,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 128000,
             max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 1.7500000000,
                 output: 14.0000000000,
@@ -2171,10 +2333,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 400000,
             max_tokens: 128000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 21.0000000000,
                 output: 168.0000000000,
@@ -2192,10 +2351,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 400000,
             max_tokens: 128000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 1.7500000000,
                 output: 14.0000000000,
@@ -2213,10 +2369,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "mistralai".to_string(),
             context_window: 262144,
             max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.4000000000,
                 output: 2.0000000000,
@@ -2234,10 +2387,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "relace".to_string(),
             context_window: 256000,
             max_tokens: 128000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 1.0000000000,
                 output: 3.0000000000,
@@ -2255,35 +2405,11 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "z-ai".to_string(),
             context_window: 131072,
             max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.3000000000,
                 output: 0.9000000000,
                 cache_read: 0.0550000000,
-                cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
-            id: "essentialai/rnj-1-instruct".to_string(),
-            name: "EssentialAI: Rnj 1 Instruct".to_string(),
-            provider: "essentialai".to_string(),
-            context_window: 32768,
-            max_tokens: 8192,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
-            cost: ModelCost {
-                input: 0.1500000000,
-                output: 0.1500000000,
-                cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -2297,10 +2423,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openrouter".to_string(),
             context_window: 128000,
             max_tokens: 32000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: -1000000.0000000000,
                 output: -1000000.0000000000,
@@ -2318,10 +2441,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 400000,
             max_tokens: 128000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 1.2500000000,
                 output: 10.0000000000,
@@ -2339,10 +2459,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "amazon".to_string(),
             context_window: 1000000,
             max_tokens: 65535,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.3000000000,
                 output: 2.5000000000,
@@ -2360,10 +2477,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "mistralai".to_string(),
             context_window: 262144,
             max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.2000000000,
                 output: 0.2000000000,
@@ -2381,10 +2495,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "mistralai".to_string(),
             context_window: 262144,
             max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.1500000000,
                 output: 0.1500000000,
@@ -2402,10 +2513,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "mistralai".to_string(),
             context_window: 131072,
             max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.1000000000,
                 output: 0.1000000000,
@@ -2423,10 +2531,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "mistralai".to_string(),
             context_window: 262144,
             max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.5000000000,
                 output: 1.5000000000,
@@ -2439,61 +2544,16 @@ pub fn built_in_models() -> Vec<Model> {
             },
         },
         Model {
-            id: "arcee-ai/trinity-mini".to_string(),
-            name: "Arcee AI: Trinity Mini".to_string(),
-            provider: "arcee-ai".to_string(),
-            context_window: 131072,
-            max_tokens: 131072,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
-            cost: ModelCost {
-                input: 0.0450000000,
-                output: 0.1500000000,
-                cache_read: 0.0000000000,
-                cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
             id: "deepseek/deepseek-v3.2".to_string(),
             name: "DeepSeek: DeepSeek V3.2".to_string(),
             provider: "deepseek".to_string(),
-            context_window: 131072,
-            max_tokens: 64000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            context_window: 163840,
+            max_tokens: 65536,
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
-                input: 0.2288000000,
-                output: 0.3432000000,
-                cache_read: 0.0000000000,
-                cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
-            id: "prime-intellect/intellect-3".to_string(),
-            name: "Prime Intellect: INTELLECT-3".to_string(),
-            provider: "prime-intellect".to_string(),
-            context_window: 131072,
-            max_tokens: 131072,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
-            cost: ModelCost {
-                input: 0.2000000000,
-                output: 1.1000000000,
-                cache_read: 0.0000000000,
+                input: 0.2690000000,
+                output: 0.4000000000,
+                cache_read: 0.1345000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -2507,10 +2567,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "anthropic".to_string(),
             context_window: 200000,
             max_tokens: 64000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 5.0000000000,
                 output: 25.0000000000,
@@ -2528,10 +2585,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "allenai".to_string(),
             context_window: 65536,
             max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.1500000000,
                 output: 0.5000000000,
@@ -2549,10 +2603,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "google".to_string(),
             context_window: 65536,
             max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 2.0000000000,
                 output: 12.0000000000,
@@ -2570,10 +2621,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "deepcogito".to_string(),
             context_window: 128000,
             max_tokens: 32000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 1.2500000000,
                 output: 1.2500000000,
@@ -2591,14 +2639,11 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 400000,
             max_tokens: 128000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 1.2500000000,
                 output: 10.0000000000,
-                cache_read: 0.1300000000,
+                cache_read: 0.1250000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -2611,15 +2656,12 @@ pub fn built_in_models() -> Vec<Model> {
             name: "OpenAI: GPT-5.1 Chat".to_string(),
             provider: "openai".to_string(),
             context_window: 128000,
-            max_tokens: 32000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            max_tokens: 16384,
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 1.2500000000,
                 output: 10.0000000000,
-                cache_read: 0.1300000000,
+                cache_read: 0.1250000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -2633,14 +2675,11 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 400000,
             max_tokens: 128000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 1.2500000000,
                 output: 10.0000000000,
-                cache_read: 0.1300000000,
+                cache_read: 0.1250000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -2654,10 +2693,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 400000,
             max_tokens: 100000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.2500000000,
                 output: 2.0000000000,
@@ -2674,15 +2710,12 @@ pub fn built_in_models() -> Vec<Model> {
             name: "MoonshotAI: Kimi K2 Thinking".to_string(),
             provider: "moonshotai".to_string(),
             context_window: 262144,
-            max_tokens: 262144,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            max_tokens: 100352,
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.6000000000,
                 output: 2.5000000000,
-                cache_read: 0.0000000000,
+                cache_read: 0.1500000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -2696,10 +2729,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "amazon".to_string(),
             context_window: 1000000,
             max_tokens: 32000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 2.5000000000,
                 output: 12.5000000000,
@@ -2717,10 +2747,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "perplexity".to_string(),
             context_window: 200000,
             max_tokens: 8000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 3.0000000000,
                 output: 15.0000000000,
@@ -2738,10 +2765,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "mistralai".to_string(),
             context_window: 32000,
             max_tokens: 8000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.1000000000,
                 output: 0.3000000000,
@@ -2759,14 +2783,11 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 131072,
             max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.0750000000,
                 output: 0.3000000000,
-                cache_read: 0.0370000000,
+                cache_read: 0.0375000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -2779,14 +2800,11 @@ pub fn built_in_models() -> Vec<Model> {
             name: "MiniMax: MiniMax M2".to_string(),
             provider: "minimax".to_string(),
             context_window: 204800,
-            max_tokens: 196608,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            max_tokens: 131072,
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
-                input: 0.2550000000,
-                output: 1.0000000000,
+                input: 0.3000000000,
+                output: 1.2000000000,
                 cache_read: 0.0300000000,
                 cache_write: 0.0000000000,
             },
@@ -2799,12 +2817,9 @@ pub fn built_in_models() -> Vec<Model> {
             id: "qwen/qwen3-vl-32b-instruct".to_string(),
             name: "Qwen: Qwen3 VL 32B Instruct".to_string(),
             provider: "qwen".to_string(),
-            context_window: 262144,
+            context_window: 131072,
             max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.1040000000,
                 output: 0.4160000000,
@@ -2822,35 +2837,11 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "ibm-granite".to_string(),
             context_window: 131000,
             max_tokens: 131000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.0170000000,
                 output: 0.1120000000,
                 cache_read: 0.0000000000,
-                cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
-            id: "microsoft/phi-4-mini-instruct".to_string(),
-            name: "Microsoft: Phi 4 Mini Instruct".to_string(),
-            provider: "microsoft".to_string(),
-            context_window: 131072,
-            max_tokens: 128000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
-            cost: ModelCost {
-                input: 0.0800000000,
-                output: 0.3500000000,
-                cache_read: 0.0800000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -2864,10 +2855,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 400000,
             max_tokens: 128000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 2.5000000000,
                 output: 2.0000000000,
@@ -2885,10 +2873,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "anthropic".to_string(),
             context_window: 200000,
             max_tokens: 64000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 1.0000000000,
                 output: 5.0000000000,
@@ -2904,12 +2889,9 @@ pub fn built_in_models() -> Vec<Model> {
             id: "qwen/qwen3-vl-8b-thinking".to_string(),
             name: "Qwen: Qwen3 VL 8B Thinking".to_string(),
             provider: "qwen".to_string(),
-            context_window: 256000,
+            context_window: 131072,
             max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.1170000000,
                 output: 1.3650000000,
@@ -2925,15 +2907,12 @@ pub fn built_in_models() -> Vec<Model> {
             id: "qwen/qwen3-vl-8b-instruct".to_string(),
             name: "Qwen: Qwen3 VL 8B Instruct".to_string(),
             provider: "qwen".to_string(),
-            context_window: 256000,
+            context_window: 262144,
             max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
-                input: 0.0800000000,
-                output: 0.5000000000,
+                input: 0.1170000000,
+                output: 0.4550000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
@@ -2948,10 +2927,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 400000,
             max_tokens: 128000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 10.0000000000,
                 output: 10.0000000000,
@@ -2969,10 +2945,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 200000,
             max_tokens: 100000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 10.0000000000,
                 output: 40.0000000000,
@@ -2990,10 +2963,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 200000,
             max_tokens: 100000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 2.0000000000,
                 output: 8.0000000000,
@@ -3006,36 +2976,12 @@ pub fn built_in_models() -> Vec<Model> {
             },
         },
         Model {
-            id: "nvidia/llama-3.3-nemotron-super-49b-v1.5".to_string(),
-            name: "NVIDIA: Llama 3.3 Nemotron Super 49B V1.5".to_string(),
-            provider: "nvidia".to_string(),
-            context_window: 131072,
-            max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
-            cost: ModelCost {
-                input: 0.4000000000,
-                output: 0.4000000000,
-                cache_read: 0.0000000000,
-                cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
             id: "google/gemini-2.5-flash-image".to_string(),
             name: "Google: Nano Banana (Gemini 2.5 Flash Image)".to_string(),
             provider: "google".to_string(),
             context_window: 32768,
-            max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            max_tokens: 8192,
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.3000000000,
                 output: 2.5000000000,
@@ -3051,12 +2997,9 @@ pub fn built_in_models() -> Vec<Model> {
             id: "qwen/qwen3-vl-30b-a3b-thinking".to_string(),
             name: "Qwen: Qwen3 VL 30B A3B Thinking".to_string(),
             provider: "qwen".to_string(),
-            context_window: 131072,
+            context_window: 262144,
             max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.1300000000,
                 output: 1.5600000000,
@@ -3073,14 +3016,11 @@ pub fn built_in_models() -> Vec<Model> {
             name: "Qwen: Qwen3 VL 30B A3B Instruct".to_string(),
             provider: "qwen".to_string(),
             context_window: 262144,
-            max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            max_tokens: 16384,
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
-                input: 0.1300000000,
-                output: 0.5200000000,
+                input: 0.1500000000,
+                output: 0.6000000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
@@ -3095,10 +3035,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 400000,
             max_tokens: 128000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 15.0000000000,
                 output: 120.0000000000,
@@ -3114,16 +3051,13 @@ pub fn built_in_models() -> Vec<Model> {
             id: "z-ai/glm-4.6".to_string(),
             name: "Z.ai: GLM 4.6".to_string(),
             provider: "z-ai".to_string(),
-            context_window: 202752,
+            context_window: 204800,
             max_tokens: 131072,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
-                input: 0.4300000000,
-                output: 1.7400000000,
-                cache_read: 0.0800000000,
+                input: 0.5000000000,
+                output: 2.0000000000,
+                cache_read: 0.1000000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -3137,10 +3071,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "anthropic".to_string(),
             context_window: 1000000,
             max_tokens: 64000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 3.0000000000,
                 output: 15.0000000000,
@@ -3158,10 +3089,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "deepseek".to_string(),
             context_window: 163840,
             max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.2700000000,
                 output: 0.4100000000,
@@ -3179,10 +3107,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "thedrummer".to_string(),
             context_window: 131072,
             max_tokens: 131072,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.3000000000,
                 output: 0.5000000000,
@@ -3200,10 +3125,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "relace".to_string(),
             context_window: 256000,
             max_tokens: 128000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.8500000000,
                 output: 1.2500000000,
@@ -3216,36 +3138,12 @@ pub fn built_in_models() -> Vec<Model> {
             },
         },
         Model {
-            id: "google/gemini-2.5-flash-lite-preview-09-2025".to_string(),
-            name: "Google: Gemini 2.5 Flash Lite Preview 09-2025".to_string(),
-            provider: "google".to_string(),
-            context_window: 1048576,
-            max_tokens: 65535,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
-            cost: ModelCost {
-                input: 0.1000000000,
-                output: 0.4000000000,
-                cache_read: 0.0100000000,
-                cache_write: 0.0833333333,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
             id: "qwen/qwen3-vl-235b-a22b-thinking".to_string(),
             name: "Qwen: Qwen3 VL 235B A22B Thinking".to_string(),
             provider: "qwen".to_string(),
             context_window: 131072,
             max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.2600000000,
                 output: 2.6000000000,
@@ -3262,15 +3160,12 @@ pub fn built_in_models() -> Vec<Model> {
             name: "Qwen: Qwen3 VL 235B A22B Instruct".to_string(),
             provider: "qwen".to_string(),
             context_window: 262144,
-            max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            max_tokens: 32768,
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
-                input: 0.2000000000,
-                output: 0.8800000000,
-                cache_read: 0.1100000000,
+                input: 0.2100000000,
+                output: 1.9000000000,
+                cache_read: 0.1000000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -3284,10 +3179,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "qwen".to_string(),
             context_window: 262144,
             max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.7800000000,
                 output: 3.9000000000,
@@ -3305,10 +3197,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "qwen".to_string(),
             context_window: 1000000,
             max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.6500000000,
                 output: 3.2500000000,
@@ -3326,10 +3215,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 400000,
             max_tokens: 128000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 1.2500000000,
                 output: 10.0000000000,
@@ -3347,14 +3233,11 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "deepseek".to_string(),
             context_window: 163840,
             max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.2700000000,
-                output: 0.9500000000,
-                cache_read: 0.1300000000,
+                output: 1.0000000000,
+                cache_read: 0.1350000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -3368,10 +3251,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "qwen".to_string(),
             context_window: 1000000,
             max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.1950000000,
                 output: 0.9750000000,
@@ -3389,10 +3269,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "qwen".to_string(),
             context_window: 262144,
             max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.0975000000,
                 output: 0.7800000000,
@@ -3409,14 +3286,29 @@ pub fn built_in_models() -> Vec<Model> {
             name: "Qwen: Qwen3 Next 80B A3B Instruct".to_string(),
             provider: "qwen".to_string(),
             context_window: 262144,
-            max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            max_tokens: 262144,
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
-                input: 0.0900000000,
-                output: 1.1000000000,
+                input: 0.1500000000,
+                output: 1.2000000000,
+                cache_read: 0.0000000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "qwen/qwen-plus-2025-07-28".to_string(),
+            name: "Qwen: Qwen Plus 0728".to_string(),
+            provider: "qwen".to_string(),
+            context_window: 1000000,
+            max_tokens: 32768,
+            input: ModelInput { text: true, image: false },
+            cost: ModelCost {
+                input: 0.2600000000,
+                output: 0.7800000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
@@ -3431,10 +3323,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "qwen".to_string(),
             context_window: 1000000,
             max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.2600000000,
                 output: 0.7800000000,
@@ -3447,36 +3336,12 @@ pub fn built_in_models() -> Vec<Model> {
             },
         },
         Model {
-            id: "qwen/qwen-plus-2025-07-28".to_string(),
-            name: "Qwen: Qwen Plus 0728".to_string(),
-            provider: "qwen".to_string(),
-            context_window: 1000000,
-            max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
-            cost: ModelCost {
-                input: 0.2600000000,
-                output: 0.7800000000,
-                cache_read: 0.0000000000,
-                cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
             id: "moonshotai/kimi-k2-0905".to_string(),
             name: "MoonshotAI: Kimi K2 0905".to_string(),
             provider: "moonshotai".to_string(),
             context_window: 262144,
-            max_tokens: 262144,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            max_tokens: 100352,
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.6000000000,
                 output: 2.5000000000,
@@ -3492,16 +3357,13 @@ pub fn built_in_models() -> Vec<Model> {
             id: "qwen/qwen3-30b-a3b-thinking-2507".to_string(),
             name: "Qwen: Qwen3 30B A3B Thinking 2507".to_string(),
             provider: "qwen".to_string(),
-            context_window: 131072,
-            max_tokens: 131072,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            context_window: 81920,
+            max_tokens: 32768,
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
-                input: 0.0800000000,
-                output: 0.4000000000,
-                cache_read: 0.0800000000,
+                input: 0.1300000000,
+                output: 1.5600000000,
+                cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -3515,10 +3377,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "nousresearch".to_string(),
             context_window: 131072,
             max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.1300000000,
                 output: 0.4000000000,
@@ -3536,10 +3395,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "nousresearch".to_string(),
             context_window: 131072,
             max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 1.0000000000,
                 output: 3.0000000000,
@@ -3557,13 +3413,10 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "deepseek".to_string(),
             context_window: 163840,
             max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
-                input: 0.2100000000,
-                output: 0.7900000000,
+                input: 0.2500000000,
+                output: 0.9500000000,
                 cache_read: 0.1300000000,
                 cache_write: 0.0000000000,
             },
@@ -3578,10 +3431,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "mistralai".to_string(),
             context_window: 131072,
             max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.4000000000,
                 output: 2.0000000000,
@@ -3599,10 +3449,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "z-ai".to_string(),
             context_window: 65536,
             max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.6000000000,
                 output: 1.8000000000,
@@ -3620,10 +3467,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "ai21".to_string(),
             context_window: 256000,
             max_tokens: 4096,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 2.0000000000,
                 output: 8.0000000000,
@@ -3641,10 +3485,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 128000,
             max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 1.2500000000,
                 output: 10.0000000000,
@@ -3662,10 +3503,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 400000,
             max_tokens: 128000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 1.2500000000,
                 output: 10.0000000000,
@@ -3683,10 +3521,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 400000,
             max_tokens: 128000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.2500000000,
                 output: 2.0000000000,
@@ -3703,15 +3538,12 @@ pub fn built_in_models() -> Vec<Model> {
             name: "OpenAI: GPT-5 Nano".to_string(),
             provider: "openai".to_string(),
             context_window: 400000,
-            max_tokens: 100000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            max_tokens: 128000,
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.0500000000,
                 output: 0.4000000000,
-                cache_read: 0.0100000000,
+                cache_read: 0.0050000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -3724,14 +3556,11 @@ pub fn built_in_models() -> Vec<Model> {
             name: "OpenAI: gpt-oss-120b".to_string(),
             provider: "openai".to_string(),
             context_window: 131072,
-            max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            max_tokens: 131072,
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
-                input: 0.0390000000,
-                output: 0.1800000000,
+                input: 0.0370000000,
+                output: 0.1700000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
@@ -3745,15 +3574,12 @@ pub fn built_in_models() -> Vec<Model> {
             name: "OpenAI: gpt-oss-20b".to_string(),
             provider: "openai".to_string(),
             context_window: 131072,
-            max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            max_tokens: 131072,
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
-                input: 0.0290000000,
-                output: 0.1400000000,
-                cache_read: 0.0000000000,
+                input: 0.0300000000,
+                output: 0.1300000000,
+                cache_read: 0.0300000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -3767,10 +3593,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "anthropic".to_string(),
             context_window: 200000,
             max_tokens: 32000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 15.0000000000,
                 output: 75.0000000000,
@@ -3788,10 +3611,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "mistralai".to_string(),
             context_window: 256000,
             max_tokens: 64000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.3000000000,
                 output: 0.9000000000,
@@ -3807,12 +3627,9 @@ pub fn built_in_models() -> Vec<Model> {
             id: "qwen/qwen3-coder-30b-a3b-instruct".to_string(),
             name: "Qwen: Qwen3 Coder 30B A3B Instruct".to_string(),
             provider: "qwen".to_string(),
-            context_window: 160000,
+            context_window: 262144,
             max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.0700000000,
                 output: 0.2700000000,
@@ -3828,15 +3645,12 @@ pub fn built_in_models() -> Vec<Model> {
             id: "qwen/qwen3-30b-a3b-instruct-2507".to_string(),
             name: "Qwen: Qwen3 30B A3B Instruct 2507".to_string(),
             provider: "qwen".to_string(),
-            context_window: 131072,
-            max_tokens: 32000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            context_window: 262144,
+            max_tokens: 65536,
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
-                input: 0.0481500000,
-                output: 0.1930500000,
+                input: 0.1000000000,
+                output: 0.3000000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
@@ -3851,10 +3665,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "z-ai".to_string(),
             context_window: 131072,
             max_tokens: 98304,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.6000000000,
                 output: 2.2000000000,
@@ -3872,10 +3683,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "z-ai".to_string(),
             context_window: 131072,
             max_tokens: 98304,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.1300000000,
                 output: 0.8500000000,
@@ -3892,15 +3700,12 @@ pub fn built_in_models() -> Vec<Model> {
             name: "Qwen: Qwen3 235B A22B Thinking 2507".to_string(),
             provider: "qwen".to_string(),
             context_window: 262144,
-            max_tokens: 262144,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            max_tokens: 32768,
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
-                input: 0.1000000000,
-                output: 0.1000000000,
-                cache_read: 0.1000000000,
+                input: 0.3000000000,
+                output: 3.0000000000,
+                cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -3912,16 +3717,13 @@ pub fn built_in_models() -> Vec<Model> {
             id: "qwen/qwen3-coder".to_string(),
             name: "Qwen: Qwen3 Coder 480B A35B".to_string(),
             provider: "qwen".to_string(),
-            context_window: 1048576,
+            context_window: 262144,
             max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
-                input: 0.2200000000,
-                output: 1.8000000000,
-                cache_read: 0.0000000000,
+                input: 0.3000000000,
+                output: 1.0000000000,
+                cache_read: 0.1000000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -3935,10 +3737,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "bytedance".to_string(),
             context_window: 128000,
             max_tokens: 2048,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.1000000000,
                 output: 0.2000000000,
@@ -3956,10 +3755,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "google".to_string(),
             context_window: 1048576,
             max_tokens: 65535,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.1000000000,
                 output: 0.4000000000,
@@ -3977,34 +3773,10 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "qwen".to_string(),
             context_window: 262144,
             max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.0900000000,
-                output: 0.1000000000,
-                cache_read: 0.0000000000,
-                cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
-            id: "switchpoint/router".to_string(),
-            name: "Switchpoint Router".to_string(),
-            provider: "switchpoint".to_string(),
-            context_window: 131072,
-            max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
-            cost: ModelCost {
-                input: 0.8500000000,
-                output: 3.4000000000,
+                output: 0.5500000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
@@ -4018,14 +3790,29 @@ pub fn built_in_models() -> Vec<Model> {
             name: "MoonshotAI: Kimi K2 0711".to_string(),
             provider: "moonshotai".to_string(),
             context_window: 131072,
-            max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            max_tokens: 100352,
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.5700000000,
                 output: 2.3000000000,
+                cache_read: 0.0000000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "cognitivecomputations/dolphin-mistral-24b-venice-edition".to_string(),
+            name: "Venice: Uncensored".to_string(),
+            provider: "cognitivecomputations".to_string(),
+            context_window: 128000,
+            max_tokens: 8192,
+            input: ModelInput { text: true, image: false },
+            cost: ModelCost {
+                input: 0.2000000000,
+                output: 0.9000000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
@@ -4040,10 +3827,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "tencent".to_string(),
             context_window: 131072,
             max_tokens: 131072,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.1400000000,
                 output: 0.5700000000,
@@ -4061,10 +3845,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "morph".to_string(),
             context_window: 262144,
             max_tokens: 131072,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.9000000000,
                 output: 1.9000000000,
@@ -4082,10 +3863,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "morph".to_string(),
             context_window: 81920,
             max_tokens: 38000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.8000000000,
                 output: 1.2000000000,
@@ -4101,12 +3879,9 @@ pub fn built_in_models() -> Vec<Model> {
             id: "baidu/ernie-4.5-vl-424b-a47b".to_string(),
             name: "Baidu: ERNIE 4.5 VL 424B A47B ".to_string(),
             provider: "baidu".to_string(),
-            context_window: 131072,
+            context_window: 123000,
             max_tokens: 16000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.4200000000,
                 output: 1.2500000000,
@@ -4122,16 +3897,13 @@ pub fn built_in_models() -> Vec<Model> {
             id: "mistralai/mistral-small-3.2-24b-instruct".to_string(),
             name: "Mistral: Mistral Small 3.2 24B".to_string(),
             provider: "mistralai".to_string(),
-            context_window: 128000,
-            max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            context_window: 256000,
+            max_tokens: 64000,
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
-                input: 0.0750000000,
-                output: 0.2000000000,
-                cache_read: 0.0000000000,
+                input: 0.1000000000,
+                output: 0.3000000000,
+                cache_read: 0.0100000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -4145,12 +3917,9 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "minimax".to_string(),
             context_window: 1000000,
             max_tokens: 40000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
-                input: 0.4000000000,
+                input: 0.5500000000,
                 output: 2.2000000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
@@ -4166,10 +3935,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "google".to_string(),
             context_window: 1048576,
             max_tokens: 65535,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.3000000000,
                 output: 2.5000000000,
@@ -4187,10 +3953,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "google".to_string(),
             context_window: 1048576,
             max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 1.2500000000,
                 output: 10.0000000000,
@@ -4208,10 +3971,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 200000,
             max_tokens: 100000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 20.0000000000,
                 output: 80.0000000000,
@@ -4229,10 +3989,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "google".to_string(),
             context_window: 1048576,
             max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 1.2500000000,
                 output: 10.0000000000,
@@ -4250,10 +4007,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "deepseek".to_string(),
             context_window: 163840,
             max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.5000000000,
                 output: 2.1500000000,
@@ -4271,10 +4025,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "anthropic".to_string(),
             context_window: 200000,
             max_tokens: 32000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 15.0000000000,
                 output: 75.0000000000,
@@ -4292,10 +4043,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "anthropic".to_string(),
             context_window: 200000,
             max_tokens: 64000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 3.0000000000,
                 output: 15.0000000000,
@@ -4313,10 +4061,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "google".to_string(),
             context_window: 32768,
             max_tokens: 8192,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.0600000000,
                 output: 0.1200000000,
@@ -4334,10 +4079,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "mistralai".to_string(),
             context_window: 131072,
             max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.4000000000,
                 output: 2.0000000000,
@@ -4355,10 +4097,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "google".to_string(),
             context_window: 1048576,
             max_tokens: 65535,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 1.2500000000,
                 output: 10.0000000000,
@@ -4376,10 +4115,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "arcee-ai".to_string(),
             context_window: 131072,
             max_tokens: 64000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.7500000000,
                 output: 1.2000000000,
@@ -4392,36 +4128,12 @@ pub fn built_in_models() -> Vec<Model> {
             },
         },
         Model {
-            id: "arcee-ai/coder-large".to_string(),
-            name: "Arcee AI: Coder Large".to_string(),
-            provider: "arcee-ai".to_string(),
-            context_window: 32768,
-            max_tokens: 8192,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
-            cost: ModelCost {
-                input: 0.5000000000,
-                output: 0.8000000000,
-                cache_read: 0.0000000000,
-                cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
             id: "meta-llama/llama-guard-4-12b".to_string(),
             name: "Meta: Llama Guard 4 12B".to_string(),
             provider: "meta-llama".to_string(),
-            context_window: 163840,
+            context_window: 1048576,
             max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.1800000000,
                 output: 0.1800000000,
@@ -4438,14 +4150,11 @@ pub fn built_in_models() -> Vec<Model> {
             name: "Qwen: Qwen3 30B A3B".to_string(),
             provider: "qwen".to_string(),
             context_window: 131072,
-            max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            max_tokens: 8192,
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
-                input: 0.1200000000,
-                output: 0.5000000000,
+                input: 0.1300000000,
+                output: 0.5200000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
@@ -4460,14 +4169,11 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "qwen".to_string(),
             context_window: 131072,
             max_tokens: 8192,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
-                input: 0.0500000000,
-                output: 0.4000000000,
-                cache_read: 0.0500000000,
+                input: 0.1170000000,
+                output: 0.4550000000,
+                cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -4479,15 +4185,12 @@ pub fn built_in_models() -> Vec<Model> {
             id: "qwen/qwen3-14b".to_string(),
             name: "Qwen: Qwen3 14B".to_string(),
             provider: "qwen".to_string(),
-            context_window: 131702,
-            max_tokens: 40960,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            context_window: 131072,
+            max_tokens: 8192,
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
-                input: 0.1000000000,
-                output: 0.2400000000,
+                input: 0.2275000000,
+                output: 0.9100000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
@@ -4502,10 +4205,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "qwen".to_string(),
             context_window: 131072,
             max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.0800000000,
                 output: 0.2800000000,
@@ -4523,10 +4223,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "qwen".to_string(),
             context_window: 131072,
             max_tokens: 8192,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.4550000000,
                 output: 1.8200000000,
@@ -4544,10 +4241,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 200000,
             max_tokens: 100000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 1.1000000000,
                 output: 4.4000000000,
@@ -4565,10 +4259,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 200000,
             max_tokens: 100000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 2.0000000000,
                 output: 8.0000000000,
@@ -4586,10 +4277,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 200000,
             max_tokens: 100000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 1.1000000000,
                 output: 4.4000000000,
@@ -4606,11 +4294,8 @@ pub fn built_in_models() -> Vec<Model> {
             name: "OpenAI: GPT-4.1".to_string(),
             provider: "openai".to_string(),
             context_window: 1047576,
-            max_tokens: 261894,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            max_tokens: 32768,
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 2.0000000000,
                 output: 8.0000000000,
@@ -4628,10 +4313,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 1047576,
             max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.4000000000,
                 output: 1.6000000000,
@@ -4649,10 +4331,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 1047576,
             max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.1000000000,
                 output: 0.4000000000,
@@ -4670,13 +4349,10 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "meta-llama".to_string(),
             context_window: 1048576,
             max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
-                input: 0.1500000000,
-                output: 0.6000000000,
+                input: 0.2000000000,
+                output: 0.8000000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
@@ -4689,12 +4365,9 @@ pub fn built_in_models() -> Vec<Model> {
             id: "meta-llama/llama-4-scout".to_string(),
             name: "Meta: Llama 4 Scout".to_string(),
             provider: "meta-llama".to_string(),
-            context_window: 10000000,
+            context_window: 1310720,
             max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.1000000000,
                 output: 0.3000000000,
@@ -4711,14 +4384,11 @@ pub fn built_in_models() -> Vec<Model> {
             name: "DeepSeek: DeepSeek V3 0324".to_string(),
             provider: "deepseek".to_string(),
             context_window: 163840,
-            max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            max_tokens: 65536,
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
-                input: 0.2000000000,
-                output: 0.7700000000,
+                input: 0.2700000000,
+                output: 1.1200000000,
                 cache_read: 0.1350000000,
                 cache_write: 0.0000000000,
             },
@@ -4733,10 +4403,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 200000,
             max_tokens: 100000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 150.0000000000,
                 output: 600.0000000000,
@@ -4754,10 +4421,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "mistralai".to_string(),
             context_window: 128000,
             max_tokens: 128000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.3510000000,
                 output: 0.5550000000,
@@ -4775,10 +4439,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "google".to_string(),
             context_window: 131072,
             max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.0500000000,
                 output: 0.1000000000,
@@ -4796,10 +4457,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "google".to_string(),
             context_window: 131072,
             max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.0500000000,
                 output: 0.1500000000,
@@ -4817,10 +4475,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "cohere".to_string(),
             context_window: 256000,
             max_tokens: 8192,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 2.5000000000,
                 output: 10.0000000000,
@@ -4838,10 +4493,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 128000,
             max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.1500000000,
                 output: 0.6000000000,
@@ -4859,10 +4511,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 128000,
             max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 2.5000000000,
                 output: 10.0000000000,
@@ -4880,10 +4529,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "rekaai".to_string(),
             context_window: 65536,
             max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.1000000000,
                 output: 0.2000000000,
@@ -4899,15 +4545,12 @@ pub fn built_in_models() -> Vec<Model> {
             id: "google/gemma-3-27b-it".to_string(),
             name: "Google: Gemma 3 27B".to_string(),
             provider: "google".to_string(),
-            context_window: 131072,
-            max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            context_window: 262144,
+            max_tokens: 65536,
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
-                input: 0.0800000000,
-                output: 0.1600000000,
+                input: 0.1000000000,
+                output: 0.3000000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
@@ -4922,10 +4565,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "thedrummer".to_string(),
             context_window: 32768,
             max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.5500000000,
                 output: 0.8000000000,
@@ -4943,10 +4583,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "perplexity".to_string(),
             context_window: 128000,
             max_tokens: 32000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 2.0000000000,
                 output: 8.0000000000,
@@ -4964,10 +4601,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "perplexity".to_string(),
             context_window: 200000,
             max_tokens: 8000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 3.0000000000,
                 output: 15.0000000000,
@@ -4985,10 +4619,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "perplexity".to_string(),
             context_window: 128000,
             max_tokens: 32000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 2.0000000000,
                 output: 8.0000000000,
@@ -5006,10 +4637,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "mistralai".to_string(),
             context_window: 32768,
             max_tokens: 8192,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.2000000000,
                 output: 0.6000000000,
@@ -5027,56 +4655,11 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 200000,
             max_tokens: 100000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 1.1000000000,
                 output: 4.4000000000,
                 cache_read: 0.5500000000,
-                cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
-            id: "aion-labs/aion-1.0".to_string(),
-            name: "AionLabs: Aion-1.0".to_string(),
-            provider: "aion-labs".to_string(),
-            context_window: 131072,
-            max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
-            cost: ModelCost {
-                input: 4.0000000000,
-                output: 8.0000000000,
-                cache_read: 0.0000000000,
-                cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
-            id: "aion-labs/aion-1.0-mini".to_string(),
-            name: "AionLabs: Aion-1.0-Mini".to_string(),
-            provider: "aion-labs".to_string(),
-            context_window: 131072,
-            max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
-            cost: ModelCost {
-                input: 0.7000000000,
-                output: 1.4000000000,
-                cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -5090,10 +4673,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "aion-labs".to_string(),
             context_window: 32768,
             max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.8000000000,
                 output: 1.6000000000,
@@ -5109,12 +4689,9 @@ pub fn built_in_models() -> Vec<Model> {
             id: "qwen/qwen2.5-vl-72b-instruct".to_string(),
             name: "Qwen: Qwen2.5 VL 72B Instruct".to_string(),
             provider: "qwen".to_string(),
-            context_window: 131072,
+            context_window: 128000,
             max_tokens: 128000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.8000000000,
                 output: 1.0000000000,
@@ -5132,10 +4709,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "qwen".to_string(),
             context_window: 1000000,
             max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.2600000000,
                 output: 0.7800000000,
@@ -5153,10 +4727,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 200000,
             max_tokens: 100000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 1.1000000000,
                 output: 4.4000000000,
@@ -5174,10 +4745,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "mistralai".to_string(),
             context_window: 32768,
             max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.0500000000,
                 output: 0.0800000000,
@@ -5195,10 +4763,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "perplexity".to_string(),
             context_window: 127072,
             max_tokens: 31768,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 1.0000000000,
                 output: 1.0000000000,
@@ -5214,12 +4779,9 @@ pub fn built_in_models() -> Vec<Model> {
             id: "deepseek/deepseek-r1-distill-llama-70b".to_string(),
             name: "DeepSeek: R1 Distill Llama 70B".to_string(),
             provider: "deepseek".to_string(),
-            context_window: 128000,
+            context_window: 8192,
             max_tokens: 8192,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.8000000000,
                 output: 0.8000000000,
@@ -5237,10 +4799,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "deepseek".to_string(),
             context_window: 163840,
             max_tokens: 16000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.7000000000,
                 output: 2.5000000000,
@@ -5258,10 +4817,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "minimax".to_string(),
             context_window: 1000192,
             max_tokens: 1000192,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.2000000000,
                 output: 1.1000000000,
@@ -5279,34 +4835,10 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "microsoft".to_string(),
             context_window: 16384,
             max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
-                input: 0.0650000000,
+                input: 0.0700000000,
                 output: 0.1400000000,
-                cache_read: 0.0000000000,
-                cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
-            id: "sao10k/l3.1-70b-hanami-x1".to_string(),
-            name: "Sao10K: Llama 3.1 70B Hanami x1".to_string(),
-            provider: "sao10k".to_string(),
-            context_window: 16000,
-            max_tokens: 4000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
-            cost: ModelCost {
-                input: 3.0000000000,
-                output: 3.0000000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
@@ -5319,12 +4851,9 @@ pub fn built_in_models() -> Vec<Model> {
             id: "deepseek/deepseek-chat".to_string(),
             name: "DeepSeek: DeepSeek V3".to_string(),
             provider: "deepseek".to_string(),
-            context_window: 131072,
+            context_window: 163840,
             max_tokens: 16000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.2002000000,
                 output: 0.8001000000,
@@ -5342,10 +4871,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "sao10k".to_string(),
             context_window: 131072,
             max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.6500000000,
                 output: 0.7500000000,
@@ -5363,10 +4889,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 200000,
             max_tokens: 100000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 15.0000000000,
                 output: 60.0000000000,
@@ -5384,10 +4907,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "cohere".to_string(),
             context_window: 128000,
             max_tokens: 4000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.0375000000,
                 output: 0.1500000000,
@@ -5404,14 +4924,11 @@ pub fn built_in_models() -> Vec<Model> {
             name: "Meta: Llama 3.3 70B Instruct".to_string(),
             provider: "meta-llama".to_string(),
             context_window: 131072,
-            max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            max_tokens: 128000,
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
-                input: 0.1000000000,
-                output: 0.3200000000,
+                input: 0.1300000000,
+                output: 0.4000000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
@@ -5426,10 +4943,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "amazon".to_string(),
             context_window: 300000,
             max_tokens: 5120,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.0600000000,
                 output: 0.2400000000,
@@ -5447,10 +4961,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "amazon".to_string(),
             context_window: 128000,
             max_tokens: 5120,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.0350000000,
                 output: 0.1400000000,
@@ -5468,10 +4979,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "amazon".to_string(),
             context_window: 300000,
             max_tokens: 5120,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.8000000000,
                 output: 3.2000000000,
@@ -5489,10 +4997,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 128000,
             max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 2.5000000000,
                 output: 10.0000000000,
@@ -5510,10 +5015,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "mistralai".to_string(),
             context_window: 131072,
             max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 2.0000000000,
                 output: 6.0000000000,
@@ -5529,12 +5031,9 @@ pub fn built_in_models() -> Vec<Model> {
             id: "qwen/qwen-2.5-coder-32b-instruct".to_string(),
             name: "Qwen2.5 Coder 32B Instruct".to_string(),
             provider: "qwen".to_string(),
-            context_window: 128000,
+            context_window: 32768,
             max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.6600000000,
                 output: 1.0000000000,
@@ -5552,10 +5051,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "thedrummer".to_string(),
             context_window: 32768,
             max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.4000000000,
                 output: 0.4000000000,
@@ -5568,36 +5064,12 @@ pub fn built_in_models() -> Vec<Model> {
             },
         },
         Model {
-            id: "anthropic/claude-3.5-haiku".to_string(),
-            name: "Anthropic: Claude 3.5 Haiku".to_string(),
-            provider: "anthropic".to_string(),
-            context_window: 200000,
-            max_tokens: 8192,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
-            cost: ModelCost {
-                input: 0.8000000000,
-                output: 4.0000000000,
-                cache_read: 0.0800000000,
-                cache_write: 1.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
             id: "anthracite-org/magnum-v4-72b".to_string(),
             name: "Magnum v4 72B".to_string(),
             provider: "anthracite-org".to_string(),
-            context_window: 32768,
+            context_window: 16384,
             max_tokens: 2048,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 3.0000000000,
                 output: 5.0000000000,
@@ -5613,36 +5085,12 @@ pub fn built_in_models() -> Vec<Model> {
             id: "qwen/qwen-2.5-7b-instruct".to_string(),
             name: "Qwen: Qwen2.5 7B Instruct".to_string(),
             provider: "qwen".to_string(),
-            context_window: 131072,
+            context_window: 32768,
             max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.0400000000,
                 output: 0.1000000000,
-                cache_read: 0.0000000000,
-                cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
-            id: "inflection/inflection-3-productivity".to_string(),
-            name: "Inflection: Inflection 3 Productivity".to_string(),
-            provider: "inflection".to_string(),
-            context_window: 8000,
-            max_tokens: 1024,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
-            cost: ModelCost {
-                input: 2.5000000000,
-                output: 10.0000000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
@@ -5657,10 +5105,25 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "inflection".to_string(),
             context_window: 8000,
             max_tokens: 1024,
-            input: ModelInput {
-                text: true,
-                image: false,
+            input: ModelInput { text: true, image: false },
+            cost: ModelCost {
+                input: 2.5000000000,
+                output: 10.0000000000,
+                cache_read: 0.0000000000,
+                cache_write: 0.0000000000,
             },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "inflection/inflection-3-productivity".to_string(),
+            name: "Inflection: Inflection 3 Productivity".to_string(),
+            provider: "inflection".to_string(),
+            context_window: 8000,
+            max_tokens: 1024,
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 2.5000000000,
                 output: 10.0000000000,
@@ -5676,15 +5139,30 @@ pub fn built_in_models() -> Vec<Model> {
             id: "thedrummer/rocinante-12b".to_string(),
             name: "TheDrummer: Rocinante 12B".to_string(),
             provider: "thedrummer".to_string(),
-            context_window: 32768,
-            max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            context_window: 65536,
+            max_tokens: 65536,
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
-                input: 0.1700000000,
-                output: 0.4300000000,
+                input: 0.2500000000,
+                output: 0.5000000000,
+                cache_read: 0.0000000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "meta-llama/llama-3.2-1b-instruct".to_string(),
+            name: "Meta: Llama 3.2 1B Instruct".to_string(),
+            provider: "meta-llama".to_string(),
+            context_window: 60000,
+            max_tokens: 60000,
+            input: ModelInput { text: true, image: false },
+            cost: ModelCost {
+                input: 0.0270000000,
+                output: 0.2010000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
@@ -5698,56 +5176,11 @@ pub fn built_in_models() -> Vec<Model> {
             name: "Meta: Llama 3.2 3B Instruct".to_string(),
             provider: "meta-llama".to_string(),
             context_window: 131072,
-            max_tokens: 80000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            max_tokens: 131072,
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
-                input: 0.0509000000,
-                output: 0.3350000000,
-                cache_read: 0.0000000000,
-                cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
-            id: "meta-llama/llama-3.2-1b-instruct".to_string(),
-            name: "Meta: Llama 3.2 1B Instruct".to_string(),
-            provider: "meta-llama".to_string(),
-            context_window: 131072,
-            max_tokens: 60000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
-            cost: ModelCost {
-                input: 0.0270000000,
-                output: 0.2010000000,
-                cache_read: 0.0000000000,
-                cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
-            id: "meta-llama/llama-3.2-11b-vision-instruct".to_string(),
-            name: "Meta: Llama 3.2 11B Vision Instruct".to_string(),
-            provider: "meta-llama".to_string(),
-            context_window: 131072,
-            max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
-            cost: ModelCost {
-                input: 0.3450000000,
-                output: 0.3450000000,
+                input: 0.0500000000,
+                output: 0.3300000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
@@ -5760,36 +5193,12 @@ pub fn built_in_models() -> Vec<Model> {
             id: "qwen/qwen-2.5-72b-instruct".to_string(),
             name: "Qwen2.5 72B Instruct".to_string(),
             provider: "qwen".to_string(),
-            context_window: 131072,
+            context_window: 32768,
             max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.3600000000,
                 output: 0.4000000000,
-                cache_read: 0.0000000000,
-                cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
-            id: "cohere/command-r-plus-08-2024".to_string(),
-            name: "Cohere: Command R+ (08-2024)".to_string(),
-            provider: "cohere".to_string(),
-            context_window: 128000,
-            max_tokens: 4000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
-            cost: ModelCost {
-                input: 2.5000000000,
-                output: 10.0000000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
@@ -5804,13 +5213,28 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "cohere".to_string(),
             context_window: 128000,
             max_tokens: 4000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.1500000000,
                 output: 0.6000000000,
+                cache_read: 0.0000000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "cohere/command-r-plus-08-2024".to_string(),
+            name: "Cohere: Command R+ (08-2024)".to_string(),
+            provider: "cohere".to_string(),
+            context_window: 128000,
+            max_tokens: 4000,
+            input: ModelInput { text: true, image: false },
+            cost: ModelCost {
+                input: 2.5000000000,
+                output: 10.0000000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
@@ -5825,10 +5249,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "sao10k".to_string(),
             context_window: 131072,
             max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.8500000000,
                 output: 0.8500000000,
@@ -5846,10 +5267,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "nousresearch".to_string(),
             context_window: 131072,
             max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.7000000000,
                 output: 0.7000000000,
@@ -5867,10 +5285,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "nousresearch".to_string(),
             context_window: 131072,
             max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 1.0000000000,
                 output: 1.0000000000,
@@ -5888,10 +5303,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "sao10k".to_string(),
             context_window: 8192,
             max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.0400000000,
                 output: 0.0500000000,
@@ -5909,35 +5321,11 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 128000,
             max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 2.5000000000,
                 output: 10.0000000000,
                 cache_read: 1.2500000000,
-                cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
-            id: "meta-llama/llama-3.1-8b-instruct".to_string(),
-            name: "Meta: Llama 3.1 8B Instruct".to_string(),
-            provider: "meta-llama".to_string(),
-            context_window: 131072,
-            max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
-            cost: ModelCost {
-                input: 0.0200000000,
-                output: 0.0300000000,
-                cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -5951,10 +5339,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "meta-llama".to_string(),
             context_window: 131072,
             max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.4000000000,
                 output: 0.4000000000,
@@ -5967,19 +5352,16 @@ pub fn built_in_models() -> Vec<Model> {
             },
         },
         Model {
-            id: "mistralai/mistral-nemo".to_string(),
-            name: "Mistral: Mistral Nemo".to_string(),
-            provider: "mistralai".to_string(),
+            id: "meta-llama/llama-3.1-8b-instruct".to_string(),
+            name: "Meta: Llama 3.1 8B Instruct".to_string(),
+            provider: "meta-llama".to_string(),
             context_window: 131072,
-            max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            max_tokens: 131072,
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
-                input: 0.0200000000,
-                output: 0.0300000000,
-                cache_read: 0.0000000000,
+                input: 0.0500000000,
+                output: 0.0800000000,
+                cache_read: 0.0250000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -5988,19 +5370,16 @@ pub fn built_in_models() -> Vec<Model> {
             },
         },
         Model {
-            id: "openai/gpt-4o-mini-2024-07-18".to_string(),
-            name: "OpenAI: GPT-4o-mini (2024-07-18)".to_string(),
-            provider: "openai".to_string(),
-            context_window: 128000,
+            id: "mistralai/mistral-nemo".to_string(),
+            name: "Mistral: Mistral Nemo".to_string(),
+            provider: "mistralai".to_string(),
+            context_window: 131072,
             max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
-                input: 0.1500000000,
-                output: 0.6000000000,
-                cache_read: 0.0750000000,
+                input: 0.0190000000,
+                output: 0.0300000000,
+                cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -6014,10 +5393,25 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 128000,
             max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: true,
+            input: ModelInput { text: true, image: true },
+            cost: ModelCost {
+                input: 0.1500000000,
+                output: 0.6000000000,
+                cache_read: 0.0750000000,
+                cache_write: 0.0000000000,
             },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "openai/gpt-4o-mini-2024-07-18".to_string(),
+            name: "OpenAI: GPT-4o-mini (2024-07-18)".to_string(),
+            provider: "openai".to_string(),
+            context_window: 128000,
+            max_tokens: 16384,
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.1500000000,
                 output: 0.6000000000,
@@ -6035,34 +5429,10 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "google".to_string(),
             context_window: 8192,
             max_tokens: 2048,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.6500000000,
                 output: 0.6500000000,
-                cache_read: 0.0000000000,
-                cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
-            id: "openai/gpt-4o-2024-05-13".to_string(),
-            name: "OpenAI: GPT-4o (2024-05-13)".to_string(),
-            provider: "openai".to_string(),
-            context_window: 128000,
-            max_tokens: 4096,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
-            cost: ModelCost {
-                input: 5.0000000000,
-                output: 15.0000000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
@@ -6077,14 +5447,11 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 128000,
             max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 2.5000000000,
                 output: 10.0000000000,
-                cache_read: 0.0000000000,
+                cache_read: 1.2500000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -6093,39 +5460,15 @@ pub fn built_in_models() -> Vec<Model> {
             },
         },
         Model {
-            id: "meta-llama/llama-3-8b-instruct".to_string(),
-            name: "Meta: Llama 3 8B Instruct".to_string(),
-            provider: "meta-llama".to_string(),
-            context_window: 8192,
-            max_tokens: 2048,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            id: "openai/gpt-4o-2024-05-13".to_string(),
+            name: "OpenAI: GPT-4o (2024-05-13)".to_string(),
+            provider: "openai".to_string(),
+            context_window: 128000,
+            max_tokens: 4096,
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
-                input: 0.1400000000,
-                output: 0.1400000000,
-                cache_read: 0.0000000000,
-                cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
-            id: "meta-llama/llama-3-70b-instruct".to_string(),
-            name: "Meta: Llama 3 70B Instruct".to_string(),
-            provider: "meta-llama".to_string(),
-            context_window: 8192,
-            max_tokens: 8000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
-            cost: ModelCost {
-                input: 0.5100000000,
-                output: 0.7400000000,
+                input: 5.0000000000,
+                output: 15.0000000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
@@ -6140,10 +5483,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "mistralai".to_string(),
             context_window: 65536,
             max_tokens: 16384,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 2.0000000000,
                 output: 6.0000000000,
@@ -6159,12 +5499,9 @@ pub fn built_in_models() -> Vec<Model> {
             id: "microsoft/wizardlm-2-8x22b".to_string(),
             name: "WizardLM-2 8x22B".to_string(),
             provider: "microsoft".to_string(),
-            context_window: 65536,
+            context_window: 65535,
             max_tokens: 8000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.6200000000,
                 output: 0.6200000000,
@@ -6182,10 +5519,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 128000,
             max_tokens: 4096,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 10.0000000000,
                 output: 30.0000000000,
@@ -6203,10 +5537,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "anthropic".to_string(),
             context_window: 200000,
             max_tokens: 4096,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: 0.2500000000,
                 output: 1.2500000000,
@@ -6224,35 +5555,11 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "mistralai".to_string(),
             context_window: 128000,
             max_tokens: 32000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 2.0000000000,
                 output: 6.0000000000,
                 cache_read: 0.2000000000,
-                cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
-            id: "openai/gpt-4-turbo-preview".to_string(),
-            name: "OpenAI: GPT-4 Turbo Preview".to_string(),
-            provider: "openai".to_string(),
-            context_window: 128000,
-            max_tokens: 4096,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
-            cost: ModelCost {
-                input: 10.0000000000,
-                output: 30.0000000000,
-                cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -6266,13 +5573,28 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 4095,
             max_tokens: 4096,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 1.0000000000,
                 output: 2.0000000000,
+                cache_read: 0.0000000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "openai/gpt-4-turbo-preview".to_string(),
+            name: "OpenAI: GPT-4 Turbo Preview".to_string(),
+            provider: "openai".to_string(),
+            context_window: 128000,
+            max_tokens: 4096,
+            input: ModelInput { text: true, image: false },
+            cost: ModelCost {
+                input: 10.0000000000,
+                output: 30.0000000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
@@ -6287,10 +5609,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openrouter".to_string(),
             context_window: 2000000,
             max_tokens: 500000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
+            input: ModelInput { text: true, image: true },
             cost: ModelCost {
                 input: -1000000.0000000000,
                 output: -1000000.0000000000,
@@ -6308,10 +5627,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 4095,
             max_tokens: 4096,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 1.5000000000,
                 output: 2.0000000000,
@@ -6329,10 +5645,7 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 16385,
             max_tokens: 4096,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 3.0000000000,
                 output: 4.0000000000,
@@ -6350,13 +5663,10 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "mancer".to_string(),
             context_window: 8000,
             max_tokens: 2000,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
-                input: 0.7500000000,
-                output: 1.0000000000,
+                input: 0.5000000000,
+                output: 0.7500000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
@@ -6370,11 +5680,8 @@ pub fn built_in_models() -> Vec<Model> {
             name: "ReMM SLERP 13B".to_string(),
             provider: "undi95".to_string(),
             context_window: 6144,
-            max_tokens: 4096,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            max_tokens: 2048,
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.4500000000,
                 output: 0.6500000000,
@@ -6390,36 +5697,12 @@ pub fn built_in_models() -> Vec<Model> {
             id: "gryphe/mythomax-l2-13b".to_string(),
             name: "MythoMax 13B".to_string(),
             provider: "gryphe".to_string(),
-            context_window: 4096,
+            context_window: 8192,
             max_tokens: 4096,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.0600000000,
                 output: 0.0600000000,
-                cache_read: 0.0000000000,
-                cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
-            id: "openai/gpt-4".to_string(),
-            name: "OpenAI: GPT-4".to_string(),
-            provider: "openai".to_string(),
-            context_window: 8191,
-            max_tokens: 4096,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
-            cost: ModelCost {
-                input: 30.0000000000,
-                output: 60.0000000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
@@ -6434,13 +5717,28 @@ pub fn built_in_models() -> Vec<Model> {
             provider: "openai".to_string(),
             context_window: 16385,
             max_tokens: 4096,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
+            input: ModelInput { text: true, image: false },
             cost: ModelCost {
                 input: 0.5000000000,
                 output: 1.5000000000,
+                cache_read: 0.0000000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "openai/gpt-4".to_string(),
+            name: "OpenAI: GPT-4".to_string(),
+            provider: "openai".to_string(),
+            context_window: 8191,
+            max_tokens: 4096,
+            input: ModelInput { text: true, image: false },
+            cost: ModelCost {
+                input: 30.0000000000,
+                output: 60.0000000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
