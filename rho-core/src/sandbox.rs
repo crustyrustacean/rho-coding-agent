@@ -279,6 +279,13 @@ const PROJECT_MARKERS: &[&str] = &[
 /// plus a boolean indicating whether a marker was found. If no marker is
 /// found, returns the current directory with `false`.
 ///
+/// The `.rho/config.toml` marker is special-cased: rho's **user-level** config
+/// also lives at `~/.rho/config.toml`, which must not be mistaken for a project
+/// root. During the walk, a `.rho/config.toml` that resolves to the user-level
+/// config path is skipped so the sandbox never roots at the user's home
+/// directory when only that file is present. A **project-level**
+/// `.rho/config.toml` (any path other than the user-level one) still counts.
+///
 /// # Errors
 ///
 /// Returns an error if the current directory cannot be determined.
@@ -289,8 +296,15 @@ pub fn find_project_root() -> Result<(SandboxRoot, bool)> {
     })?;
     let mut dir = cwd.as_path();
 
+    // The user-level config (`~/.rho/config.toml`) must not be treated as a
+    // project-root marker, or the walk would root the sandbox at $HOME.
+    let user_config = crate::config::user_config_path();
+
     loop {
-        if PROJECT_MARKERS.iter().any(|m| dir.join(m).exists()) {
+        if PROJECT_MARKERS
+            .iter()
+            .any(|m| is_project_marker(dir, m, &user_config))
+        {
             return Ok((SandboxRoot::new(dir)?, true));
         }
 
@@ -300,6 +314,27 @@ pub fn find_project_root() -> Result<(SandboxRoot, bool)> {
             _ => return Ok((SandboxRoot::new(&cwd)?, false)),
         }
     }
+}
+
+/// Returns `true` if `dir` contains a project marker at the relative path
+/// `marker`.
+///
+/// The `.rho/config.toml` marker is skipped when it resolves to the user's
+/// global config file (`user_config`), which is not a project root. All other
+/// markers, and all project-level `.rho/config.toml` files, count normally.
+fn is_project_marker(dir: &Path, marker: &str, user_config: &Path) -> bool {
+    let candidate = dir.join(marker);
+    if !candidate.exists() {
+        return false;
+    }
+    if marker == ".rho/config.toml" && candidate == user_config {
+        debug!(
+            path = %candidate.display(),
+            "sandbox: ignoring user-level config as project-root marker"
+        );
+        return false;
+    }
+    true
 }
 
 // ── canonicalize_for_write ────────────────────────────────────────────────────
@@ -449,5 +484,54 @@ mod sandbox_tests {
             .join("evil.txt");
         let root = SandboxRoot::new(dir.path()).unwrap();
         assert!(root.validate_for_write(&sneaky).is_err());
+    }
+
+    // ── find_project_root marker matching ────────────────────────────────────
+
+    #[test]
+    fn project_marker_detects_real_marker() {
+        let dir = tmpdir();
+        std::fs::write(dir.path().join("Cargo.toml"), "[package]").unwrap();
+        let user_config = dir.path().join("unrelated").join(".rho/config.toml");
+        assert!(is_project_marker(dir.path(), "Cargo.toml", &user_config));
+    }
+
+    #[test]
+    fn project_marker_missing_file_is_not_a_marker() {
+        let dir = tmpdir();
+        let user_config = dir.path().join(".rho/config.toml");
+        // File does not exist → not a marker regardless of user_config.
+        assert!(!is_project_marker(dir.path(), "Cargo.toml", &user_config));
+    }
+
+    #[test]
+    fn user_level_config_is_not_a_project_marker() {
+        // Simulate $HOME/.rho/config.toml being the user's global config.
+        let home = tmpdir();
+        let rho_dir = home.path().join(".rho");
+        std::fs::create_dir_all(&rho_dir).unwrap();
+        let config = rho_dir.join("config.toml");
+        std::fs::write(&config, "[agent]").unwrap();
+
+        // The user_config path equals the candidate → skipped as a marker.
+        assert!(!is_project_marker(home.path(), ".rho/config.toml", &config));
+    }
+
+    #[test]
+    fn project_level_config_is_a_project_marker() {
+        // A .rho/config.toml that is NOT the user-level config still counts.
+        let project = tmpdir();
+        let rho_dir = project.path().join(".rho");
+        std::fs::create_dir_all(&rho_dir).unwrap();
+        std::fs::write(rho_dir.join("config.toml"), "[agent]").unwrap();
+
+        // user_config points somewhere else entirely (a fake home).
+        let elsewhere = tmpdir();
+        let user_config = elsewhere.path().join(".rho").join("config.toml");
+        assert!(is_project_marker(
+            project.path(),
+            ".rho/config.toml",
+            &user_config
+        ));
     }
 }
