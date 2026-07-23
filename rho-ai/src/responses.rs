@@ -249,15 +249,18 @@ enum ResponsesEvent {
         /// JSON argument fragment.
         delta: String,
     },
-    /// Final function-call arguments.
+    /// Final function-call arguments. The `name` field is optional — some
+    /// models (e.g. gpt-5.6-sol) omit it since the name was established in
+    /// the earlier `response.output_item.added` event.
     #[serde(rename = "response.function_call_arguments.done")]
     FunctionCallArgumentsDone {
         /// Position among all Responses output items.
         output_index: usize,
         /// Provider item identifier.
         item_id: String,
-        /// Function name.
-        name: String,
+        /// Function name (may be absent on some models).
+        #[serde(default)]
+        name: Option<String>,
         /// Complete JSON arguments.
         arguments: String,
     },
@@ -524,13 +527,16 @@ impl ToolCallAccumulator {
             delta,
         }])
     }
-
     /// Complete a function call from the authoritative arguments-done event.
+    ///
+    /// When `name` is `Some`, it is validated against the name registered
+    /// during `add_item`. When `None` (omitted by some models), the existing
+    /// name is trusted.
     fn complete_arguments(
         &mut self,
         output_index: usize,
         item_id: &str,
-        name: &str,
+        name: Option<&str>,
         arguments: String,
     ) -> Result<Vec<StreamEvent>, ProviderError> {
         let call = self.calls.get_mut(&output_index).ok_or_else(|| {
@@ -539,7 +545,9 @@ impl ToolCallAccumulator {
             ))
         })?;
         Self::validate_item_id(call, output_index, item_id)?;
-        if call.name != name {
+        if let Some(name) = name
+            && call.name != name
+        {
             return Err(protocol_error(format!(
                 "function name changed for output index {output_index}"
             )));
@@ -762,9 +770,10 @@ impl ResponsesSseStream {
                 item_id,
                 name,
                 arguments,
-            } => self
-                .tool_acc
-                .complete_arguments(output_index, &item_id, &name, arguments),
+            } => {
+                self.tool_acc
+                    .complete_arguments(output_index, &item_id, name.as_deref(), arguments)
+            }
             ResponsesEvent::OutputItemDone {
                 output_index,
                 item:
@@ -1434,5 +1443,54 @@ mod tests {
             })
         ));
         request_handle.join().expect("fixture server joins");
+    }
+
+    #[tokio::test]
+    async fn function_call_arguments_done_without_name_field() {
+        use futures::StreamExt as _;
+
+        // gpt-5.6-sol omits the `name` field from
+        // `response.function_call_arguments.done` — the name was already
+        // established in `response.output_item.added`. This must not fail.
+        let fixture = "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_1\",\"name\":\"write_file\",\"arguments\":\"\"}}\n\n\
+            data: {\"type\":\"response.function_call_arguments.done\",\"output_index\":0,\"item_id\":\"fc_1\",\"arguments\":\"{\\\"path\\\":\\\"a.rs\\\"}\"}\n\n\
+            data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}}\n\n";
+        let events = fixture_stream(vec![fixture])
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .expect("no-name done event must parse");
+        assert!(matches!(
+            &events[..],
+            [
+                StreamEvent::ToolUseStart { index: 0, .. },
+                StreamEvent::ToolUseComplete { index: 0, .. },
+                StreamEvent::Done {
+                    reason: StopReason::ToolUse,
+                    ..
+                }
+            ]
+        ));
+    }
+
+    #[tokio::test]
+    async fn function_call_arguments_done_with_wrong_name_still_errors() {
+        use futures::StreamExt as _;
+
+        // When `name` IS present and disagrees with the name from
+        // `output_item.added`, it must still be a protocol error.
+        let fixture = concat!(
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,",
+            "\"item\":{\"type\":\"function_call\",\"id\":\"fc_1\",",
+            "\"call_id\":\"call_1\",\"name\":\"read_file\",\"arguments\":\"\"}}\n\n",
+            "data: {\"type\":\"response.function_call_arguments.done\",",
+            "\"output_index\":0,\"item_id\":\"fc_1\",\"name\":\"write_file\",",
+            "\"arguments\":\"{}\"}\n\n"
+        );
+        let events = fixture_stream(vec![fixture]).collect::<Vec<_>>().await;
+        assert_eq!(events.len(), 2);
+        assert!(matches!(&events[0], Ok(StreamEvent::ToolUseStart { .. })));
+        assert!(matches!(&events[1], Err(ProviderError::Sse { .. })));
     }
 }
