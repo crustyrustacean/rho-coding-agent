@@ -1,3 +1,8 @@
+## [0.90.5] - 2026-07-23
+
+### 🐛 Bug Fixes
+
+- *(core)* Don't treat user-level ~/.rho/config.toml as a project marker
 ## [0.90.4] - 2026-07-23
 
 ### 🐛 Bug Fixes
