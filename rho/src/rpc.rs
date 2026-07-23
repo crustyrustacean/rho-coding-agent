@@ -518,8 +518,26 @@ async fn demux_request(
 
     match method {
         "abort" => {
-            cancel.lock().unwrap().cancel();
-            send(transport, &success_response(&id, EmptyResult {})).await;
+            let abort_ok = cancel
+                .lock()
+                .map(|g| {
+                    g.cancel();
+                })
+                .is_ok();
+
+            if abort_ok {
+                send(transport, &success_response(&id, EmptyResult {})).await;
+            } else {
+                send(
+                    transport,
+                    &error_response(
+                        &id,
+                        INTERNAL_ERROR,
+                        "abort failed: internal lock error, try again",
+                    ),
+                )
+                .await;
+            }
         }
         "approvalResponse" => {
             // Consumed by the approval gate via the channel; no wire ack
@@ -675,11 +693,15 @@ async fn handle_prompt(
         registry: &app.registry,
         config: &app.config,
         cancel: {
-            let mut guard = cancel.lock().unwrap();
-            if guard.is_cancelled() {
-                *guard = CancellationToken::new();
+            let token = cancel
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if token.is_cancelled() {
+                warn!("cancel token cancelled but mutex poisoned; using fresh token");
+                CancellationToken::new()
+            } else {
+                token.clone()
             }
-            guard.clone()
         },
         gate: &gate,
         observer: &composite,
