@@ -1461,6 +1461,10 @@ initial_backoff_ms = 500
 # Context window token budget (default: 32768)
 token_budget = 32768
 
+# Tokens reserved for the model's completion (output). Sent as max_tokens.
+# Defaults to 16384. Increase for reasoning models (e.g. 32768).
+completion_reserve = 16384
+
 # Stuck-loop detection: consecutive identical outputs before nudge (default: 3, 0 = off)
 stuck_loop_threshold = 3
 
@@ -1629,6 +1633,7 @@ api_key_env = "OPENAI_API_KEY"
 <tr><td><code>agent.model</code></td><td><code>--model</code></td><td>Model identifier</td></tr>
 <tr><td><code>agent.provider</code></td><td>—</td><td>Provider name (uses its <code>default_model</code>)</td></tr>
 <tr><td><code>agent.token_budget</code></td><td><code>--token-budget</code></td><td>Context window token budget</td></tr>
+<tr><td><code>agent.completion_reserve</code></td><td>--</td><td>Tokens reserved for model's completion (default: 16384)</td></tr>
 <tr><td><code>provider.endpoint</code></td><td><code>--endpoint</code></td><td>API endpoint URL (does not change <code>api</code>)</td></tr>
 <tr><td><code>provider.api</code></td><td>—</td><td>Protocol is config-only</td></tr>
 <tr><td><code>provider.api_key_env</code></td><td><code>--api-key-env</code></td><td>Env var holding the API key</td></tr>
