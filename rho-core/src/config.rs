@@ -118,7 +118,8 @@ pub struct AgentLoopConfig {
     #[serde(default = "default_token_budget")]
     pub token_budget: u32,
     /// Tokens reserved for the model's completion (output) in each request.
-    /// Sent as `max_tokens` in every LLM API call. Defaults to 8,192.
+    /// Tokens reserved for the model's completion (output) in each request.
+    /// Sent as `max_tokens` in every LLM API call. Defaults to 16,384.
     ///
     /// Reasoning models (Qwen3, DeepSeek-R1, etc.) can spend thousands of
     /// tokens on chain-of-thought before producing their response. If the
@@ -238,10 +239,10 @@ fn default_token_budget() -> u32 {
 }
 /// Default value for `completion_reserve`.
 ///
-/// 8,192 tokens is sufficient for non-reasoning models. Reasoning models
-/// may need 16,384–32,768 or more.
+/// 16,384 tokens is sufficient for non-reasoning models. Reasoning models
+/// may need 32,768 or more.
 fn default_completion_reserve() -> u32 {
-    8_192
+    16_384
 }
 /// Default value for `stuck_loop_threshold`.
 fn default_stuck_loop_threshold() -> u32 {
@@ -1773,9 +1774,9 @@ token_budget = 16384
     }
 
     #[test]
-    fn completion_reserve_default_is_8k() {
+    fn completion_reserve_default_is_16k() {
         let config = AgentLoopConfig::default();
-        assert_eq!(config.completion_reserve, 8_192);
+        assert_eq!(config.completion_reserve, 16_384);
     }
 
     #[test]

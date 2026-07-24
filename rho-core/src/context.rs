@@ -39,7 +39,7 @@ use tracing::{debug, warn};
 pub struct TokenBudget {
     /// The model's total context window size.
     pub context_window: usize,
-    /// Tokens reserved for the model's completion. Default: 8192.
+    /// Tokens reserved for the model's completion. Default: 16384.
     ///
     /// **Invariant:** conversation + system + schema ≤
     /// (`context_window` − `completion_reserve`). This reserve is never
@@ -49,11 +49,11 @@ pub struct TokenBudget {
 
 impl TokenBudget {
     /// Create a token budget with the given context window and default
-    /// completion reserve (8192).
+    /// completion reserve (16384).
     pub fn new(context_window: usize) -> Self {
         Self {
             context_window,
-            completion_reserve: 8192,
+            completion_reserve: 16384,
         }
     }
 
@@ -111,7 +111,7 @@ impl Default for TokenBudget {
     fn default() -> Self {
         Self {
             context_window: 32_768,
-            completion_reserve: 8192,
+            completion_reserve: 16384,
         }
     }
 }
@@ -1064,8 +1064,8 @@ mod tests {
 
     #[test]
     fn message_budget_subtracts_overheads() {
-        let budget = TokenBudget::new(32_768); // reserve = 8192, prompt = 24576
-        assert_eq!(budget.message_budget(5000, 1000), 24_576 - 5000 - 1000);
+        let budget = TokenBudget::new(32_768); // reserve = 16384, prompt = 16384
+        assert_eq!(budget.message_budget(5000, 1000), 16_384 - 5000 - 1000);
     }
 
     #[test]

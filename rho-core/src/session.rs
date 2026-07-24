@@ -225,11 +225,11 @@ mod tests {
     }
 
     #[test]
-    fn token_budget_default_has_32k_window_and_8k_reserve() {
+    fn token_budget_default_has_32k_window_and_16k_reserve() {
         let budget = TokenBudget::default();
         assert_eq!(budget.context_window, 32_768);
-        assert_eq!(budget.completion_reserve, 8192);
-        assert_eq!(budget.prompt_budget(), 24_576);
+        assert_eq!(budget.completion_reserve, 16384);
+        assert_eq!(budget.prompt_budget(), 16_384);
     }
 
     #[test]

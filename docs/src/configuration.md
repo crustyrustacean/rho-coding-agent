@@ -83,6 +83,10 @@ initial_backoff_ms = 500
 # Context window token budget (default: 32768)
 token_budget = 32768
 
+# Tokens reserved for the model's completion (output). Sent as max_tokens.
+# Defaults to 16384. Increase for reasoning models (e.g. 32768).
+completion_reserve = 16384
+
 # Stuck-loop detection: consecutive identical outputs before nudge (default: 3, 0 = off)
 stuck_loop_threshold = 3
 
@@ -262,6 +266,7 @@ All config values can be overridden by CLI flags. CLI flags take highest priorit
 | `agent.model` | `--model` | Model identifier |
 | `agent.provider` | — | Provider name (uses its `default_model`) |
 | `agent.token_budget` | `--token-budget` | Context window token budget |
+| `agent.completion_reserve` | -- | Tokens reserved for model's completion (default: 16384) |
 | `provider.endpoint` | `--endpoint` | API endpoint URL (does not change `api`) |
 | `provider.api` | — | Protocol is config-only |
 | `provider.api_key_env` | `--api-key-env` | Env var holding the API key |
