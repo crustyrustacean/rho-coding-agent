@@ -20,17 +20,17 @@ tempfile = "3"
 
 [dependencies]
 async-trait.workspace = true
-tracing.workspace = true
 ignore = "0.4"
-reqwest = { version = "0.13.2", features = ["json"] }
+reqwest = { version = "0.13", features = ["json"] }
 rho-core = { path = "../rho-core" }
 rho-highlight = { path = "../rho-highlight" }
 rho-memory = { path = "../rho-memory" }
 serde.workspace = true
 serde_json.workspace = true
+tracing.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tree-sitter.workspace = true
-url = "2.5.8"
+url = "2.5"
 uuid = { version = "1", features = ["v4", "serde"] }
 which = "8.0.4"

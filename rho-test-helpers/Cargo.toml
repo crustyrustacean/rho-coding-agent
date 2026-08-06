@@ -14,10 +14,10 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-rho-core = { path = "../rho-core" }
-rho-ai = { path = "../rho-ai" }
 async-trait.workspace = true
 futures.workspace = true
+rho-core = { path = "../rho-core" }
+rho-ai = { path = "../rho-ai" }
 serde_json.workspace = true
 tempfile = "3"
 tokio.workspace = true

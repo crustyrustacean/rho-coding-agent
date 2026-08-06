@@ -2804,10 +2804,10 @@ mod tests {
             usage: rho_ai::StreamUsage::new(1_000_000, 0),
         };
         let _ = route_response(&acc, &mut session).unwrap();
-        // glm-5.2 input is $0.826/M → 1M tokens should cost $0.826.
+        // glm-5.2 input is $0.76/M → 1M tokens should cost $0.76.
         let cost = session.api_usage().total_cost;
         assert!(
-            (cost - 0.826).abs() < 1e-9,
+            (cost - 0.76).abs() < 1e-9,
             "expected catalog-derived cost, got {cost}"
         );
     }
@@ -2910,7 +2910,7 @@ mod tests {
         // When a user-defined entry shares the id with a catalog entry, the
         // user's pricing wins (consulted first).
         let mut session = test_session(None, &[], vec![]);
-        session.model = "z-ai/glm-5.2".to_string(); // catalog input is 1.4
+        session.model = "z-ai/glm-5.2".to_string(); // catalog input is 0.76
         session.user_models = vec![rho_ai::Model {
             id: "z-ai/glm-5.2".to_string(),
             name: "z-ai/glm-5.2".to_string(),
@@ -2934,7 +2934,7 @@ mod tests {
             usage: rho_ai::StreamUsage::new(1_000_000, 0),
         };
         let _ = route_response(&acc, &mut session).unwrap();
-        // User's $9.0/M input wins, not the catalog's $0.826.
+        // User's $9.0/M input wins, not the catalog's $0.76.
         assert!(
             (session.api_usage().total_cost - 9.0).abs() < 1e-9,
             "user model pricing should override the catalog; got {}",

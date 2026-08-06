@@ -372,22 +372,22 @@ mod tests {
 
     #[test]
     fn cost_for_known_model_matches_per_million_pricing() {
-        // glm-5.2 in the generated catalog: input 0.826, output 2.596 per 1M.
+        // glm-5.2 in the generated catalog: input 0.76, output 2.42 per 1M.
         let model = Catalog::find_built_in("z-ai/glm-5.2").expect("glm-5.2 present");
         let usage = StreamUsage::new(1_000_000, 500_000);
         let cost = model.cost_for(&usage).expect("pricing available");
-        // 1M input @ $0.826 + 0.5M output @ $2.596 = 0.826 + 1.298 = 2.124
-        assert!((cost - 2.124).abs() < 1e-9, "got {cost}");
+        // 1M input @ $0.76 + 0.5M output @ $2.42 = 0.76 + 1.21 = 1.97
+        assert!((cost - 1.97).abs() < 1e-9, "got {cost}");
     }
 
     #[test]
     fn cost_for_prices_cached_reads_at_discount() {
         let model = Catalog::find_built_in("z-ai/glm-5.2").expect("glm-5.2 present");
-        // glm-5.2 reports cache_read 0.1534 per 1M.
+        // glm-5.2 reports cache_read 0.14 per 1M.
         let usage = StreamUsage::new(1_000_000, 0).with_cached(1_000_000);
         let cost = model.cost_for(&usage).expect("pricing available");
-        // All input cached: 1M @ $0.1534 = 0.1534
-        assert!((cost - 0.1534).abs() < 1e-9, "got {cost}");
+        // All input cached: 1M @ $0.14 = 0.14
+        assert!((cost - 0.14).abs() < 1e-9, "got {cost}");
     }
 
     #[test]
