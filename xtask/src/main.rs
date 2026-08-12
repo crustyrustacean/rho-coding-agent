@@ -58,11 +58,14 @@ enum Xtask {
     /// Prepare a release: bump version, update changelog, tag, and commit.
     ///
     /// Steps:
-    ///   1. Run CI to ensure a clean tree.
+    ///   1. Run CI to ensure a clean tree (unless --skip-ci).
     ///   2. Bump the version in workspace `Cargo.toml`.
     ///   3. Generate a changelog entry via git-cliff and prepend to CHANGELOG.md.
-    ///   4. Create a `v<version>` git tag.
-    ///   5. Commit everything with `chore(release): prepare <version>`.
+    ///   4. Commit everything with `chore(release): prepare <version>`.
+    ///   5. Create a `v<version>` git tag on the release commit.
+    ///
+    /// Refuses to run if there are no commits since the last tag (would produce
+    /// an empty release); pass --allow-empty to override.
     ///
     /// The tag and commit are local only — push with `git push origin trunk --tags`.
     Release {
@@ -72,6 +75,11 @@ enum Xtask {
         /// Skip the CI check (use if you just ran `cargo xtask ci`).
         #[arg(long)]
         skip_ci: bool,
+
+        /// Release even when there are no commits since the last tag
+        /// (otherwise the empty-release guard refuses to run).
+        #[arg(long)]
+        allow_empty: bool,
     },
 
     /// Show workspace status summary.
@@ -99,7 +107,11 @@ fn main() -> Result<()> {
         Xtask::Clean => tasks::clean(),
         Xtask::Ci => tasks::ci(),
         Xtask::Changelog => tasks::changelog(),
-        Xtask::Release { version, skip_ci } => tasks::release(&version, skip_ci),
+        Xtask::Release {
+            version,
+            skip_ci,
+            allow_empty,
+        } => tasks::release(&version, skip_ci, allow_empty),
         Xtask::Status => tasks::status(),
         Xtask::Schema => tasks::schema(),
         Xtask::GenerateModels => tasks::generate_models(),
