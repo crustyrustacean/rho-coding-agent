@@ -29,6 +29,36 @@ fn spawn(label: &str, cmd: &str, args: &[&str]) -> Result<()> {
     }
 }
 
+/// Run a git command and capture its trimmed stdout, returning `None` on any
+/// failure (non-zero exit, missing git, or non-UTF8 output).
+fn git_stdout(args: &[&str]) -> Option<String> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(workspace_root())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8(output.stdout)
+        .ok()
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
+}
+
+/// The latest tag reachable from `HEAD` (e.g. `v0.90.7`), or `None` if there
+/// are no tags yet.
+fn latest_tag() -> Option<String> {
+    git_stdout(&["describe", "--tags", "--abbrev=0"])
+}
+
+/// Number of commits on `HEAD` since the given tag, or `None` if the tag is
+/// unknown or git fails to count.
+fn commits_since(tag: &str) -> Option<usize> {
+    let range = format!("{tag}..HEAD");
+    git_stdout(&["rev-list", "--count", &range])?.parse().ok()
+}
+
 /// Read the current workspace version from Cargo.toml.
 ///
 /// Scans for the `version` line under `[workspace.package]` instead of
@@ -263,17 +293,41 @@ pub fn changelog() -> Result<()> {
 
 /// `cargo xtask release <version>` — prepare a release.
 ///
+/// Refuses to run if there are no commits since the last tag (that would
+/// produce an empty release — the failure mode behind the empty 0.90.6 and
+/// 0.90.7 releases). Pass `--allow-empty` to override.
+///
 /// 1. Run CI (unless --skip-ci).
 /// 2. Bump version in workspace Cargo.toml.
 /// 3. Generate changelog entry via git-cliff --prepend.
 /// 4. Commit with `chore(release): prepare <version>`.
 /// 5. Create a `v<version>` git tag on the release commit.
-pub fn release(version_spec: &str, skip_ci: bool) -> Result<()> {
+pub fn release(version_spec: &str, skip_ci: bool, allow_empty: bool) -> Result<()> {
     let current_version = read_workspace_version()?;
     let new_version = resolve_version(version_spec, &current_version)?;
     let tag = format!("v{new_version}");
 
     println!("🚀 Preparing release {tag} (was v{current_version})");
+
+    // Step 0: Guard against spurious empty releases.
+    //
+    // If nothing has changed since the last tag, releasing would write an
+    // empty changelog section and a version bump with no content behind it.
+    // Bail early unless `--allow-empty` makes the intent explicit.
+    if let Some(prev) = latest_tag() {
+        match commits_since(&prev) {
+            Some(0) if !allow_empty => {
+                bail!(
+                    "no commits since {prev}; nothing to release.\n\
+                     Commit your work first, or pass --allow-empty to release anyway."
+                );
+            }
+            Some(n) => println!("📦 {n} commit(s) since {prev}."),
+            None => println!("⚠️  Could not count commits since {prev}; continuing."),
+        }
+    } else {
+        println!("ℹ️  No previous tag found; treating this as the first release.");
+    }
 
     // Step 1: CI.
     if skip_ci {
