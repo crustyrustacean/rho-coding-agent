@@ -58,6 +58,7 @@ async fn run_turn_returns_mock_reply() {
                 observer: &NopObserver,
                 gate: &AutoApproveGate,
                 steering: None,
+                cancel: rho_core::tool::CancellationToken::new(),
             },
         )
         .await

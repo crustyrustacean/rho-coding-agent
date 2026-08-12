@@ -37,10 +37,10 @@ use std::path::{Path, PathBuf};
 ///
 /// These are deliberately *not* owned by [`Agent`]: an observer/approval-gate
 /// is tied to a UI connection (e.g. an RPC transport) and may change between
-/// turns (e.g. when extensions reload). The caller composes them — for example,
-/// a composite of the frontend observer plus extension observers — and passes
-/// them in for each turn. [`Agent::run`] supplies headless defaults.
-#[derive(Clone, Copy)]
+/// turns (e.g. when extensions reload); the cancellation token is supplied
+/// per turn so the caller can swap a fresh one in (the RPC layer does this so
+/// a prior `abort` doesn't poison the next turn). The caller composes them and
+/// passes them in for each turn. [`Agent::run`] supplies headless defaults.
 pub struct TurnInputs<'a> {
     /// UI callback for state changes and streaming deltas.
     pub observer: &'a dyn AgentObserver,
@@ -49,6 +49,10 @@ pub struct TurnInputs<'a> {
     /// Optional source of mid-turn steering messages, drained between
     /// tool-batch completion and the next thinking step (see [`SteeringSource`]).
     pub steering: Option<&'a dyn SteeringSource>,
+    /// Cooperative cancellation token for this turn. The caller owns the
+    /// cancellation source (the RPC layer swaps a fresh token in per turn);
+    /// this clone feeds the agent loop. [`Agent::run`] clones the agent's token.
+    pub cancel: CancellationToken,
 }
 
 // ── Errors ──────────────────────────────────────────────────────────────────
@@ -185,7 +189,7 @@ impl Agent {
             client: client.as_ref(),
             registry: &self.registry,
             config: &self.config,
-            cancel: self.cancel.clone(),
+            cancel: inputs.cancel.clone(),
             gate: inputs.gate,
             observer: inputs.observer,
             compaction_client,
@@ -215,6 +219,7 @@ impl Agent {
                 observer: &observer,
                 gate: &gate,
                 steering: None,
+                cancel: self.cancel.clone(),
             },
         )
         .await
@@ -344,6 +349,23 @@ impl Agent {
         &self.cancel
     }
 
+    /// The provider registry (for model/provider listing and lookups).
+    #[must_use]
+    pub fn providers(&self) -> &ProviderRegistry {
+        &self.providers
+    }
+
+    /// The tool registry (for inspecting registered tool definitions).
+    #[must_use]
+    pub fn registry(&self) -> &ToolRegistry {
+        &self.registry
+    }
+
+    /// Mutable access to the tool registry (for runtime tool/extension reload).
+    pub fn registry_mut(&mut self) -> &mut ToolRegistry {
+        &mut self.registry
+    }
+
     /// Registered tool definitions.
     #[must_use]
     pub fn list_tools(&self) -> &[ToolDefinition] {
@@ -404,6 +426,9 @@ pub struct AgentBuilder {
     providers: Option<ProviderRegistry>,
     /// Token-budget override.
     token_budget: Option<TokenBudget>,
+    /// Context-window override, used as the fallback when no catalog model is
+    /// known (mirrors the `--token-budget` flag).
+    context_window: Option<u32>,
     /// Max-iterations override.
     max_iterations: Option<u32>,
     /// Session construction mode.
@@ -426,6 +451,7 @@ impl Default for AgentBuilder {
             tools: None,
             providers: None,
             token_budget: None,
+            context_window: None,
             max_iterations: None,
             session_mode: SessionMode::Ephemeral,
             check_consent: true,
@@ -500,6 +526,13 @@ impl AgentBuilder {
     /// Override the token budget.
     pub fn token_budget(mut self, budget: TokenBudget) -> Self {
         self.token_budget = Some(budget);
+        self
+    }
+
+    /// Override the context window (used as the fallback when the model is not
+    /// in the built-in catalog; mirrors the `--token-budget` flag).
+    pub fn context_window(mut self, context_window: u32) -> Self {
+        self.context_window = Some(context_window);
         self
     }
 
@@ -611,9 +644,13 @@ impl AgentBuilder {
         let tool_schemas = registry.tool_definitions();
 
         // Token budget.
-        let token_budget = self
-            .token_budget
-            .unwrap_or_else(|| resolve_budget(&config, resolved.catalog_model.as_ref()));
+        let token_budget = self.token_budget.unwrap_or_else(|| {
+            resolve_budget(
+                &config,
+                resolved.catalog_model.as_ref(),
+                self.context_window,
+            )
+        });
 
         // Agent config (with max-iterations override).
         let mut agent_config = AgentConfig::from_config(&config);
@@ -803,9 +840,13 @@ fn ensure_openrouter_provider(registry: &mut ProviderRegistry) -> usize {
 }
 
 /// Resolve the token budget from config + optional catalog enrichment.
-fn resolve_budget(config: &RhoConfig, catalog_model: Option<&Model>) -> TokenBudget {
+fn resolve_budget(
+    config: &RhoConfig,
+    catalog_model: Option<&Model>,
+    ctx_override: Option<u32>,
+) -> TokenBudget {
     let context_window = catalog_model.map_or_else(
-        || config.agent.token_budget as usize,
+        || ctx_override.unwrap_or(config.agent.token_budget) as usize,
         |m| usize::try_from(m.context_window).unwrap_or(usize::MAX),
     );
     let configured_reserve = config.agent.completion_reserve as usize;
@@ -1041,5 +1082,140 @@ mod tests {
             .message()
             .contains("acme")
         );
+    }
+
+    fn config_with_provider(
+        provider_name: Option<&str>,
+        model: Option<&str>,
+        providers: Vec<ProviderConfig>,
+    ) -> RhoConfig {
+        RhoConfig {
+            agent: AgentLoopConfig {
+                model: model.map(String::from),
+                provider: provider_name.map(String::from),
+                ..Default::default()
+            },
+            provider: ProviderSettings { providers },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn resolve_model_default_model_when_no_agent_model() {
+        let config = config_with(None, vec![provider("local", Some("qwen2.5-coder:7b"))]);
+        let r = resolve_model(&config, None);
+        assert_eq!(r.id, "qwen2.5-coder:7b");
+        assert_eq!(r.provider.as_deref(), Some("local"));
+    }
+
+    #[test]
+    fn resolve_model_bare_default_resolves_catalog_context_window() {
+        let config = config_with(
+            None,
+            vec![provider("openrouter", Some("deepseek-v4-flash"))],
+        );
+        let r = resolve_model(&config, None);
+        assert_eq!(r.id, "deepseek-v4-flash");
+        let catalog_model = r
+            .catalog_model
+            .expect("bare default_model should resolve via basename");
+        assert_eq!(catalog_model.id, "deepseek/deepseek-v4-flash");
+        assert_eq!(catalog_model.context_window, 1_048_576);
+    }
+
+    #[test]
+    fn resolve_model_providers_without_default_returns_default() {
+        let config = config_with(None, vec![provider("openrouter", None)]);
+        let r = resolve_model(&config, None);
+        assert_eq!(r.id, rho_ai::catalog::DEFAULT_MODEL_ID);
+    }
+
+    #[test]
+    fn resolve_model_agent_model_overrides_agent_provider() {
+        let config = config_with_provider(
+            Some("openai"),
+            Some("claude-sonnet-4"),
+            vec![
+                provider("openrouter", Some("claude-sonnet-4")),
+                provider("openai", Some("gpt-4o")),
+            ],
+        );
+        let r = resolve_model(&config, None);
+        assert_eq!(r.id, "claude-sonnet-4");
+        assert_eq!(r.provider.as_deref(), Some("openrouter"));
+    }
+
+    #[test]
+    fn resolve_model_agent_provider_selects_providers_default() {
+        let config = config_with_provider(
+            Some("openrouter"),
+            None,
+            vec![
+                provider("openrouter", Some("claude-sonnet-4")),
+                provider("openai", Some("gpt-4o")),
+            ],
+        );
+        let r = resolve_model(&config, None);
+        assert_eq!(r.id, "claude-sonnet-4");
+        assert_eq!(r.provider.as_deref(), Some("openrouter"));
+    }
+
+    #[test]
+    fn resolve_model_agent_provider_overrides_first_provider() {
+        let config = config_with_provider(
+            Some("openai"),
+            None,
+            vec![
+                provider("openrouter", Some("claude-sonnet-4")),
+                provider("openai", Some("gpt-4o")),
+            ],
+        );
+        let r = resolve_model(&config, None);
+        assert_eq!(r.id, "gpt-4o");
+        assert_eq!(r.provider.as_deref(), Some("openai"));
+    }
+
+    #[test]
+    fn resolve_model_agent_provider_unknown_falls_through() {
+        let config = config_with_provider(
+            Some("unknown"),
+            None,
+            vec![
+                provider("openrouter", Some("claude-sonnet-4")),
+                provider("openai", Some("gpt-4o")),
+            ],
+        );
+        let r = resolve_model(&config, None);
+        assert_eq!(r.id, "claude-sonnet-4");
+        assert_eq!(r.provider.as_deref(), Some("openrouter"));
+    }
+
+    #[test]
+    fn resolve_model_default_with_multiple_providers() {
+        let config = config_with(
+            None,
+            vec![
+                provider("openrouter", Some("claude-sonnet-4")),
+                provider("openai", Some("gpt-4o")),
+            ],
+        );
+        let r = resolve_model(&config, None);
+        assert_eq!(r.id, "claude-sonnet-4");
+        assert_eq!(r.provider.as_deref(), Some("openrouter"));
+    }
+
+    #[test]
+    fn resolve_model_catalog_returns_none_for_unknown() {
+        let config = config_with(Some("my-custom/local-model"), vec![]);
+        let r = resolve_model(&config, None);
+        assert!(r.catalog_model.is_none());
+    }
+
+    #[test]
+    fn resolve_model_default_has_catalog_entry() {
+        let config = config_with(None, vec![]);
+        let r = resolve_model(&config, None);
+        assert!(r.catalog_model.is_some());
+        assert_eq!(r.id, rho_ai::catalog::DEFAULT_MODEL_ID);
     }
 }
