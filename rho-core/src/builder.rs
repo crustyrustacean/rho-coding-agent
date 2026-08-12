@@ -37,10 +37,10 @@ use std::path::{Path, PathBuf};
 ///
 /// These are deliberately *not* owned by [`Agent`]: an observer/approval-gate
 /// is tied to a UI connection (e.g. an RPC transport) and may change between
-/// turns (e.g. when extensions reload). The caller composes them — for example,
-/// a composite of the frontend observer plus extension observers — and passes
-/// them in for each turn. [`Agent::run`] supplies headless defaults.
-#[derive(Clone, Copy)]
+/// turns (e.g. when extensions reload); the cancellation token is supplied
+/// per turn so the caller can swap a fresh one in (the RPC layer does this so
+/// a prior `abort` doesn't poison the next turn). The caller composes them and
+/// passes them in for each turn. [`Agent::run`] supplies headless defaults.
 pub struct TurnInputs<'a> {
     /// UI callback for state changes and streaming deltas.
     pub observer: &'a dyn AgentObserver,
@@ -49,6 +49,10 @@ pub struct TurnInputs<'a> {
     /// Optional source of mid-turn steering messages, drained between
     /// tool-batch completion and the next thinking step (see [`SteeringSource`]).
     pub steering: Option<&'a dyn SteeringSource>,
+    /// Cooperative cancellation token for this turn. The caller owns the
+    /// cancellation source (the RPC layer swaps a fresh token in per turn);
+    /// this clone feeds the agent loop. [`Agent::run`] clones the agent's token.
+    pub cancel: CancellationToken,
 }
 
 // ── Errors ──────────────────────────────────────────────────────────────────
@@ -185,7 +189,7 @@ impl Agent {
             client: client.as_ref(),
             registry: &self.registry,
             config: &self.config,
-            cancel: self.cancel.clone(),
+            cancel: inputs.cancel.clone(),
             gate: inputs.gate,
             observer: inputs.observer,
             compaction_client,
@@ -215,6 +219,7 @@ impl Agent {
                 observer: &observer,
                 gate: &gate,
                 steering: None,
+                cancel: self.cancel.clone(),
             },
         )
         .await
@@ -1077,5 +1082,140 @@ mod tests {
             .message()
             .contains("acme")
         );
+    }
+
+    fn config_with_provider(
+        provider_name: Option<&str>,
+        model: Option<&str>,
+        providers: Vec<ProviderConfig>,
+    ) -> RhoConfig {
+        RhoConfig {
+            agent: AgentLoopConfig {
+                model: model.map(String::from),
+                provider: provider_name.map(String::from),
+                ..Default::default()
+            },
+            provider: ProviderSettings { providers },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn resolve_model_default_model_when_no_agent_model() {
+        let config = config_with(None, vec![provider("local", Some("qwen2.5-coder:7b"))]);
+        let r = resolve_model(&config, None);
+        assert_eq!(r.id, "qwen2.5-coder:7b");
+        assert_eq!(r.provider.as_deref(), Some("local"));
+    }
+
+    #[test]
+    fn resolve_model_bare_default_resolves_catalog_context_window() {
+        let config = config_with(
+            None,
+            vec![provider("openrouter", Some("deepseek-v4-flash"))],
+        );
+        let r = resolve_model(&config, None);
+        assert_eq!(r.id, "deepseek-v4-flash");
+        let catalog_model = r
+            .catalog_model
+            .expect("bare default_model should resolve via basename");
+        assert_eq!(catalog_model.id, "deepseek/deepseek-v4-flash");
+        assert_eq!(catalog_model.context_window, 1_048_576);
+    }
+
+    #[test]
+    fn resolve_model_providers_without_default_returns_default() {
+        let config = config_with(None, vec![provider("openrouter", None)]);
+        let r = resolve_model(&config, None);
+        assert_eq!(r.id, rho_ai::catalog::DEFAULT_MODEL_ID);
+    }
+
+    #[test]
+    fn resolve_model_agent_model_overrides_agent_provider() {
+        let config = config_with_provider(
+            Some("openai"),
+            Some("claude-sonnet-4"),
+            vec![
+                provider("openrouter", Some("claude-sonnet-4")),
+                provider("openai", Some("gpt-4o")),
+            ],
+        );
+        let r = resolve_model(&config, None);
+        assert_eq!(r.id, "claude-sonnet-4");
+        assert_eq!(r.provider.as_deref(), Some("openrouter"));
+    }
+
+    #[test]
+    fn resolve_model_agent_provider_selects_providers_default() {
+        let config = config_with_provider(
+            Some("openrouter"),
+            None,
+            vec![
+                provider("openrouter", Some("claude-sonnet-4")),
+                provider("openai", Some("gpt-4o")),
+            ],
+        );
+        let r = resolve_model(&config, None);
+        assert_eq!(r.id, "claude-sonnet-4");
+        assert_eq!(r.provider.as_deref(), Some("openrouter"));
+    }
+
+    #[test]
+    fn resolve_model_agent_provider_overrides_first_provider() {
+        let config = config_with_provider(
+            Some("openai"),
+            None,
+            vec![
+                provider("openrouter", Some("claude-sonnet-4")),
+                provider("openai", Some("gpt-4o")),
+            ],
+        );
+        let r = resolve_model(&config, None);
+        assert_eq!(r.id, "gpt-4o");
+        assert_eq!(r.provider.as_deref(), Some("openai"));
+    }
+
+    #[test]
+    fn resolve_model_agent_provider_unknown_falls_through() {
+        let config = config_with_provider(
+            Some("unknown"),
+            None,
+            vec![
+                provider("openrouter", Some("claude-sonnet-4")),
+                provider("openai", Some("gpt-4o")),
+            ],
+        );
+        let r = resolve_model(&config, None);
+        assert_eq!(r.id, "claude-sonnet-4");
+        assert_eq!(r.provider.as_deref(), Some("openrouter"));
+    }
+
+    #[test]
+    fn resolve_model_default_with_multiple_providers() {
+        let config = config_with(
+            None,
+            vec![
+                provider("openrouter", Some("claude-sonnet-4")),
+                provider("openai", Some("gpt-4o")),
+            ],
+        );
+        let r = resolve_model(&config, None);
+        assert_eq!(r.id, "claude-sonnet-4");
+        assert_eq!(r.provider.as_deref(), Some("openrouter"));
+    }
+
+    #[test]
+    fn resolve_model_catalog_returns_none_for_unknown() {
+        let config = config_with(Some("my-custom/local-model"), vec![]);
+        let r = resolve_model(&config, None);
+        assert!(r.catalog_model.is_none());
+    }
+
+    #[test]
+    fn resolve_model_default_has_catalog_entry() {
+        let config = config_with(None, vec![]);
+        let r = resolve_model(&config, None);
+        assert!(r.catalog_model.is_some());
+        assert_eq!(r.id, rho_ai::catalog::DEFAULT_MODEL_ID);
     }
 }

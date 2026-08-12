@@ -73,7 +73,7 @@
 //! | -32602 | Invalid params       |
 //! | -32603 | Internal error       |
 
-use crate::app::{App, TurnResult, run_agent_turn};
+use crate::app::App;
 use crate::ext_observer::CompositeObserver;
 use crate::rpc_wire::{
     AgentEndParams, AgentErrorParams, AgentStartParams, ApprovalRequestParams, EmptyResult,
@@ -376,7 +376,7 @@ pub(crate) async fn run_rpc_on(mut app: App, transport: Arc<dyn Transport>) -> R
     let (work_tx, mut work_rx) = mpsc::unbounded_channel::<WorkItem>();
     let (approval_tx, approval_rx) = mpsc::unbounded_channel::<Value>();
     let approval_rx: ApprovalReceiver = Arc::new(tokio::sync::Mutex::new(approval_rx));
-    let cancel: SharedCancel = Arc::new(std::sync::Mutex::new(app.cancel.clone()));
+    let cancel: SharedCancel = Arc::new(std::sync::Mutex::new(app.agent.cancel().clone()));
 
     // Concurrent reader: owns the transport, classifies every inbound message,
     // and routes it. It never touches `&mut App` — only the main task below does
@@ -445,7 +445,7 @@ pub(crate) async fn run_rpc_on(mut app: App, transport: Arc<dyn Transport>) -> R
 
     // The reader hit EOF and dropped `work_tx`; shut down.
     let _ = reader.await;
-    app.session.close("transport EOF");
+    app.agent.session_mut().close("transport EOF");
     Ok(())
 }
 
@@ -661,7 +661,7 @@ async fn handle_prompt(
 
     debug!(
         message_len = message.len(),
-        model = %app.session.model(),
+        model = %app.agent.session().model(),
         "agent turn started"
     );
     let turn_start = Instant::now();
@@ -680,55 +680,47 @@ async fn handle_prompt(
         transport: Arc::clone(&transport),
         approval_rx: Arc::clone(approval_rx),
     };
-    let client = app.active_provider().clone_boxed_service();
-    let compaction_client = if app.config.compaction_mode == "llm" {
-        Some(std::sync::Arc::from(
-            app.active_provider().clone_boxed_service(),
-        ))
-    } else {
-        None
+    // Per-turn cancellation token: clone the live SharedCancel token (or a
+    // fresh one if it was cancelled by a prior abort / a poisoned mutex).
+    let turn_cancel = {
+        let token = cancel
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if token.is_cancelled() {
+            warn!("cancel token cancelled but mutex poisoned; using fresh token");
+            CancellationToken::new()
+        } else {
+            token.clone()
+        }
     };
-    let loop_params = rho_core::LoopParams {
-        client: client.as_ref(),
-        registry: &app.registry,
-        config: &app.config,
-        cancel: {
-            let token = cancel
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if token.is_cancelled() {
-                warn!("cancel token cancelled but mutex poisoned; using fresh token");
-                CancellationToken::new()
-            } else {
-                token.clone()
-            }
-        },
-        gate: &gate,
+    let inputs = rho_core::TurnInputs {
         observer: &composite,
-        compaction_client,
+        gate: &gate,
         steering: Some(steering),
+        cancel: turn_cancel,
     };
-    match run_agent_turn(&mut app.session, &message, &loop_params).await {
-        TurnResult::Done(result) => {
+    match app.agent.run_turn(&message, &inputs).await {
+        Ok(result) => {
             let reply = result.reply.clone();
-            let end_params = AgentEndParams::from(result);
+            let end_params = AgentEndParams::from(Box::new(result));
             info!(
                 message_len = message.len(),
                 reply_len = reply.len(),
                 duration_ms = end_params.duration_ms,
                 iterations = end_params.iterations,
-                model = %app.session.model(),
+                model = %app.agent.session().model(),
                 "agent turn completed"
             );
             send(&*transport, &notification("agent/end", &end_params)).await;
             send(&*transport, &success_response(id, PromptResult { reply })).await;
         }
-        TurnResult::Error(e) => {
+        Err(err) => {
+            let e = err.to_string();
             let elapsed = turn_start.elapsed();
             info!(
                 message_len = message.len(),
                 duration_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
-                model = %app.session.model(),
+                model = %app.agent.session().model(),
                 error = %e,
                 "agent turn failed"
             );
@@ -753,10 +745,16 @@ async fn handle_get_state(app: &App, id: &Value, transport: &dyn Transport) {
         &success_response(
             id,
             GetStateResult {
-                model: app.session.model().to_owned(),
+                model: app.agent.session().model().to_owned(),
                 provider: app.active_provider().name().to_owned(),
-                cwd: app.session.header().cwd.to_string_lossy().into_owned(),
-                message_count: app.session.context_stats().message_count as u64,
+                cwd: app
+                    .agent
+                    .session()
+                    .header()
+                    .cwd
+                    .to_string_lossy()
+                    .into_owned(),
+                message_count: app.agent.session().context_stats().message_count as u64,
             },
         ),
     )
@@ -766,7 +764,8 @@ async fn handle_get_state(app: &App, id: &Value, transport: &dyn Transport) {
 /// Return all messages on the current session path.
 async fn handle_get_messages(app: &App, id: &Value, transport: &dyn Transport) {
     let messages: Vec<Value> = app
-        .session
+        .agent
+        .session()
         .path_messages()
         .iter()
         .map(message_to_json)
@@ -791,13 +790,13 @@ async fn handle_set_model(
     transport: &dyn Transport,
 ) {
     let spec = &params.model;
-    let old_model = app.session.model().to_owned();
+    let old_model = app.agent.session().model().to_owned();
     let old_provider = app.active_provider().name().to_owned();
     match app.set_model(spec).await {
         Ok(()) => {
             let provider = app.active_provider().name().to_owned();
-            let model = app.session.model().to_owned();
-            let stats = app.session.context_stats();
+            let model = app.agent.session().model().to_owned();
+            let stats = app.agent.session().context_stats();
             info!(
                 old_model = %old_model,
                 old_provider = %old_provider,
@@ -831,8 +830,8 @@ async fn handle_set_model(
 
 /// Return token budget and context-window usage statistics.
 async fn handle_get_session_stats(app: &App, id: &Value, transport: &dyn Transport) {
-    let stats = app.session.context_stats();
-    let usage = app.session.api_usage();
+    let stats = app.agent.session().context_stats();
+    let usage = app.agent.session().api_usage();
     let result = GetSessionStatsResult::from(&stats).with_api_usage(usage);
     send(transport, &success_response(id, result)).await;
 }
@@ -856,10 +855,10 @@ async fn handle_compact(app: &mut App, id: &Value, transport: &dyn Transport) {
 /// Clear conversation history by branching back to system message.
 async fn handle_clear(app: &mut App, id: &Value, transport: &dyn Transport) {
     info!("session cleared");
-    let path = app.session.path_to_root();
+    let path = app.agent.session().path_to_root();
     if let Some(root_entry) = path.last() {
         let root_id = root_entry.id.clone();
-        let _ = app.session.branch_to(&root_id);
+        let _ = app.agent.session_mut().branch_to(&root_id);
         send(transport, &success_response(id, EmptyResult {})).await;
     } else {
         send(
@@ -889,7 +888,7 @@ async fn handle_new_session(app: &mut App, id: &Value, transport: &dyn Transport
 
 /// List available models from all providers.
 async fn handle_list_models(app: &App, id: &Value, transport: &dyn Transport) {
-    let all = app.providers.list_all_models().await;
+    let all = app.agent.providers().list_all_models().await;
     let models: Vec<ModelEntry> = all
         .iter()
         .map(|(provider, info)| ModelEntry {
@@ -906,7 +905,7 @@ async fn handle_list_models(app: &App, id: &Value, transport: &dyn Transport) {
 
 /// List configured providers with reachability status.
 async fn handle_list_providers(app: &App, id: &Value, transport: &dyn Transport) {
-    let providers = app.providers.list_providers().await;
+    let providers = app.agent.providers().list_providers().await;
     let active = app.active_provider().name();
     let list: Vec<ProviderEntry> = providers
         .iter()
@@ -926,7 +925,7 @@ async fn handle_list_providers(app: &App, id: &Value, transport: &dyn Transport)
 
 /// List previous sessions for this project.
 async fn handle_list_sessions(app: &App, id: &Value, transport: &dyn Transport) {
-    let cwd = app.session.header().cwd.clone();
+    let cwd = app.agent.session().header().cwd.clone();
     let sessions = rho_core::list_sessions(&cwd);
     let list: Vec<SessionEntry> = sessions
         .iter()
@@ -980,13 +979,13 @@ async fn handle_resume_session(
     let path = std::path::PathBuf::from(&params.path);
     match rho_core::Session::open(&path) {
         Ok(mut session) => {
-            let old_model = app.session.model().to_owned();
+            let old_model = app.agent.session().model().to_owned();
             session.set_model(&old_model);
-            session.set_tools(app.registry.tool_definitions());
-            session.set_token_budget(app.session.token_budget());
-            session.set_user_models(app.session.user_models.clone());
+            session.set_tools(app.agent.registry().tool_definitions());
+            session.set_token_budget(app.agent.session().token_budget());
+            session.set_user_models(app.agent.session().user_models.clone());
             let session_cwd = session.header().cwd.clone();
-            let current_cwd = app.session.header().cwd.clone();
+            let current_cwd = app.agent.session().header().cwd.clone();
             if session_cwd != current_cwd {
                 warn!(
                     session_cwd = %session_cwd.display(),
@@ -994,7 +993,7 @@ async fn handle_resume_session(
                     "resumed session CWD differs from current working directory"
                 );
             }
-            app.session = session;
+            *app.agent.session_mut() = session;
             info!(
                 path = %path.display(),
                 model = %old_model,
@@ -1007,8 +1006,14 @@ async fn handle_resume_session(
                     ResumeSessionResult {
                         path: params.path,
                         model: old_model,
-                        cwd: app.session.header().cwd.to_string_lossy().into_owned(),
-                        entry_count: app.session.entry_count() as u64,
+                        cwd: app
+                            .agent
+                            .session()
+                            .header()
+                            .cwd
+                            .to_string_lossy()
+                            .into_owned(),
+                        entry_count: app.agent.session().entry_count() as u64,
                     },
                 ),
             )
@@ -1029,7 +1034,8 @@ async fn handle_resume_session(
 /// and parameter schemas.
 async fn handle_list_tools(app: &App, id: &Value, transport: &dyn Transport) {
     let tools: Vec<ToolEntry> = app
-        .registry
+        .agent
+        .registry()
         .list()
         .iter()
         .map(|t| ToolEntry {
@@ -1044,10 +1050,11 @@ async fn handle_list_tools(app: &App, id: &Value, transport: &dyn Transport) {
 
 /// Reload extensions from disk.
 async fn handle_reload_extensions(app: &mut App, id: &Value, transport: &dyn Transport) {
-    let dirs = crate::app::extension_dirs(&app.session.header().cwd);
-    let fresh_config = rho_core::ConfigLoader::load(&app.session.header().cwd).unwrap_or_default();
+    let dirs = crate::app::extension_dirs(&app.agent.session().header().cwd);
+    let fresh_config =
+        rho_core::ConfigLoader::load(&app.agent.session().header().cwd).unwrap_or_default();
     app.ext_loader.set_config(fresh_config.extensions);
-    match app.ext_loader.reload(&dirs, &mut app.registry).await {
+    match app.ext_loader.reload(&dirs, app.agent.registry_mut()).await {
         Ok(report) => {
             info!(
                 added = report.added.len(),
@@ -1063,7 +1070,8 @@ async fn handle_reload_extensions(app: &mut App, id: &Value, transport: &dyn Tra
             // keeps the stale schemas captured at start/last-sync and newly
             // loaded tools are invisible to the model mid-conversation.
             if report.has_changes() {
-                app.session.set_tools(app.registry.tool_definitions());
+                let schemas = app.agent.registry().tool_definitions();
+                app.agent.session_mut().set_tools(schemas);
             }
             send(
                 transport,
@@ -1158,8 +1166,8 @@ fn blocks_to_text(blocks: &[ContentBlock]) -> String {
 mod tests {
     use super::*;
     use rho_core::{
-        AgentConfig, AgentState, ChatMessage, ContentBlock, ModelToolCall, ProviderRegistry,
-        Session, Tool, ToolCallFunction, ToolCallId, ToolName, ToolOutcome, ToolRegistry, ToolRisk,
+        AgentState, ChatMessage, ContentBlock, ModelToolCall, ProviderRegistry, Session, Tool,
+        ToolCallFunction, ToolCallId, ToolName, ToolOutcome, ToolRegistry, ToolRisk,
         tool::CancellationToken,
     };
     use rho_test_helpers::{
@@ -1191,33 +1199,9 @@ mod tests {
     }
 
     fn test_app(client: MockChatClient, registry: ToolRegistry) -> App {
-        let session = Session::in_memory(
-            "test-model",
-            Some("You are a helpful assistant."),
-            vec![],
-            std::path::Path::new("."),
-        )
-        .with_token_budget(rho_core::TokenBudget::default());
         let mut providers = ProviderRegistry::new();
         providers.add(Box::new(TestProvider::new("test", client)));
-        App {
-            session,
-            providers,
-            active_provider_index: 0,
-            registry,
-            config: AgentConfig::default(),
-            cancel: CancellationToken::new(),
-            ext_loader: rho_ext::loader::ExtensionLoader::new(
-                rho_core::ExtensionConfig::default(),
-                std::path::PathBuf::new(),
-                rho_core::denylist::CommandDenylist::default_powershell(),
-            ),
-            ext_observers: vec![],
-            _log_guard: tracing_appender::non_blocking(tracing_appender::rolling::never(
-                "logs", "test.log",
-            ))
-            .1,
-        }
+        test_app_with_providers(providers, registry)
     }
 
     fn echo_registry() -> ToolRegistry {
@@ -1283,7 +1267,18 @@ mod tests {
     }
 
     fn test_app_with_providers(providers: ProviderRegistry, registry: ToolRegistry) -> App {
-        let session = Session::in_memory(
+        let mut agent = rho_core::Agent::builder()
+            .ephemeral()
+            .model("test-model")
+            .providers(providers)
+            .tools(registry)
+            .build()
+            .expect("agent build should succeed");
+        // Match the original test setup exactly: an in-memory session with an
+        // empty tool set (the registry carries the tools; production syncs them
+        // into the session, but these tests model pre-sync state) and a
+        // relative cwd of ".".
+        *agent.session_mut() = Session::in_memory(
             "test-model",
             Some("You are a helpful assistant."),
             vec![],
@@ -1291,12 +1286,7 @@ mod tests {
         )
         .with_token_budget(rho_core::TokenBudget::default());
         App {
-            session,
-            providers,
-            active_provider_index: 0,
-            registry,
-            config: AgentConfig::default(),
-            cancel: CancellationToken::new(),
+            agent,
             ext_loader: rho_ext::loader::ExtensionLoader::new(
                 rho_core::ExtensionConfig::default(),
                 std::path::PathBuf::new(),
@@ -1585,11 +1575,11 @@ mod tests {
             thinking: rho_ai::ModelThinking::default(),
         };
         let mut app = test_app(MockChatClient::new(vec![]), echo_registry());
-        app.session.user_models = vec![model];
+        app.agent.session_mut().user_models = vec![model];
         let (session_id, _path) = app.start_new_session();
         assert!(!session_id.is_empty());
-        assert_eq!(app.session.user_models.len(), 1);
-        assert_eq!(app.session.user_models[0].id, "custom/x");
+        assert_eq!(app.agent.session().user_models.len(), 1);
+        assert_eq!(app.agent.session().user_models[0].id, "custom/x");
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -2410,30 +2400,35 @@ mod tests {
 
         // Model session start: the session captures the live registry's tool
         // definitions (as `build_session` does in production).
-        app.session.set_tools(app.registry.tool_definitions());
-        assert_eq!(app.session.tools().len(), 1);
-        assert_eq!(app.session.tools()[0].name, "echo_tool");
+        let schemas = app.agent.registry().tool_definitions();
+        app.agent.session_mut().set_tools(schemas);
+        assert_eq!(app.agent.session().tools().len(), 1);
+        assert_eq!(app.agent.session().tools()[0].name, "echo_tool");
 
         // Simulate what `ExtensionLoader::reload` does to the registry on a
         // successful reload that adds a tool: register a brand-new tool.
-        app.registry.register(Box::new(FixedResponseTool {
-            name: "new_ext_tool",
-            response: "ext".into(),
-            risk: ToolRisk::Read,
-        }));
+        app.agent
+            .registry_mut()
+            .register(Box::new(FixedResponseTool {
+                name: "new_ext_tool",
+                response: "ext".into(),
+                risk: ToolRisk::Read,
+            }));
 
         // Pre-sync: the registry has the new tool, but the session does not —
         // this is exactly the drift the bug produced.
-        assert_eq!(app.registry.tool_definitions().len(), 2);
-        assert_eq!(app.session.tools().len(), 1);
+        assert_eq!(app.agent.registry().tool_definitions().len(), 2);
+        assert_eq!(app.agent.session().tools().len(), 1);
 
         // The reload handler now calls this after a reload with changes:
-        app.session.set_tools(app.registry.tool_definitions());
+        let schemas = app.agent.registry().tool_definitions();
+        app.agent.session_mut().set_tools(schemas);
 
         // Post-sync: the session advertises the full live tool set.
-        assert_eq!(app.session.tools().len(), 2);
+        assert_eq!(app.agent.session().tools().len(), 2);
         let names: Vec<_> = app
-            .session
+            .agent
+            .session()
             .tools()
             .iter()
             .map(|t| t.name.as_str())
