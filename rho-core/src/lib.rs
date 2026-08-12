@@ -66,6 +66,7 @@
 
 pub mod agent;
 pub mod approval;
+pub mod builder;
 pub mod client;
 pub mod config;
 pub mod context;
@@ -92,13 +93,14 @@ pub mod tool;
 // Convenience re-exports for the most commonly used types
 pub use agent::{
     AgentConfig, AgentError, AgentObserver, AgentResult, AgentState, CollectingObserver,
-    InterceptResult, IterationUsage, LoopFinishReason, LoopParams, NopObserver, TokenUsage,
-    ToolCallOutcome, ToolCallRecord, TransitionError, run_loop,
+    InterceptResult, IterationUsage, LoopFinishReason, LoopParams, NopObserver, SteeringSource,
+    TokenUsage, ToolCallOutcome, ToolCallRecord, TransitionError, run_loop,
 };
 pub use approval::{
     ApprovalDecision, ApprovalGate, ApprovalPolicy, AutoApprovePolicy, ConfigApprovalPolicy,
     DefaultApprovalPolicy,
 };
+pub use builder::{Agent, AgentBuildError, AgentBuilder, SwitchModelError, TurnInputs};
 pub use client::{ModelInfo, ModelList, RhoAiClient, is_local_endpoint, resolve_api_key};
 pub use config::{
     AgentLoopConfig, ApiProtocol, ApprovalAction, ApprovalConfig, ConfigLoadError, ConfigLoader,
