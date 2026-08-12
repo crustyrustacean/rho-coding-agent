@@ -344,6 +344,23 @@ impl Agent {
         &self.cancel
     }
 
+    /// The provider registry (for model/provider listing and lookups).
+    #[must_use]
+    pub fn providers(&self) -> &ProviderRegistry {
+        &self.providers
+    }
+
+    /// The tool registry (for inspecting registered tool definitions).
+    #[must_use]
+    pub fn registry(&self) -> &ToolRegistry {
+        &self.registry
+    }
+
+    /// Mutable access to the tool registry (for runtime tool/extension reload).
+    pub fn registry_mut(&mut self) -> &mut ToolRegistry {
+        &mut self.registry
+    }
+
     /// Registered tool definitions.
     #[must_use]
     pub fn list_tools(&self) -> &[ToolDefinition] {
