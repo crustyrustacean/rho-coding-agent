@@ -1,3 +1,24 @@
+## [0.91.0] - 2026-08-12
+
+### 🚀 Features
+
+- *(core)* Introduce Agent + AgentBuilder (embeddable orchestration core)
+- *(xtask)* Guard against empty releases (--allow-empty to override)
+- *(core)* Add providers/registry accessors to Agent
+- *(core)* Add context_window override to AgentBuilder
+- *(core)* Embedder hello-world example (Phase 4, final)
+
+### 🐛 Bug Fixes
+
+- *(release)* Correct git-cliff skip filter for release/bump commits
+
+### 🚜 Refactor
+
+- *(rho)* App owns an Agent — equivalence-gate swap (Phase 2)
+
+### 📚 Documentation
+
+- *(core)* Document embeddable Agent API + public-API characterization (Phase 3)
 ## [0.90.7] - 2026-08-06
 ## [0.90.6] - 2026-07-24
 ## [0.90.5] - 2026-07-23
