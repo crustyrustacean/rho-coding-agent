@@ -421,6 +421,9 @@ pub struct AgentBuilder {
     providers: Option<ProviderRegistry>,
     /// Token-budget override.
     token_budget: Option<TokenBudget>,
+    /// Context-window override, used as the fallback when no catalog model is
+    /// known (mirrors the `--token-budget` flag).
+    context_window: Option<u32>,
     /// Max-iterations override.
     max_iterations: Option<u32>,
     /// Session construction mode.
@@ -443,6 +446,7 @@ impl Default for AgentBuilder {
             tools: None,
             providers: None,
             token_budget: None,
+            context_window: None,
             max_iterations: None,
             session_mode: SessionMode::Ephemeral,
             check_consent: true,
@@ -517,6 +521,13 @@ impl AgentBuilder {
     /// Override the token budget.
     pub fn token_budget(mut self, budget: TokenBudget) -> Self {
         self.token_budget = Some(budget);
+        self
+    }
+
+    /// Override the context window (used as the fallback when the model is not
+    /// in the built-in catalog; mirrors the `--token-budget` flag).
+    pub fn context_window(mut self, context_window: u32) -> Self {
+        self.context_window = Some(context_window);
         self
     }
 
@@ -628,9 +639,13 @@ impl AgentBuilder {
         let tool_schemas = registry.tool_definitions();
 
         // Token budget.
-        let token_budget = self
-            .token_budget
-            .unwrap_or_else(|| resolve_budget(&config, resolved.catalog_model.as_ref()));
+        let token_budget = self.token_budget.unwrap_or_else(|| {
+            resolve_budget(
+                &config,
+                resolved.catalog_model.as_ref(),
+                self.context_window,
+            )
+        });
 
         // Agent config (with max-iterations override).
         let mut agent_config = AgentConfig::from_config(&config);
@@ -820,9 +835,13 @@ fn ensure_openrouter_provider(registry: &mut ProviderRegistry) -> usize {
 }
 
 /// Resolve the token budget from config + optional catalog enrichment.
-fn resolve_budget(config: &RhoConfig, catalog_model: Option<&Model>) -> TokenBudget {
+fn resolve_budget(
+    config: &RhoConfig,
+    catalog_model: Option<&Model>,
+    ctx_override: Option<u32>,
+) -> TokenBudget {
     let context_window = catalog_model.map_or_else(
-        || config.agent.token_budget as usize,
+        || ctx_override.unwrap_or(config.agent.token_budget) as usize,
         |m| usize::try_from(m.context_window).unwrap_or(usize::MAX),
     );
     let configured_reserve = config.agent.completion_reserve as usize;
