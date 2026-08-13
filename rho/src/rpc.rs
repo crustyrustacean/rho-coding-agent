@@ -365,6 +365,35 @@ pub async fn run_rpc(app: App) -> Result<()> {
 /// queued as [`WorkItem`]s for this task, which owns `&mut App` and processes
 /// them serially. Exits cleanly on transport disconnect.
 ///
+/// Resolve a live per-turn cancellation token from the shared slot.
+///
+/// Each turn must run against a *live* token so a mid-turn `abort` (which
+/// cancels the shared slot) can reach it. A prior `abort` leaves the shared
+/// token cancelled forever, so when that is detected the slot is replaced
+/// with a fresh token and the turn receives a clone of it.
+///
+/// Writing the fresh token *back into the slot* is the load-bearing detail:
+/// an earlier version returned a disconnected `CancellationToken::new()`
+/// without resetting the slot, so the first `abort` of the session worked but
+/// every subsequent `abort` cancelled an already-dead token and silently
+/// no-op'd the running turn.
+///
+/// Mutex poison is recovered silently and independently of cancellation
+/// state (a poison does not, by itself, warrant a fresh token).
+fn resolve_turn_cancel(cancel: &SharedCancel) -> CancellationToken {
+    let mut token = cancel
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if token.is_cancelled() {
+        debug!("resetting cancel slot left cancelled by a prior abort");
+        let fresh = CancellationToken::new();
+        *token = fresh.clone();
+        fresh
+    } else {
+        token.clone()
+    }
+}
+
 /// # Errors
 ///
 /// Returns an error if the transport fails unexpectedly.
@@ -680,19 +709,9 @@ async fn handle_prompt(
         transport: Arc::clone(&transport),
         approval_rx: Arc::clone(approval_rx),
     };
-    // Per-turn cancellation token: clone the live SharedCancel token (or a
-    // fresh one if it was cancelled by a prior abort / a poisoned mutex).
-    let turn_cancel = {
-        let token = cancel
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if token.is_cancelled() {
-            warn!("cancel token cancelled but mutex poisoned; using fresh token");
-            CancellationToken::new()
-        } else {
-            token.clone()
-        }
-    };
+    // Per-turn cancellation token: a live clone of the shared slot, resetting
+    // the slot if a prior abort left it cancelled (see `resolve_turn_cancel`).
+    let turn_cancel = resolve_turn_cancel(&cancel);
     let inputs = rho_core::TurnInputs {
         observer: &composite,
         gate: &gate,
@@ -1780,6 +1799,70 @@ mod tests {
         let ends = events_of_type(&events, "agent/end");
         assert_eq!(ends.len(), 1);
         assert_eq!(ends[0]["params"]["reply"], "recovered");
+    }
+
+    #[test]
+    fn resolve_turn_cancel_returns_live_clone_when_slot_unused() {
+        let cancel: SharedCancel = Arc::new(std::sync::Mutex::new(CancellationToken::new()));
+        let turn = resolve_turn_cancel(&cancel);
+        assert!(!turn.is_cancelled(), "turn must get a live token");
+        assert!(
+            !cancel.lock().unwrap().is_cancelled(),
+            "unused slot must stay live"
+        );
+    }
+
+    #[test]
+    fn resolve_turn_cancel_resets_slot_so_next_abort_reaches_turn() {
+        // Pinpoint regression for the second-abort-no-op bug: a prior abort
+        // leaves the shared slot cancelled. The resolver must reset the slot
+        // AND hand the turn a token that shares state with it, so a subsequent
+        // abort cancels the running turn. The old code returned a disconnected
+        // `CancellationToken::new()` and never reset the slot, so the second
+        // abort silently missed.
+        let cancel: SharedCancel = Arc::new(std::sync::Mutex::new(CancellationToken::new()));
+        cancel.lock().unwrap().cancel(); // simulate a prior abort
+
+        let turn = resolve_turn_cancel(&cancel);
+        assert!(!turn.is_cancelled(), "turn must get a fresh live token");
+        assert!(
+            !cancel.lock().unwrap().is_cancelled(),
+            "slot must be reset to a live token"
+        );
+
+        // A subsequent abort cancels the slot; the turn's token must follow.
+        cancel.lock().unwrap().cancel();
+        assert!(
+            turn.is_cancelled(),
+            "second abort must propagate to the running turn"
+        );
+    }
+
+    #[tokio::test]
+    async fn repeated_aborts_keep_recovering() {
+        // End-to-end companion to the unit test above: across two abort
+        // cycles, every prompt must still complete (the slot must not be left
+        // permanently dead after the first abort).
+        let client = MockChatClient::new(vec![text_events("first"), text_events("second")]);
+        let events = rpc_run(
+            client,
+            echo_registry(),
+            &[
+                r#"{"jsonrpc":"2.0","method":"abort","id":1}"#,
+                r#"{"jsonrpc":"2.0","method":"prompt","params":{"message":"a"},"id":2}"#,
+                r#"{"jsonrpc":"2.0","method":"abort","id":3}"#,
+                r#"{"jsonrpc":"2.0","method":"prompt","params":{"message":"b"},"id":4}"#,
+            ],
+        )
+        .await;
+
+        assert_eq!(
+            events_of_type(&events, "agent/error").len(),
+            0,
+            "no prompt should error after aborts"
+        );
+        let ends = events_of_type(&events, "agent/end");
+        assert_eq!(ends.len(), 2, "both prompts should complete");
     }
 
     #[tokio::test]
