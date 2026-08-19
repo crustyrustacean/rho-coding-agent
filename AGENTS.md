@@ -2,7 +2,7 @@
 
 Guidance for AI assistants working on this codebase.
 
-For architecture, key types, and crate responsibilities, see [`ARCHITECTURE.md`](ARCHITECTURE.md).
+For architecture, key types, and crate responsibilities, see the mdBook at [`docs/src/`](docs/src/SUMMARY.md) — the single source of truth.
 
 ## Extensions
 

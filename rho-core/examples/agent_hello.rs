@@ -11,7 +11,7 @@
 //! To talk to a real model instead, drop the mock [`TestProvider`] and
 //! configure providers/models via `AgentBuilder::config` (a `RhoConfig`,
 //! e.g. loaded from `~/.rho/config.toml`) or the `endpoint` / `api_key_env` /
-//! `model` setters. See `ARCHITECTURE.md` → "Embedding `rho-core`".
+//! `model` setters. See `docs/src/architecture/embedding.md`.
 
 use rho_core::Agent;
 use rho_test_helpers::{MockChatClient, TestProvider, text_events};
@@ -34,7 +34,7 @@ async fn main() {
     // Headless default: a no-op observer, an auto-approve gate, no steering.
     // A frontend would instead call `agent.run_turn(prompt, &TurnInputs { .. })`
     // to inject its own observer, approval gate, steering source, and a per-turn
-    // cancel token (see ARCHITECTURE.md → "Embedding `rho-core`").
+    // cancel token (see docs/src/architecture/embedding.md).
     let result = agent.run("Say hello.").await.expect("turn should succeed");
 
     println!("reply:      {}", result.reply);

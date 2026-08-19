@@ -110,7 +110,7 @@ echo '{"jsonrpc":"2.0","method":"prompt","params":{"message":"list the source fi
     --model my-model
 ```
 
-Output is a stream of JSON-RPC responses and notifications (`ready`, `agent/start`, `message/delta`, `tool/call`, `tool/result`, `agent/end`, etc.). See [ARCHITECTURE.md](ARCHITECTURE.md) for the full protocol reference, or [docs/rpc-schema/openrpc.json](docs/rpc-schema/openrpc.json) for the machine-readable `OpenRPC` schema.
+Output is a stream of JSON-RPC responses and notifications (`ready`, `agent/start`, `message/delta`, `tool/call`, `tool/result`, `agent/end`, etc.). See [docs/src/rpc-mode.md](docs/src/rpc-mode.md) for the full protocol reference, or [docs/rpc-schema/openrpc.json](docs/rpc-schema/openrpc.json) for the machine-readable `OpenRPC` schema.
 
 ## Frontends
 

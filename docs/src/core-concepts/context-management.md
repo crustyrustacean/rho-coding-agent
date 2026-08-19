@@ -12,10 +12,10 @@ Language models have finite context windows. A long coding session — especiall
 
 ```rust
 TokenBudget {
-    context_window: 32768,     // total window size
-    completion_reserve: 4096,  // reserved for the model's reply
+    context_window: 32768,      // total window size (token_budget)
+    completion_reserve: 16384, // reserved for the model's reply
 }
-// prompt_budget() = context_window - completion_reserve = 28672
+// prompt_budget() = context_window - completion_reserve = 16384
 ```
 
 The `completion_reserve` ensures the model always has room to generate a reply. The `prompt_budget()` is the hard limit on how many tokens of conversation history are sent.

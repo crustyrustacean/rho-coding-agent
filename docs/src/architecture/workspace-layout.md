@@ -13,13 +13,13 @@ rho-coding-agent/
 │   └── src/
 │       ├── main.rs           # Thin: parse CLI, build App, run
 │       ├── lib.rs            # Module declarations
-│       ├── cli.rs            # `Cli` — CLI flags with clap
+│       ├── cli.rs            # `Cli` — CLI flags with clap; `Command::Extension` subcommand
 │       ├── app.rs            # `App` — runtime state, build/run orchestration, extension loading
-│       ├── model.rs          # Model resolution (config-as-truth, provider-first)
+│       ├── ext_cli.rs        # `rho extension` subcommand handlers (sync/install/remove/list)
 │       ├── ext_observer.rs   # `CompositeObserver` — fans out to RPC observer + extension observers
 │       ├── rpc.rs            # JSON-RPC 2.0: `run_rpc`, `run_rpc_on`, observer, approval gate
-│       ├── rpc_wire.rs        # Typed wire-format structs (params, results, notifications)
-│       ├── transport.rs        # `Transport` trait, `StdioTransport` (newline-delimited JSON)
+│       ├── rpc_wire.rs       # Typed wire-format structs (params, results, notifications)
+│       ├── transport.rs      # `Transport` trait, `StdioTransport` (newline-delimited JSON)
 │       └── presenter/
 │           └── rpc.rs        # `RpcPresenter` — diagnostic output to stderr
 ├── rho-ai/                 # Unified LLM provider abstraction
@@ -58,6 +58,7 @@ rho-coding-agent/
 │   └── src/
 │       ├── lib.rs           # Module declarations, convenience re-exports
 │       ├── agent.rs         # Agent loop state machine, `run_loop`, `AgentResult`, `CollectingObserver`, `LoopFinishReason`, phase tracking, auto-compact
+│       ├── builder.rs       # `Agent` + `AgentBuilder` — embeddable orchestration core, `TurnInputs`, model resolution
 │       ├── approval.rs      # `ApprovalPolicy`, `ApprovalGate` traits
 │       ├── client.rs        # `RhoAiClient`, `resolve_api_key`, `is_local_endpoint`, `ModelInfo`, `ModelList`
 │       ├── client/          # Module directory

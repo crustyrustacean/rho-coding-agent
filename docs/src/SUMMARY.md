@@ -6,6 +6,7 @@
   - [Workspace Layout](./architecture/workspace-layout.md)
   - [Crate Responsibilities](./architecture/crate-responsibilities.md)
   - [Dependency Flow](./architecture/dependency-flow.md)
+  - [Embedding `rho-core`](./architecture/embedding.md)
 - [Core Concepts](./core-concepts.md)
   - [Agent Loop](./core-concepts/agent-loop.md)
   - [Tool Trait](./core-concepts/tool-trait.md)
@@ -27,4 +28,3 @@
 - [Development](./development.md)
   - [Testing](./development/testing.md)
   - [Dependency Philosophy](./development/dependency-philosophy.md)
-  - [Roadmap](./development/roadmap.md)

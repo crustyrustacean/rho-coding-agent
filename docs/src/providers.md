@@ -350,12 +350,12 @@ token_budget = 131072
 
 Or via CLI: `--token-budget 131072`.
 
-The budget is split into a **prompt budget** (conversation + system prompt + tool schemas) and a **completion reserve** (room for the model's reply). The default reserve is 8192 tokens.
+The budget is split into a **prompt budget** (conversation + system prompt + tool schemas) and a **completion reserve** (room for the model's reply). The default reserve is 16384 tokens.
 
 Run rho with `RUST_LOG=info` to see budget diagnostics at startup:
 
 ```
-budget: 131072T context, 8192T reserve, 122880T prompt (4700T system + 2000T schema = 6700T overhead, 116180T for conversation)
+budget: 131072T context, 16384T reserve, 114688T prompt (4700T system + 2000T schema = 6700T overhead, 107988T for conversation)
 ```
 
 ## The `type`, `name`, `preset`, and `api` fields
