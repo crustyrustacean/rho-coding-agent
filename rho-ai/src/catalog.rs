@@ -378,7 +378,10 @@ mod tests {
         let usage = StreamUsage::new(1_000_000, 500_000);
         let cost = model.cost_for(&usage).expect("pricing available");
         let expected = model.cost.input + 0.5 * model.cost.output;
-        assert!((cost - expected).abs() < 1e-9, "got {cost}, expected {expected}");
+        assert!(
+            (cost - expected).abs() < 1e-9,
+            "got {cost}, expected {expected}"
+        );
     }
 
     #[test]
@@ -393,7 +396,10 @@ mod tests {
         } else {
             model.cost.input
         };
-        assert!((cost - cache_rate).abs() < 1e-9, "got {cost}, expected {cache_rate}");
+        assert!(
+            (cost - cache_rate).abs() < 1e-9,
+            "got {cost}, expected {cache_rate}"
+        );
     }
 
     #[test]

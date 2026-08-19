@@ -1,3 +1,22 @@
+## [0.91.2] - 2026-08-19
+
+### 🚀 Features
+
+- *(core)* Suggest similar models on failed switch
+
+### 🐛 Bug Fixes
+
+- *(rho-ai)* Make catalog cost tests drift-proof
+
+### 📚 Documentation
+
+- Audit and consolidate into the mdBook as single source of truth
+- Remove superseded model-resolution design note
+
+### ⚙️ Miscellaneous Tasks
+
+- *(schema)* Regenerate OpenRPC schema at 0.91.1
+- *(rho-ai)* Regenerate model catalog from OpenRouter
 ## [0.91.1] - 2026-08-13
 
 ### 🚀 Features
