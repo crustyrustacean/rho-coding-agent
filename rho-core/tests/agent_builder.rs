@@ -110,7 +110,7 @@ async fn switch_model_rejects_unknown_model() {
         .expect_err("unknown model should be rejected");
     assert!(matches!(
         err,
-        rho_core::SwitchModelError::ModelNotFound { ref model } if model == "no-such-model"
+        rho_core::SwitchModelError::ModelNotFound { ref model, .. } if model == "no-such-model"
     ));
 }
 

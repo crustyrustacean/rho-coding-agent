@@ -2795,7 +2795,8 @@ mod tests {
         // non-OpenRouter provider). With a catalog model set, route_response
         // should fall back to per-million pricing.
         let mut session = test_session(None, &[], vec![]);
-        session.model = "z-ai/glm-5.2".to_string();
+        let model = "z-ai/glm-5.2";
+        session.model = model.to_string();
         let acc = rho_ai::AccumulatedResponse {
             text: "hi".into(),
             reasoning: String::new(),
@@ -2804,11 +2805,15 @@ mod tests {
             usage: rho_ai::StreamUsage::new(1_000_000, 0),
         };
         let _ = route_response(&acc, &mut session).unwrap();
-        // glm-5.2 input is $0.76/M → 1M tokens should cost $0.76.
+        // Expected cost is derived from the catalog so the assertion does
+        // not rot when `cargo xtask generate-models` refreshes pricing.
+        let expected = rho_ai::catalog::Catalog::resolve(None, model)
+            .map(|m| m.cost.input)
+            .expect("catalog should have z-ai/glm-5.2 pricing");
         let cost = session.api_usage().total_cost;
         assert!(
-            (cost - 0.76).abs() < 1e-9,
-            "expected catalog-derived cost, got {cost}"
+            (cost - expected).abs() < 1e-9,
+            "expected catalog-derived cost {expected}, got {cost}"
         );
     }
 

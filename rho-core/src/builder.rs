@@ -25,7 +25,7 @@ use crate::{
     LoopParams, MechanicalCompactionStrategy, ModelInfo, NopObserver, OpenAiCompatibleProvider,
     Provider, ProviderRegistry, Redactor, RhoConfig, SandboxRoot, Session, SteeringSource,
     TokenBudget, ToolDefinition, ToolRegistry, compose_full_system_prompt, find_latest_session,
-    run_loop,
+    format_suggestions, fuzzy_match, run_loop,
 };
 use async_trait::async_trait;
 use rho_ai::catalog::{Catalog, Model};
@@ -68,6 +68,10 @@ pub enum SwitchModelError {
     ModelNotFound {
         /// The rejected model identifier.
         model: String,
+        /// Formatted fuzzy-match suggestions from the providers' advertised
+        /// models ("  qwen3-8b (provider: local)" lines), empty when no
+        /// candidate clears the similarity threshold.
+        suggestions: String,
     },
     /// `provider:model` syntax named a provider that isn't configured.
     UnknownProvider {
@@ -83,11 +87,18 @@ impl SwitchModelError {
     #[must_use]
     pub fn message(&self) -> String {
         match self {
-            Self::ModelNotFound { model } => format!(
-                "model '{model}' was not found on any provider; use /models to list \
-                 available models, or 'provider:{model}' to target a provider that \
-                 does not advertise models via /v1/models"
-            ),
+            Self::ModelNotFound { model, suggestions } => {
+                let mut msg = format!(
+                    "model '{model}' was not found on any provider; use /models to list \
+                     available models, or 'provider:{model}' to target a provider that \
+                     does not advertise models via /v1/models"
+                );
+                if !suggestions.is_empty() {
+                    msg.push_str("\nDid you mean:\n");
+                    msg.push_str(suggestions);
+                }
+                msg
+            }
             Self::UnknownProvider { provider, model } => format!(
                 "unknown provider '{provider}' for model '{model}'; use /providers to \
                  list configured providers"
@@ -255,8 +266,20 @@ impl Agent {
         } else if let Some(index) = self.providers.find_model_index(model_id).await {
             self.active_provider_index = index;
         } else {
+            // The probe already fetched every provider's advertised models;
+            // reuse that data to suggest close matches instead of making the
+            // user re-run /models themselves.
+            let available: Vec<(&str, String)> = self
+                .providers
+                .list_all_models()
+                .await
+                .into_iter()
+                .map(|(name, info)| (name, info.id().to_owned()))
+                .collect();
+            let suggestions = format_suggestions(&fuzzy_match(model_id, &available, 0.5), 5);
             return Err(SwitchModelError::ModelNotFound {
                 model: model_id.to_owned(),
+                suggestions,
             });
         }
 
@@ -1069,10 +1092,20 @@ mod tests {
     fn switch_model_error_messages_name_the_offender() {
         assert!(
             SwitchModelError::ModelNotFound {
-                model: "z.ai/x".into()
+                model: "z.ai/x".into(),
+                suggestions: String::new(),
             }
             .message()
             .contains("z.ai/x")
+        );
+        // Suggestions append a "Did you mean" block to the message.
+        assert!(
+            SwitchModelError::ModelNotFound {
+                model: "qwen3-8".into(),
+                suggestions: "  qwen3-8b (provider: local)".into(),
+            }
+            .message()
+            .contains("Did you mean:\n  qwen3-8b (provider: local)")
         );
         assert!(
             SwitchModelError::UnknownProvider {
