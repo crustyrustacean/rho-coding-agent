@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Roadmap - rho</title>
+        <title>Embedding rho-core - rho</title>
 
 
         <!-- Custom HTML head -->
@@ -88,7 +88,7 @@
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded "><a href="../introduction.html"><strong aria-hidden="true">1.</strong> Introduction</a></li><li class="chapter-item expanded "><a href="../getting-started.html"><strong aria-hidden="true">2.</strong> Getting Started</a></li><li class="chapter-item expanded "><a href="../architecture.html"><strong aria-hidden="true">3.</strong> Architecture</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../architecture/workspace-layout.html"><strong aria-hidden="true">3.1.</strong> Workspace Layout</a></li><li class="chapter-item expanded "><a href="../architecture/crate-responsibilities.html"><strong aria-hidden="true">3.2.</strong> Crate Responsibilities</a></li><li class="chapter-item expanded "><a href="../architecture/dependency-flow.html"><strong aria-hidden="true">3.3.</strong> Dependency Flow</a></li></ol></li><li class="chapter-item expanded "><a href="../core-concepts.html"><strong aria-hidden="true">4.</strong> Core Concepts</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../core-concepts/agent-loop.html"><strong aria-hidden="true">4.1.</strong> Agent Loop</a></li><li class="chapter-item expanded "><a href="../core-concepts/tool-trait.html"><strong aria-hidden="true">4.2.</strong> Tool Trait</a></li><li class="chapter-item expanded "><a href="../core-concepts/chatclient-provider-trait.html"><strong aria-hidden="true">4.3.</strong> Provider Architecture</a></li><li class="chapter-item expanded "><a href="../core-concepts/approval-policy.html"><strong aria-hidden="true">4.4.</strong> Approval Policy</a></li><li class="chapter-item expanded "><a href="../core-concepts/context-management.html"><strong aria-hidden="true">4.5.</strong> Context Management</a></li><li class="chapter-item expanded "><a href="../core-concepts/sessions.html"><strong aria-hidden="true">4.6.</strong> Sessions</a></li><li class="chapter-item expanded "><a href="../core-concepts/project-context-files.html"><strong aria-hidden="true">4.7.</strong> Project Context Files</a></li></ol></li><li class="chapter-item expanded "><a href="../security.html"><strong aria-hidden="true">5.</strong> Security</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../security/threat-model.html"><strong aria-hidden="true">5.1.</strong> Threat Model</a></li><li class="chapter-item expanded "><a href="../security/file-sandbox.html"><strong aria-hidden="true">5.2.</strong> File Sandbox</a></li><li class="chapter-item expanded "><a href="../security/secret-redaction.html"><strong aria-hidden="true">5.3.</strong> Secret Redaction</a></li><li class="chapter-item expanded "><a href="../security/prompt-injection-defense.html"><strong aria-hidden="true">5.4.</strong> Prompt Injection Defense</a></li><li class="chapter-item expanded "><a href="../security/egress-control.html"><strong aria-hidden="true">5.5.</strong> Egress Control</a></li></ol></li><li class="chapter-item expanded "><a href="../configuration.html"><strong aria-hidden="true">6.</strong> Configuration</a></li><li class="chapter-item expanded "><a href="../providers.html"><strong aria-hidden="true">7.</strong> External Providers</a></li><li class="chapter-item expanded "><a href="../rpc-mode.html"><strong aria-hidden="true">8.</strong> RPC Mode</a></li><li class="chapter-item expanded "><a href="../extensions.html"><strong aria-hidden="true">9.</strong> Extensions</a></li><li class="chapter-item expanded "><a href="../development.html"><strong aria-hidden="true">10.</strong> Development</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../development/testing.html"><strong aria-hidden="true">10.1.</strong> Testing</a></li><li class="chapter-item expanded "><a href="../development/dependency-philosophy.html"><strong aria-hidden="true">10.2.</strong> Dependency Philosophy</a></li><li class="chapter-item expanded "><a href="../development/roadmap.html" class="active"><strong aria-hidden="true">10.3.</strong> Roadmap</a></li></ol></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded "><a href="../introduction.html"><strong aria-hidden="true">1.</strong> Introduction</a></li><li class="chapter-item expanded "><a href="../getting-started.html"><strong aria-hidden="true">2.</strong> Getting Started</a></li><li class="chapter-item expanded "><a href="../architecture.html"><strong aria-hidden="true">3.</strong> Architecture</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../architecture/workspace-layout.html"><strong aria-hidden="true">3.1.</strong> Workspace Layout</a></li><li class="chapter-item expanded "><a href="../architecture/crate-responsibilities.html"><strong aria-hidden="true">3.2.</strong> Crate Responsibilities</a></li><li class="chapter-item expanded "><a href="../architecture/dependency-flow.html"><strong aria-hidden="true">3.3.</strong> Dependency Flow</a></li><li class="chapter-item expanded "><a href="../architecture/embedding.html" class="active"><strong aria-hidden="true">3.4.</strong> Embedding rho-core</a></li></ol></li><li class="chapter-item expanded "><a href="../core-concepts.html"><strong aria-hidden="true">4.</strong> Core Concepts</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../core-concepts/agent-loop.html"><strong aria-hidden="true">4.1.</strong> Agent Loop</a></li><li class="chapter-item expanded "><a href="../core-concepts/tool-trait.html"><strong aria-hidden="true">4.2.</strong> Tool Trait</a></li><li class="chapter-item expanded "><a href="../core-concepts/chatclient-provider-trait.html"><strong aria-hidden="true">4.3.</strong> Provider Architecture</a></li><li class="chapter-item expanded "><a href="../core-concepts/approval-policy.html"><strong aria-hidden="true">4.4.</strong> Approval Policy</a></li><li class="chapter-item expanded "><a href="../core-concepts/context-management.html"><strong aria-hidden="true">4.5.</strong> Context Management</a></li><li class="chapter-item expanded "><a href="../core-concepts/sessions.html"><strong aria-hidden="true">4.6.</strong> Sessions</a></li><li class="chapter-item expanded "><a href="../core-concepts/project-context-files.html"><strong aria-hidden="true">4.7.</strong> Project Context Files</a></li></ol></li><li class="chapter-item expanded "><a href="../security.html"><strong aria-hidden="true">5.</strong> Security</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../security/threat-model.html"><strong aria-hidden="true">5.1.</strong> Threat Model</a></li><li class="chapter-item expanded "><a href="../security/file-sandbox.html"><strong aria-hidden="true">5.2.</strong> File Sandbox</a></li><li class="chapter-item expanded "><a href="../security/secret-redaction.html"><strong aria-hidden="true">5.3.</strong> Secret Redaction</a></li><li class="chapter-item expanded "><a href="../security/prompt-injection-defense.html"><strong aria-hidden="true">5.4.</strong> Prompt Injection Defense</a></li><li class="chapter-item expanded "><a href="../security/egress-control.html"><strong aria-hidden="true">5.5.</strong> Egress Control</a></li></ol></li><li class="chapter-item expanded "><a href="../configuration.html"><strong aria-hidden="true">6.</strong> Configuration</a></li><li class="chapter-item expanded "><a href="../providers.html"><strong aria-hidden="true">7.</strong> External Providers</a></li><li class="chapter-item expanded "><a href="../rpc-mode.html"><strong aria-hidden="true">8.</strong> RPC Mode</a></li><li class="chapter-item expanded "><a href="../extensions.html"><strong aria-hidden="true">9.</strong> Extensions</a></li><li class="chapter-item expanded "><a href="../development.html"><strong aria-hidden="true">10.</strong> Development</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../development/testing.html"><strong aria-hidden="true">10.1.</strong> Testing</a></li><li class="chapter-item expanded "><a href="../development/dependency-philosophy.html"><strong aria-hidden="true">10.2.</strong> Dependency Philosophy</a></li></ol></li></ol>
             </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -150,7 +150,7 @@
                         <a href="https://github.com/crustyrustacean/rho-coding-agent" title="Git repository" aria-label="Git repository">
                             <i id="git-repository-button" class="fa fa-github"></i>
                         </a>
-                        <a href="https://github.com/crustyrustacean/rho-coding-agent/edit/trunk/docs/src/development/roadmap.md" title="Suggest an edit" aria-label="Suggest an edit">
+                        <a href="https://github.com/crustyrustacean/rho-coding-agent/edit/trunk/docs/src/architecture/embedding.md" title="Suggest an edit" aria-label="Suggest an edit">
                             <i id="git-edit-button" class="fa fa-edit"></i>
                         </a>
 
@@ -179,54 +179,49 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="roadmap"><a class="header" href="#roadmap">Roadmap</a></h1>
-<p>rho is developed in phases, each building on the last. The current version is <strong>0.84.7</strong>.</p>
-<h2 id="phase-summary"><a class="header" href="#phase-summary">Phase summary</a></h2>
-<div class="table-wrapper"><table><thead><tr><th>Phase</th><th>Status</th><th>Summary</th></tr></thead><tbody>
-<tr><td>1a: The Agent Loop</td><td>✅ Complete</td><td>Agent loop, tool registry, <code>LlmService</code> trait, conversation management</td></tr>
-<tr><td>1b: Security Surface</td><td>✅ Complete</td><td>Approval gate, file sandbox, context-file trust, secret redaction, untrusted-data framing</td></tr>
-<tr><td>2: Shell, File Tools &amp; Cross-Platform</td><td>✅ Complete</td><td>PowerShell-native shell, file tools, config loader, command denylist, cross-platform</td></tr>
-<tr><td>2.5: Adaptive-Resolution Context</td><td>✅ Complete</td><td>Session tree, resolution levels, calibrated budget, tool-result bounding, amnesia fix, JSONL persistence</td></tr>
-<tr><td>3: Rust Tooling and Tree-Sitter</td><td>✅ Complete</td><td><code>rho-highlight</code>, structured diagnostics, <code>CargoCheck</code>/<code>Clippy</code>/<code>Test</code>/<code>Fix</code>/<code>RustcExplain</code>, node-splitting validation</td></tr>
-<tr><td>3.5: Rust Standard Library Reference</td><td>✅ Complete</td><td>Local rustdoc lookup tool for stdlib API docs</td></tr>
-<tr><td>3.6: crates.io Research</td><td>✅ Complete</td><td>Crate metadata lookup, search, version history, dependency inspection</td></tr>
-<tr><td>3.8: Hashline Editing</td><td>✅ Complete</td><td>Content-addressed line references with fuzzy anchor matching</td></tr>
-<tr><td>3.9: Streaming &amp; Live Output</td><td>✅ Complete</td><td>SSE streaming, <code>AgentObserver</code> trait, streaming output via JSON-RPC notifications</td></tr>
-<tr><td>3.10: Multi-Provider &amp; Model Picker</td><td>✅ Complete</td><td><code>Provider</code> trait, <code>ProviderRegistry</code>, <code>/models</code>, <code>/model</code></td></tr>
-<tr><td>3.11: Session Discovery &amp; Context Visibility</td><td>✅ Complete</td><td><code>find_latest_session()</code>, <code>list_sessions()</code>, <code>rho -c</code>, <code>/sessions</code>, <code>/status</code>, context status bar</td></tr>
-<tr><td>3.12: RPC Mode</td><td>✅ Complete</td><td>Headless JSON-RPC 2.0 over stdin/stdout, <code>run_rpc_on&lt;R, W&gt;</code>, approval round-trips, integration tests</td></tr>
-<tr><td>4: Terminal UI</td><td>🔜 Next</td><td>Rich TUI replacing the bare REPL</td></tr>
-<tr><td>5: TypeScript Extensions</td><td>✅ Complete</td><td><code>rho-ext</code> crate, V8/deno-core runtime, <code>ExtensionLoader</code>, <code>DenoTool</code>, <code>DenoObserver</code>, hot reload, config integration, type definitions</td></tr>
-<tr><td>6: LSP</td><td>Deferred</td><td>rust-analyzer integration</td></tr>
-</tbody></table>
-</div>
-<h2 id="context-management-enhancement-062064"><a class="header" href="#context-management-enhancement-062064">Context Management Enhancement (0.62–0.64)</a></h2>
-<p>A series of incremental improvements to context management, addressing structural issues that caused context exhaustion and amnesia:</p>
-<div class="table-wrapper"><table><thead><tr><th>Phase</th><th>Summary</th><th>Version</th></tr></thead><tbody>
-<tr><td>Graduated Resolution</td><td>Added <code>Outlined</code> and <code>Summarized</code> intermediate fidelity levels</td><td>0.62</td></tr>
-<tr><td>Mechanical Outlining</td><td>12 tool-specific structural summary formatters</td><td>0.62</td></tr>
-<tr><td>Selective Turn-Internal Eviction</td><td>Per-entry downgrade planner (Full → Outlined → Summarized)</td><td>0.63</td></tr>
-<tr><td>Phase Detection</td><td><code>SessionPhase</code> state machine tracking exploration/execution/verification</td><td>0.63</td></tr>
-<tr><td>Phase-Aware Compaction</td><td>Narrative summaries grouped by session phase</td><td>0.64</td></tr>
-<tr><td>LLM Compaction</td><td>Model-generated narrative notes (opt-in, graceful fallback)</td><td>0.64</td></tr>
-<tr><td>Enhanced ContextStats</td><td>Token distribution by role, resolution, and phase</td><td>0.64</td></tr>
-<tr><td>Config fields removed</td><td><code>context_pressure_threshold</code>, <code>context_pressure_interval</code> removed from code; structural mechanisms handle context management</td><td>0.81</td></tr>
-</tbody></table>
-</div>
-<h2 id="upcoming-phases"><a class="header" href="#upcoming-phases">Upcoming phases</a></h2>
-<h3 id="phase-4--terminal-ui"><a class="header" href="#phase-4--terminal-ui">Phase 4 — Terminal UI</a></h3>
-<p>Rich TUI replacing the bare REPL. Streaming output, approval prompts with rich previews, diagnostic panels, syntax highlighting. Built on <code>ratatui</code>/<code>crossterm</code>.</p>
-<h3 id="phase-6--lsp"><a class="header" href="#phase-6--lsp">Phase 6 — LSP</a></h3>
-<p><code>rust-analyzer</code> integration for real-time diagnostics, go-to-definition, and refactoring support. Deferred until after the TUI is stable.</p>
+                        <h1 id="embedding-rho-core"><a class="header" href="#embedding-rho-core">Embedding <code>rho-core</code></a></h1>
+<blockquote>
+<p>A runnable version of the example below lives at <code>rho-core/examples/agent_hello.rs</code> (<code>cargo run -p rho-core --example agent_hello</code>).</p>
+</blockquote>
+<p><code>rho-core</code> is an embeddable library: <code>Agent</code> (built via <code>AgentBuilder</code>) owns the long-lived agent state and exposes a programmatic API, so every consumer — the <code>rho</code> binary's RPC loop, a Makepad or web frontend, headless scripts, benches — is a thin wrapper. Construction is decoupled from CLI flags, config files, and stdio.</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>use rho_core::{Agent, AgentBuilder, TurnInputs};
+
+let mut agent = Agent::builder()
+    .config(cfg)              // or .load_config_at(sandbox), or pure setters
+    .ephemeral()              // in-memory session (also: persisted / resume / continue_last)
+    .model("gpt-4o")
+    .tools(tool_registry)     // host registers tools/extensions/memory
+    .build()?;                // -&gt; Result&lt;Agent, AgentBuildError&gt;
+
+// Headless / embedder default (auto-approve gate, no-op observer, no steering):
+let result = agent.run("list the source files").await?;   // -&gt; AgentResult
+
+// Frontend path: inject a UI observer, an approval gate, steering, and a
+// per-turn cancel token via TurnInputs.
+let result = agent.run_turn(prompt, &amp;TurnInputs {
+    observer: &amp;my_ui,
+    gate: &amp;my_approval_gate,
+    steering: Some(&amp;my_steering_queue),
+    cancel: cancel_token,
+}).await?;
+<span class="boring">}</span></code></pre></pre>
+<p><strong>Separation principle.</strong> The kernel owns <em>"I am a configured agent; run a prompt."</em> Host-only concerns stay <em>out</em> of <code>rho-core</code> and are composed on top by the host (<code>App</code> in the <code>rho</code> binary): the TypeScript extension runtime (<code>rho-ext</code>), the tracing subscriber, interactive consent prompts, and startup banners. Per-turn, per-connection inputs (observer / approval gate / steering / cancel token) are supplied via <code>TurnInputs</code> because they are tied to a UI connection and may change between turns (e.g. on extension reload). <code>rho-core</code> therefore has no dependency on <code>rho-ext</code> or <code>tracing-appender</code>.</p>
+<p><strong>Consent / presenter seam.</strong> External-provider consent is enforced inside the builder: if external providers are configured and consent was not granted (<code>.accept_external_consent()</code>), <code>build()</code> returns <code>AgentBuildError::ExternalConsentRequired</code>. The kernel emits diagnostics through <code>tracing</code> and returns structured errors; the host formats human-facing banners (the <code>rho</code> binary uses <code>RpcPresenter</code> to stderr, separate from the JSON-RPC stdout channel).</p>
+<p><strong>Abort / reset.</strong> The cancel token in <code>TurnInputs</code> is per-turn by design — the RPC layer swaps a fresh token in before each turn so a prior <code>abort</code> doesn't poison the next. Headless <code>run()</code> clones the agent's own token.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../development/dependency-philosophy.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../architecture/dependency-flow.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
+                            <a rel="next prefetch" href="../core-concepts.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
 
                         <div style="clear: both"></div>
                     </nav>
@@ -234,10 +229,13 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../development/dependency-philosophy.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../architecture/dependency-flow.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
+                    <a rel="next prefetch" href="../core-concepts.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
             </nav>
 
         </div>
