@@ -372,22 +372,28 @@ mod tests {
 
     #[test]
     fn cost_for_known_model_matches_per_million_pricing() {
-        // glm-5.2 in the generated catalog: input 0.76, output 2.42 per 1M.
+        // Derive the expected cost from the catalog itself so the test
+        // survives catalog regenerations (OpenRouter prices change often).
         let model = Catalog::find_built_in("z-ai/glm-5.2").expect("glm-5.2 present");
         let usage = StreamUsage::new(1_000_000, 500_000);
         let cost = model.cost_for(&usage).expect("pricing available");
-        // 1M input @ $0.76 + 0.5M output @ $2.42 = 0.76 + 1.21 = 1.97
-        assert!((cost - 1.97).abs() < 1e-9, "got {cost}");
+        let expected = model.cost.input + 0.5 * model.cost.output;
+        assert!((cost - expected).abs() < 1e-9, "got {cost}, expected {expected}");
     }
 
     #[test]
     fn cost_for_prices_cached_reads_at_discount() {
         let model = Catalog::find_built_in("z-ai/glm-5.2").expect("glm-5.2 present");
-        // glm-5.2 reports cache_read 0.14 per 1M.
         let usage = StreamUsage::new(1_000_000, 0).with_cached(1_000_000);
         let cost = model.cost_for(&usage).expect("pricing available");
-        // All input cached: 1M @ $0.14 = 0.14
-        assert!((cost - 0.14).abs() < 1e-9, "got {cost}");
+        // All input cached: 1M @ cache_read. Fall back to the input rate when
+        // the catalog reports no cache_read, mirroring `cost_for`'s contract.
+        let cache_rate = if model.cost.cache_read > 0.0 {
+            model.cost.cache_read
+        } else {
+            model.cost.input
+        };
+        assert!((cost - cache_rate).abs() < 1e-9, "got {cost}, expected {cache_rate}");
     }
 
     #[test]
