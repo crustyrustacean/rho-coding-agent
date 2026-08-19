@@ -1343,6 +1343,27 @@ mod tests {
             .collect()
     }
 
+    /// Wait until the captured outbound buffer contains at least one
+    /// message of the given method, polling so the single-threaded test
+    /// runtime interleaves the driver with the RPC loop. Returns once seen
+    /// (or panics after ~5s of wall time to fail fast on a stuck loop).
+    async fn await_event(out: &Arc<std::sync::Mutex<Vec<u8>>>, method: &str) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            {
+                let buf = out.lock().unwrap().clone();
+                if !events_of_type(&parse_output(&buf), method).is_empty() {
+                    return;
+                }
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for a `{method}` notification"
+            );
+            tokio::task::yield_now().await;
+        }
+    }
+
     // ═══════════════════════════════════════════════════════════════════════
     // 1. Unit tests for helpers
     // ═══════════════════════════════════════════════════════════════════════
@@ -1840,29 +1861,132 @@ mod tests {
 
     #[tokio::test]
     async fn repeated_aborts_keep_recovering() {
-        // End-to-end companion to the unit test above: across two abort
-        // cycles, every prompt must still complete (the slot must not be left
-        // permanently dead after the first abort).
+        // End-to-end companion to the unit test above: aborts that land in
+        // the idle gap between turns must not poison the cancel slot — every
+        // subsequent prompt still completes.
+        //
+        // Uses `ChannelTransport` (not the up-front `Cursor` of `rpc_run`) so
+        // the driver controls WHEN each abort becomes readable: only after
+        // the previous turn's `agent/end` is observed. A `Cursor` feeds all
+        // lines immediately, letting the reader demux `abort` while a turn is
+        // still live — cancelling a legitimately running turn and emitting
+        // `agent/error`, which raced (observed on CI/Linux, not Windows).
         let client = MockChatClient::new(vec![text_events("first"), text_events("second")]);
-        let events = rpc_run(
-            client,
-            echo_registry(),
-            &[
-                r#"{"jsonrpc":"2.0","method":"abort","id":1}"#,
-                r#"{"jsonrpc":"2.0","method":"prompt","params":{"message":"a"},"id":2}"#,
-                r#"{"jsonrpc":"2.0","method":"abort","id":3}"#,
-                r#"{"jsonrpc":"2.0","method":"prompt","params":{"message":"b"},"id":4}"#,
-            ],
-        )
-        .await;
+        let (msg_tx, msg_rx) = mpsc::unbounded_channel::<Value>();
+        let out = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let transport: Arc<dyn Transport> = Arc::new(ChannelTransport {
+            inbound: tokio::sync::Mutex::new(msg_rx),
+            outbound: Arc::clone(&out),
+        });
+        let app = test_app(client, echo_registry());
 
+        let rpc = run_rpc_on(app, Arc::clone(&transport));
+        let value = Arc::clone(&out);
+        let driver = async move {
+            // Abort while idle, then run a turn to completion.
+            msg_tx
+                .send(json!({"jsonrpc": "2.0", "method": "abort", "id": 1}))
+                .unwrap();
+            msg_tx
+                .send(json!({"jsonrpc": "2.0", "method": "prompt", "params": {"message": "a"}, "id": 2}))
+                .unwrap();
+            await_event(&value, "agent/end").await;
+
+            // Second cycle: abort strictly after the first turn ended, then
+            // another turn — both must complete.
+            msg_tx
+                .send(json!({"jsonrpc": "2.0", "method": "abort", "id": 3}))
+                .unwrap();
+            msg_tx
+                .send(json!({"jsonrpc": "2.0", "method": "prompt", "params": {"message": "b"}, "id": 4}))
+                .unwrap();
+            await_event(&value, "agent/end").await;
+            drop(msg_tx); // EOF so the RPC loop exits
+        };
+        let (rpc_result, ()) = tokio::join!(rpc, driver);
+        rpc_result.expect("run_rpc_on should complete");
+
+        let events = {
+            let buf = out.lock().unwrap().clone();
+            parse_output(&buf)
+        };
         assert_eq!(
             events_of_type(&events, "agent/error").len(),
             0,
-            "no prompt should error after aborts"
+            "no prompt should error after idle aborts"
         );
         let ends = events_of_type(&events, "agent/end");
         assert_eq!(ends.len(), 2, "both prompts should complete");
+    }
+
+    /// An abort that arrives while a turn is genuinely running cancels that
+    /// turn (surfacing `agent/error`), and the slot reset means the NEXT
+    /// prompt still completes — the exact e2e scenario PR #21 fixed.
+    #[tokio::test]
+    async fn abort_mid_turn_cancels_and_next_turn_recovers() {
+        let sync = Arc::new(SyncToolState::default());
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(SyncTool {
+            state: Arc::clone(&sync),
+        }));
+
+        let client = MockChatClient::new(vec![
+            // Iteration 1: model calls the blocking tool (turn holds here).
+            tool_call_events("c1", "sync_tool", "{}"),
+            // After cancellation + recovery: plain reply.
+            text_events("recovered"),
+        ]);
+        let (msg_tx, msg_rx) = mpsc::unbounded_channel::<Value>();
+        let out = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let transport: Arc<dyn Transport> = Arc::new(ChannelTransport {
+            inbound: tokio::sync::Mutex::new(msg_rx),
+            outbound: Arc::clone(&out),
+        });
+        let app = test_app(client, registry);
+
+        let rpc = run_rpc_on(app, Arc::clone(&transport));
+        let value = Arc::clone(&out);
+        let driver = async move {
+            // Start the turn; wait until the tool is executing (mid-turn).
+            msg_tx
+                .send(json!({"jsonrpc": "2.0", "method": "prompt", "params": {"message": "do it"}, "id": 1}))
+                .unwrap();
+            sync.started.notified().await;
+
+            // Abort lands on the LIVE turn: it must cancel.
+            msg_tx
+                .send(json!({"jsonrpc": "2.0", "method": "abort", "id": 2}))
+                .unwrap();
+            // Let the reader demux the abort and the turn observe it.
+            for _ in 0..16 {
+                tokio::task::yield_now().await;
+            }
+            // Release the tool so the cancellation check fires.
+            sync.release.notify_one();
+            await_event(&value, "agent/error").await;
+
+            // The next prompt must still complete — slot was reset.
+            msg_tx
+                .send(json!({"jsonrpc": "2.0", "method": "prompt", "params": {"message": "again"}, "id": 3}))
+                .unwrap();
+            await_event(&value, "agent/end").await;
+            drop(msg_tx);
+        };
+        let (rpc_result, ()) = tokio::join!(rpc, driver);
+        rpc_result.expect("run_rpc_on should complete");
+
+        let events = {
+            let buf = out.lock().unwrap().clone();
+            parse_output(&buf)
+        };
+        assert_eq!(
+            events_of_type(&events, "agent/error").len(),
+            1,
+            "live-turn abort must surface exactly one agent/error"
+        );
+        let ends = events_of_type(&events, "agent/end");
+        assert_eq!(ends.len(), 1, "prompt after mid-turn abort completes");
+        assert_eq!(ends[0]["params"]["reply"], "recovered");
     }
 
     #[tokio::test]
