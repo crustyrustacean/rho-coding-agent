@@ -10,6 +10,7 @@ members = [
     "rho-tools",
     "rho-test-helpers",
     "xtask",
+    "rho-schema-gen",
 ]
 resolver = "3"
 

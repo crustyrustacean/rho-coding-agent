@@ -1,0 +1,21 @@
+[package]
+name = "rho-schema-gen"
+description = "Generate docs/rpc-schema/openrpc.json from the rho-protocol wire types"
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+version.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+rho-protocol = { path = "../rho-protocol", features = ["schema"] }
+serde_json = "1"
+
+[[bin]]
+name = "rho-schema-gen"
+path = "src/main.rs"

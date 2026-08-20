@@ -15,6 +15,8 @@
 //!   [`transport::StdioTransport`] (newline-delimited JSON over any
 //!   `BufRead`/`Write` pair). Future transports (WebSocket, TCP) implement
 //!   the same trait.
+//! - [`schema`] (behind the `schema` cargo feature) — `OpenRPC` document
+//!   from the wire structs, consumed by `cargo xtask schema`.
 //! - [`client`] — a reusable JSON-RPC client: request/response correlation
 //!   with timeouts, notification dispatch, and a child-process helper for the
 //!   spawn-`rho`-and-talk-stdio pattern shared by every frontend.
@@ -24,6 +26,8 @@
 //! produces those, so the protocol crate stays domain-free.
 
 pub mod client;
+#[cfg(feature = "schema")]
+pub mod schema;
 pub mod transport;
 pub mod types;
 

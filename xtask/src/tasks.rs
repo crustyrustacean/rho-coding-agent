@@ -635,15 +635,35 @@ pub fn generate_models() -> Result<()> {
     Ok(())
 }
 
-/// `cargo xtask schema` -- generate/update the `OpenRPC` 1.3.1 schema.
+/// `cargo xtask schema` -- generate the `OpenRPC` 1.3.1 schema.
 ///
-/// Reads the version from workspace `Cargo.toml`, injects it into
-/// `docs/rpc-schema/openrpc.json`, and writes the result.
+/// Runs the generator binary inside the workspace (feature-gated on the
+/// rho-protocol `schema` feature) that emits the `OpenRPC` document from the
+/// same wire structs the dispatch layer uses, then injects the workspace
+/// version and writes `docs/rpc-schema/openrpc.json`. The schema cannot
+/// drift from the code because it is generated from it.
 pub fn schema() -> Result<()> {
     let root = workspace_root();
     let version = read_workspace_version()?;
 
-    let schema_path = std::path::PathBuf::from(root).join("docs/rpc-schema/openrpc.json");
+    // Running via `cargo run` keeps xtask free of any rho-protocol
+    // dependency and of schemars entirely.
+    let status = std::process::Command::new("cargo")
+        .args([
+            "run",
+            "-p",
+            "rho-schema-gen",
+            "--features",
+            "rho-protocol/schema",
+        ])
+        .current_dir(root)
+        .status()
+        .context("schema: failed to spawn cargo run")?;
+    if !status.success() {
+        anyhow::bail!("schema: failed: rho-schema-gen exited with {status}");
+    }
+
+    let schema_path = std::path::PathBuf::from(&root).join("docs/rpc-schema/openrpc.json");
     let content =
         std::fs::read_to_string(&schema_path).context("schema: failed to read openrpc.json")?;
     let mut spec: serde_json::Value =
@@ -655,6 +675,6 @@ pub fn schema() -> Result<()> {
     std::fs::write(&schema_path, output.as_bytes())
         .context("schema: failed to write openrpc.json")?;
 
-    println!("📝 docs/rpc-schema/openrpc.json updated (version: {version})");
+    println!("📝 docs/rpc-schema/openrpc.json generated (version: {version})");
     Ok(())
 }
