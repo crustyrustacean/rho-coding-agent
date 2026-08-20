@@ -2476,6 +2476,7 @@ dependencies = [
  "rho-core",
  "rho-ext",
  "rho-memory",
+ "rho-protocol",
  "rho-test-helpers",
  "rho-tools",
  "serde",
@@ -2570,6 +2571,18 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "rho-protocol"
+version = "0.91.2"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "rho-test-helpers",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

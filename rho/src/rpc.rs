@@ -75,23 +75,25 @@
 
 use crate::app::App;
 use crate::ext_observer::CompositeObserver;
-use crate::rpc_wire::{
-    AgentEndParams, AgentErrorParams, AgentStartParams, ApprovalRequestParams, EmptyResult,
-    ExtensionEntry, GetMessagesResult, GetSessionStatsResult, GetStateResult, ListExtensionsResult,
-    ListModelsResult, ListProvidersResult, ListSessionsResult, ListToolsResult, MessageDeltaParams,
-    ModelEntry, NewSessionResult, PromptErrorResult, PromptParams, PromptResult, ProviderEntry,
-    ReadyParams, ReasoningDeltaParams, ResumeSessionParams, ResumeSessionResult, SessionEntry,
-    SetModelParams, SetModelResult, StateChangeParams, ToolCallParams, ToolDeniedParams, ToolEntry,
-    ToolResultParams, UsageContextWire, UsageDeltaWire, UsageParams, notification, risk_label,
-    state_name,
+use crate::wire_conversions::{
+    agent_end_wire, risk_label, session_stats_wire, state_name, with_api_usage,
 };
-use crate::transport::{ReadResult, StdioTransport, Transport};
 use anyhow::Result;
 use async_trait::async_trait;
 use rho_core::{
     AgentObserver, ChatMessage, ContentBlock, ModelToolCall, ToolResult, agent::SteeringQueue,
     tool::CancellationToken,
 };
+use rho_protocol::{
+    AgentErrorParams, AgentStartParams, ApprovalRequestParams, EmptyResult, ExtensionEntry,
+    GetMessagesResult, GetStateResult, ListExtensionsResult, ListModelsResult, ListProvidersResult,
+    ListSessionsResult, ListToolsResult, MessageDeltaParams, ModelEntry, NewSessionResult,
+    PromptErrorResult, PromptParams, PromptResult, ProviderEntry, ReadyParams,
+    ReasoningDeltaParams, ResumeSessionParams, ResumeSessionResult, SessionEntry, SetModelParams,
+    SetModelResult, StateChangeParams, ToolCallParams, ToolDeniedParams, ToolEntry,
+    ToolResultParams, UsageContextWire, UsageDeltaWire, UsageParams, notification,
+};
+use rho_protocol::{ReadResult, StdioTransport, Transport};
 use serde_json::{Value, json};
 use std::io;
 use std::sync::Arc;
@@ -721,7 +723,7 @@ async fn handle_prompt(
     match app.agent.run_turn(&message, &inputs).await {
         Ok(result) => {
             let reply = result.reply.clone();
-            let end_params = AgentEndParams::from(Box::new(result));
+            let end_params = agent_end_wire(Box::new(result));
             info!(
                 message_len = message.len(),
                 reply_len = reply.len(),
@@ -851,7 +853,7 @@ async fn handle_set_model(
 async fn handle_get_session_stats(app: &App, id: &Value, transport: &dyn Transport) {
     let stats = app.agent.session().context_stats();
     let usage = app.agent.session().api_usage();
-    let result = GetSessionStatsResult::from(&stats).with_api_usage(usage);
+    let result = with_api_usage(session_stats_wire(&stats), usage);
     send(transport, &success_response(id, result)).await;
 }
 
@@ -1393,8 +1395,7 @@ mod tests {
 
     #[test]
     fn notification_shape() {
-        let notif =
-            crate::rpc_wire::notification("agent/start", &crate::rpc_wire::AgentStartParams {});
+        let notif = rho_protocol::notification("agent/start", &rho_protocol::AgentStartParams {});
         assert_eq!(notif["jsonrpc"], "2.0");
         assert_eq!(notif["method"], "agent/start");
         assert!(!notif.as_object().unwrap().contains_key("id"));

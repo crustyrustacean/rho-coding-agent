@@ -1,8 +1,8 @@
 //! Transport abstraction for the JSON-RPC 2.0 protocol.
 //!
 //! The [`Transport`] trait decouples the RPC loop from the underlying I/O
-//! mechanism. Currently only [`StdioTransport`] (newline-delimited JSON over
-//! `stdin`/`stdout`) is implemented, but the trait allows future transports
+//! mechanism. [`StdioTransport`] (newline-delimited JSON over any
+//! `BufRead`/`Write` pair) is the default; the trait allows future transports
 //! (WebSocket, Unix socket, TCP) without modifying the RPC dispatch logic.
 
 use anyhow::Result;
@@ -57,6 +57,18 @@ pub struct StdioTransport {
     reader: Arc<Mutex<Box<dyn BufRead + Send>>>,
     /// Shared, mutex-protected writer.
     writer: Arc<Mutex<Box<dyn Write + Send + Sync>>>,
+}
+
+impl Clone for StdioTransport {
+    /// Clones share the same underlying reader/writer handles — two clones
+    /// are two handles onto one pipe, which is what concurrent readers and
+    /// writers over the same child process need.
+    fn clone(&self) -> Self {
+        Self {
+            reader: Arc::clone(&self.reader),
+            writer: Arc::clone(&self.writer),
+        }
+    }
 }
 
 impl StdioTransport {

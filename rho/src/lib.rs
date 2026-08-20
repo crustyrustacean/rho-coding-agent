@@ -10,5 +10,5 @@ pub mod ext_cli;
 pub(crate) mod ext_observer;
 pub(crate) mod presenter;
 pub(crate) mod rpc;
-pub(crate) mod rpc_wire;
-pub(crate) mod transport;
+pub use wire_conversions::{risk_label, state_name};
+pub(crate) mod wire_conversions;
