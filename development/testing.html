@@ -182,7 +182,7 @@
                         <h1 id="testing"><a class="header" href="#testing">Testing</a></h1>
 <p>rho uses a layered test strategy: unit tests within each source file, integration tests at the crate level, and end-to-end scenario tests that exercise the full agent loop.</p>
 <h2 id="running-tests"><a class="header" href="#running-tests">Running tests</a></h2>
-<pre><code class="language-sh">cargo xtask ci        # Full CI pipeline: fmt → lint → build → test
+<pre><code class="language-sh">cargo xtask ci        # Full CI pipeline: fmt → lint → audit → build → test
 ctest                 # All tests via cargo-nextest (falls back to cargo test)
 cargo xtask test -p rho-core -- --nocapture  # Single crate
 </code></pre>

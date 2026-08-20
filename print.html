@@ -501,7 +501,7 @@ rho --ephemeral          # in-memory mode, no session file
 <p>Shared test infrastructure (dev-only): <code>MockChatClient</code>, <code>TestProvider</code>, <code>MockShellExecutor</code>, <code>AutoApproveGate</code>, <code>AutoDenyGate</code>, <code>FixedResponseTool</code>, <code>FailingTool</code>, <code>FileTestEnv</code>, <code>in_memory_session</code>, <code>empty_trust_store</code>, <code>detect_shell</code>, <code>tempdir_with_sandbox</code>, <code>assert_no_orphan_tool_results</code>. Depends on <code>rho-core</code> and <code>rho-ai</code>. Never published.</p>
 <p><code>TestProvider</code> wraps a <code>MockChatClient</code> as a <code>Provider</code> impl, enabling integration tests that need a <code>ProviderRegistry</code> without a live model server.</p>
 <h2 id="xtask"><a class="header" href="#xtask"><code>xtask</code></a></h2>
-<p>Dev task runner: <code>cargo xtask ci</code> (fmt → lint → build → test), <code>cargo xtask test</code>, <code>cargo xtask build</code>, <code>cargo xtask release</code>, <code>cargo xtask changelog</code>, <code>cargo xtask fmt</code>, <code>cargo xtask fmt-fix</code>, <code>cargo xtask run</code>, <code>cargo xtask clean</code>, <code>cargo xtask status</code>, <code>cargo xtask schema</code>, <code>cargo xtask generate-models</code>. Tests use <code>cargo-nextest</code> when available, falling back to <code>cargo test</code>.</p>
+<p>Dev task runner: <code>cargo xtask ci</code> (fmt → lint → audit → build → test), <code>cargo xtask test</code>, <code>cargo xtask build</code>, <code>cargo xtask audit</code>, <code>cargo xtask release</code>, <code>cargo xtask changelog</code>, <code>cargo xtask fmt</code>, <code>cargo xtask fmt-fix</code>, <code>cargo xtask run</code>, <code>cargo xtask clean</code>, <code>cargo xtask status</code>, <code>cargo xtask schema</code>, <code>cargo xtask generate-models</code>. Tests use <code>cargo-nextest</code> when available, falling back to <code>cargo test</code>; <code>cargo xtask audit</code> runs <code>cargo audit</code> (skipped with a note when <code>cargo-audit</code> is not installed).</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="dependency-flow"><a class="header" href="#dependency-flow">Dependency Flow</a></h1>
 <p>Dependencies flow downward only. A crate may depend on crates below it in the stack but never above.</p>
 <pre><code>rho (binary) ──────────────────────────────────────────
@@ -2317,7 +2317,7 @@ if let Some(state) = session.read_custom_state("rho.diagnostics.v1")? {
 <div style="break-before: page; page-break-before: always;"></div><h1 id="testing-1"><a class="header" href="#testing-1">Testing</a></h1>
 <p>rho uses a layered test strategy: unit tests within each source file, integration tests at the crate level, and end-to-end scenario tests that exercise the full agent loop.</p>
 <h2 id="running-tests"><a class="header" href="#running-tests">Running tests</a></h2>
-<pre><code class="language-sh">cargo xtask ci        # Full CI pipeline: fmt → lint → build → test
+<pre><code class="language-sh">cargo xtask ci        # Full CI pipeline: fmt → lint → audit → build → test
 ctest                 # All tests via cargo-nextest (falls back to cargo test)
 cargo xtask test -p rho-core -- --nocapture  # Single crate
 </code></pre>
