@@ -55,7 +55,7 @@ See [`docs/src/extensions.md`](docs/src/extensions.md) for the full extension sy
 cargo xtask ci    # Run the full CI pipeline before considering work done
 ```
 
-This runs `fmt → lint → build → test` in sequence. All four must pass.
+This runs `fmt → lint → audit → build → test` in sequence. All five must pass (audit skips with a note when `cargo-audit` is not installed).
 
 CI runs the fast gates (`fmt`, `lint`) on every push to `trunk`, and they
 fail often — always run `cargo xtask fmt` and `cargo xtask lint` (or

@@ -218,7 +218,7 @@ rho treats model output as untrusted and applies defense-in-depth:
 ## Development
 
 ```sh
-cargo xtask ci                # Full CI pipeline (fmt → lint → build → test)
+cargo xtask ci                # Full CI pipeline (fmt → lint → audit → build → test)
 cargo xtask test              # Run all tests
 cargo xtask test -- --nocapture  # Run with stdout visible
 cargo xtask changelog <ver>   # Generate CHANGELOG.md

@@ -243,6 +243,23 @@ pub fn test(release: bool, extra_args: &[String]) -> Result<()> {
     }
 }
 
+/// `cargo xtask audit` — audit `Cargo.lock` against the `RustSec` advisory database.
+///
+/// Mirrors the scheduled GitHub Actions audit workflow so the exact same
+/// check runs locally as part of `cargo xtask ci`. Skipped (with a loud note,
+/// not an error) when `cargo-audit` is not installed — same fallback policy
+/// as `cargo-nextest` in [`test`].
+pub fn audit() -> Result<()> {
+    if which::which("cargo-audit").is_err() {
+        eprintln!(
+            "note: cargo-audit not found; skipping dependency audit. \
+             Install with: cargo install cargo-audit --locked"
+        );
+        return Ok(());
+    }
+    spawn("audit", "cargo", &["audit"])
+}
+
 /// `cargo xtask run [-- <args>...]` — run the main binary.
 pub fn run(extra_args: &[String]) -> Result<()> {
     let mut args: Vec<&str> = vec!["run", "-p", "rho"];
@@ -258,10 +275,11 @@ pub fn clean() -> Result<()> {
     spawn("clean", "cargo", &["clean"])
 }
 
-/// `cargo xtask ci` — the full CI pipeline (fmt, lint, build, test).
+/// `cargo xtask ci` — the full CI pipeline (fmt, lint, audit, build, test).
 pub fn ci() -> Result<()> {
     fmt().context("fmt")?;
     lint().context("lint")?;
+    audit().context("audit")?;
     build(false).context("build")?;
     test(false, &[]).context("test")?;
     Ok(())

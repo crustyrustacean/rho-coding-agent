@@ -19,6 +19,12 @@ enum Xtask {
     /// Run Clippy lints.
     Lint,
 
+    /// Audit Cargo.lock against the `RustSec` advisory database.
+    ///
+    /// Runs `cargo audit`. Mirrors the scheduled GitHub Actions audit
+    /// workflow. Skipped (with a note) when cargo-audit is not installed.
+    Audit,
+
     /// Build all workspace crates.
     Build {
         /// Build with release optimizations.
@@ -46,7 +52,7 @@ enum Xtask {
     /// Remove build artifacts.
     Clean,
 
-    /// Run the full CI pipeline (fmt, lint, build, test).
+    /// Run the full CI pipeline (fmt, lint, audit, build, test).
     Ci,
 
     /// Generate or update CHANGELOG.md via git-cliff.
@@ -101,6 +107,7 @@ fn main() -> Result<()> {
         Xtask::Fmt => tasks::fmt(),
         Xtask::FmtFix => tasks::fmt_fix(),
         Xtask::Lint => tasks::lint(),
+        Xtask::Audit => tasks::audit(),
         Xtask::Build { release } => tasks::build(release),
         Xtask::Test { release, args } => tasks::test(release, &args),
         Xtask::Run { args } => tasks::run(&args),

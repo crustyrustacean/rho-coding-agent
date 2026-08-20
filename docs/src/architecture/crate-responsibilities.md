@@ -65,4 +65,4 @@ Shared test infrastructure (dev-only): `MockChatClient`, `TestProvider`, `MockSh
 
 ## `xtask`
 
-Dev task runner: `cargo xtask ci` (fmt → lint → build → test), `cargo xtask test`, `cargo xtask build`, `cargo xtask release`, `cargo xtask changelog`, `cargo xtask fmt`, `cargo xtask fmt-fix`, `cargo xtask run`, `cargo xtask clean`, `cargo xtask status`, `cargo xtask schema`, `cargo xtask generate-models`. Tests use `cargo-nextest` when available, falling back to `cargo test`.
+Dev task runner: `cargo xtask ci` (fmt → lint → audit → build → test), `cargo xtask test`, `cargo xtask build`, `cargo xtask audit`, `cargo xtask release`, `cargo xtask changelog`, `cargo xtask fmt`, `cargo xtask fmt-fix`, `cargo xtask run`, `cargo xtask clean`, `cargo xtask status`, `cargo xtask schema`, `cargo xtask generate-models`. Tests use `cargo-nextest` when available, falling back to `cargo test`; `cargo xtask audit` runs `cargo audit` (skipped with a note when `cargo-audit` is not installed).

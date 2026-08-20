@@ -1,5 +1,0 @@
-[advisories]
-# RUSTSEC-2023-0071 — rsa: Marvin attack (timing oracle in RSA decryption).
-# Transitive dependency via sqlx-mysql (rsa 0.9.10). No fixed upgrade
-# available yet; re-check when sqlx bumps rsa.
-ignore = ["RUSTSEC-2023-0071"]

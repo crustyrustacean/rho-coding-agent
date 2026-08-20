@@ -5,7 +5,7 @@ rho uses a layered test strategy: unit tests within each source file, integratio
 ## Running tests
 
 ```sh
-cargo xtask ci        # Full CI pipeline: fmt → lint → build → test
+cargo xtask ci        # Full CI pipeline: fmt → lint → audit → build → test
 ctest                 # All tests via cargo-nextest (falls back to cargo test)
 cargo xtask test -p rho-core -- --nocapture  # Single crate
 ```
