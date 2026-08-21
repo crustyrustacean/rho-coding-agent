@@ -133,9 +133,12 @@ impl SearchFiles {
             if !entry.file_type().is_some_and(|ft| ft.is_file()) {
                 continue;
             }
-            if count.load(Ordering::Relaxed) >= max_results {
-                break;
-            }
+            // Once the cap is reached we do NOT stop the walk: a later file
+            // must still be *searched* (results discarded) so `saw_overflow`
+            // can distinguish "no more matches" from "we stopped early".
+            // Stopping the walk here would make the truncation notice depend
+            // on directory iteration order (a real-world flake we shipped and
+            // fixed; see search_tests::search_files_truncates_at_max_results_with_notice).
             let path = entry.path();
             let display = path
                 .strip_prefix(scope)

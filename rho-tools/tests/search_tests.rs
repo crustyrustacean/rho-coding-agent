@@ -436,3 +436,57 @@ fn find_files_metadata() {
             .contains(&json!("pattern"))
     );
 }
+
+#[tokio::test]
+async fn search_files_truncation_notice_fires_when_cap_hit_at_last_file() {
+    // Regression: the walk used to `break` once the cap was reached, so if the
+    // directory iteration order put the last matching file *before* others,
+    // no overflow match was ever observed and the "truncated" notice never
+    // fired — a filesystem-order-dependent flake (failed on CI, passed
+    // locally). The fix keeps walking (discarding results past the cap) so
+    // the notice depends on the data, not the readdir order. This test pins
+    // the invariant: cap N, more-than-N total matches across files ⇒ notice
+    // present regardless of which file fills the cap.
+    let (dir, sandbox) = tempdir_with_sandbox();
+    let root = sandbox.path();
+    // Three files, each with exactly one match. Cap = 3 ⇒ whichever file is
+    // visited last still has its match observed as overflow… unless total
+    // matches == cap exactly. Use FOUR files with one match each, cap = 3:
+    // any iteration order leaves ≥1 overflow match.
+    for name in ["a.txt", "b.txt", "c.txt", "d.txt"] {
+        std::fs::write(root.join(name), "needle\n").unwrap();
+    }
+    let tool = SearchFiles::new(sandbox.clone());
+    let out = tool
+        .execute(
+            json!({"pattern": "needle", "max_results": 3}),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let text = immediate_output(&out);
+    let match_lines: Vec<&str> = text.lines().filter(|l| !l.starts_with('…')).collect();
+    assert_eq!(match_lines.len(), 3, "cap exceeded:\n{text}");
+    assert!(text.contains("truncated"), "notice missing:\n{text}");
+    // And the exact-cap case must NOT show a notice (no overflow anywhere).
+    let dir2 = tempfile::tempdir().unwrap();
+    let sandbox2 = SandboxRoot::new(dunce::canonicalize(dir2.path()).unwrap()).unwrap();
+    std::fs::create_dir_all(sandbox2.path()).unwrap();
+    for name in ["x.txt", "y.txt"] {
+        std::fs::write(sandbox2.path().join(name), "needle\n").unwrap();
+    }
+    let tool2 = SearchFiles::new(sandbox2.clone());
+    let out2 = tool2
+        .execute(
+            json!({"pattern": "needle", "max_results": 2}),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let text2 = immediate_output(&out2);
+    assert!(
+        !text2.contains("truncated"),
+        "notice shown with no overflow:\n{text2}"
+    );
+    let _ = dir;
+}
