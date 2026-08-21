@@ -194,6 +194,7 @@
 <p>Built-in tool implementations:</p>
 <ul>
 <li><strong>File tools:</strong> <code>ReadFile</code>, <code>BatchRead</code>, <code>WriteFile</code>, <code>ListDir</code>, <code>EditFile</code></li>
+<li><strong>Read-tier tools:</strong> <code>SearchFiles</code> (regex content search on the ripgrep engine, <code>path:line:</code> results), <code>FindFiles</code> (name-glob lookup) — both <code>Read</code> risk, sandbox-confined, <code>.gitignore</code>-aware; preferred over shell for locating code</li>
 <li><strong>Shell tools:</strong> <code>RunCommand</code>, <code>PowerShellExecutor</code>, <code>CommandDenylist</code></li>
 <li><strong>Rust tools:</strong> <code>CargoCheck</code>, <code>CargoClippy</code>, <code>CargoTest</code>, <code>CargoFix</code>, <code>RustcExplain</code></li>
 <li><strong>Lookup tools:</strong> <code>RustdocTool</code>, <code>CratesIoLookup</code></li>

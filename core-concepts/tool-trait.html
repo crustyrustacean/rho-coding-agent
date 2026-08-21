@@ -243,10 +243,12 @@ let result = registry.execute(&amp;call, cancel).await?;
 <span class="boring">}</span></code></pre></pre>
 <p>Duplicate tool names panic at registration (fast-fail, programming error). Execution returns <code>RhoError::ToolNotFound</code> if the model requests an unregistered tool.</p>
 <h2 id="built-in-tools"><a class="header" href="#built-in-tools">Built-in tools</a></h2>
-<p>rho ships with 14 built-in tools, all registered in <code>rho-tools::register_all()</code> (plus <code>memory</code>, registered only when <code>[memory] enabled = true</code>):</p>
+<p>rho ships with 16 built-in tools, all registered in <code>rho-tools::register_all()</code> (plus <code>memory</code>, registered only when <code>[memory] enabled = true</code>):</p>
 <div class="table-wrapper"><table><thead><tr><th>Tool</th><th>Risk</th><th>Description</th></tr></thead><tbody>
 <tr><td><code>read_file</code></td><td>Read</td><td>Read file contents, wrapped in <code>&lt;context&gt;</code> framing</td></tr>
 <tr><td><code>batch_read</code></td><td>Read</td><td>Read multiple files at once (up to 20 paths)</td></tr>
+<tr><td><code>search_files</code></td><td>Read</td><td>Regex content search (ripgrep engine) returning <code>path:line:</code> matches; <code>.gitignore</code>-aware, sandbox-confined</td></tr>
+<tr><td><code>find_files</code></td><td>Read</td><td>Find files by name glob (e.g. <code>*.rs</code>, <code>Cargo.toml</code>); <code>.gitignore</code>-aware, sandbox-confined</td></tr>
 <tr><td><code>write_file</code></td><td>Write</td><td>Create or overwrite files within the sandbox</td></tr>
 <tr><td><code>list_dir</code></td><td>Read</td><td><code>.gitignore</code>-aware directory listing</td></tr>
 <tr><td><code>edit_file</code></td><td>Write</td><td>Hashline-anchor replacements with node-splitting validation</td></tr>
