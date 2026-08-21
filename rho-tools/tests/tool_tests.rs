@@ -2207,7 +2207,7 @@ async fn edit_file_hashline_chained_edit_with_stale_hash_succeeds() {
         "path": path.to_str().unwrap(),
         "edits": [{
             "op": "replace",
-            "pos": format!("4#ZZ"),  // Stale/wrong hash
+            "pos": "4#ZZ".to_string(),  // Stale/wrong hash
             "lines": ["modified line 4"]
         }]
     });
