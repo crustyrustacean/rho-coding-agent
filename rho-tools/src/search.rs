@@ -144,7 +144,7 @@ impl SearchFiles {
                 .strip_prefix(scope)
                 .unwrap_or(path)
                 .to_string_lossy()
-                .into_owned();
+                .replace('\\', "/");
             let mut sink = CollectingSink {
                 path_display: display,
                 lines: &mut lines,
@@ -473,7 +473,7 @@ impl Tool for FindFiles {
                 .strip_prefix(&*safe_scope)
                 .unwrap_or(path)
                 .to_string_lossy()
-                .into_owned();
+                .replace('\\', "/");
             paths.push(display);
         }
 

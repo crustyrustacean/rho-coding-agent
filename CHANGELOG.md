@@ -1,3 +1,25 @@
+## [0.92.0] - 2026-08-21
+
+### 🚀 Features
+
+- Extract rho-protocol crate — wire types, Transport, client
+- *(schema)* Derive OpenRPC schema from wire types; pin to dispatch
+- *(tools)* Add search_files and find_files read-tier tools
+
+### 🐛 Bug Fixes
+
+- *(deps)* Bump h2 to 0.4.16 for RUSTSEC-2026-0258
+- *(tools)* Replace useless format! with .to_string() in tool_tests
+- *(tools)* Make search_files truncation notice order-independent
+- *(protocol)* Gate JsonSchema derives behind the schema feature
+
+### 🧪 Testing
+
+- *(rpc)* De-flake repeated-aborts via ChannelTransport; add mid-turn abort e2e
+
+### ⚙️ Miscellaneous Tasks
+
+- *(xtask)* Wire cargo audit into ci pipeline
 ## [0.91.2] - 2026-08-19
 
 ### 🚀 Features
