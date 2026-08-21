@@ -17,13 +17,15 @@
 
 #![allow(clippy::missing_docs_in_private_items)]
 
+#[cfg(feature = "schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 // ── Method params ──────────────────────────────────────────────────────────────
 
 /// Params for the `prompt` method.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct PromptParams {
     /// The user's message text.
@@ -39,21 +41,24 @@ pub struct PromptParams {
 }
 
 /// Params for the `setModel` method.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct SetModelParams {
     pub model: String,
 }
 
 /// Params for the `resumeSession` method.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ResumeSessionParams {
     pub path: String,
 }
 
 /// Params for the `approvalResponse` method.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 #[allow(dead_code)]
 pub struct ApprovalResponseParams {
@@ -68,21 +73,24 @@ pub struct ApprovalResponseParams {
 // ── Method results ────────────────────────────────────────────────────────────
 
 /// Result for `prompt` — the agent's reply text.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct PromptResult {
     pub reply: String,
 }
 
 /// Result for `prompt` on error.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct PromptErrorResult {
     pub error: String,
 }
 
 /// Result for `getState`.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct GetStateResult {
     pub model: String,
@@ -104,7 +112,8 @@ pub struct GetStateResult {
 /// Beyond the resolved model/provider, carries the post-switch context-window
 /// stats so clients can refresh their footer in the same round-trip (no
 /// separate `getSessionStats` needed just to reflect the new model's window).
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct SetModelResult {
     pub model: String,
@@ -115,7 +124,8 @@ pub struct SetModelResult {
 }
 
 /// Result for `getSessionStats`.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct GetSessionStatsResult {
     pub context_window: u64,
@@ -135,7 +145,8 @@ pub struct GetSessionStatsResult {
 }
 
 /// Wire-format role token distribution (nested inside `getSessionStats`).
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct RoleTokenDist {
     pub system: u64,
@@ -145,7 +156,8 @@ pub struct RoleTokenDist {
 }
 
 /// Wire-format resolution token distribution (nested inside `getSessionStats`).
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ResolutionTokenDist {
     pub full: u64,
@@ -160,7 +172,8 @@ pub struct ResolutionTokenDist {
 /// tracks the shape of the work being done (exploration vs execution vs
 /// verification vs conclusion). Only meaningful once the session has
 /// classified entries into phases; otherwise all buckets are zero.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct PhaseTokenDistWire {
     pub exploration: u64,
@@ -171,7 +184,8 @@ pub struct PhaseTokenDistWire {
 }
 
 /// Wire-format API usage (nested inside `getSessionStats`).
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ApiUsageWire {
     pub total_input_tokens: u64,
@@ -183,14 +197,16 @@ pub struct ApiUsageWire {
 }
 
 /// Result for `listModels`.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ListModelsResult {
     pub models: Vec<ModelEntry>,
 }
 
 /// A single model entry in `listModels`.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ModelEntry {
     pub id: String,
@@ -198,14 +214,16 @@ pub struct ModelEntry {
 }
 
 /// Result for `listProviders`.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ListProvidersResult {
     pub providers: Vec<ProviderEntry>,
 }
 
 /// A single provider entry in `listProviders`.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderEntry {
     pub name: String,
@@ -216,14 +234,16 @@ pub struct ProviderEntry {
 }
 
 /// Result for `listSessions`.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ListSessionsResult {
     pub sessions: Vec<SessionEntry>,
 }
 
 /// A single session entry in `listSessions`.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct SessionEntry {
     pub path: String,
@@ -233,14 +253,16 @@ pub struct SessionEntry {
 }
 
 /// Result for `listExtensions`.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ListExtensionsResult {
     pub extensions: Vec<ExtensionEntry>,
 }
 
 /// A single extension entry in `listExtensions`.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ExtensionEntry {
     pub name: String,
@@ -248,14 +270,16 @@ pub struct ExtensionEntry {
 }
 
 /// Result for `listTools`.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ListToolsResult {
     pub tools: Vec<ToolEntry>,
 }
 
 /// A single tool entry in `listTools`.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ToolEntry {
     pub name: String,
@@ -265,7 +289,8 @@ pub struct ToolEntry {
 }
 
 /// Result for `resumeSession`.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ResumeSessionResult {
     pub path: String,
@@ -275,7 +300,8 @@ pub struct ResumeSessionResult {
 }
 
 /// Result for `newSession`.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct NewSessionResult {
     /// The new session's unique id.
@@ -288,7 +314,8 @@ pub struct NewSessionResult {
 /// the `ChatMessage` → JSON conversion has complex per-role shapes that
 /// don't map cleanly to a single struct without coupling `rho-core` to the
 /// wire format.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct GetMessagesResult {
     pub messages: Vec<serde_json::Value>,
@@ -296,19 +323,22 @@ pub struct GetMessagesResult {
 
 /// Empty result for methods that return no data (`abort`, `clear`, `compact`,
 /// `reloadExtensions`).
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct EmptyResult {}
 
 // ── Notification params ──────────────────────────────────────────────────────
 
 /// Params for the `agent/start` notification.
-#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct AgentStartParams {}
 
 /// Wire-format token usage (delta for a single `run_loop` call).
-#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct TokenUsageWire {
     pub input_tokens: u64,
@@ -319,7 +349,8 @@ pub struct TokenUsageWire {
 }
 
 /// Wire-format tool call outcome.
-#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ToolCallOutcomeWire {
     pub kind: String,
@@ -328,7 +359,8 @@ pub struct ToolCallOutcomeWire {
 }
 
 /// Wire-format tool call record.
-#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ToolCallRecordWire {
     pub name: String,
@@ -339,7 +371,8 @@ pub struct ToolCallRecordWire {
 }
 
 /// Params for the `agent/end` notification.
-#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct AgentEndParams {
     pub reply: String,
@@ -351,35 +384,40 @@ pub struct AgentEndParams {
 }
 
 /// Params for the `agent/error` notification.
-#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct AgentErrorParams {
     pub error: String,
 }
 
 /// Params for the `state/change` notification.
-#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct StateChangeParams {
     pub state: String,
 }
 
 /// Params for the `message/delta` notification.
-#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct MessageDeltaParams {
     pub delta: String,
 }
 
 /// Params for the `reasoning/delta` notification.
-#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ReasoningDeltaParams {
     pub delta: String,
 }
 
 /// Params for the `tool/call` notification.
-#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ToolCallParams {
     pub name: String,
@@ -387,7 +425,8 @@ pub struct ToolCallParams {
 }
 
 /// Params for the `tool/result` notification.
-#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ToolResultParams {
     pub name: String,
@@ -397,14 +436,16 @@ pub struct ToolResultParams {
 }
 
 /// Params for the `tool/denied` notification.
-#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ToolDeniedParams {
     pub name: String,
 }
 
 /// Params for the `approval/request` notification.
-#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ApprovalRequestParams {
     pub tool: String,
@@ -413,12 +454,14 @@ pub struct ApprovalRequestParams {
 }
 
 /// Params for the `ready` notification.
-#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ReadyParams {}
 
 /// Wire-format per-iteration usage delta (nested inside the `usage` notification).
-#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct UsageDeltaWire {
     pub input_tokens: u64,
@@ -429,7 +472,8 @@ pub struct UsageDeltaWire {
 }
 
 /// Wire-format live context snapshot (nested inside the `usage` notification).
-#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct UsageContextWire {
     pub estimated_used: u64,
@@ -443,7 +487,8 @@ pub struct UsageContextWire {
 /// Carries the per-iteration token/cost delta and a live context snapshot so
 /// frontends can render a context/cost gauge during long multi-iteration turns
 /// without polling `getSessionStats`.
-#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct UsageParams {
     pub iteration: u32,
