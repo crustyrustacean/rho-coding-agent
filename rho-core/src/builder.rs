@@ -535,6 +535,10 @@ impl AgentBuilder {
     }
 
     /// Supply a pre-built tool registry (the host registers tools/extensions/memory).
+    ///
+    /// Embedders can register a *subset* — e.g. a read-only explorer agent gets
+    /// only the read tier (`search_files`, `find_files`, `read_file`,
+    /// `batch_read`, `list_dir`) with no write or shell tools.
     pub fn tools(mut self, registry: ToolRegistry) -> Self {
         self.tools = Some(registry);
         self

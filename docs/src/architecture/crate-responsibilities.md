@@ -27,6 +27,7 @@ Key types: `Language`, `HighlightSpan`, `HighlightTag`, `NodeInfo`.
 Built-in tool implementations:
 
 - **File tools:** `ReadFile`, `BatchRead`, `WriteFile`, `ListDir`, `EditFile`
+- **Read-tier tools:** `SearchFiles` (regex content search on the ripgrep engine, `path:line:` results), `FindFiles` (name-glob lookup) — both `Read` risk, sandbox-confined, `.gitignore`-aware; preferred over shell for locating code
 - **Shell tools:** `RunCommand`, `PowerShellExecutor`, `CommandDenylist`
 - **Rust tools:** `CargoCheck`, `CargoClippy`, `CargoTest`, `CargoFix`, `RustcExplain`
 - **Lookup tools:** `RustdocTool`, `CratesIoLookup`

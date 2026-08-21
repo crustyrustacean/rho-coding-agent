@@ -52,6 +52,10 @@ Prefer targeted edits over wholesale rewrites. Read before you write. If you are
 
 File paths are validated against a project sandbox. Attempts to read or write outside the sandbox will be refused — this is expected, not a bug.
 
+# Finding code and files
+
+Use `search_files` to find where text, identifiers, or patterns appear in the project, and `find_files` to locate files by name — **prefer these over shell commands** (`Select-String`, `Get-ChildItem -Recurse`, `grep`, `find`). They are sandboxed, respect `.gitignore`, and return structured `path:line:` results that pair directly with hashline anchors for editing. Reach for the shell only when a query needs something these tools cannot express.
+
 # Shell
 
 The shell is **PowerShell 7+** (`pwsh`). Generate PowerShell commands directly. Do not use bash, cmd.exe, or aliases for denied commands.

@@ -74,12 +74,14 @@ Duplicate tool names panic at registration (fast-fail, programming error). Execu
 
 ## Built-in tools
 
-rho ships with 14 built-in tools, all registered in `rho-tools::register_all()` (plus `memory`, registered only when `[memory] enabled = true`):
+rho ships with 16 built-in tools, all registered in `rho-tools::register_all()` (plus `memory`, registered only when `[memory] enabled = true`):
 
 | Tool | Risk | Description |
 |---|---|---|
 | `read_file` | Read | Read file contents, wrapped in `<context>` framing |
 | `batch_read` | Read | Read multiple files at once (up to 20 paths) |
+| `search_files` | Read | Regex content search (ripgrep engine) returning `path:line:` matches; `.gitignore`-aware, sandbox-confined |
+| `find_files` | Read | Find files by name glob (e.g. `*.rs`, `Cargo.toml`); `.gitignore`-aware, sandbox-confined |
 | `write_file` | Write | Create or overwrite files within the sandbox |
 | `list_dir` | Read | `.gitignore`-aware directory listing |
 | `edit_file` | Write | Hashline-anchor replacements with node-splitting validation |

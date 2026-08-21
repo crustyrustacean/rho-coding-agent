@@ -32,6 +32,7 @@ pub mod files;
 pub mod hashline;
 pub mod memory;
 pub mod rust;
+pub mod search;
 pub mod session_summary;
 pub mod shell;
 
@@ -50,6 +51,7 @@ pub use file_ops::{BatchRead, ListDir, ReadFile, WriteFile};
 pub use hashline::compute_line_hash;
 pub use memory::MemoryTool;
 pub use rust::{CargoCheck, CargoClippy, CargoFix, CargoTest, RustcExplain, RustdocTool};
+pub use search::{FindFiles, SearchFiles};
 pub use shell::{CommandDenylist, PowerShellExecutor, RunCommand};
 
 use rho_core::{SandboxRoot, ToolRegistry};
@@ -112,6 +114,11 @@ pub fn register_all(
 
     // crates.io lookup (Phase 3.6)
     registry.register(Box::new(CratesIoLookup::new()));
+
+    // Read-tier tools (engine Phase 0): structured search/find so the model
+    // does not shell out for code lookups.
+    registry.register(Box::new(SearchFiles::new(root.clone())));
+    registry.register(Box::new(FindFiles::new(root.clone())));
 
     let executor = make_executor()?;
     let denylist = CommandDenylist::from_config(config);
