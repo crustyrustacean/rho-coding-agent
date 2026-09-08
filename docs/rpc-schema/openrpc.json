@@ -414,7 +414,8 @@
   },
   "info": {
     "description": "Headless coding agent — JSON-RPC 2.0 protocol over stdin/stdout. Diagnostic output goes to stderr.",
-    "title": "rho"
+    "title": "rho",
+    "version": "0.92.0"
   },
   "methods": [
     {

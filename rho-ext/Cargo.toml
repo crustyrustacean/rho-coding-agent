@@ -13,7 +13,7 @@ publish.workspace = true
 [dependencies]
 async-trait.workspace = true
 deno_ast = { version = "0.53.2", features = [ "transpiling" ] }
-deno_core = "0.406.0"
+deno_core = "0.411"
 deno_error = "0.7.1"
 rho-core = { path = "../rho-core" }
 reqwest.workspace = true

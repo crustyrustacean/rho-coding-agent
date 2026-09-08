@@ -35,5 +35,5 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tree-sitter.workspace = true
 url = "2.5"
-uuid = { version = "1", features = ["v4", "serde"] }
+uuid.workspace = true
 which = "8.0.4"
