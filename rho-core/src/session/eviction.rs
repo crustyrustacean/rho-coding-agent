@@ -324,7 +324,6 @@ mod tests {
             id: EntryId::new(),
             parent_id: None,
             timestamp: SystemTime::UNIX_EPOCH,
-            resolution: EntryResolution::Full,
             payload,
         }
     }
@@ -366,7 +365,7 @@ mod tests {
             .iter()
             .map(|e| PathEntry {
                 entry: e,
-                resolution: e.resolution.clone(),
+                resolution: EntryResolution::default_for(&e.payload),
             })
             .collect()
     }
@@ -580,7 +579,6 @@ mod tests {
         let pinned_id = EntryId::new();
         let mut pinned_entry = user_entry("important plan");
         pinned_entry.id = pinned_id.clone();
-        pinned_entry.resolution = EntryResolution::Pinned;
 
         let entries: Vec<Entry> = vec![
             system_entry(),
@@ -593,6 +591,21 @@ mod tests {
         let refs = as_refs(&entries);
         let estimator = HeuristicEstimator::new();
 
+        // Mark the pinned entry at the PathEntry layer, which is where the
+        // planner reads resolution from.
+        let refs: Vec<PathEntry<'_>> = refs
+            .into_iter()
+            .map(|pe| {
+                if pe.entry.id == pinned_id {
+                    PathEntry {
+                        resolution: EntryResolution::Pinned,
+                        ..pe
+                    }
+                } else {
+                    pe
+                }
+            })
+            .collect();
         let plan = plan_downgrades(&refs, tiny_budget(), &estimator, &[]);
         assert!(
             !plan.actions.iter().any(|a| a.entry_id == pinned_id),
@@ -605,9 +618,6 @@ mod tests {
         let outlined_id = EntryId::new();
         let mut outlined_entry = tool_entry("call_1", "big content");
         outlined_entry.id = outlined_id.clone();
-        outlined_entry.resolution = EntryResolution::Outlined {
-            outline: "already outlined".to_owned(),
-        };
 
         let entries: Vec<Entry> = vec![
             system_entry(),
@@ -619,6 +629,21 @@ mod tests {
         let refs = as_refs(&entries);
         let estimator = HeuristicEstimator::new();
 
+        let refs: Vec<PathEntry<'_>> = refs
+            .into_iter()
+            .map(|pe| {
+                if pe.entry.id == outlined_id {
+                    PathEntry {
+                        resolution: EntryResolution::Outlined {
+                            outline: "already outlined".to_owned(),
+                        },
+                        ..pe
+                    }
+                } else {
+                    pe
+                }
+            })
+            .collect();
         let plan = plan_downgrades(&refs, tiny_budget(), &estimator, &[]);
         assert!(
             !plan.actions.iter().any(|a| a.entry_id == outlined_id),
@@ -802,15 +827,14 @@ mod tests {
             id: EntryId::new(),
             parent_id: None,
             timestamp: SystemTime::UNIX_EPOCH,
-            resolution: EntryResolution::Compacted {
-                into: EntryId::new(),
-            },
             payload: EntryPayload::Message(ChatMessage::user_text("x".repeat(1000))),
         };
         assert_eq!(
             estimate_entry_token_cost(&PathEntry {
                 entry: &entry,
-                resolution: entry.resolution.clone(),
+                resolution: EntryResolution::Compacted {
+                    into: EntryId::new(),
+                },
             }),
             0
         );
@@ -822,14 +846,13 @@ mod tests {
             id: EntryId::new(),
             parent_id: None,
             timestamp: SystemTime::UNIX_EPOCH,
-            resolution: EntryResolution::Outlined {
-                outline: "short".to_owned(),
-            },
             payload: EntryPayload::Message(ChatMessage::user_text("x".repeat(1000))),
         };
         let tokens = estimate_entry_token_cost(&PathEntry {
             entry: &entry,
-            resolution: entry.resolution.clone(),
+            resolution: EntryResolution::Outlined {
+                outline: "short".to_owned(),
+            },
         });
         // "short" should be very few tokens (< 10)
         assert!(

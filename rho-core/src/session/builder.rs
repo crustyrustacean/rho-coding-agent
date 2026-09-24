@@ -39,7 +39,6 @@ impl Session {
                 id: EntryId::new(),
                 parent_id: None,
                 timestamp: SystemTime::now(),
-                resolution: EntryResolution::Full,
                 payload: EntryPayload::Message(ChatMessage::system_text(prompt)),
             };
             let id = root.id.clone();
@@ -99,7 +98,6 @@ impl Session {
                 id: EntryId::new(),
                 parent_id: None,
                 timestamp: SystemTime::now(),
-                resolution: EntryResolution::Full,
                 payload: EntryPayload::Message(ChatMessage::system_text(prompt)),
             };
             let id = root.id.clone();
@@ -290,7 +288,10 @@ mod tests {
             .expect("leaf should be set after construction");
         let entry = session.entry(&leaf).expect("root entry should exist");
         assert!(entry.parent_id.is_none(), "root entry has no parent");
-        assert!(matches!(entry.resolution, EntryResolution::Full));
+        assert!(matches!(
+            EntryResolution::default_for(&entry.payload),
+            EntryResolution::Full
+        ));
         assert!(matches!(
             entry.payload,
             EntryPayload::Message(ChatMessage::System { .. })

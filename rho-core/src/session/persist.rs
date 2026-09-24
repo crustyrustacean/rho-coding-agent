@@ -444,6 +444,7 @@ pub fn open_session(path: &Path) -> Result<Session> {
                 ))
             })?;
 
+    let mut legacy_resolutions: Vec<(crate::newtypes::EntryId, EntryResolution)> = Vec::new();
     parse_body_lines(
         path,
         &raw_lines,
@@ -451,9 +452,11 @@ pub fn open_session(path: &Path) -> Result<Session> {
         &mut last_entry_id,
         &mut entry_count,
         &mut resolution_changes,
+        &mut legacy_resolutions,
     )?;
 
-    let resolution_overlay = build_resolution_overlay(&mut entries, &resolution_changes, path);
+    let resolution_overlay =
+        build_resolution_overlay(&entries, &resolution_changes, &legacy_resolutions, path);
 
     // Determine the leaf.
     // The last entry in the file is always the leaf (entries are appended
@@ -744,6 +747,10 @@ fn parse_body_lines(
         crate::newtypes::EntryId,
         crate::session::entry::EntryResolution,
     )>,
+    legacy_resolutions: &mut Vec<(
+        crate::newtypes::EntryId,
+        crate::session::entry::EntryResolution,
+    )>,
 ) -> Result<()> {
     let last_line_index = raw_lines.len();
 
@@ -781,6 +788,16 @@ fn parse_body_lines(
                 warn!("duplicate header line in session file, ignoring");
             }
             JsonlLine::Entry(entry) => {
+                // A v1 line carries `resolution` inline. The field is gone from
+                // `Entry`, so pull it straight off the raw JSON to seed the
+                // overlay. Unknown keys are ignored by serde, so a v2 line
+                // without it simply yields `None`.
+                if let Ok(raw) = serde_json::from_str::<serde_json::Value>(line)
+                    && let Some(legacy) = raw.get("resolution")
+                    && let Ok(resolution) = serde_json::from_value(legacy.clone())
+                {
+                    legacy_resolutions.push((entry.id.clone(), resolution));
+                }
                 *last_entry_id = Some(entry.id.clone());
                 entries.insert(entry.id.clone(), entry);
                 *entry_count += 1;
@@ -813,45 +830,46 @@ fn parse_body_lines(
 /// 1. `Resolution` lines, applied in file order (last write wins). A line
 ///    naming an entry that is not in this file is skipped with a warning: the
 ///    entry may live in a session file this one was branched from.
-/// 2. A v1 file's embedded `Entry.resolution`, which differs from the payload
-///    default only in hand-migrated files (an organic v1 file carries each
+/// 2. A v1 file's inline `resolution` key, read straight off the raw JSON
+///    (the field no longer exists on `Entry`). It differs from the payload
+///    default only in hand-migrated files: an organic v1 file carries each
 ///    entry's append-time default, because resolution changes were never
-///    persisted before v2).
+///    persisted before v2.
 ///
 /// Entries whose effective resolution equals their payload default are left
 /// out of the map, which is what keeps the overlay sparse.
 fn build_resolution_overlay(
-    entries: &mut HashMap<crate::newtypes::EntryId, Entry>,
+    entries: &HashMap<crate::newtypes::EntryId, Entry>,
     resolution_changes: &[(crate::newtypes::EntryId, EntryResolution)],
+    legacy_resolutions: &[(crate::newtypes::EntryId, EntryResolution)],
     path: &Path,
 ) -> HashMap<crate::newtypes::EntryId, EntryResolution> {
     let mut overlay: HashMap<crate::newtypes::EntryId, EntryResolution> = HashMap::new();
 
-    for (entry_id, resolution) in resolution_changes {
-        let Some(entry) = entries.get_mut(entry_id) else {
+    let mut apply = |entry_id: &crate::newtypes::EntryId, resolution: &EntryResolution| {
+        let Some(entry) = entries.get(entry_id) else {
             warn!(
                 entry = %entry_id,
                 path = %path.display(),
                 "resolution change references unknown entry; skipping"
             );
-            continue;
+            return;
         };
-        entry.resolution = resolution.clone();
         if *resolution == EntryResolution::default_for(&entry.payload) {
             // Back to the payload default — drop any earlier override.
             overlay.remove(entry_id);
         } else {
             overlay.insert(entry_id.clone(), resolution.clone());
         }
-    }
+    };
 
-    for (entry_id, entry) in entries.iter() {
-        if overlay.contains_key(entry_id) {
-            continue;
-        }
-        if entry.resolution != EntryResolution::default_for(&entry.payload) {
-            overlay.insert(entry_id.clone(), entry.resolution.clone());
-        }
+    // `Resolution` lines win over an inline v1 value: they are the newer format
+    // and a file may legitimately carry both.
+    for (entry_id, resolution) in legacy_resolutions {
+        apply(entry_id, resolution);
+    }
+    for (entry_id, resolution) in resolution_changes {
+        apply(entry_id, resolution);
     }
 
     overlay
@@ -926,7 +944,7 @@ mod tests {
         let reopened = open_session(&path).unwrap();
         assert!(
             matches!(
-                reopened.entry(&user).unwrap().resolution,
+                reopened.resolution_of(&user),
                 EntryResolution::Outlined { .. }
             ),
             "outlined resolution must survive flush + reopen"
@@ -947,7 +965,7 @@ mod tests {
         let reopened = open_session(&path).unwrap();
         assert!(
             matches!(
-                reopened.entry(&user).unwrap().resolution,
+                reopened.resolution_of(&user),
                 EntryResolution::Summarized { .. }
             ),
             "summarized resolution must survive flush + reopen"
@@ -983,7 +1001,7 @@ mod tests {
         let reopened = open_session(&path).unwrap();
         assert!(
             matches!(
-                &reopened.entry(&u1).unwrap().resolution,
+                &reopened.resolution_of(&u1),
                 EntryResolution::Compacted { into } if into == &compaction_id
             ),
             "compacted entry must still point at its Compaction after reopen"
@@ -1015,7 +1033,7 @@ mod tests {
         let reopened = open_session(&path).unwrap();
         assert!(
             matches!(
-                reopened.entry(&u1).unwrap().resolution,
+                reopened.resolution_of(&u1),
                 EntryResolution::Compacted { .. }
             ),
             "compact_older_than must flush its resolution changes itself"
@@ -1074,7 +1092,7 @@ mod tests {
         let reopened = open_session(&path).unwrap();
         assert!(
             matches!(
-                reopened.entry(&user).unwrap().resolution,
+                reopened.resolution_of(&user),
                 EntryResolution::Summarized { .. }
             ),
             "last Resolution line must win"
@@ -1192,7 +1210,7 @@ mod tests {
         let pure_v1 = open_session(&path).unwrap();
         assert_eq!(pure_v1.entry_count(), 2);
         assert!(matches!(
-            pure_v1.entry(&user).unwrap().resolution,
+            pure_v1.resolution_of(&user),
             EntryResolution::Full
         ));
 
@@ -1223,7 +1241,7 @@ mod tests {
         let migrated = open_session(&path).unwrap();
         assert!(
             matches!(
-                &migrated.entry(&user).unwrap().resolution,
+                &migrated.resolution_of(&user),
                 EntryResolution::Outlined { outline } if outline == "hand migrated"
             ),
             "v1 embedded resolution must be honoured"
@@ -1291,6 +1309,86 @@ mod tests {
             "all-default v1 file should not populate the overlay"
         );
         assert_eq!(reopened.resolution_of(&user), EntryResolution::Full);
+    }
+
+    /// PR 3: a newly-written `Entry` line carries no `resolution` field —
+    /// resolution lives only in `Resolution` lines. Opening such a file and
+    /// writing a fresh entry must keep the file free of the legacy field.
+    #[test]
+    fn new_entry_lines_omit_the_resolution_field() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.jsonl");
+        let mut session = file_backed_session(path.clone());
+        let (_root, user) = seed_two_entries(&mut session);
+        drop(session);
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        for line in text.lines().filter(|l| l.contains("\"Entry\"")) {
+            let value: serde_json::Value = serde_json::from_str(line).unwrap();
+            assert!(
+                value.get("resolution").is_none(),
+                "Entry lines must not carry an embedded resolution: {line}"
+            );
+        }
+
+        // Reopen and append: the new line also omits it.
+        let mut reopened = open_session(&path).unwrap();
+        reopened.append_user_message("after");
+        let text = std::fs::read_to_string(&path).unwrap();
+        for line in text.lines().filter(|l| l.contains("\"Entry\"")) {
+            let value: serde_json::Value = serde_json::from_str(line).unwrap();
+            assert!(
+                value.get("resolution").is_none(),
+                "Entry lines must not carry an embedded resolution: {line}"
+            );
+        }
+        let _ = user;
+    }
+
+    /// PR 3: `Entry` no longer carries `resolution`, so a v1 file's embedded
+    /// resolution is read by `serde` into a throwaway field and used only to
+    /// seed the overlay. Once the field is gone for good this test documents
+    /// that the migration path still works.
+    #[test]
+    fn v1_embedded_resolution_seeds_overlay_after_field_removal() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.jsonl");
+        let mut session = file_backed_session(path.clone());
+        let (_root, user) = seed_two_entries(&mut session);
+        drop(session);
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        let migrated: Vec<String> = text
+            .lines()
+            .map(|line| {
+                if line.contains(&user.to_string()) {
+                    let value: serde_json::Value = serde_json::from_str(line).unwrap();
+                    serde_json::json!({
+                        "type": "Entry",
+                        "id": user.to_string(),
+                        "parent_id": value["parent_id"],
+                        "timestamp": value["timestamp"],
+                        "resolution": {"Outlined": {"outline": "hand migrated"}},
+                        "payload": value["payload"],
+                    })
+                    .to_string()
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect();
+        std::fs::write(&path, format!("{}\n", migrated.join("\n"))).unwrap();
+
+        let reopened = open_session(&path).unwrap();
+        assert!(
+            matches!(
+                reopened.resolution_of(&user),
+                EntryResolution::Outlined { outline } if outline == "hand migrated"
+            ),
+            "a v1 embedded resolution must seed the overlay even with the field removed"
+        );
+        // The value is reachable only through the overlay now.
+        assert!(!reopened.resolution_overlay_is_empty());
     }
 
     /// Create a fake session JSONL file in the given directory.

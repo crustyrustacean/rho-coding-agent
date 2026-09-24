@@ -245,7 +245,6 @@ mod tests {
     #[test]
     fn compaction_entry_estimated_by_summary_not_tokens_before() {
         use crate::newtypes::EntryId;
-        use crate::session::entry::EntryResolution;
         use crate::session::estimator::HeuristicEstimator;
         use std::collections::BTreeMap;
         use std::time::{Duration, SystemTime};
@@ -265,7 +264,6 @@ mod tests {
             id: EntryId::new(),
             parent_id: None,
             timestamp: SystemTime::UNIX_EPOCH,
-            resolution: EntryResolution::Full,
             payload: EntryPayload::Compaction {
                 summary: summary.clone(),
                 first_kept: EntryId::new(),
@@ -292,7 +290,7 @@ mod tests {
     #[test]
     fn summary_estimate_does_not_double_count_flat_and_phases() {
         use crate::newtypes::{EntryId, ToolName};
-        use crate::session::entry::{CompactionPhase, EntryResolution};
+        use crate::session::entry::CompactionPhase;
         use crate::session::estimator::HeuristicEstimator;
         use std::collections::BTreeMap;
         use std::time::{Duration, SystemTime};
@@ -302,7 +300,6 @@ mod tests {
                 id: EntryId::new(),
                 parent_id: None,
                 timestamp: SystemTime::UNIX_EPOCH,
-                resolution: EntryResolution::Full,
                 payload: EntryPayload::Compaction {
                     summary,
                     first_kept: EntryId::new(),

@@ -48,28 +48,24 @@ fn entry_round_trip_all_variants() {
             id: EntryId::new(),
             parent_id: None,
             timestamp: SystemTime::UNIX_EPOCH,
-            resolution: EntryResolution::Full,
             payload: EntryPayload::Message(ChatMessage::system_text("sys")),
         },
         Entry {
             id: EntryId::new(),
             parent_id: None,
             timestamp: SystemTime::UNIX_EPOCH,
-            resolution: EntryResolution::Full,
             payload: EntryPayload::Message(ChatMessage::user_text("hello")),
         },
         Entry {
             id: EntryId::new(),
             parent_id: None,
             timestamp: SystemTime::UNIX_EPOCH,
-            resolution: EntryResolution::Full,
             payload: EntryPayload::Message(ChatMessage::assistant_text("reply")),
         },
         Entry {
             id: EntryId::new(),
             parent_id: None,
             timestamp: SystemTime::UNIX_EPOCH,
-            resolution: EntryResolution::Full,
             payload: EntryPayload::Message(ChatMessage::tool_result(
                 ToolCallId::from("c1"),
                 "result",
@@ -79,7 +75,6 @@ fn entry_round_trip_all_variants() {
             id: EntryId::new(),
             parent_id: None,
             timestamp: SystemTime::UNIX_EPOCH,
-            resolution: EntryResolution::Full,
             payload: EntryPayload::Compaction {
                 summary: CompactionSummary {
                     original_request: Some("fix it".to_owned()),
@@ -100,7 +95,6 @@ fn entry_round_trip_all_variants() {
             id: EntryId::new(),
             parent_id: None,
             timestamp: SystemTime::UNIX_EPOCH,
-            resolution: EntryResolution::Full,
             payload: EntryPayload::BranchSummary {
                 summary: CompactionSummary {
                     original_request: None,
@@ -120,7 +114,6 @@ fn entry_round_trip_all_variants() {
             id: EntryId::new(),
             parent_id: None,
             timestamp: SystemTime::UNIX_EPOCH,
-            resolution: EntryResolution::Full,
             payload: EntryPayload::ModelChange {
                 model: "gemma-4".to_owned(),
             },
@@ -129,7 +122,6 @@ fn entry_round_trip_all_variants() {
             id: EntryId::new(),
             parent_id: None,
             timestamp: SystemTime::UNIX_EPOCH,
-            resolution: EntryResolution::Attached,
             payload: EntryPayload::Label {
                 target_id: EntryId::new(),
                 label: Some("checkpoint".to_owned()),
@@ -139,7 +131,6 @@ fn entry_round_trip_all_variants() {
             id: EntryId::new(),
             parent_id: None,
             timestamp: SystemTime::UNIX_EPOCH,
-            resolution: EntryResolution::Attached,
             payload: EntryPayload::SessionInfo {
                 name: "test".to_owned(),
             },
@@ -148,7 +139,6 @@ fn entry_round_trip_all_variants() {
             id: EntryId::new(),
             parent_id: None,
             timestamp: SystemTime::UNIX_EPOCH,
-            resolution: EntryResolution::Attached,
             payload: EntryPayload::LeafMoved {
                 from: Some(EntryId::new()),
                 to: EntryId::new(),
@@ -158,7 +148,6 @@ fn entry_round_trip_all_variants() {
             id: EntryId::new(),
             parent_id: None,
             timestamp: SystemTime::UNIX_EPOCH,
-            resolution: EntryResolution::Attached,
             payload: EntryPayload::Custom {
                 kind: "rho.test.v1".to_owned(),
                 data: serde_json::json!({"count": 42}),
@@ -168,7 +157,6 @@ fn entry_round_trip_all_variants() {
             id: EntryId::new(),
             parent_id: None,
             timestamp: SystemTime::UNIX_EPOCH,
-            resolution: EntryResolution::Full,
             payload: EntryPayload::CustomMessage {
                 kind: "rho.msg.v1".to_owned(),
                 content: vec![ContentBlock::Text {
@@ -180,9 +168,6 @@ fn entry_round_trip_all_variants() {
             id: EntryId::new(),
             parent_id: None,
             timestamp: SystemTime::UNIX_EPOCH,
-            resolution: EntryResolution::Compacted {
-                into: EntryId::from("compaction_id"),
-            },
             payload: EntryPayload::Message(ChatMessage::user_text("old")),
         },
     ];
@@ -870,7 +855,10 @@ async fn compact_and_resume_original_entries_still_accessible() {
 
     // Compaction entry should exist and be Full
     let comp_entry = session.entry(&compaction_id).unwrap();
-    assert!(matches!(comp_entry.resolution, EntryResolution::Full));
+    assert!(matches!(
+        session.resolution_of(&comp_entry.id),
+        EntryResolution::Full
+    ));
     assert!(
         matches!(comp_entry.payload, EntryPayload::Compaction { .. }),
         "compaction entry should have Compaction payload"

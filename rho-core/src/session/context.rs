@@ -165,12 +165,9 @@ impl Session {
             .into());
         }
 
-        // Write the overlay — the authoritative location going forward — and
-        // mirror into the entry field, which #62 PR 3 removes.
+        // The overlay is the single source of truth for an entry's resolution;
+        // the entry itself carries none.
         self.resolution.insert(id.clone(), resolution.clone());
-        if let Some(entry) = self.entries.get_mut(id) {
-            entry.resolution = resolution.clone();
-        }
         self.queue_resolution(id.clone(), resolution);
 
         if flush {
@@ -203,25 +200,27 @@ impl Session {
     /// caller-controlled flush, so batch callers can queue many changes and
     /// persist them in one pass.
     fn outline_entry_inner(&mut self, id: &EntryId, flush: bool) -> Result<()> {
-        // Check existence and resolution with immutable borrow.
+        // Fetch with an immutable borrow to build the outline.
         let entry = self.entries.get(id).ok_or_else(|| {
             crate::error::RhoError::Session(SessionError::Persistence(format!(
                 "entry {id} not found"
             )))
         })?;
 
-        if !matches!(
-            entry.resolution,
-            EntryResolution::Full | EntryResolution::Pinned
-        ) {
+        // This precondition is deliberately stricter than the generic transition
+        // table: re-outlining is an error even when the regenerated outline is
+        // byte-identical, which `set_resolution` alone would accept as an
+        // idempotent no-op. `set_resolution` decides what a legal *transition*
+        // is; this decides what this operation *means* on an entry that is
+        // already outlined.
+        let current = self.resolution_of(id);
+        if !matches!(current, EntryResolution::Full | EntryResolution::Pinned) {
             return Err(SessionError::Persistence(format!(
-                "cannot outline entry {id}: resolution is {:?}, expected Full or Pinned",
-                entry.resolution
+                "cannot outline entry {id}: resolution is {current:?}, expected Full or Pinned"
             ))
             .into());
         }
 
-        // Resolve context while we still have an immutable borrow.
         let ctx = self.resolve_outline_context(entry);
         let outline = super::outliner::generate_outline(entry, &ctx);
 
@@ -249,28 +248,29 @@ impl Session {
     /// Shared implementation for [`summarize_entry`](Self::summarize_entry)
     /// with a caller-controlled flush.
     fn summarize_entry_inner(&mut self, id: &EntryId, flush: bool) -> Result<()> {
-        // Check existence and resolution with immutable borrow.
-        let entry = self.entries.get(id).ok_or_else(|| {
-            crate::error::RhoError::Session(SessionError::Persistence(format!(
-                "entry {id} not found"
-            )))
-        })?;
-
         // `Outlined` is accepted so the eviction planner's second
         // (Outline -> Summarize) step can land. Before this, that step was
         // rejected here and silently swallowed by `apply_downgrade_plan`.
+        //
+        // Like `outline_entry_inner`, this precondition is stricter than the
+        // generic transition table: re-summarizing an already-summarized entry
+        // is an error even when the text is unchanged.
+        if !self.entries.contains_key(id) {
+            return Err(SessionError::Persistence(format!("entry {id} not found")).into());
+        }
+        let current = self.resolution_of(id);
         if !matches!(
-            entry.resolution,
+            current,
             EntryResolution::Full | EntryResolution::Pinned | EntryResolution::Outlined { .. }
         ) {
             return Err(SessionError::Persistence(format!(
-                "cannot summarize entry {id}: resolution is {:?}",
-                entry.resolution
+                "cannot summarize entry {id}: resolution is {current:?}"
             ))
             .into());
         }
 
         // Resolve context while we still have an immutable borrow.
+        let entry = self.entries.get(id).expect("presence checked above");
         let ctx = self.resolve_outline_context(entry);
         let summary = super::outliner::generate_summary(entry, &ctx);
 
@@ -471,7 +471,7 @@ impl Session {
         let mut compact_end: usize = 0; // exclusive upper bound; 0 means not reached
 
         // Start from index 1 (skip the root system message)
-        for (i, entry) in chronological.iter().enumerate().skip(1) {
+        for (i, path_entry) in chronological.iter().enumerate().skip(1) {
             // Don't compact the last entry (the leaf)
             if i == chronological.len() - 1 {
                 break;
@@ -479,17 +479,17 @@ impl Session {
 
             // A pinned entry terminates the compaction range. Anything at or
             // after it is preserved at full resolution.
-            if matches!(entry.resolution, EntryResolution::Pinned) {
+            if matches!(path_entry.resolution, EntryResolution::Pinned) {
                 break;
             }
 
             // Skip entries already at a reduced/attached resolution.
-            if !matches!(entry.resolution, EntryResolution::Full) {
+            if !matches!(path_entry.resolution, EntryResolution::Full) {
                 continue;
             }
 
             cumulative_tokens += super::truncation::estimate_entry_tokens_for_compaction(
-                entry.entry,
+                path_entry.entry,
                 &self.model,
                 self.estimator.as_ref(),
             );
@@ -721,7 +721,7 @@ impl Session {
             let entry_tokens = Self::estimate_entry_tokens_in_path(entry);
 
             // Classify by resolution.
-            match &path_entry.resolution {
+            match path_entry.resolution {
                 EntryResolution::Full => resolution_tokens.full += entry_tokens,
                 EntryResolution::Pinned => resolution_tokens.pinned += entry_tokens,
                 EntryResolution::Outlined { .. } => {
@@ -848,30 +848,6 @@ mod tests {
         ));
     }
 
-    /// During the two-PR transition the overlay and the mirrored
-    /// `Entry.resolution` field must never disagree. PR 3 removes the field
-    /// and this assertion with it.
-    #[test]
-    fn overlay_agrees_with_mirrored_field_for_every_entry() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
-        let a = session.append_user_message("one");
-        let b = session.append_user_message("two");
-        let state = session.append_custom_state("k".into(), serde_json::json!({}));
-
-        // Pin before outlining: `Pinned -> Outlined` is legal, the reverse is not.
-        session.pin_entry(&a).unwrap();
-        session.outline_entry(&a).unwrap();
-        session.summarize_entry(&b).unwrap();
-
-        for id in [&a, &b, &state] {
-            assert_eq!(
-                session.resolution_of(id),
-                session.entry(id).unwrap().resolution,
-                "overlay and mirrored field disagree for {id}"
-            );
-        }
-    }
-
     /// `path_to_root` yields `PathEntry` values carrying the effective
     /// resolution, and `path_entries` is chronological.
     #[test]
@@ -942,7 +918,7 @@ mod tests {
             .unwrap();
 
         assert!(matches!(
-            session.entry(&id).unwrap().resolution,
+            session.resolution_of(&id),
             EntryResolution::Outlined { .. }
         ));
     }
@@ -963,7 +939,7 @@ mod tests {
             .unwrap();
 
         assert!(matches!(
-            session.entry(&id).unwrap().resolution,
+            session.resolution_of(&id),
             EntryResolution::Summarized { .. }
         ));
     }
@@ -994,7 +970,7 @@ mod tests {
             .unwrap();
 
         assert!(matches!(
-            session.entry(&id).unwrap().resolution,
+            session.resolution_of(&id),
             EntryResolution::Summarized { .. }
         ));
     }
@@ -1007,15 +983,12 @@ mod tests {
 
         session.pin_entry(&id).unwrap();
         assert!(matches!(
-            session.entry(&id).unwrap().resolution,
+            session.resolution_of(&id),
             EntryResolution::Pinned
         ));
 
         session.unpin_entry(&id).unwrap();
-        assert!(matches!(
-            session.entry(&id).unwrap().resolution,
-            EntryResolution::Full
-        ));
+        assert!(matches!(session.resolution_of(&id), EntryResolution::Full));
     }
 
     /// Reverse transitions out of a reduced resolution are rejected.
@@ -1102,7 +1075,7 @@ mod tests {
         let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let id = session.append_custom_state("k".into(), serde_json::json!({}));
         assert!(matches!(
-            session.entry(&id).unwrap().resolution,
+            session.resolution_of(&id),
             EntryResolution::Attached
         ));
 
@@ -1137,7 +1110,7 @@ mod tests {
         session.pin_entry(&id).unwrap();
         session.pin_entry(&id).unwrap();
         assert!(matches!(
-            session.entry(&id).unwrap().resolution,
+            session.resolution_of(&id),
             EntryResolution::Pinned
         ));
     }
@@ -1149,10 +1122,7 @@ mod tests {
         let id = session.append_user_message("hello");
 
         session.unpin_entry(&id).unwrap();
-        assert!(matches!(
-            session.entry(&id).unwrap().resolution,
-            EntryResolution::Full
-        ));
+        assert!(matches!(session.resolution_of(&id), EntryResolution::Full));
     }
 
     // ── Context building tests (Task 8) ────────────────────────────────
@@ -1542,18 +1512,16 @@ mod tests {
         let compaction_id = session.compact_older_than(1, &strategy).await.unwrap();
 
         // The compacted entries should now have Compacted resolution
-        let user_entry = session.entry(&user_id).unwrap();
         assert!(
             matches!(
-                &user_entry.resolution,
-                EntryResolution::Compacted { into } if *into == compaction_id
+                session.resolution_of(&user_id),
+                EntryResolution::Compacted { into } if into == compaction_id
             ),
             "compacted entry should have Compacted resolution pointing to the compaction entry"
         );
 
         // The compaction entry itself should be Full resolution
-        let compaction_entry = session.entry(&compaction_id).unwrap();
-        assert!(matches!(compaction_entry.resolution, EntryResolution::Full));
+        assert_eq!(session.resolution_of(&compaction_id), EntryResolution::Full);
     }
 
     #[tokio::test]
@@ -1647,10 +1615,9 @@ mod tests {
         );
 
         // Verify the entry is indeed Compacted
-        let compacted_entry = session.entry(&user_id).unwrap();
         assert!(
             matches!(
-                compacted_entry.resolution,
+                session.resolution_of(&user_id),
                 EntryResolution::Compacted { .. }
             ),
             "compacted entry should have Compacted resolution"
@@ -1670,9 +1637,8 @@ mod tests {
         session.compact_older_than(1, &strategy).await.unwrap();
 
         // The root (system message) should never be compacted
-        let root_entry = session.entry(&root_id).unwrap();
         assert!(
-            matches!(root_entry.resolution, EntryResolution::Full),
+            matches!(session.resolution_of(&root_id), EntryResolution::Full),
             "root (system message) should never be compacted"
         );
     }
@@ -1692,9 +1658,8 @@ mod tests {
 
         // The leaf should have moved (to the compaction entry),
         // so the original leaf should still be Full resolution
-        let leaf_entry = session.entry(&leaf_before).unwrap();
         assert!(
-            matches!(leaf_entry.resolution, EntryResolution::Full),
+            matches!(session.resolution_of(&leaf_before), EntryResolution::Full),
             "last entry before compaction should not be compacted"
         );
     }
@@ -1853,7 +1818,7 @@ mod tests {
         // The batch-1 user message must now be Compacted, pointing at S1.
         assert!(
             matches!(
-                &session.entry(&u1).unwrap().resolution,
+                &session.resolution_of(&u1),
                 EntryResolution::Compacted { into } if *into == s1_id
             ),
             "batch-1 entry should be Compacted into S1"
@@ -1895,7 +1860,7 @@ mod tests {
         // itself rolled forward, so re-transitioning would orphan S1).
         assert!(
             matches!(
-                &session.entry(&u1).unwrap().resolution,
+                &session.resolution_of(&u1),
                 EntryResolution::Compacted { into } if *into == s1_id
             ),
             "batch-1 entry should remain Compacted into S1 after the second compaction"
@@ -1905,7 +1870,6 @@ mod tests {
     #[test]
     fn estimate_entry_tokens_in_path_counts_summary_findings() {
         use crate::newtypes::EntryId;
-        use crate::session::entry::EntryResolution;
         use std::collections::BTreeMap;
         use std::time::{Duration, SystemTime};
 
@@ -1914,7 +1878,6 @@ mod tests {
                 id: EntryId::new(),
                 parent_id: None,
                 timestamp: SystemTime::UNIX_EPOCH,
-                resolution: EntryResolution::Full,
                 payload: EntryPayload::Compaction {
                     summary,
                     first_kept: EntryId::new(),
@@ -2003,9 +1966,9 @@ mod tests {
         let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let before_id = session.append_user_message("old context");
         let pinned_id = session.append_user_message("the plan");
-        if let Some(entry) = session.entries.get_mut(&pinned_id) {
-            entry.resolution = EntryResolution::Pinned;
-        }
+        session
+            .set_resolution(&pinned_id, EntryResolution::Pinned)
+            .unwrap();
         let after_id = session.append_user_message("newer context");
         session.append_user_message("leaf"); // leaf
 
@@ -2016,19 +1979,19 @@ mod tests {
 
         // The pre-pin entry was compacted.
         assert!(
-            matches!(&session.entry(&before_id).unwrap().resolution,
+            matches!(&session.resolution_of(&before_id),
                      EntryResolution::Compacted { into } if *into == compaction_id),
             "entry before the pin should be compacted"
         );
         // The pin is untouched.
         assert_eq!(
-            session.entry(&pinned_id).unwrap().resolution,
+            session.resolution_of(&pinned_id),
             EntryResolution::Pinned,
             "pinned entry must survive"
         );
         // The entry after the pin is untouched (still Full).
         assert_eq!(
-            session.entry(&after_id).unwrap().resolution,
+            session.resolution_of(&after_id),
             EntryResolution::Full,
             "entry after the pin must not be swept into the range"
         );
@@ -2043,9 +2006,11 @@ mod tests {
 
         session.outline_entry(&user_id).unwrap();
 
-        let entry = session.entry(&user_id).unwrap();
         assert!(
-            matches!(entry.resolution, EntryResolution::Outlined { .. }),
+            matches!(
+                session.resolution_of(&user_id),
+                EntryResolution::Outlined { .. }
+            ),
             "entry should be Outlined after outline_entry"
         );
     }
@@ -2057,9 +2022,11 @@ mod tests {
 
         session.summarize_entry(&user_id).unwrap();
 
-        let entry = session.entry(&user_id).unwrap();
         assert!(
-            matches!(entry.resolution, EntryResolution::Summarized { .. }),
+            matches!(
+                session.resolution_of(&user_id),
+                EntryResolution::Summarized { .. }
+            ),
             "entry should be Summarized after summarize_entry"
         );
     }
@@ -2116,17 +2083,19 @@ mod tests {
         let user_id = session.append_user_message("important plan");
 
         // Manually set resolution to Pinned (pin_entry API not yet implemented)
-        if let Some(entry) = session.entries.get_mut(&user_id) {
-            entry.resolution = EntryResolution::Pinned;
-        }
+        session
+            .set_resolution(&user_id, EntryResolution::Pinned)
+            .unwrap();
 
         // Outlining a pinned entry should work (pin protects from eviction,
         // outlining is a downgrade of fidelity, not eviction)
         session.outline_entry(&user_id).unwrap();
 
-        let entry = session.entry(&user_id).unwrap();
         assert!(
-            matches!(entry.resolution, EntryResolution::Outlined { .. }),
+            matches!(
+                session.resolution_of(&user_id),
+                EntryResolution::Outlined { .. }
+            ),
             "pinned entry should become Outlined"
         );
     }
@@ -2192,9 +2161,8 @@ mod tests {
         }
 
         let reopened = Session::open(&path).unwrap();
-        let entry = reopened.entry(&user_id).unwrap();
         assert!(
-            matches!(&entry.resolution, EntryResolution::Outlined { outline } if outline.contains("hello")),
+            matches!(&reopened.resolution_of(&user_id), EntryResolution::Outlined { outline } if outline.contains("hello")),
             "outlined entry should survive JSONL round-trip"
         );
     }
@@ -2216,9 +2184,8 @@ mod tests {
         }
 
         let reopened = Session::open(&path).unwrap();
-        let entry = reopened.entry(&user_id).unwrap();
         assert!(
-            matches!(&entry.resolution, EntryResolution::Summarized { summary } if summary.contains("hello")),
+            matches!(&reopened.resolution_of(&user_id), EntryResolution::Summarized { summary } if summary.contains("hello")),
             "summarized entry should survive JSONL round-trip"
         );
     }
@@ -2268,15 +2235,19 @@ mod tests {
         }
 
         // Before prepare_context, the tool result should be Full
-        let entry = session.entry(&tool_id).unwrap();
-        assert!(matches!(entry.resolution, EntryResolution::Full));
+        assert!(matches!(
+            session.resolution_of(&tool_id),
+            EntryResolution::Full
+        ));
 
         session.prepare_context();
 
         // After prepare_context, the tool result should be downgraded
-        let entry = session.entry(&tool_id).unwrap();
         assert!(
-            matches!(entry.resolution, EntryResolution::Outlined { .. }),
+            matches!(
+                session.resolution_of(&tool_id),
+                EntryResolution::Outlined { .. }
+            ),
             "tool result should be outlined after prepare_context"
         );
     }
@@ -2326,9 +2297,9 @@ mod tests {
 
         session.prepare_context();
 
-        let resolutions: Vec<&EntryResolution> = tool_ids
+        let resolutions: Vec<EntryResolution> = tool_ids
             .iter()
-            .map(|id| &session.entry(id).unwrap().resolution)
+            .map(|id| session.resolution_of(id))
             .collect();
         assert!(
             resolutions
@@ -2360,9 +2331,8 @@ mod tests {
 
         session.prepare_context();
 
-        let entry = session.entry(&tool_id).unwrap();
         assert!(
-            matches!(entry.resolution, EntryResolution::Full),
+            matches!(session.resolution_of(&tool_id), EntryResolution::Full),
             "tool result should stay Full when within budget"
         );
     }
@@ -2378,9 +2348,8 @@ mod tests {
 
         session.prepare_context();
 
-        let entry = session.entry(&user_id).unwrap();
         assert!(
-            matches!(entry.resolution, EntryResolution::Full),
+            matches!(session.resolution_of(&user_id), EntryResolution::Full),
             "first user turn should be protected from downgrade"
         );
     }
@@ -2396,9 +2365,8 @@ mod tests {
 
         session.prepare_context();
 
-        let entry = session.entry(&last_id).unwrap();
         assert!(
-            matches!(entry.resolution, EntryResolution::Full),
+            matches!(session.resolution_of(&last_id), EntryResolution::Full),
             "last turn should be protected from downgrade"
         );
     }

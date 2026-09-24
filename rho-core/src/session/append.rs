@@ -7,7 +7,7 @@
 // LeafMoved entries are written only when the leaf moves to a non-adjacent
 // position (during branch operations, not normal append).
 
-use super::{Entry, EntryId, EntryPayload, EntryResolution, Session};
+use super::{Entry, EntryId, EntryPayload, Session};
 use crate::message::ChatMessage;
 use crate::newtypes::ToolCallId;
 use crate::tool::{ToolResult, ToolResultDetails};
@@ -21,17 +21,14 @@ impl Session {
     ///
     /// Returns the [`EntryId`] of the new entry.
     pub fn append_user_message(&mut self, text: &str) -> EntryId {
-        self.append_entry(
-            EntryPayload::Message(ChatMessage::user_text(text)),
-            EntryResolution::Full,
-        )
+        self.append_entry(EntryPayload::Message(ChatMessage::user_text(text)))
     }
 
     /// Append an assistant message (used by `send_current` to persist model responses).
     ///
     /// Returns the [`EntryId`] of the new entry.
     pub(crate) fn append_assistant_message(&mut self, msg: ChatMessage) -> EntryId {
-        self.append_entry(EntryPayload::Message(msg), EntryResolution::Full)
+        self.append_entry(EntryPayload::Message(msg))
     }
 
     /// Append a tool result, applying secret redaction and bounded resolution.
@@ -99,10 +96,9 @@ impl Session {
             (redacted, ToolResultDetails::None)
         };
 
-        let id = self.append_entry(
-            EntryPayload::Message(ChatMessage::tool_result(call_id, content)),
-            EntryResolution::Full,
-        );
+        let id = self.append_entry(EntryPayload::Message(ChatMessage::tool_result(
+            call_id, content,
+        )));
 
         // Store structured details in the details store for later retrieval.
         // Both FullOutput (truncated results) and Diagnostics (compiler output)
@@ -126,14 +122,11 @@ impl Session {
         first_kept: EntryId,
         tokens_before: usize,
     ) -> EntryId {
-        self.append_entry(
-            EntryPayload::Compaction {
-                summary,
-                first_kept,
-                tokens_before,
-            },
-            EntryResolution::Full,
-        )
+        self.append_entry(EntryPayload::Compaction {
+            summary,
+            first_kept,
+            tokens_before,
+        })
     }
 
     /// Append a branch summary entry.
@@ -146,20 +139,14 @@ impl Session {
         summary: super::CompactionSummary,
         from_id: EntryId,
     ) -> EntryId {
-        self.append_entry(
-            EntryPayload::BranchSummary { summary, from_id },
-            EntryResolution::Full,
-        )
+        self.append_entry(EntryPayload::BranchSummary { summary, from_id })
     }
 
     /// Append a label on a target entry.
     ///
     /// Returns the [`EntryId`] of the new entry.
     pub fn append_label(&mut self, target_id: EntryId, label: Option<String>) -> EntryId {
-        self.append_entry(
-            EntryPayload::Label { target_id, label },
-            EntryResolution::Attached,
-        )
+        self.append_entry(EntryPayload::Label { target_id, label })
     }
 
     /// Append a custom state entry (extension data that does NOT participate
@@ -170,10 +157,7 @@ impl Session {
     ///
     /// Returns the [`EntryId`] of the new entry.
     pub fn append_custom_state(&mut self, kind: String, data: serde_json::Value) -> EntryId {
-        self.append_entry(
-            EntryPayload::Custom { kind, data },
-            EntryResolution::Attached,
-        )
+        self.append_entry(EntryPayload::Custom { kind, data })
     }
 
     /// Append a custom message entry (extension content that DOES participate
@@ -187,10 +171,7 @@ impl Session {
         kind: String,
         content: Vec<crate::message::ContentBlock>,
     ) -> EntryId {
-        self.append_entry(
-            EntryPayload::CustomMessage { kind, content },
-            EntryResolution::Full,
-        )
+        self.append_entry(EntryPayload::CustomMessage { kind, content })
     }
 
     /// Append a `SessionEnded` entry marking the clean close of this session.
@@ -203,12 +184,9 @@ impl Session {
     /// entry in the JSONL file indicates an unclean shutdown (crash, kill,
     /// or Ctrl-C).
     pub fn close(&mut self, reason: impl Into<String>) {
-        self.append_entry(
-            EntryPayload::SessionEnded {
-                reason: reason.into(),
-            },
-            EntryResolution::Attached,
-        );
+        self.append_entry(EntryPayload::SessionEnded {
+            reason: reason.into(),
+        });
     }
 
     // ── Typed extension entry methods ─────────────────────────────────────
@@ -228,13 +206,10 @@ impl Session {
             );
             serde_json::Value::Null
         });
-        self.append_entry(
-            EntryPayload::Custom {
-                kind: E::KIND.to_owned(),
-                data,
-            },
-            EntryResolution::Attached,
-        )
+        self.append_entry(EntryPayload::Custom {
+            kind: E::KIND.to_owned(),
+            data,
+        })
     }
 
     /// Read a typed extension state entry back from the session tree.
@@ -259,13 +234,10 @@ impl Session {
     /// LLM context.
     pub fn write_custom_message<E: super::ExtensionMessageEntry>(&mut self, entry: &E) -> EntryId {
         let content = entry.content_blocks();
-        self.append_entry(
-            EntryPayload::CustomMessage {
-                kind: E::KIND.to_owned(),
-                content,
-            },
-            EntryResolution::Full,
-        )
+        self.append_entry(EntryPayload::CustomMessage {
+            kind: E::KIND.to_owned(),
+            content,
+        })
     }
 
     /// Read a typed extension message entry back from the session tree.
@@ -291,13 +263,17 @@ impl Session {
     /// flush fails, a `warn!` is logged but the in-memory session is unaffected
     /// — the entry is still in the tree. The file will be caught up on the next
     /// successful flush or when the session is opened again.
-    fn append_entry(&mut self, payload: EntryPayload, resolution: EntryResolution) -> EntryId {
+    ///
+    /// The entry's resolution is not stored on it: a new entry always sits at
+    /// its payload's default, and any later change goes through
+    /// [`set_resolution`](Session::set_resolution), which records an overlay
+    /// entry and a `Resolution` line.
+    fn append_entry(&mut self, payload: EntryPayload) -> EntryId {
         let id = EntryId::new();
         let entry = Entry {
             id: id.clone(),
             parent_id: self.leaf.clone(),
             timestamp: SystemTime::now(),
-            resolution,
             payload,
         };
         self.entries.insert(id.clone(), entry);
@@ -329,6 +305,7 @@ mod tests {
     use crate::context::TokenBudget;
     use crate::message::ContentBlock;
     use crate::newtypes::ToolCallId;
+    use crate::session::entry::EntryResolution;
     use crate::tool::ToolResult;
     use std::collections::BTreeMap;
 
@@ -342,7 +319,10 @@ mod tests {
 
         let entry = session.entry(&user_id).unwrap();
         assert_eq!(entry.parent_id, Some(root_id));
-        assert!(matches!(entry.resolution, EntryResolution::Full));
+        assert!(matches!(
+            EntryResolution::default_for(&entry.payload),
+            EntryResolution::Full
+        ));
         assert!(matches!(
             entry.payload,
             EntryPayload::Message(ChatMessage::User { .. })
@@ -506,7 +486,10 @@ mod tests {
 
         let id = session.append_compaction(summary, user_id, 200);
         let entry = session.entry(&id).unwrap();
-        assert!(matches!(entry.resolution, EntryResolution::Full));
+        assert!(matches!(
+            EntryResolution::default_for(&entry.payload),
+            EntryResolution::Full
+        ));
         assert!(matches!(entry.payload, EntryPayload::Compaction { .. }));
         assert_eq!(session.leaf(), Some(id));
     }
@@ -530,7 +513,10 @@ mod tests {
 
         let id = session.append_branch_summary(summary, from_id);
         let entry = session.entry(&id).unwrap();
-        assert!(matches!(entry.resolution, EntryResolution::Full));
+        assert!(matches!(
+            EntryResolution::default_for(&entry.payload),
+            EntryResolution::Full
+        ));
         assert!(matches!(entry.payload, EntryPayload::BranchSummary { .. }));
     }
 
@@ -541,7 +527,10 @@ mod tests {
 
         let id = session.append_label(target, Some("checkpoint".to_owned()));
         let entry = session.entry(&id).unwrap();
-        assert!(matches!(entry.resolution, EntryResolution::Attached));
+        assert!(matches!(
+            EntryResolution::default_for(&entry.payload),
+            EntryResolution::Attached
+        ));
         assert!(matches!(entry.payload, EntryPayload::Label { .. }));
     }
 
@@ -554,7 +543,10 @@ mod tests {
             serde_json::json!({"errors": 3}),
         );
         let entry = session.entry(&id).unwrap();
-        assert!(matches!(entry.resolution, EntryResolution::Attached));
+        assert!(matches!(
+            EntryResolution::default_for(&entry.payload),
+            EntryResolution::Attached
+        ));
         if let EntryPayload::Custom { kind, data } = &entry.payload {
             assert_eq!(kind, "rho.diagnostics.v1");
             assert_eq!(data["errors"], 3);
@@ -574,7 +566,10 @@ mod tests {
             }],
         );
         let entry = session.entry(&id).unwrap();
-        assert!(matches!(entry.resolution, EntryResolution::Full));
+        assert!(matches!(
+            EntryResolution::default_for(&entry.payload),
+            EntryResolution::Full
+        ));
         if let EntryPayload::CustomMessage { kind, content } = &entry.payload {
             assert_eq!(kind, "rho.diagnostics.v1");
             assert_eq!(content.len(), 1);
