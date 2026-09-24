@@ -12,6 +12,149 @@ use crate::session::error::SessionError;
 use crate::session::outliner::OutlineContext;
 
 impl Session {
+    // ── Resolution write path (#61) ─────────────────────────────────────
+
+    /// Transition an entry to a new [`EntryResolution`].
+    ///
+    /// This is the single validated write path for resolution changes. The
+    /// change is mirrored into the entry and queued for persistence, then
+    /// flushed immediately so a crash cannot lose it — a resolution change
+    /// to an already-flushed entry is otherwise invisible to
+    /// [`flush`](Session::flush), which only writes new entries.
+    ///
+    /// # Transition rules
+    ///
+    /// - `Full ↔ Pinned` — pin/unpin
+    /// - `Full | Pinned → Outlined | Summarized` — reduce fidelity
+    /// - `Outlined → Summarized` — a further one-way downgrade, used by the
+    ///   eviction planner when a single outline does not cover the excess
+    /// - `Full | Pinned → Compacted` — absorbed by a `Compaction` entry
+    ///
+    /// Every other transition is an error: reduced resolutions are
+    /// one-way, and `Compacted` / `Attached` entries are terminal.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RhoError::Session`](crate::error::RhoError::Session) if the
+    /// entry does not exist, or if the transition is not permitted by the
+    /// rules above.
+    pub fn set_resolution(&mut self, id: &EntryId, resolution: EntryResolution) -> Result<()> {
+        self.set_resolution_inner(id, resolution, true)
+    }
+
+    /// Pin an entry so compaction treats it as a hard barrier.
+    ///
+    /// Idempotent: pinning an already-pinned entry succeeds without writing a
+    /// duplicate change.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RhoError::Session`](crate::error::RhoError::Session) if the
+    /// entry does not exist, or if it is at a reduced resolution (only
+    /// `Full` and `Pinned` entries can be pinned).
+    pub fn pin_entry(&mut self, id: &EntryId) -> Result<()> {
+        self.pin_entry_inner(id, true)
+    }
+
+    /// Remove the pin from an entry, returning it to `Full` resolution.
+    ///
+    /// Idempotent: unpinning an entry that is not pinned succeeds as a no-op.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RhoError::Session`](crate::error::RhoError::Session) if the
+    /// entry does not exist, or if it is at a reduced resolution (only
+    /// `Pinned` entries can be unpinned back to `Full`).
+    pub fn unpin_entry(&mut self, id: &EntryId) -> Result<()> {
+        self.pin_entry_inner(id, false)
+    }
+
+    /// Shared implementation for [`pin_entry`](Self::pin_entry) and
+    /// [`unpin_entry`](Self::unpin_entry).
+    fn pin_entry_inner(&mut self, id: &EntryId, pinned: bool) -> Result<()> {
+        let current = self.entry_resolution(id)?;
+        let target = if pinned {
+            EntryResolution::Pinned
+        } else {
+            EntryResolution::Full
+        };
+        if current == target {
+            return Ok(());
+        }
+        self.set_resolution_inner(id, target, true)
+    }
+
+    /// Read an entry's current resolution, or an error if the entry is absent.
+    fn entry_resolution(&self, id: &EntryId) -> Result<EntryResolution> {
+        self.entries
+            .get(id)
+            .map(|entry| entry.resolution.clone())
+            .ok_or_else(|| {
+                crate::error::RhoError::Session(SessionError::Persistence(format!(
+                    "entry {id} not found"
+                )))
+            })
+    }
+
+    /// Whether `current -> next` is a permitted resolution transition.
+    ///
+    /// Permitted: `Full ↔ Pinned`; `Full | Pinned → Outlined | Summarized |
+    /// Compacted`; and the further one-way downgrade `Outlined → Summarized`
+    /// that the eviction planner relies on (it schedules Outline then Summarize
+    /// for the same entry when one outline does not cover the excess).
+    ///
+    /// Everything else is rejected — reverse transitions, and any change out
+    /// of the terminal `Compacted` / `Attached` / `Summarized` states. An
+    /// identical resolution is filtered out earlier (it is an idempotent
+    /// no-op, not a transition).
+    fn is_valid_transition(current: &EntryResolution, next: &EntryResolution) -> bool {
+        use EntryResolution::{Compacted, Full, Outlined, Pinned, Summarized};
+        matches!(
+            (current, next),
+            // Pin / unpin.
+            (Full, Pinned) | (Pinned, Full)
+            // Reduce fidelity, directly from full fidelity.
+            | (Full | Pinned, Outlined { .. } | Summarized { .. } | Compacted { .. })
+            // A further one-way downgrade.
+            | (Outlined { .. }, Summarized { .. })
+        )
+    }
+
+    /// Apply a resolution change, optionally flushing.
+    ///
+    /// `flush` is `false` for batch callers that write many changes in one go
+    /// (the eviction planner) and want a single flush at the end; every
+    /// other caller wants the change durable immediately.
+    fn set_resolution_inner(
+        &mut self,
+        id: &EntryId,
+        resolution: EntryResolution,
+        flush: bool,
+    ) -> Result<()> {
+        let current = self.entry_resolution(id)?;
+        if current == resolution {
+            return Ok(());
+        }
+        if !Self::is_valid_transition(&current, &resolution) {
+            return Err(SessionError::Persistence(format!(
+                "cannot set resolution of entry {id}: {current:?} -> {resolution:?} is not a permitted transition"
+            ))
+            .into());
+        }
+
+        // Mirror into the entry (the authoritative location until the overlay
+        // lands in #62) and queue the change for the JSONL log.
+        if let Some(entry) = self.entries.get_mut(id) {
+            entry.resolution = resolution.clone();
+        }
+        self.queue_resolution(id.clone(), resolution);
+
+        if flush {
+            self.flush()?;
+        }
+        Ok(())
+    }
+
     // ── Outlining & Summarization (Phase 1) ───────────────────────────
     /// Transition an entry from its current resolution to Outlined.
     ///
@@ -22,16 +165,20 @@ impl Session {
     /// Only `Full` or `Pinned` entries can be outlined. Returns an error if
     /// the entry doesn't exist or is already at a non-outlineable resolution.
     ///
-    /// # Panics
-    ///
-    /// If the entry existed during the initial immutable borrow but was
-    /// removed before the second lookup (impossible in single-threaded access).
+    /// The change is persisted immediately — see [`set_resolution`](Self::set_resolution).
     ///
     /// # Errors
     ///
     /// Returns `RhoError::Session` if the entry doesn't exist or its
     /// resolution is not `Full` or `Pinned`.
     pub fn outline_entry(&mut self, id: &EntryId) -> Result<()> {
+        self.outline_entry_inner(id, true)
+    }
+
+    /// Shared implementation for [`outline_entry`](Self::outline_entry) with a
+    /// caller-controlled flush, so batch callers can queue many changes and
+    /// persist them in one pass.
+    fn outline_entry_inner(&mut self, id: &EntryId, flush: bool) -> Result<()> {
         // Check existence and resolution with immutable borrow.
         let entry = self.entries.get(id).ok_or_else(|| {
             crate::error::RhoError::Session(SessionError::Persistence(format!(
@@ -54,28 +201,30 @@ impl Session {
         let ctx = self.resolve_outline_context(entry);
         let outline = super::outliner::generate_outline(entry, &ctx);
 
-        // Now take the mutable borrow to update resolution.
-        let entry = self
-            .entries
-            .get_mut(id)
-            .expect("entry confirmed to exist above");
-        entry.resolution = EntryResolution::Outlined { outline };
-        self.flush()?;
-        Ok(())
+        // Route the mutation through the validated, persisted write path.
+        self.set_resolution_inner(id, EntryResolution::Outlined { outline }, flush)
     }
 
     /// Transition an entry from its current resolution to Summarized.
     ///
-    /// # Panics
+    /// Accepts `Full`, `Pinned`, or `Outlined` entries. The `Outlined` case
+    /// exists for the eviction planner, which schedules an Outline followed by
+    /// a Summarize on the same entry when one outline does not cover the
+    /// excess.
     ///
-    /// If the entry existed during the initial immutable borrow but was
-    /// removed before the second lookup (impossible in single-threaded access).
+    /// The change is persisted immediately — see [`set_resolution`](Self::set_resolution).
     ///
     /// # Errors
     ///
     /// Returns `RhoError::Session` if the entry doesn't exist or its
-    /// resolution is not `Full` or `Pinned`.
+    /// resolution is not `Full`, `Pinned`, or `Outlined`.
     pub fn summarize_entry(&mut self, id: &EntryId) -> Result<()> {
+        self.summarize_entry_inner(id, true)
+    }
+
+    /// Shared implementation for [`summarize_entry`](Self::summarize_entry)
+    /// with a caller-controlled flush.
+    fn summarize_entry_inner(&mut self, id: &EntryId, flush: bool) -> Result<()> {
         // Check existence and resolution with immutable borrow.
         let entry = self.entries.get(id).ok_or_else(|| {
             crate::error::RhoError::Session(SessionError::Persistence(format!(
@@ -83,9 +232,12 @@ impl Session {
             )))
         })?;
 
+        // `Outlined` is accepted so the eviction planner's second
+        // (Outline -> Summarize) step can land. Before this, that step was
+        // rejected here and silently swallowed by `apply_downgrade_plan`.
         if !matches!(
             entry.resolution,
-            EntryResolution::Full | EntryResolution::Pinned
+            EntryResolution::Full | EntryResolution::Pinned | EntryResolution::Outlined { .. }
         ) {
             return Err(SessionError::Persistence(format!(
                 "cannot summarize entry {id}: resolution is {:?}",
@@ -98,14 +250,8 @@ impl Session {
         let ctx = self.resolve_outline_context(entry);
         let summary = super::outliner::generate_summary(entry, &ctx);
 
-        // Now take the mutable borrow to update resolution.
-        let entry = self
-            .entries
-            .get_mut(id)
-            .expect("entry confirmed to exist above");
-        entry.resolution = EntryResolution::Summarized { summary };
-        self.flush()?;
-        Ok(())
+        // Route the mutation through the validated, persisted write path.
+        self.set_resolution_inner(id, EntryResolution::Summarized { summary }, flush)
     }
 
     // ── Turn-internal eviction (Phase 3) ────────────────────────────
@@ -119,21 +265,30 @@ impl Session {
     /// Called automatically before building LLM requests via
     /// [`prepare_context`](Self::prepare_context).
     fn apply_downgrade_plan(&mut self, plan: &super::eviction::DowngradePlan) {
+        let mut applied = false;
         for action in &plan.actions {
             let result = match action.target {
-                super::eviction::DowngradeTarget::Outline => self.outline_entry(&action.entry_id),
+                super::eviction::DowngradeTarget::Outline => {
+                    self.outline_entry_inner(&action.entry_id, false)
+                }
                 super::eviction::DowngradeTarget::Summarize => {
-                    self.summarize_entry(&action.entry_id)
+                    self.summarize_entry_inner(&action.entry_id, false)
                 }
             };
-            if let Err(e) = result {
-                tracing::debug!(
-                    entry_id = %action.entry_id,
-                    target = ?action.target,
-                    error = %e,
-                    "failed to apply downgrade, skipping"
-                );
+            match result {
+                Ok(()) => applied = true,
+                Err(e) => {
+                    tracing::debug!(
+                        entry_id = %action.entry_id,
+                        target = ?action.target,
+                        error = %e,
+                        "failed to apply downgrade, skipping"
+                    );
+                }
             }
+        }
+        if applied && let Err(e) = self.flush() {
+            tracing::warn!(error = %e, "failed to flush downgrades to disk");
         }
     }
 
@@ -366,14 +521,23 @@ impl Session {
         // Append the Compaction entry
         let compaction_id = self.append_compaction(summary, first_kept_id, tokens_before);
 
-        // Transition the compacted entries' resolution to Compacted
+        // Transition the compacted entries' resolution to Compacted. This
+        // queues one change per entry; the trailing flush persists them all
+        // in a single pass.
         for entry_id in &compacted_ids {
-            if let Some(entry) = self.entries.get_mut(entry_id) {
-                entry.resolution = EntryResolution::Compacted {
+            self.set_resolution_inner(
+                entry_id,
+                EntryResolution::Compacted {
                     into: compaction_id.clone(),
-                };
-            }
+                },
+                false,
+            )?;
         }
+        // Persist the queued resolution changes. `append_compaction`
+        // auto-flushed the new entry, so the Compaction line is already on
+        // disk; without this flush the Compacted transitions would sit in
+        // the queue until the next append.
+        self.flush()?;
 
         Ok(compaction_id)
     }
@@ -622,6 +786,237 @@ mod tests {
     use crate::context::TokenBudget;
     use crate::message::{ChatMessage, ContentBlock, ModelToolCall, ToolCallFunction};
     use crate::newtypes::{ToolCallId, ToolName};
+
+    // ── set_resolution transition tests (#61) ───────────────────────────
+
+    /// A `Full` entry may be outlined.
+    #[test]
+    fn set_resolution_full_to_outlined_is_allowed() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let id = session.append_user_message("hello");
+
+        session
+            .set_resolution(
+                &id,
+                EntryResolution::Outlined {
+                    outline: "o".into(),
+                },
+            )
+            .unwrap();
+
+        assert!(matches!(
+            session.entry(&id).unwrap().resolution,
+            EntryResolution::Outlined { .. }
+        ));
+    }
+
+    /// A `Full` entry may be summarized.
+    #[test]
+    fn set_resolution_full_to_summarized_is_allowed() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let id = session.append_user_message("hello");
+
+        session
+            .set_resolution(
+                &id,
+                EntryResolution::Summarized {
+                    summary: "s".into(),
+                },
+            )
+            .unwrap();
+
+        assert!(matches!(
+            session.entry(&id).unwrap().resolution,
+            EntryResolution::Summarized { .. }
+        ));
+    }
+
+    /// Option A: `Outlined -> Summarized` is a legal further downgrade. The
+    /// eviction planner emits both actions for the same entry when a single
+    /// outline does not cover the excess.
+    #[test]
+    fn set_resolution_outlined_to_summarized_is_allowed() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let id = session.append_user_message("hello");
+        session
+            .set_resolution(
+                &id,
+                EntryResolution::Outlined {
+                    outline: "o".into(),
+                },
+            )
+            .unwrap();
+
+        session
+            .set_resolution(
+                &id,
+                EntryResolution::Summarized {
+                    summary: "s".into(),
+                },
+            )
+            .unwrap();
+
+        assert!(matches!(
+            session.entry(&id).unwrap().resolution,
+            EntryResolution::Summarized { .. }
+        ));
+    }
+
+    /// `Full <-> Pinned` are both legal.
+    #[test]
+    fn set_resolution_full_pinned_round_trips() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let id = session.append_user_message("hello");
+
+        session.pin_entry(&id).unwrap();
+        assert!(matches!(
+            session.entry(&id).unwrap().resolution,
+            EntryResolution::Pinned
+        ));
+
+        session.unpin_entry(&id).unwrap();
+        assert!(matches!(
+            session.entry(&id).unwrap().resolution,
+            EntryResolution::Full
+        ));
+    }
+
+    /// Reverse transitions out of a reduced resolution are rejected.
+    #[test]
+    fn set_resolution_rejects_reverse_transitions() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let id = session.append_user_message("hello");
+
+        // Full -> Outlined, then Outlined -> Full is rejected.
+        session
+            .set_resolution(
+                &id,
+                EntryResolution::Outlined {
+                    outline: "o".into(),
+                },
+            )
+            .unwrap();
+        assert!(
+            session.set_resolution(&id, EntryResolution::Full).is_err(),
+            "Outlined -> Full must be rejected"
+        );
+
+        // Outlined -> Summarized is legal (Option A), but Summarized -> Full
+        // is not.
+        session
+            .set_resolution(
+                &id,
+                EntryResolution::Summarized {
+                    summary: "s".into(),
+                },
+            )
+            .unwrap();
+        assert!(
+            session.set_resolution(&id, EntryResolution::Full).is_err(),
+            "Summarized -> Full must be rejected"
+        );
+    }
+
+    /// `Compacted` is terminal: no transition out of it is legal.
+    #[test]
+    fn set_resolution_compacted_is_terminal() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let id = session.append_user_message("hello");
+        let target = session.append_user_message("target");
+        let other = session.append_user_message("other");
+
+        session
+            .set_resolution(
+                &id,
+                EntryResolution::Compacted {
+                    into: target.clone(),
+                },
+            )
+            .unwrap();
+
+        // Re-setting the *same* resolution is an idempotent no-op: it never
+        // reaches transition validation.
+        session
+            .set_resolution(&id, EntryResolution::Compacted { into: target })
+            .unwrap();
+
+        for target in [
+            EntryResolution::Full,
+            EntryResolution::Pinned,
+            EntryResolution::Outlined {
+                outline: "o".into(),
+            },
+            EntryResolution::Summarized {
+                summary: "s".into(),
+            },
+            EntryResolution::Compacted { into: other },
+        ] {
+            assert!(
+                session.set_resolution(&id, target.clone()).is_err(),
+                "Compacted -> {target:?} must be rejected"
+            );
+        }
+    }
+
+    /// A transition from `Attached` is rejected: attached entries are
+    /// metadata, not context participants.
+    #[test]
+    fn set_resolution_attached_is_terminal() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let id = session.append_custom_state("k".into(), serde_json::json!({}));
+        assert!(matches!(
+            session.entry(&id).unwrap().resolution,
+            EntryResolution::Attached
+        ));
+
+        assert!(
+            session.set_resolution(&id, EntryResolution::Full).is_err(),
+            "Attached -> Full must be rejected"
+        );
+    }
+
+    /// A missing entry id is an error, not a silent no-op.
+    #[test]
+    fn set_resolution_rejects_unknown_entry() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let missing = crate::newtypes::EntryId::from("deadbeef");
+
+        let err = session
+            .set_resolution(&missing, EntryResolution::Pinned)
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("not found"),
+            "error should mention not found, got: {err}"
+        );
+    }
+
+    /// `pin_entry` on an already-pinned entry is a no-op, not an error, so
+    /// repeated pin requests are idempotent.
+    #[test]
+    fn pin_entry_is_idempotent() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let id = session.append_user_message("hello");
+
+        session.pin_entry(&id).unwrap();
+        session.pin_entry(&id).unwrap();
+        assert!(matches!(
+            session.entry(&id).unwrap().resolution,
+            EntryResolution::Pinned
+        ));
+    }
+
+    /// `unpin_entry` on a `Full` (never pinned) entry is a no-op.
+    #[test]
+    fn unpin_entry_is_idempotent() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let id = session.append_user_message("hello");
+
+        session.unpin_entry(&id).unwrap();
+        assert!(matches!(
+            session.entry(&id).unwrap().resolution,
+            EntryResolution::Full
+        ));
+    }
 
     // ── Context building tests (Task 8) ────────────────────────────────
 
@@ -1746,6 +2141,58 @@ mod tests {
         assert!(
             matches!(entry.resolution, EntryResolution::Outlined { .. }),
             "tool result should be outlined after prepare_context"
+        );
+    }
+
+    /// Option A end-to-end: the eviction planner emits Outline then Summarize
+    /// for the same entry when outlining alone does not cover the excess.
+    /// Before `Outlined -> Summarized` was made legal, the second action was
+    /// rejected by `summarize_entry` and silently swallowed at `debug!` level.
+    /// This test asserts the second step now actually lands.
+    ///
+    /// The scenario needs several tool results: a single one is truncated by
+    /// `append_tool_result` to fit the budget, so the planner only ever sees
+    /// one large candidate whose Outline already covers the excess.
+    #[test]
+    fn prepare_context_reaches_summarized_via_outline_then_summarize() {
+        // Budget: prompt = 100 - 50 = 50. A tool result is truncated above
+        // 50% of prompt budget (25 tokens ≈ 100 chars), so keep each result
+        // just under that while accumulating several of them.
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
+            .with_token_budget(TokenBudget::with_reserve(100, 50));
+
+        let tool_ids;
+        {
+            session.append_user_message("original request");
+            for call in 0..4 {
+                session.append_assistant_message(assistant_with_tool_call(&format!("call_{call}")));
+                let result = crate::tool::ToolResult {
+                    output: "x".repeat(80),
+                    is_error: false,
+                    details: crate::tool::ToolResultDetails::None,
+                };
+                session.append_tool_result(ToolCallId::from(format!("call_{call}")), &result);
+            }
+            session.append_user_message("current question");
+            tool_ids = session
+                .path_to_root()
+                .into_iter()
+                .filter(|e| matches!(e.payload, EntryPayload::Message(ChatMessage::Tool { .. })))
+                .map(|e| e.id.clone())
+                .collect::<Vec<_>>();
+        }
+
+        session.prepare_context();
+
+        let resolutions: Vec<&EntryResolution> = tool_ids
+            .iter()
+            .map(|id| &session.entry(id).unwrap().resolution)
+            .collect();
+        assert!(
+            resolutions
+                .iter()
+                .any(|r| matches!(r, EntryResolution::Summarized { .. })),
+            "planner's second (Summarize) step must land for at least one entry; got {resolutions:?}"
         );
     }
 
