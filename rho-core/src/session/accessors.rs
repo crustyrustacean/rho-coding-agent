@@ -208,6 +208,34 @@ impl Session {
     pub(crate) fn set_flushed_count(&mut self, count: usize) {
         self.persist.flushed_count = count;
     }
+
+    /// Clear the queued resolution changes after a successful flush.
+    pub(crate) fn clear_pending_resolution(&mut self) {
+        self.persist.pending_resolution.clear();
+    }
+
+    /// Queue a resolution change for persistence.
+    ///
+    /// Entries can be rewritten several times before the next flush (the
+    /// eviction planner emits Outline then Summarize for the same entry), so
+    /// an existing queued change for the same id is replaced rather than
+    /// appended. Replay is last-write-wins, so only the final value matters.
+    pub(crate) fn queue_resolution(
+        &mut self,
+        id: EntryId,
+        resolution: crate::session::entry::EntryResolution,
+    ) {
+        if let Some(slot) = self
+            .persist
+            .pending_resolution
+            .iter_mut()
+            .find(|(pending_id, _)| pending_id == &id)
+        {
+            slot.1 = resolution;
+        } else {
+            self.persist.pending_resolution.push((id, resolution));
+        }
+    }
 }
 
 #[cfg(test)]
