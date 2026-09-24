@@ -1,11 +1,18 @@
 //! JSONL persistence for session trees.
 //!
-//! Sessions persist to append-only JSONL files. Each line is a JSON object
-//! representing a single entry. The format is:
+//! Sessions persist to append-only JSONL files. The first line is a `Header`;
+//! every subsequent line is a tagged record — an `Entry`, or (format v2+) a
+//! `Resolution` change against an already-written entry:
 //!
 //! ```text
-//! {"id":"abc12345","parent_id":null,"timestamp":...,"resolution":"Full","payload":{...}}
+//! {"type":"Header",...}
+//! {"type":"Entry","id":"abc12345","parent_id":null,"timestamp":...,"resolution":"Full","payload":{...}}
+//! {"type":"Resolution","entry":"abc12345","resolution":{"Outlined":{"outline":"..."}},"cursor":null}
 //! ```
+//!
+//! `Entry` lines are append-only; resolution is changed by appending a
+//! `Resolution` line rather than rewriting the entry. Replay applies those
+//! changes in file order, last-write-wins.
 //!
 //! # Path layout
 //!
@@ -19,11 +26,20 @@
 //! - `timestamp` is the session creation time as a Unix epoch seconds string.
 //! - `session-id` is the 8-char hex [`SessionId`](crate::newtypes::SessionId).
 //!
+//! # Format versions
+//!
+//! v1 carries resolution inside the `Entry` line. v2 (current,
+//! [`SESSION_FORMAT_VERSION`]) adds the `Resolution` line so changes to
+//! already-flushed entries survive a restart. v1 files remain readable;
+//! files newer than this build understands are rejected rather than misread.
+//!
 //! # Crash safety
 //!
 //! Each append operation auto-flushes to disk. A crashed process loses at
 //! most one in-flight entry. The JSONL format is append-only, so partial writes
-//! lose only the last line — the rest of the file is intact.
+//! lose only the last line — the rest of the file is intact. On open, an
+//! unparsable *final* line is discarded as a torn write; an unparsable line
+//! anywhere else is treated as corruption and fails the load.
 //!
 //! # In-memory mode
 //!
@@ -80,7 +96,36 @@ pub enum JsonlLine {
     },
     /// A session tree entry.
     Entry(Entry),
+    /// A resolution change applied to an existing entry.
+    ///
+    /// Resolution changes happen after an entry is flushed (the entry is
+    /// already on disk), so they cannot be folded back into the `Entry` line.
+    /// Each change is appended as its own line; replay applies them in file
+    /// order with last-write-wins.
+    ///
+    /// `cursor` is reserved for the per-cursor overlay split (roadmap A3) and
+    /// is always `None` in format v2. The field is present so stamping it
+    /// later does not require a second format change.
+    Resolution {
+        /// The entry whose resolution changed.
+        entry: crate::newtypes::EntryId,
+        /// The new resolution for that entry.
+        resolution: crate::session::entry::EntryResolution,
+        /// Cursor this change applies to. Always `None` in format v2.
+        #[serde(default)]
+        cursor: Option<String>,
+    },
 }
+
+/// Current on-disk session format version.
+///
+/// v2 adds the `JsonlLine::Resolution` variant so resolution changes to
+/// already-flushed entries survive a restart. v1 files carry resolution
+/// inside the `Entry` line and are still accepted.
+pub const SESSION_FORMAT_VERSION: u32 = 2;
+
+/// Highest on-disk format version this build can read.
+pub const MAX_SUPPORTED_SESSION_VERSION: u32 = SESSION_FORMAT_VERSION;
 
 // ── Path computation ──────────────────────────────────────────────────────────
 
@@ -283,6 +328,16 @@ pub struct PersistState {
     /// Number of entries that have been flushed to disk. Entries at index
     /// `flushed_count..entries.len()` are unwritten.
     pub flushed_count: usize,
+    /// Resolution changes not yet written to disk.
+    ///
+    /// Resolution changes apply to entries that are *already* on disk, so this
+    /// queue is deliberately independent of `flushed_count`. `flush_session`
+    /// drains it after writing any new entries — a `Resolution` line must
+    /// never precede the `Entry` line it refers to.
+    pub pending_resolution: Vec<(
+        crate::newtypes::EntryId,
+        crate::session::entry::EntryResolution,
+    )>,
 }
 
 impl PersistState {
@@ -291,6 +346,7 @@ impl PersistState {
         Self {
             save_path: None,
             flushed_count: 0,
+            pending_resolution: Vec::new(),
         }
     }
 
@@ -299,6 +355,7 @@ impl PersistState {
         Self {
             save_path: Some(path),
             flushed_count,
+            pending_resolution: Vec::new(),
         }
     }
 }
@@ -350,76 +407,68 @@ pub fn open_session(path: &Path) -> Result<Session> {
             ))
         })?;
 
-    let header_jsonl: JsonlLine = serde_json::from_str(&header_line).map_err(|e| {
-        SessionError::Persistence(format!(
-            "failed to parse session header from {}: {e}",
+    let (session_id, version, created_at_secs, cwd, parent_session) =
+        parse_header_line(&header_line, path)?;
+
+    // Reject formats newer than this build understands rather than silently
+    // misreading them. v1 and v2 are both accepted.
+    if version > MAX_SUPPORTED_SESSION_VERSION {
+        return Err(SessionError::Persistence(format!(
+            "session file {} has unsupported format version {version} (this build supports up to {MAX_SUPPORTED_SESSION_VERSION})",
             path.display()
         ))
-    })?;
-
-    let (session_id, version, created_at_secs, cwd, parent_session) = match header_jsonl {
-        JsonlLine::Header {
-            id,
-            version,
-            created_at_secs,
-            cwd,
-            parent_session,
-        } => (
-            id,
-            version,
-            created_at_secs,
-            PathBuf::from(cwd),
-            parent_session,
-        ),
-        JsonlLine::Entry(_) => {
-            return Err(SessionError::Persistence(format!(
-                "first line of session file is not a header: {}",
-                path.display()
-            ))
-            .into());
-        }
-    };
+        .into());
+    }
 
     // Read all entry lines.
     let mut entries: HashMap<crate::newtypes::EntryId, Entry> = HashMap::new();
     let mut last_entry_id: Option<crate::newtypes::EntryId> = None;
     let mut entry_count: usize = 0;
+    // Resolution changes in file order. Last write wins on replay.
+    let mut resolution_changes: Vec<(
+        crate::newtypes::EntryId,
+        crate::session::entry::EntryResolution,
+    )> = Vec::new();
 
-    for line_result in lines {
-        let line = line_result.map_err(|e| {
-            SessionError::Persistence(format!(
-                "failed to read line from session file {}: {e}",
-                path.display()
-            ))
-        })?;
+    // Read the remaining lines eagerly so an unparsable *final* line can be
+    // told apart from corruption in the middle of the file. A crash mid-append
+    // leaves a partial last line; the JSONL contract treats the rest of the
+    // file as intact.
+    let raw_lines: Vec<String> =
+        lines
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| {
+                SessionError::Persistence(format!(
+                    "failed to read line from session file {}: {e}",
+                    path.display()
+                ))
+            })?;
 
-        let line = line.trim();
-        if line.is_empty() {
-            continue; // skip blank lines
-        }
+    parse_body_lines(
+        path,
+        &raw_lines,
+        &mut entries,
+        &mut last_entry_id,
+        &mut entry_count,
+        &mut resolution_changes,
+    )?;
 
-        let jsonl_line: JsonlLine = serde_json::from_str(line).map_err(|e| {
-            SessionError::Persistence(format!(
-                "failed to parse entry at line {} in {}: {e}",
-                entry_count + 2, // +2: header is line 1, entries start at line 2
-                path.display()
-            ))
-        })?;
-
-        match jsonl_line {
-            JsonlLine::Header { .. } => {
-                warn!("duplicate header line in session file, ignoring");
-            }
-            JsonlLine::Entry(entry) => {
-                last_entry_id = Some(entry.id.clone());
-                entries.insert(entry.id.clone(), entry);
-                entry_count += 1;
+    // Apply resolution changes in file order (last write wins). A change for
+    // an unknown entry id is skipped with a warning: the referenced entry may
+    // live in a session file this one was branched from.
+    for (entry_id, resolution) in &resolution_changes {
+        match entries.get_mut(entry_id) {
+            Some(entry) => entry.resolution = resolution.clone(),
+            None => {
+                warn!(
+                    entry = %entry_id,
+                    path = %path.display(),
+                    "resolution change references unknown entry; skipping"
+                );
             }
         }
     }
 
-    // Determine the leaf.
-    // Determine the leaf.
     // The last entry in the file is always the leaf (entries are appended
     // in order). Branch operations produce LeafMoved entries that become
     // the leaf, then subsequent appends extend from there.
@@ -477,8 +526,9 @@ pub fn flush_session(session: &mut Session) -> Result<()> {
     };
 
     let total_entries = session.entry_count();
+    let pending_resolution = session.persist_state().pending_resolution.clone();
 
-    if persist.flushed_count >= total_entries {
+    if persist.flushed_count >= total_entries && pending_resolution.is_empty() {
         // Nothing new to write.
         return Ok(());
     }
@@ -512,29 +562,7 @@ pub fn flush_session(session: &mut Session) -> Result<()> {
 
     // Write header if file is new.
     if !file_exists {
-        let header = session.header();
-        let header_line = JsonlLine::Header {
-            id: header.id.to_string(),
-            version: header.version,
-            created_at_secs: header
-                .created_at
-                .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                .map_or(0, |d| d.as_secs()),
-            cwd: header.cwd.to_string_lossy().into_owned(),
-            parent_session: header
-                .parent_session
-                .as_ref()
-                .map(|p| p.to_string_lossy().into_owned()),
-        };
-        let json = serde_json::to_string(&header_line).map_err(|e| {
-            SessionError::Persistence(format!("failed to serialize session header: {e}"))
-        })?;
-        writeln!(writer, "{json}").map_err(|e| {
-            SessionError::Persistence(format!(
-                "failed to write session header to {}: {e}",
-                save_path.display()
-            ))
-        })?;
+        write_header_line(&mut writer, session, &save_path)?;
     }
 
     // Write unwritten entries.
@@ -560,6 +588,11 @@ pub fn flush_session(session: &mut Session) -> Result<()> {
         })?;
     }
 
+    // Write queued resolution changes *after* the entries, so a Resolution
+    // line never precedes the Entry it refers to. Last write wins on replay,
+    // so repeats for the same entry are safe and order-preserving.
+    write_resolution_lines(&mut writer, &pending_resolution, &save_path)?;
+
     writer.flush().map_err(|e| {
         SessionError::Persistence(format!(
             "failed to flush session file {}: {e}",
@@ -567,8 +600,9 @@ pub fn flush_session(session: &mut Session) -> Result<()> {
         ))
     })?;
 
-    // Update flushed count.
+    // Update flushed count and clear the queue only after a successful write.
     session.set_flushed_count(total_entries);
+    session.clear_pending_resolution();
 
     debug!(
         path = %save_path.display(),
@@ -576,6 +610,211 @@ pub fn flush_session(session: &mut Session) -> Result<()> {
         "session flushed to JSONL"
     );
 
+    Ok(())
+}
+
+/// Parse the header line of a session file.
+///
+/// Returns `(session_id, version, created_at_secs, cwd, parent_session)`.
+///
+/// # Errors
+///
+/// Returns [`crate::error::RhoError`] if the line does not deserialise or is
+/// not a `Header` line.
+fn parse_header_line(
+    header_line: &str,
+    path: &Path,
+) -> Result<(String, u32, u64, PathBuf, Option<String>)> {
+    let header_jsonl: JsonlLine = serde_json::from_str(header_line).map_err(|e| {
+        SessionError::Persistence(format!(
+            "failed to parse session header from {}: {e}",
+            path.display()
+        ))
+    })?;
+
+    match header_jsonl {
+        JsonlLine::Header {
+            id,
+            version,
+            created_at_secs,
+            cwd,
+            parent_session,
+        } => Ok((
+            id,
+            version,
+            created_at_secs,
+            PathBuf::from(cwd),
+            parent_session,
+        )),
+        JsonlLine::Entry(_) | JsonlLine::Resolution { .. } => {
+            Err(SessionError::Persistence(format!(
+                "first line of session file is not a header: {}",
+                path.display()
+            ))
+            .into())
+        }
+    }
+}
+
+/// Serialise and write the session header line.
+///
+/// Used only when the target file is new or empty; an existing file already
+/// carries its header from the first flush.
+///
+/// # Errors
+///
+/// Returns [`crate::error::RhoError`] if the header cannot be serialised or
+/// written.
+fn write_header_line<W: Write>(writer: &mut W, session: &Session, save_path: &Path) -> Result<()> {
+    let header = session.header();
+    let header_line = JsonlLine::Header {
+        id: header.id.to_string(),
+        version: header.version,
+        created_at_secs: header
+            .created_at
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs()),
+        cwd: header.cwd.to_string_lossy().into_owned(),
+        parent_session: header
+            .parent_session
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned()),
+    };
+    let json = serde_json::to_string(&header_line).map_err(|e| {
+        SessionError::Persistence(format!("failed to serialize session header: {e}"))
+    })?;
+    writeln!(writer, "{json}").map_err(|e| {
+        SessionError::Persistence(format!(
+            "failed to write session header to {}: {e}",
+            save_path.display()
+        ))
+    })?;
+    Ok(())
+}
+
+/// Serialise and write queued resolution changes, one line per change.
+///
+/// Order is preserved so replay's last-write-wins rule produces the same
+/// result as the in-memory sequence of changes.
+///
+/// # Errors
+///
+/// Returns [`crate::error::RhoError`] if a change cannot be serialised or
+/// written.
+fn write_resolution_lines<W: Write>(
+    writer: &mut W,
+    changes: &[(
+        crate::newtypes::EntryId,
+        crate::session::entry::EntryResolution,
+    )],
+    save_path: &Path,
+) -> Result<()> {
+    for (entry_id, resolution) in changes {
+        let line = JsonlLine::Resolution {
+            entry: entry_id.clone(),
+            resolution: resolution.clone(),
+            cursor: None,
+        };
+        let json = serde_json::to_string(&line).map_err(|e| {
+            SessionError::Persistence(format!(
+                "failed to serialize resolution change for {entry_id}: {e}"
+            ))
+        })?;
+        writeln!(writer, "{json}").map_err(|e| {
+            SessionError::Persistence(format!(
+                "failed to write resolution change to {}: {e}",
+                save_path.display()
+            ))
+        })?;
+    }
+    Ok(())
+}
+
+/// Parse the body lines of a session file (everything after the header).
+///
+/// Populates `entries`, `last_entry_id`, and `entry_count` from `Entry`
+/// lines, and appends `Resolution` changes to `resolution_changes` in file
+/// order (the caller applies them last-write-wins).
+///
+/// # Torn-tail tolerance
+///
+/// A crash mid-append leaves a partial final line. That line is discarded with
+/// a warning; every complete line before it is kept. An unparsable line
+/// anywhere else is real corruption and fails the load.
+///
+/// # Errors
+///
+/// Returns [`crate::error::RhoError`] if a non-final line cannot be
+/// deserialized.
+fn parse_body_lines(
+    path: &Path,
+    raw_lines: &[String],
+    entries: &mut HashMap<crate::newtypes::EntryId, Entry>,
+    last_entry_id: &mut Option<crate::newtypes::EntryId>,
+    entry_count: &mut usize,
+    resolution_changes: &mut Vec<(
+        crate::newtypes::EntryId,
+        crate::session::entry::EntryResolution,
+    )>,
+) -> Result<()> {
+    let last_line_index = raw_lines.len();
+
+    for (line_index, raw_line) in raw_lines.iter().enumerate() {
+        let physical_line_number = line_index + 2; // +2: header is line 1
+        let line = raw_line.trim();
+        if line.is_empty() {
+            continue; // skip blank lines
+        }
+
+        let jsonl_line: JsonlLine = match serde_json::from_str(line) {
+            Ok(parsed) => parsed,
+            Err(e) => {
+                // A crash mid-write leaves a partial final line. Tolerate it
+                // and keep every complete line before it; an unparsable line
+                // anywhere else is real corruption and fails the load.
+                if line_index + 1 == last_line_index {
+                    warn!(
+                        path = %path.display(),
+                        line = physical_line_number,
+                        "discarding unparsable final line (torn write)"
+                    );
+                    break;
+                }
+                return Err(SessionError::Persistence(format!(
+                    "failed to parse entry at line {physical_line_number} in {}: {e}",
+                    path.display()
+                ))
+                .into());
+            }
+        };
+
+        match jsonl_line {
+            JsonlLine::Header { .. } => {
+                warn!("duplicate header line in session file, ignoring");
+            }
+            JsonlLine::Entry(entry) => {
+                *last_entry_id = Some(entry.id.clone());
+                entries.insert(entry.id.clone(), entry);
+                *entry_count += 1;
+            }
+            JsonlLine::Resolution {
+                entry,
+                resolution,
+                cursor,
+            } => {
+                if cursor.is_some() {
+                    // Per-cursor resolution is roadmap A3; this build has no
+                    // cursor concept, so a stamped line cannot be applied.
+                    warn!(
+                        entry = %entry,
+                        "resolution line carries a cursor id, which this build does not support; ignoring"
+                    );
+                    continue;
+                }
+                resolution_changes.push((entry, resolution));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -592,7 +831,364 @@ pub fn compute_save_path(header: &SessionHeader) -> PathBuf {
 #[allow(clippy::duration_suboptimal_units)]
 mod tests {
     use super::*;
+    use crate::message::ChatMessage;
+    use crate::newtypes::EntryId;
+    use crate::session::MechanicalCompactionStrategy;
+    use crate::session::entry::EntryResolution;
     use std::io::Write;
+
+    /// Build a file-backed [`Session`] rooted at `path`, using the internal
+    /// constructor so tests can point persistence at a temp file.
+    ///
+    /// The session starts with a root system-message entry and no unwritten
+    /// entries. Callers append via the normal public API to exercise the
+    /// real flush path.
+    fn file_backed_session(path: PathBuf) -> Session {
+        let header = SessionHeader {
+            id: crate::newtypes::SessionId::from("test0001"),
+            version: SESSION_FORMAT_VERSION,
+            created_at: std::time::SystemTime::UNIX_EPOCH,
+            cwd: std::env::temp_dir(),
+            parent_session: None,
+        };
+        Session::new_internal(
+            header,
+            HashMap::new(),
+            None,
+            PersistState::with_path(path, 0),
+        )
+    }
+
+    /// Append a root system message plus a user turn, returning their IDs.
+    ///
+    /// Exercises the real append/flush path so the file exists on disk before
+    /// a resolution change is applied.
+    fn seed_two_entries(session: &mut Session) -> (EntryId, EntryId) {
+        let root = session.append_user_message("system");
+        let user = session.append_user_message("hello");
+        (root, user)
+    }
+
+    // ── Resolution persistence regression tests (#61) ──────────────────
+
+    /// Regression for the live bug: `outline_entry` mutates an already-flushed
+    /// entry, so the change was previously lost on reopen.
+    #[test]
+    fn outline_survives_flush_and_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.jsonl");
+        let mut session = file_backed_session(path.clone());
+        let (_root, user) = seed_two_entries(&mut session);
+
+        session.outline_entry(&user).unwrap();
+        drop(session);
+
+        let reopened = open_session(&path).unwrap();
+        assert!(
+            matches!(
+                reopened.entry(&user).unwrap().resolution,
+                EntryResolution::Outlined { .. }
+            ),
+            "outlined resolution must survive flush + reopen"
+        );
+    }
+
+    /// Regression for `summarize_entry` losing its mutation on reopen.
+    #[test]
+    fn summarize_survives_flush_and_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.jsonl");
+        let mut session = file_backed_session(path.clone());
+        let (_root, user) = seed_two_entries(&mut session);
+
+        session.summarize_entry(&user).unwrap();
+        drop(session);
+
+        let reopened = open_session(&path).unwrap();
+        assert!(
+            matches!(
+                reopened.entry(&user).unwrap().resolution,
+                EntryResolution::Summarized { .. }
+            ),
+            "summarized resolution must survive flush + reopen"
+        );
+    }
+
+    /// Regression for the worst manifestation: after a restart, both the
+    /// `Compaction` entry *and* the entries it replaced render into context.
+    #[tokio::test]
+    async fn compaction_survives_flush_and_reopen_without_duplicating_originals() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.jsonl");
+        let mut session = file_backed_session(path.clone());
+        // sys, u1, a1, u2, a2, u3 (leaf) — enough turns for a compaction
+        // range to accumulate above a tiny threshold.
+        let _root = session.append_user_message("system");
+        let u1 = session.append_user_message("first request");
+        let _a1 = session.append_user_message("first answer");
+        let _u2 = session.append_user_message("second request");
+        let _a2 = session.append_user_message("second answer");
+        let _u3 = session.append_user_message("current request");
+
+        let compaction_id = session
+            .compact_older_than(1, &MechanicalCompactionStrategy::new())
+            .await
+            .unwrap();
+        // Explicit flush: `compact_older_than` must persist its resolution
+        // changes, but exercise `flush` directly so this test isolates the
+        // persistence question from the auto-flush wiring.
+        session.flush().unwrap();
+        drop(session);
+
+        let reopened = open_session(&path).unwrap();
+        assert!(
+            matches!(
+                &reopened.entry(&u1).unwrap().resolution,
+                EntryResolution::Compacted { into } if into == &compaction_id
+            ),
+            "compacted entry must still point at its Compaction after reopen"
+        );
+    }
+
+    /// `compact_older_than` must persist its own resolution changes without
+    /// requiring an explicit `flush()` call. Catches the missing trailing
+    /// flush in the compaction path specifically.
+    #[tokio::test]
+    async fn compact_older_than_persists_without_explicit_flush() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.jsonl");
+        let mut session = file_backed_session(path.clone());
+        let _root = session.append_user_message("system");
+        let u1 = session.append_user_message("first request");
+        let _a1 = session.append_user_message("first answer");
+        let _u2 = session.append_user_message("second request");
+        let _a2 = session.append_user_message("second answer");
+        let _u3 = session.append_user_message("current request");
+
+        session
+            .compact_older_than(1, &MechanicalCompactionStrategy::new())
+            .await
+            .unwrap();
+        // Deliberately no `flush()` — the Session value is dropped as-is.
+        drop(session);
+
+        let reopened = open_session(&path).unwrap();
+        assert!(
+            matches!(
+                reopened.entry(&u1).unwrap().resolution,
+                EntryResolution::Compacted { .. }
+            ),
+            "compact_older_than must flush its resolution changes itself"
+        );
+    }
+
+    /// A reopened compacted session must not render both the Compaction entry
+    /// and the original entries it replaced.
+    #[tokio::test]
+    async fn reopened_compaction_path_excludes_compacted_originals() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.jsonl");
+        let mut session = file_backed_session(path.clone());
+        let _root = session.append_user_message("system");
+        let _u1 = session.append_user_message("first request");
+        let _a1 = session.append_user_message("first answer");
+        let _u2 = session.append_user_message("second request");
+        let _a2 = session.append_user_message("second answer");
+        let _u3 = session.append_user_message("current request");
+
+        session
+            .compact_older_than(1, &MechanicalCompactionStrategy::new())
+            .await
+            .unwrap();
+        drop(session);
+
+        let reopened = open_session(&path).unwrap();
+        let messages = reopened.path_messages();
+        let texts: Vec<String> = messages
+            .iter()
+            .filter_map(|m| match m {
+                ChatMessage::User { content } => content.first().map(|block| match block {
+                    crate::message::ContentBlock::Text { text } => text.clone(),
+                }),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            !texts.iter().any(|t| t == "first request"),
+            "compacted original must not render into context after reopen; got {texts:?}"
+        );
+    }
+
+    /// Multiple `Resolution` lines for one entry: the last write wins.
+    #[test]
+    fn multiple_resolution_lines_for_one_entry_last_wins() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.jsonl");
+        let mut session = file_backed_session(path.clone());
+        let (_root, user) = seed_two_entries(&mut session);
+
+        session.outline_entry(&user).unwrap();
+        session.summarize_entry(&user).unwrap();
+        drop(session);
+
+        let reopened = open_session(&path).unwrap();
+        assert!(
+            matches!(
+                reopened.entry(&user).unwrap().resolution,
+                EntryResolution::Summarized { .. }
+            ),
+            "last Resolution line must win"
+        );
+    }
+
+    /// An `Resolution` line referring to an entry id that does not exist in
+    /// the file must not fail the load.
+    #[test]
+    fn resolution_line_for_unknown_entry_is_skipped_with_warning() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.jsonl");
+        let mut session = file_backed_session(path.clone());
+        let (_root, _user) = seed_two_entries(&mut session);
+        drop(session);
+
+        // Append a Resolution line for an entry that was never written.
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        let line = serde_json::json!({
+            "type": "Resolution",
+            "entry": "deadbeef",
+            "resolution": {"Outlined": {"outline": "ghost"}},
+            "cursor": null
+        });
+        writeln!(file, "{line}").unwrap();
+
+        let reopened = open_session(&path).unwrap();
+        assert_eq!(reopened.entry_count(), 2, "unknown entry must be skipped");
+    }
+
+    /// A torn final line (a crash mid-write) must not prevent opening.
+    #[test]
+    fn torn_final_entry_line_is_tolerated() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.jsonl");
+        let mut session = file_backed_session(path.clone());
+        seed_two_entries(&mut session);
+        drop(session);
+
+        let mut text = std::fs::read_to_string(&path).unwrap();
+        text.push_str("{\"type\":\"Entry\",\"id\":\"abc\",\"parent_id\":");
+        std::fs::write(&path, text).unwrap();
+
+        let reopened = open_session(&path).unwrap();
+        assert_eq!(reopened.entry_count(), 2);
+    }
+
+    /// A torn final `Resolution` line must not prevent opening.
+    #[test]
+    fn torn_final_resolution_line_is_tolerated() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.jsonl");
+        let mut session = file_backed_session(path.clone());
+        let (_root, user) = seed_two_entries(&mut session);
+        session.outline_entry(&user).unwrap();
+        drop(session);
+
+        let mut text = std::fs::read_to_string(&path).unwrap();
+        text.push_str("{\"type\":\"Resolution\",\"entry\":");
+        std::fs::write(&path, text).unwrap();
+
+        let reopened = open_session(&path).unwrap();
+        assert_eq!(reopened.entry_count(), 2);
+    }
+
+    /// Header versions newer than this build understands must be rejected
+    /// rather than silently misread.
+    #[test]
+    fn future_header_version_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.jsonl");
+        let mut session = file_backed_session(path.clone());
+        seed_two_entries(&mut session);
+        drop(session);
+
+        let future = SESSION_FORMAT_VERSION + 1;
+        let text = std::fs::read_to_string(&path).unwrap();
+        let bumped: Vec<String> = text
+            .lines()
+            .map(|line| {
+                if line.contains("\"type\":\"Header\"") {
+                    line.replace(
+                        &format!("\"version\":{SESSION_FORMAT_VERSION}"),
+                        &format!("\"version\":{future}"),
+                    )
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect();
+        std::fs::write(&path, format!("{}\n", bumped.join("\n"))).unwrap();
+
+        let err = open_session(&path).unwrap_err();
+        assert!(
+            err.to_string().contains("version"),
+            "error should mention version, got: {err}"
+        );
+    }
+
+    /// v1 files with no `Resolution` lines must still open cleanly, and a
+    /// hand-migrated v1 file (resolution embedded in the Entry line) must have
+    /// that resolution honoured.
+    #[test]
+    fn v1_file_with_embedded_resolution_opens() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.jsonl");
+        let mut session = file_backed_session(path.clone());
+        let (_root, user) = seed_two_entries(&mut session);
+        drop(session);
+
+        // Case 1: a pure v1 file (Entry lines only, all resolutions Full).
+        let pure_v1 = open_session(&path).unwrap();
+        assert_eq!(pure_v1.entry_count(), 2);
+        assert!(matches!(
+            pure_v1.entry(&user).unwrap().resolution,
+            EntryResolution::Full
+        ));
+
+        // Case 2: a hand-migrated v1 file — the entry's embedded resolution
+        // is Outlined and there are no Resolution lines.
+        let text = std::fs::read_to_string(&path).unwrap();
+        let migrated_lines: Vec<String> = text
+            .lines()
+            .map(|line| {
+                if line.contains(&user.to_string()) {
+                    let value: serde_json::Value = serde_json::from_str(line).unwrap();
+                    serde_json::json!({
+                        "type": "Entry",
+                        "id": user.to_string(),
+                        "parent_id": value["parent_id"],
+                        "timestamp": value["timestamp"],
+                        "resolution": {"Outlined": {"outline": "hand migrated"}},
+                        "payload": value["payload"],
+                    })
+                    .to_string()
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect();
+        std::fs::write(&path, format!("{}\n", migrated_lines.join("\n"))).unwrap();
+
+        let migrated = open_session(&path).unwrap();
+        assert!(
+            matches!(
+                &migrated.entry(&user).unwrap().resolution,
+                EntryResolution::Outlined { outline } if outline == "hand migrated"
+            ),
+            "v1 embedded resolution must be honoured"
+        );
+    }
 
     /// Create a fake session JSONL file in the given directory.
     ///

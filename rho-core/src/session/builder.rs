@@ -52,7 +52,7 @@ impl Session {
 
         let header = SessionHeader {
             id: SessionId::new(),
-            version: 1,
+            version: super::persist::SESSION_FORMAT_VERSION,
             created_at: SystemTime::now(),
             cwd: cwd.into(),
             parent_session: None,
@@ -112,7 +112,7 @@ impl Session {
         Self {
             header: SessionHeader {
                 id: SessionId::new(),
-                version: 1,
+                version: persist::SESSION_FORMAT_VERSION,
                 created_at: SystemTime::now(),
                 cwd: cwd.into(),
                 parent_session: None,
@@ -330,7 +330,7 @@ mod tests {
     #[test]
     fn header_has_correct_version() {
         let session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
-        assert_eq!(session.header().version, 1);
+        assert_eq!(session.header().version, persist::SESSION_FORMAT_VERSION);
     }
 
     #[test]
@@ -389,7 +389,7 @@ mod tests {
         // Write just a header line
         let header = JsonlLine::Header {
             id: "abc12345".to_owned(),
-            version: 1,
+            version: super::persist::SESSION_FORMAT_VERSION,
             created_at_secs: 1_700_000_000,
             cwd: "/tmp".to_owned(),
             parent_session: None,

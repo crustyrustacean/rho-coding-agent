@@ -376,7 +376,10 @@ mod tests {
 
         // Verify header
         assert_eq!(reopened.header().id, session.header().id);
-        assert_eq!(reopened.header().version, 1);
+        assert_eq!(
+            reopened.header().version,
+            super::persist::SESSION_FORMAT_VERSION
+        );
         assert_eq!(reopened.header().cwd, PathBuf::from("/tmp"));
 
         // Verify entries
