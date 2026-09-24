@@ -1,3 +1,14 @@
+## [0.92.2] - 2026-09-24
+
+### 🐛 Bug Fixes
+
+- *(session)* Persist resolution changes to JSONL
+- *(deps)* Bump rustls to 0.23.45 for RUSTSEC-2026-0285
+
+### 🚜 Refactor
+
+- *(session)* Resolve resolution through a sparse overlay
+- *(session)* Drop Entry.resolution; the overlay is the only store
 ## [0.92.1] - 2026-09-08
 ## [0.92.0] - 2026-08-21
 
