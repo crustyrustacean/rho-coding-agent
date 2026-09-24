@@ -106,6 +106,7 @@ pub use header::SessionHeader;
 pub use persist::PersistState;
 pub use persist::{SessionMetadata, find_latest_session, list_sessions};
 pub use persist::{default_save_path, open_session, project_hash};
+pub use tree::PathEntry;
 
 use crate::context::{ContextManager, TokenBudget};
 use crate::newtypes::EntryId;
@@ -151,6 +152,17 @@ pub struct Session {
     entries: HashMap<EntryId, Entry>,
     /// Append-ordered entry IDs (in the order they were added to the session).
     append_order: Vec<EntryId>,
+    /// Sparse resolution overlay, keyed by entry ID.
+    ///
+    /// An entry absent from this map resolves to
+    /// [`EntryResolution::default_for`] of its payload, which is what keeps
+    /// the map sparse — only entries whose resolution was explicitly changed
+    /// occupy space.
+    ///
+    /// While `Entry::resolution` still exists (it is removed in #62 PR 3),
+    /// [`set_resolution`](Self::set_resolution) mirrors every change into
+    /// both places and the two are asserted to agree.
+    resolution: HashMap<EntryId, EntryResolution>,
     /// The current leaf position. Always `Some` after construction.
     leaf: Option<EntryId>,
     /// Token estimator for budget-aware decisions.

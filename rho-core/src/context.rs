@@ -14,7 +14,7 @@
 
 use crate::message::{ChatMessage, ContentBlock};
 
-use crate::session::{Entry, EntryPayload, EntryResolution, TokenEstimator};
+use crate::session::{Entry, EntryPayload, EntryResolution, PathEntry, TokenEstimator};
 use tracing::{debug, warn};
 
 /// A token budget for context window management.
@@ -195,17 +195,18 @@ pub trait ContextManager: Send + Sync {
     /// produced by reversing `path_to_root()`.
     fn fit_path(
         &self,
-        entries: &[&Entry],
+        entries: &[PathEntry<'_>],
         budget: TokenBudget,
         estimator: &dyn TokenEstimator,
         tool_schemas: &[rho_ai::ToolDefinition],
     ) -> Vec<ChatMessage> {
         // Step 1–4: Convert entries to messages, respecting resolution.
         let mut messages = Vec::with_capacity(entries.len());
-        for entry in entries {
+        for path_entry in entries {
+            let entry = path_entry.entry;
             // Skip entries that don't participate in the model's context.
             // Outlined/summarized entries render at reduced fidelity.
-            let reduced_text: Option<&str> = match &entry.resolution {
+            let reduced_text: Option<&str> = match &path_entry.resolution {
                 EntryResolution::Compacted { .. } | EntryResolution::Attached => continue,
                 EntryResolution::Full | EntryResolution::Pinned => None,
                 EntryResolution::Outlined { outline } => Some(outline.as_str()),
@@ -705,7 +706,7 @@ impl ContextManager for SlidingWindowContextManager {
     #[allow(clippy::too_many_lines)]
     fn fit_path(
         &self,
-        entries: &[&Entry],
+        entries: &[PathEntry<'_>],
         budget: TokenBudget,
         estimator: &dyn TokenEstimator,
         tool_schemas: &[rho_ai::ToolDefinition],
@@ -713,8 +714,9 @@ impl ContextManager for SlidingWindowContextManager {
         // Steps 1–4: Convert entries to messages, tracking pinned status.
         let mut messages = Vec::with_capacity(entries.len());
         let mut pinned_indices = Vec::new();
-        for entry in entries {
-            let reduced_text: Option<&str> = match &entry.resolution {
+        for path_entry in entries {
+            let entry = path_entry.entry;
+            let reduced_text: Option<&str> = match &path_entry.resolution {
                 EntryResolution::Compacted { .. } | EntryResolution::Attached => continue,
                 EntryResolution::Full => None,
                 EntryResolution::Pinned => {
@@ -1285,7 +1287,13 @@ mod tests {
                 EntryResolution::Full,
             ),
         ];
-        let refs: Vec<&Entry> = entries.iter().collect();
+        let refs: Vec<PathEntry> = entries
+            .iter()
+            .map(|e| PathEntry {
+                entry: e,
+                resolution: e.resolution.clone(),
+            })
+            .collect();
 
         let cm = SlidingWindowContextManager::new();
         let estimator = HeuristicEstimator::new();
@@ -1315,7 +1323,13 @@ mod tests {
                 EntryResolution::Full,
             ),
         ];
-        let refs: Vec<&Entry> = entries.iter().collect();
+        let refs: Vec<PathEntry> = entries
+            .iter()
+            .map(|e| PathEntry {
+                entry: e,
+                resolution: e.resolution.clone(),
+            })
+            .collect();
 
         let cm = SlidingWindowContextManager::new();
         let estimator = HeuristicEstimator::new();
@@ -1353,7 +1367,13 @@ mod tests {
                 EntryResolution::Attached,
             ),
         ];
-        let refs: Vec<&Entry> = entries.iter().collect();
+        let refs: Vec<PathEntry> = entries
+            .iter()
+            .map(|e| PathEntry {
+                entry: e,
+                resolution: e.resolution.clone(),
+            })
+            .collect();
 
         let cm = SlidingWindowContextManager::new();
         let estimator = HeuristicEstimator::new();
@@ -1391,7 +1411,13 @@ mod tests {
                 EntryResolution::Attached,
             ),
         ];
-        let refs: Vec<&Entry> = entries.iter().collect();
+        let refs: Vec<PathEntry> = entries
+            .iter()
+            .map(|e| PathEntry {
+                entry: e,
+                resolution: e.resolution.clone(),
+            })
+            .collect();
 
         let cm = SlidingWindowContextManager::new();
         let estimator = HeuristicEstimator::new();
@@ -1434,7 +1460,13 @@ mod tests {
                 EntryResolution::Full,
             ),
         ];
-        let refs: Vec<&Entry> = entries.iter().collect();
+        let refs: Vec<PathEntry> = entries
+            .iter()
+            .map(|e| PathEntry {
+                entry: e,
+                resolution: e.resolution.clone(),
+            })
+            .collect();
 
         let cm = SlidingWindowContextManager::new();
         let estimator = HeuristicEstimator::new();
@@ -1490,7 +1522,13 @@ mod tests {
                 EntryResolution::Full,
             ),
         ];
-        let refs: Vec<&Entry> = entries.iter().collect();
+        let refs: Vec<PathEntry> = entries
+            .iter()
+            .map(|e| PathEntry {
+                entry: e,
+                resolution: e.resolution.clone(),
+            })
+            .collect();
 
         let cm = SlidingWindowContextManager::new();
         let estimator = HeuristicEstimator::new();
@@ -1517,7 +1555,13 @@ mod tests {
                 EntryResolution::Full,
             ),
         ];
-        let refs: Vec<&Entry> = entries.iter().collect();
+        let refs: Vec<PathEntry> = entries
+            .iter()
+            .map(|e| PathEntry {
+                entry: e,
+                resolution: e.resolution.clone(),
+            })
+            .collect();
 
         let cm = SlidingWindowContextManager::new();
         let estimator = HeuristicEstimator::new();
@@ -1546,7 +1590,13 @@ mod tests {
                 )
             })
             .collect();
-        let refs: Vec<&Entry> = entries.iter().collect();
+        let refs: Vec<PathEntry> = entries
+            .iter()
+            .map(|e| PathEntry {
+                entry: e,
+                resolution: e.resolution.clone(),
+            })
+            .collect();
 
         let cm = SlidingWindowContextManager::new();
         let estimator = HeuristicEstimator::new();
@@ -1614,7 +1664,13 @@ mod tests {
                 EntryResolution::Full,
             ),
         ];
-        let refs: Vec<&Entry> = entries.iter().collect();
+        let refs: Vec<PathEntry> = entries
+            .iter()
+            .map(|e| PathEntry {
+                entry: e,
+                resolution: e.resolution.clone(),
+            })
+            .collect();
 
         let cm = SlidingWindowContextManager::new();
         let estimator = HeuristicEstimator::new();
@@ -1648,7 +1704,13 @@ mod tests {
                 EntryResolution::Pinned,
             ),
         ];
-        let refs: Vec<&Entry> = entries.iter().collect();
+        let refs: Vec<PathEntry> = entries
+            .iter()
+            .map(|e| PathEntry {
+                entry: e,
+                resolution: e.resolution.clone(),
+            })
+            .collect();
 
         let cm = SlidingWindowContextManager::new();
         let estimator = HeuristicEstimator::new();
@@ -1684,7 +1746,13 @@ mod tests {
                 },
             ),
         ];
-        let refs: Vec<&Entry> = entries.iter().collect();
+        let refs: Vec<PathEntry> = entries
+            .iter()
+            .map(|e| PathEntry {
+                entry: e,
+                resolution: e.resolution.clone(),
+            })
+            .collect();
 
         let cm = SlidingWindowContextManager::new();
         let estimator = HeuristicEstimator::new();
@@ -1734,7 +1802,13 @@ mod tests {
                 },
             ),
         ];
-        let refs: Vec<&Entry> = entries.iter().collect();
+        let refs: Vec<PathEntry> = entries
+            .iter()
+            .map(|e| PathEntry {
+                entry: e,
+                resolution: e.resolution.clone(),
+            })
+            .collect();
 
         let cm = SlidingWindowContextManager::new();
         let estimator = HeuristicEstimator::new();
@@ -1778,7 +1852,13 @@ mod tests {
                 },
             ),
         ];
-        let refs: Vec<&Entry> = entries.iter().collect();
+        let refs: Vec<PathEntry> = entries
+            .iter()
+            .map(|e| PathEntry {
+                entry: e,
+                resolution: e.resolution.clone(),
+            })
+            .collect();
 
         let cm = SlidingWindowContextManager::new();
         let estimator = HeuristicEstimator::new();
@@ -1820,7 +1900,13 @@ mod tests {
                 },
             ),
         ];
-        let refs: Vec<&Entry> = entries.iter().collect();
+        let refs: Vec<PathEntry> = entries
+            .iter()
+            .map(|e| PathEntry {
+                entry: e,
+                resolution: e.resolution.clone(),
+            })
+            .collect();
 
         let cm = SlidingWindowContextManager::new();
         let estimator = HeuristicEstimator::new();
@@ -1855,7 +1941,13 @@ mod tests {
                 EntryResolution::Full,
             ),
         ];
-        let refs: Vec<&Entry> = entries.iter().collect();
+        let refs: Vec<PathEntry> = entries
+            .iter()
+            .map(|e| PathEntry {
+                entry: e,
+                resolution: e.resolution.clone(),
+            })
+            .collect();
 
         let cm = SlidingWindowContextManager::new();
         let estimator = HeuristicEstimator::new();
@@ -1918,7 +2010,13 @@ mod tests {
                 },
             ),
         ];
-        let refs: Vec<&Entry> = entries.iter().collect();
+        let refs: Vec<PathEntry> = entries
+            .iter()
+            .map(|e| PathEntry {
+                entry: e,
+                resolution: e.resolution.clone(),
+            })
+            .collect();
 
         let cm = TestManager;
         let estimator = HeuristicEstimator::new();
@@ -1965,7 +2063,13 @@ mod tests {
                 EntryResolution::Full,
             ),
         ];
-        let refs: Vec<&Entry> = entries.iter().collect();
+        let refs: Vec<PathEntry> = entries
+            .iter()
+            .map(|e| PathEntry {
+                entry: e,
+                resolution: e.resolution.clone(),
+            })
+            .collect();
 
         let cm = SlidingWindowContextManager::new();
         let estimator = HeuristicEstimator::new();

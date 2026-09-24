@@ -47,7 +47,7 @@
 //! Used by tests and ephemeral sessions.
 
 use crate::error::Result;
-use crate::session::entry::Entry;
+use crate::session::entry::{Entry, EntryResolution};
 use crate::session::error::SessionError;
 use crate::session::{Session, SessionHeader};
 use sha2::{Digest, Sha256};
@@ -453,22 +453,9 @@ pub fn open_session(path: &Path) -> Result<Session> {
         &mut resolution_changes,
     )?;
 
-    // Apply resolution changes in file order (last write wins). A change for
-    // an unknown entry id is skipped with a warning: the referenced entry may
-    // live in a session file this one was branched from.
-    for (entry_id, resolution) in &resolution_changes {
-        match entries.get_mut(entry_id) {
-            Some(entry) => entry.resolution = resolution.clone(),
-            None => {
-                warn!(
-                    entry = %entry_id,
-                    path = %path.display(),
-                    "resolution change references unknown entry; skipping"
-                );
-            }
-        }
-    }
+    let resolution_overlay = build_resolution_overlay(&mut entries, &resolution_changes, path);
 
+    // Determine the leaf.
     // The last entry in the file is always the leaf (entries are appended
     // in order). Branch operations produce LeafMoved entries that become
     // the leaf, then subsequent appends extend from there.
@@ -487,11 +474,12 @@ pub fn open_session(path: &Path) -> Result<Session> {
     // We need to construct a Session, but Session has private fields.
     // We'll use a builder approach: create a minimal session and then
     // replace its internals.
-    let session = Session::new_internal(
+    let session = Session::new_internal_with_overlay(
         header,
         entries,
         leaf,
         PersistState::with_path(path.to_path_buf(), entry_count),
+        resolution_overlay,
     );
 
     debug!(
@@ -818,6 +806,57 @@ fn parse_body_lines(
     Ok(())
 }
 
+/// Build the sparse resolution overlay for a session being opened.
+///
+/// Two sources feed the overlay:
+///
+/// 1. `Resolution` lines, applied in file order (last write wins). A line
+///    naming an entry that is not in this file is skipped with a warning: the
+///    entry may live in a session file this one was branched from.
+/// 2. A v1 file's embedded `Entry.resolution`, which differs from the payload
+///    default only in hand-migrated files (an organic v1 file carries each
+///    entry's append-time default, because resolution changes were never
+///    persisted before v2).
+///
+/// Entries whose effective resolution equals their payload default are left
+/// out of the map, which is what keeps the overlay sparse.
+fn build_resolution_overlay(
+    entries: &mut HashMap<crate::newtypes::EntryId, Entry>,
+    resolution_changes: &[(crate::newtypes::EntryId, EntryResolution)],
+    path: &Path,
+) -> HashMap<crate::newtypes::EntryId, EntryResolution> {
+    let mut overlay: HashMap<crate::newtypes::EntryId, EntryResolution> = HashMap::new();
+
+    for (entry_id, resolution) in resolution_changes {
+        let Some(entry) = entries.get_mut(entry_id) else {
+            warn!(
+                entry = %entry_id,
+                path = %path.display(),
+                "resolution change references unknown entry; skipping"
+            );
+            continue;
+        };
+        entry.resolution = resolution.clone();
+        if *resolution == EntryResolution::default_for(&entry.payload) {
+            // Back to the payload default — drop any earlier override.
+            overlay.remove(entry_id);
+        } else {
+            overlay.insert(entry_id.clone(), resolution.clone());
+        }
+    }
+
+    for (entry_id, entry) in entries.iter() {
+        if overlay.contains_key(entry_id) {
+            continue;
+        }
+        if entry.resolution != EntryResolution::default_for(&entry.payload) {
+            overlay.insert(entry_id.clone(), entry.resolution.clone());
+        }
+    }
+
+    overlay
+}
+
 /// Compute the default save path for a new session.
 pub fn compute_save_path(header: &SessionHeader) -> PathBuf {
     let created_at_secs = header
@@ -851,11 +890,12 @@ mod tests {
             cwd: std::env::temp_dir(),
             parent_session: None,
         };
-        Session::new_internal(
+        Session::new_internal_with_overlay(
             header,
             HashMap::new(),
             None,
             PersistState::with_path(path, 0),
+            HashMap::new(),
         )
     }
 
@@ -1188,6 +1228,69 @@ mod tests {
             ),
             "v1 embedded resolution must be honoured"
         );
+    }
+
+    /// A v1 file's embedded resolution seeds the overlay, so `resolution_of`
+    /// reports it even though no `Resolution` line exists.
+    #[test]
+    fn v1_embedded_resolution_seeds_overlay() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.jsonl");
+        let mut session = file_backed_session(path.clone());
+        let (_root, user) = seed_two_entries(&mut session);
+        drop(session);
+
+        // Rewrite as a hand-migrated v1 file: the resolution lives inside the
+        // Entry line, and there are no Resolution lines at all.
+        let text = std::fs::read_to_string(&path).unwrap();
+        let migrated: Vec<String> = text
+            .lines()
+            .map(|line| {
+                if line.contains(&user.to_string()) {
+                    let value: serde_json::Value = serde_json::from_str(line).unwrap();
+                    serde_json::json!({
+                        "type": "Entry",
+                        "id": user.to_string(),
+                        "parent_id": value["parent_id"],
+                        "timestamp": value["timestamp"],
+                        "resolution": {"Outlined": {"outline": "hand migrated"}},
+                        "payload": value["payload"],
+                    })
+                    .to_string()
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect();
+        std::fs::write(&path, format!("{}\n", migrated.join("\n"))).unwrap();
+
+        let reopened = open_session(&path).unwrap();
+        assert!(
+            matches!(
+                reopened.resolution_of(&user),
+                EntryResolution::Outlined { outline } if outline == "hand migrated"
+            ),
+            "a v1 embedded resolution must seed the overlay"
+        );
+    }
+
+    /// A v1 file whose entries all carry the payload default produces an
+    /// empty overlay — the sparse-map invariant, and what keeps the map
+    /// sparse rather than mirroring every entry.
+    #[test]
+    fn v1_all_default_produces_empty_overlay() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.jsonl");
+        let mut session = file_backed_session(path.clone());
+        let (_root, user) = seed_two_entries(&mut session);
+        drop(session);
+
+        let reopened = open_session(&path).unwrap();
+        assert!(
+            reopened.resolution_overlay_is_empty(),
+            "all-default v1 file should not populate the overlay"
+        );
+        assert_eq!(reopened.resolution_of(&user), EntryResolution::Full);
     }
 
     /// Create a fake session JSONL file in the given directory.

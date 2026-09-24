@@ -10,6 +10,23 @@ use super::Session;
 use super::entry::{CompactionSummary, Entry, EntryPayload, EntryResolution};
 use super::error::SessionError;
 
+// ── PathEntry ─────────────────────────────────────────────────────────────────
+
+/// An entry paired with its effective resolution.
+///
+/// Returned by [`path_to_root`](Self::path_to_root) and consumed by
+/// [`ContextManager::fit_path`](crate::context::ContextManager::fit_path).
+/// Carrying the resolution alongside the entry means readers never reach
+/// into [`Entry::resolution`] themselves — the value they get is already
+/// resolved through the session's overlay.
+#[derive(Clone, Debug)]
+pub struct PathEntry<'a> {
+    /// The entry itself.
+    pub entry: &'a Entry,
+    /// The entry's effective resolution, after overlay lookup.
+    pub resolution: EntryResolution,
+}
+
 impl Session {
     // ── Tree navigation ──────────────────────────────────────────────────
 
@@ -26,15 +43,16 @@ impl Session {
 
     /// Walk from the current leaf back to the root, collecting entries.
     ///
-    /// Returns entries in leaf-to-root order (newest first). If the leaf
-    /// is `None`, returns an empty vec.
+    /// Returns [`PathEntry`] values in leaf-to-root order (newest first), each
+    /// carrying the entry's effective resolution (overlay first, payload
+    /// default otherwise). If the leaf is `None`, returns an empty vec.
     ///
     /// # Panics
     ///
     /// Does not panic — but if the tree is corrupt (a `parent_id` references
     /// a non-existent entry), the walk stops at the last reachable entry
     /// and a `warn!` is emitted.
-    pub fn path_to_root(&self) -> Vec<&Entry> {
+    pub fn path_to_root(&self) -> Vec<PathEntry<'_>> {
         let Some(mut current_id) = self.leaf.clone() else {
             return Vec::new();
         };
@@ -53,7 +71,8 @@ impl Session {
                 break;
             }
 
-            path.push(entry);
+            let resolution = self.resolution_of(&current_id);
+            path.push(PathEntry { entry, resolution });
 
             match &entry.parent_id {
                 Some(parent_id) => current_id = parent_id.clone(),
@@ -62,6 +81,16 @@ impl Session {
         }
 
         path
+    }
+
+    /// The leaf-to-root path in chronological order (oldest first), with each
+    /// entry's effective resolution attached.
+    ///
+    /// This is the shape [`path_messages`](Session::path_messages),
+    /// [`context_stats`](Session::context_stats), and the compaction walk all
+    /// consume.
+    pub fn path_entries(&self) -> Vec<PathEntry<'_>> {
+        self.path_to_root().into_iter().rev().collect()
     }
 
     /// Return the direct children of an entry, sorted by timestamp (oldest
@@ -194,9 +223,12 @@ mod tests {
 
         let path = session.path_to_root();
         assert_eq!(path.len(), 3);
-        assert_eq!(path[0].id, asst_id, "first entry should be the leaf");
-        assert_eq!(path[1].id, user_id, "second entry should be user message");
-        assert_eq!(path[2].id, root_id, "last entry should be the root");
+        assert_eq!(path[0].entry.id, asst_id, "first entry should be the leaf");
+        assert_eq!(
+            path[1].entry.id, user_id,
+            "second entry should be user message"
+        );
+        assert_eq!(path[2].entry.id, root_id, "last entry should be the root");
     }
 
     #[test]
@@ -211,7 +243,7 @@ mod tests {
         let root_id = session.leaf().unwrap();
         let path = session.path_to_root();
         assert_eq!(path.len(), 1);
-        assert_eq!(path[0].id, root_id);
+        assert_eq!(path[0].entry.id, root_id);
     }
 
     #[test]
@@ -223,14 +255,14 @@ mod tests {
         let id3 = session.append_user_message("msg2");
 
         let path = session.path_to_root();
-        let ids: std::collections::HashSet<_> = path.iter().map(|e| e.id.clone()).collect();
+        let ids: std::collections::HashSet<_> = path.iter().map(|e| e.entry.id.clone()).collect();
         assert_eq!(ids.len(), path.len(), "path should have no duplicate IDs");
 
         // Verify exact order: leaf → ... → root
-        assert_eq!(path[0].id, id3);
-        assert_eq!(path[1].id, id2);
-        assert_eq!(path[2].id, id1);
-        assert_eq!(path[3].id, root_id);
+        assert_eq!(path[0].entry.id, id3);
+        assert_eq!(path[1].entry.id, id2);
+        assert_eq!(path[2].entry.id, id1);
+        assert_eq!(path[3].entry.id, root_id);
     }
 
     #[test]
@@ -379,7 +411,7 @@ mod tests {
 
         // The new reply should be reachable from the leaf
         let path = session.path_to_root();
-        let path_ids: Vec<_> = path.iter().map(|e| e.id.clone()).collect();
+        let path_ids: Vec<_> = path.iter().map(|e| e.entry.id.clone()).collect();
         assert!(
             path_ids.contains(&new_reply_id),
             "new reply should be on the leaf path"
@@ -410,7 +442,7 @@ mod tests {
         assert!(old_entry.is_some(), "old branch entry should still exist");
 
         let path = session.path_to_root();
-        let path_ids: Vec<_> = path.iter().map(|e| e.id.clone()).collect();
+        let path_ids: Vec<_> = path.iter().map(|e| e.entry.id.clone()).collect();
         assert!(
             !path_ids.contains(&asst_a_id),
             "old assistant should NOT be on the current leaf path"
@@ -494,7 +526,7 @@ mod tests {
         session.branch_to(&root_id).unwrap();
 
         let path = session.path_to_root();
-        let path_ids: Vec<_> = path.iter().map(|e| e.id.clone()).collect();
+        let path_ids: Vec<_> = path.iter().map(|e| e.entry.id.clone()).collect();
 
         // The path should go: LeafMoved → root
         // It should NOT include user_id or asst_a_id
@@ -527,6 +559,9 @@ mod tests {
         // The LeafMoved entry IS in the path (it's the leaf)
         let leaf_entry = &path[0];
         assert!(matches!(leaf_entry.resolution, EntryResolution::Attached));
-        assert!(matches!(leaf_entry.payload, EntryPayload::LeafMoved { .. }));
+        assert!(matches!(
+            leaf_entry.entry.payload,
+            EntryPayload::LeafMoved { .. }
+        ));
     }
 }
