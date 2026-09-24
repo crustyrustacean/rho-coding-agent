@@ -245,7 +245,7 @@ fn path_building_no_duplicates_no_orphans() {
     }
 
     let path = session.path_to_root();
-    let ids: Vec<_> = path.iter().map(|e| e.id.clone()).collect();
+    let ids: Vec<_> = path.iter().map(|e| e.entry.id.clone()).collect();
 
     // No duplicates
     let unique: std::collections::HashSet<_> = ids.iter().cloned().collect();
@@ -253,11 +253,11 @@ fn path_building_no_duplicates_no_orphans() {
 
     // Every entry in the path should have a parent that is also in the path
     for entry in &path {
-        if let Some(ref parent_id) = entry.parent_id {
+        if let Some(ref parent_id) = entry.entry.parent_id {
             assert!(
                 ids.contains(parent_id),
                 "entry {:?}: parent {:?} not in path",
-                entry.id,
+                entry.entry.id,
                 parent_id
             );
         }
@@ -275,7 +275,7 @@ fn resolution_filtering_attached_still_in_tree() {
     let path = session.path_to_root();
     let label_entry = path
         .iter()
-        .find(|e| matches!(e.payload, EntryPayload::Label { .. }));
+        .find(|e| matches!(e.entry.payload, EntryPayload::Label { .. }));
     assert!(label_entry.is_some(), "label entry should be in the tree");
 
     // The label should NOT appear in path_messages
@@ -315,8 +315,13 @@ async fn branching_old_branch_unreachable_from_leaf() {
         .path_to_root()
         .iter()
         .rev()
-        .find(|e| matches!(e.payload, EntryPayload::Message(ChatMessage::User { .. })))
-        .map(|e| e.id.clone())
+        .find(|e| {
+            matches!(
+                e.entry.payload,
+                EntryPayload::Message(ChatMessage::User { .. })
+            )
+        })
+        .map(|e| e.entry.id.clone())
         .unwrap();
 
     // Find the assistant entry id
@@ -325,11 +330,11 @@ async fn branching_old_branch_unreachable_from_leaf() {
         .iter()
         .find(|e| {
             matches!(
-                e.payload,
+                e.entry.payload,
                 EntryPayload::Message(ChatMessage::Assistant { .. })
             )
         })
-        .map(|e| e.id.clone())
+        .map(|e| e.entry.id.clone())
         .unwrap();
 
     // Branch back to user
@@ -348,7 +353,7 @@ async fn branching_old_branch_unreachable_from_leaf() {
     let path_ids: Vec<_> = session
         .path_to_root()
         .iter()
-        .map(|e| e.id.clone())
+        .map(|e| e.entry.id.clone())
         .collect();
     assert!(
         !path_ids.contains(&asst_a),
@@ -1161,8 +1166,13 @@ async fn tool_call_turn_integrity_after_branch() {
         .path_to_root()
         .iter()
         .rev()
-        .find(|e| matches!(e.payload, EntryPayload::Message(ChatMessage::User { .. })))
-        .map(|e| e.id.clone())
+        .find(|e| {
+            matches!(
+                e.entry.payload,
+                EntryPayload::Message(ChatMessage::User { .. })
+            )
+        })
+        .map(|e| e.entry.id.clone())
         .unwrap();
 
     session.branch_to(&user_id).unwrap();

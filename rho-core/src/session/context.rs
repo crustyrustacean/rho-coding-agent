@@ -84,16 +84,39 @@ impl Session {
         self.set_resolution_inner(id, target, true)
     }
 
+    /// The effective resolution of an entry: the overlay if it has one,
+    /// otherwise the payload default.
+    ///
+    /// This is the read side of the overlay contract. Every reader
+    /// (`path_to_root`, `fit_path`, stats, the compaction walk, the eviction
+    /// planner) goes through this rather than reading `Entry::resolution`
+    /// directly.
+    pub fn resolution_of(&self, id: &EntryId) -> EntryResolution {
+        let Some(entry) = self.entries.get(id) else {
+            return EntryResolution::Full;
+        };
+        self.resolution
+            .get(id)
+            .cloned()
+            .unwrap_or_else(|| EntryResolution::default_for(&entry.payload))
+    }
+
+    /// Whether the resolution overlay holds no entries.
+    ///
+    /// Used by tests to assert the sparse-map invariant: a session whose
+    /// resolutions all match their payload defaults has an empty overlay.
+    pub fn resolution_overlay_is_empty(&self) -> bool {
+        self.resolution.is_empty()
+    }
+
     /// Read an entry's current resolution, or an error if the entry is absent.
     fn entry_resolution(&self, id: &EntryId) -> Result<EntryResolution> {
-        self.entries
-            .get(id)
-            .map(|entry| entry.resolution.clone())
-            .ok_or_else(|| {
-                crate::error::RhoError::Session(SessionError::Persistence(format!(
-                    "entry {id} not found"
-                )))
-            })
+        if !self.entries.contains_key(id) {
+            return Err(crate::error::RhoError::Session(SessionError::Persistence(
+                format!("entry {id} not found"),
+            )));
+        }
+        Ok(self.resolution_of(id))
     }
 
     /// Whether `current -> next` is a permitted resolution transition.
@@ -142,8 +165,9 @@ impl Session {
             .into());
         }
 
-        // Mirror into the entry (the authoritative location until the overlay
-        // lands in #62) and queue the change for the JSONL log.
+        // Write the overlay — the authoritative location going forward — and
+        // mirror into the entry field, which #62 PR 3 removes.
+        self.resolution.insert(id.clone(), resolution.clone());
         if let Some(entry) = self.entries.get_mut(id) {
             entry.resolution = resolution.clone();
         }
@@ -304,8 +328,7 @@ impl Session {
     /// and should also be called before building the LLM request in the agent
     /// loop.
     pub fn prepare_context(&mut self) {
-        let path = self.path_to_root();
-        let entries: Vec<&Entry> = path.into_iter().rev().collect();
+        let entries = self.path_entries();
 
         let plan = super::eviction::plan_downgrades(
             &entries,
@@ -423,9 +446,8 @@ impl Session {
         threshold: usize,
         strategy: &dyn super::compaction::CompactionStrategy,
     ) -> Result<EntryId> {
-        // Walk the leaf-to-root path and reverse to get chronological order.
-        let path = self.path_to_root();
-        let chronological: Vec<&Entry> = path.into_iter().rev().collect();
+        // Walk the leaf-to-root path in chronological order.
+        let chronological = self.path_entries();
 
         if chronological.len() <= 1 {
             // Nothing to compact (only the root, or empty)
@@ -467,7 +489,7 @@ impl Session {
             }
 
             cumulative_tokens += super::truncation::estimate_entry_tokens_for_compaction(
-                entry,
+                entry.entry,
                 &self.model,
                 self.estimator.as_ref(),
             );
@@ -500,8 +522,8 @@ impl Session {
         // it stays in the range and is rolled forward by `process_entry`.
         let to_compact: Vec<&Entry> = chronological[1..compact_end]
             .iter()
-            .copied()
-            .filter(|e| matches!(e.resolution, EntryResolution::Full))
+            .filter(|pe| matches!(pe.resolution, EntryResolution::Full))
+            .map(|pe| pe.entry)
             .collect();
         if to_compact.is_empty() {
             return Err(SessionError::Persistence(
@@ -512,7 +534,7 @@ impl Session {
 
         // Collect the IDs of entries to compact BEFORE any mutation
         let compacted_ids: Vec<EntryId> = to_compact.iter().map(|e| e.id.clone()).collect();
-        let first_kept_id = chronological[compact_end].id.clone();
+        let first_kept_id = chronological[compact_end].entry.id.clone();
         let tokens_before = cumulative_tokens;
 
         // Generate the summary
@@ -553,9 +575,7 @@ impl Session {
     /// Returns the fitted messages in chronological order (system first),
     /// ready to be placed in a [`ChatRequest`](crate::request::ChatRequest).
     pub fn path_messages(&self) -> Vec<ChatMessage> {
-        // Walk leaf-to-root, then reverse to get chronological order.
-        let path = self.path_to_root();
-        let entries: Vec<&Entry> = path.into_iter().rev().collect();
+        let entries = self.path_entries();
 
         self.context_manager.fit_path(
             &entries,
@@ -677,8 +697,7 @@ impl Session {
     /// be sent to the model (after eviction).
     pub fn context_stats(&self) -> ContextStats {
         let budget = self.token_budget;
-        let path = self.path_to_root();
-        let chronological: Vec<&Entry> = path.into_iter().rev().collect();
+        let chronological = self.path_entries();
 
         let mut role_tokens = RoleTokenDistribution::default();
         let mut resolution_tokens = ResolutionTokenDistribution::default();
@@ -686,22 +705,23 @@ impl Session {
         let mut compaction_tokens: usize = 0;
         let mut compacted_entry_count: usize = 0;
 
-        for entry in &chronological {
+        for path_entry in &chronological {
+            let entry = path_entry.entry;
             // Count compacted entries (they don't consume context, but we
             // track how many have been compacted for diagnostics).
-            if matches!(entry.resolution, EntryResolution::Compacted { .. }) {
+            if matches!(path_entry.resolution, EntryResolution::Compacted { .. }) {
                 compacted_entry_count += 1;
                 continue;
             }
             // Attached entries don't participate in context.
-            if matches!(entry.resolution, EntryResolution::Attached) {
+            if matches!(path_entry.resolution, EntryResolution::Attached) {
                 continue;
             }
 
             let entry_tokens = Self::estimate_entry_tokens_in_path(entry);
 
             // Classify by resolution.
-            match &entry.resolution {
+            match &path_entry.resolution {
                 EntryResolution::Full => resolution_tokens.full += entry_tokens,
                 EntryResolution::Pinned => resolution_tokens.pinned += entry_tokens,
                 EntryResolution::Outlined { .. } => {
@@ -786,6 +806,123 @@ mod tests {
     use crate::context::TokenBudget;
     use crate::message::{ChatMessage, ContentBlock, ModelToolCall, ToolCallFunction};
     use crate::newtypes::{ToolCallId, ToolName};
+    use crate::session::MechanicalCompactionStrategy;
+
+    // ── Resolution overlay tests (#62 PR 2) ─────────────────────────────
+
+    /// `resolution_of` on an entry with no overlay entry returns the payload
+    /// default — the sparse-map contract.
+    #[test]
+    fn resolution_of_defaults_to_payload_default() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let user = session.append_user_message("hi");
+        let state = session.append_custom_state("k".into(), serde_json::json!({}));
+
+        assert_eq!(session.resolution_of(&user), EntryResolution::Full);
+        assert_eq!(
+            session.resolution_of(&state),
+            EntryResolution::Attached,
+            "a Custom entry defaults to Attached with no overlay entry"
+        );
+    }
+
+    /// A resolution set through `set_resolution` is visible via
+    /// `resolution_of`.
+    #[test]
+    fn resolution_of_reflects_overlay_after_set() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let id = session.append_user_message("hi");
+
+        session
+            .set_resolution(
+                &id,
+                EntryResolution::Outlined {
+                    outline: "o".into(),
+                },
+            )
+            .unwrap();
+
+        assert!(matches!(
+            session.resolution_of(&id),
+            EntryResolution::Outlined { .. }
+        ));
+    }
+
+    /// During the two-PR transition the overlay and the mirrored
+    /// `Entry.resolution` field must never disagree. PR 3 removes the field
+    /// and this assertion with it.
+    #[test]
+    fn overlay_agrees_with_mirrored_field_for_every_entry() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let a = session.append_user_message("one");
+        let b = session.append_user_message("two");
+        let state = session.append_custom_state("k".into(), serde_json::json!({}));
+
+        // Pin before outlining: `Pinned -> Outlined` is legal, the reverse is not.
+        session.pin_entry(&a).unwrap();
+        session.outline_entry(&a).unwrap();
+        session.summarize_entry(&b).unwrap();
+
+        for id in [&a, &b, &state] {
+            assert_eq!(
+                session.resolution_of(id),
+                session.entry(id).unwrap().resolution,
+                "overlay and mirrored field disagree for {id}"
+            );
+        }
+    }
+
+    /// `path_to_root` yields `PathEntry` values carrying the effective
+    /// resolution, and `path_entries` is chronological.
+    #[test]
+    fn path_entries_carry_effective_resolution() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let first = session.append_user_message("one");
+        let second = session.append_user_message("two");
+        session.outline_entry(&first).unwrap();
+
+        let chronological = session.path_entries();
+        let ids: Vec<&EntryId> = chronological.iter().map(|pe| &pe.entry.id).collect();
+        assert_eq!(ids.len(), 3, "system + two user entries");
+
+        let outlined = chronological
+            .iter()
+            .find(|pe| pe.entry.id == first)
+            .expect("first entry is on the path");
+        assert!(
+            matches!(outlined.resolution, EntryResolution::Outlined { .. }),
+            "PathEntry must carry the effective (overlaid) resolution"
+        );
+
+        let second_pe = chronological
+            .iter()
+            .find(|pe| pe.entry.id == second)
+            .expect("second entry is on the path");
+        assert_eq!(second_pe.resolution, EntryResolution::Full);
+    }
+
+    /// A pinned entry is a compaction barrier. Rewritten to go through
+    /// `pin_entry` so the overlay is the single source of truth.
+    #[tokio::test]
+    async fn pinned_barrier_via_pin_entry_blocks_compaction_below_it() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let root = session.leaf().unwrap();
+        let pinned = session.append_user_message("pinned");
+        let _after = session.append_user_message("after");
+
+        session.pin_entry(&pinned).unwrap();
+        // Pin the root too, so the barrier is the only thing stopping the walk
+        // from reaching a threshold it would otherwise clear.
+        session.pin_entry(&root).unwrap();
+
+        let result = session
+            .compact_older_than(1, &MechanicalCompactionStrategy::new())
+            .await;
+        assert!(
+            result.is_err(),
+            "a pinned entry on the path must halt compaction before the threshold"
+        );
+    }
 
     // ── set_resolution transition tests (#61) ───────────────────────────
 
@@ -1042,12 +1179,15 @@ mod tests {
         let user_id = session.append_user_message("hello");
         let _asst_id = session.append_assistant_message(ChatMessage::assistant_text("hi"));
 
-        // Manually mark the user entry as compacted
-        if let Some(entry) = session.entries.get_mut(&user_id) {
-            entry.resolution = EntryResolution::Compacted {
-                into: EntryId::from("test"),
-            };
-        }
+        // Mark the user entry compacted through the validated write path.
+        session
+            .set_resolution(
+                &user_id,
+                EntryResolution::Compacted {
+                    into: EntryId::from("test"),
+                },
+            )
+            .unwrap();
 
         let messages = session.path_messages();
 
@@ -1836,10 +1976,8 @@ mod tests {
 
         let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
         let pinned_id = session.append_user_message("current task: land the reload fix");
-        // Pin it directly (pin_entry API comes in the next step).
-        if let Some(entry) = session.entries.get_mut(&pinned_id) {
-            entry.resolution = EntryResolution::Pinned;
-        }
+        // Pin through the validated write path so the overlay knows about it.
+        session.pin_entry(&pinned_id).unwrap();
         session.append_assistant_message(ChatMessage::assistant_text("working on it"));
         session.append_user_message("keep going"); // leaf
 
@@ -1848,9 +1986,8 @@ mod tests {
         // pin would meet the threshold and pull the pin into the range.
         let _ = session.compact_older_than(1, &strategy).await;
 
-        let pinned = session.entry(&pinned_id).unwrap();
         assert_eq!(
-            pinned.resolution,
+            session.resolution_of(&pinned_id),
             EntryResolution::Pinned,
             "pinned entry must not be demoted by compaction"
         );
@@ -2177,8 +2314,13 @@ mod tests {
             tool_ids = session
                 .path_to_root()
                 .into_iter()
-                .filter(|e| matches!(e.payload, EntryPayload::Message(ChatMessage::Tool { .. })))
-                .map(|e| e.id.clone())
+                .filter(|pe| {
+                    matches!(
+                        pe.entry.payload,
+                        EntryPayload::Message(ChatMessage::Tool { .. })
+                    )
+                })
+                .map(|pe| pe.entry.id.clone())
                 .collect::<Vec<_>>();
         }
 
