@@ -154,14 +154,12 @@ pub struct Session {
     append_order: Vec<EntryId>,
     /// Sparse resolution overlay, keyed by entry ID.
     ///
-    /// An entry absent from this map resolves to
+    /// An entry's resolution is *not* stored on the entry — entries are
+    /// immutable data. An entry absent from this map resolves to
     /// [`EntryResolution::default_for`] of its payload, which is what keeps
-    /// the map sparse — only entries whose resolution was explicitly changed
-    /// occupy space.
-    ///
-    /// While `Entry::resolution` still exists (it is removed in #62 PR 3),
-    /// [`set_resolution`](Self::set_resolution) mirrors every change into
-    /// both places and the two are asserted to agree.
+    /// the map sparse: only entries whose resolution was explicitly changed
+    /// occupy space. [`set_resolution`](Self::set_resolution) is the only
+    /// write path.
     resolution: HashMap<EntryId, EntryResolution>,
     /// The current leaf position. Always `Some` after construction.
     leaf: Option<EntryId>,
@@ -350,7 +348,6 @@ mod tests {
             id: EntryId::from("test1234"),
             parent_id: None,
             timestamp: std::time::SystemTime::UNIX_EPOCH,
-            resolution: EntryResolution::Full,
             payload: EntryPayload::Message(ChatMessage::system_text("hello")),
         };
         let line = JsonlLine::Entry(entry.clone());
@@ -405,8 +402,10 @@ mod tests {
         assert!(reopened.entry(&user_id).is_some());
 
         // Verify entry content
-        let root_entry = reopened.entry(&root_id).unwrap();
-        assert!(matches!(root_entry.resolution, EntryResolution::Full));
+        assert!(matches!(
+            session.resolution_of(&root_id),
+            EntryResolution::Full
+        ));
 
         let user_entry = reopened.entry(&user_id).unwrap();
         if let EntryPayload::Message(ChatMessage::User { content }) = &user_entry.payload {
@@ -474,20 +473,22 @@ mod tests {
         let _asst_id = session.append_assistant_message(ChatMessage::assistant_text("ok"));
 
         // Manually compact the user entry (simulate compaction)
-        if let Some(entry) = session.entries.get_mut(&user_id) {
-            entry.resolution = EntryResolution::Compacted {
-                into: EntryId::from("compaction"),
-            };
-        }
+        session
+            .set_resolution(
+                &user_id,
+                EntryResolution::Compacted {
+                    into: EntryId::from("compaction"),
+                },
+            )
+            .unwrap();
 
         session.persist.save_path = Some(path.clone());
         session.persist.flushed_count = 0;
         session.flush().unwrap();
 
         let reopened = Session::open(&path).unwrap();
-        let user_entry = reopened.entry(&user_id).unwrap();
         assert!(
-            matches!(&user_entry.resolution, EntryResolution::Compacted { into } if *into == EntryId::from("compaction")),
+            matches!(reopened.resolution_of(&user_id), EntryResolution::Compacted { into } if into == EntryId::from("compaction")),
             "compacted resolution should survive round-trip"
         );
     }
@@ -600,7 +601,7 @@ mod tests {
         // Verify SessionEnded entry survived
         let leaf = reopened.leaf().unwrap();
         let leaf_entry = reopened.entry(&leaf).unwrap();
-        assert_eq!(leaf_entry.resolution, EntryResolution::Attached);
+        assert_eq!(reopened.resolution_of(&leaf), EntryResolution::Attached);
         assert!(matches!(
             &leaf_entry.payload,
             EntryPayload::SessionEnded { reason } if reason == "test completed"
@@ -637,7 +638,6 @@ mod tests {
             id: EntryId::from("test1234"),
             parent_id: None,
             timestamp: std::time::SystemTime::UNIX_EPOCH,
-            resolution: EntryResolution::Full,
             payload: EntryPayload::Message(ChatMessage::system_text("hello")),
         };
         let entry_line = JsonlLine::Entry(entry);

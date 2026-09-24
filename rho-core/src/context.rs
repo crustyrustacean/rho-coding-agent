@@ -1264,36 +1264,40 @@ mod tests {
     use serde_json::json;
     use std::time::{Duration, SystemTime};
 
-    /// Helper: create a test entry with the given payload and resolution.
-    fn test_entry(payload: EntryPayload, resolution: EntryResolution) -> Entry {
+    /// Helper: create a test entry carrying only its payload.
+    fn test_entry(payload: EntryPayload) -> Entry {
         Entry {
             id: EntryId::new(),
             parent_id: None,
             timestamp: SystemTime::UNIX_EPOCH,
-            resolution,
             payload,
         }
     }
 
+    /// Helper: build the `PathEntry` slice `fit_path` consumes from
+    /// `(payload, resolution)` pairs.
+    fn paths(specs: &[(EntryPayload, EntryResolution)]) -> Vec<PathEntry<'static>> {
+        specs
+            .iter()
+            .map(|(payload, resolution)| PathEntry {
+                entry: Box::leak(Box::new(test_entry(payload.clone()))),
+                resolution: resolution.clone(),
+            })
+            .collect()
+    }
+
     #[test]
     fn fit_path_returns_messages_from_full_entries() {
-        let entries = [
-            test_entry(
+        let refs = paths(&[
+            (
                 EntryPayload::Message(ChatMessage::system_text("sys")),
                 EntryResolution::Full,
             ),
-            test_entry(
+            (
                 EntryPayload::Message(ChatMessage::user_text("hello")),
                 EntryResolution::Full,
             ),
-        ];
-        let refs: Vec<PathEntry> = entries
-            .iter()
-            .map(|e| PathEntry {
-                entry: e,
-                resolution: e.resolution.clone(),
-            })
-            .collect();
+        ]);
 
         let cm = SlidingWindowContextManager::new();
         let estimator = HeuristicEstimator::new();
@@ -1307,29 +1311,22 @@ mod tests {
     #[test]
     fn fit_path_skips_compacted_entries() {
         let compacted_into = EntryId::from("test");
-        let entries = [
-            test_entry(
+        let refs = paths(&[
+            (
                 EntryPayload::Message(ChatMessage::system_text("sys")),
                 EntryResolution::Full,
             ),
-            test_entry(
+            (
                 EntryPayload::Message(ChatMessage::user_text("old")),
                 EntryResolution::Compacted {
                     into: compacted_into,
                 },
             ),
-            test_entry(
+            (
                 EntryPayload::Message(ChatMessage::user_text("new")),
                 EntryResolution::Full,
             ),
-        ];
-        let refs: Vec<PathEntry> = entries
-            .iter()
-            .map(|e| PathEntry {
-                entry: e,
-                resolution: e.resolution.clone(),
-            })
-            .collect();
+        ]);
 
         let cm = SlidingWindowContextManager::new();
         let estimator = HeuristicEstimator::new();
@@ -1354,26 +1351,19 @@ mod tests {
     #[test]
     fn fit_path_skips_attached_entries() {
         let target_id = EntryId::new();
-        let entries = [
-            test_entry(
+        let refs = paths(&[
+            (
                 EntryPayload::Message(ChatMessage::system_text("sys")),
                 EntryResolution::Full,
             ),
-            test_entry(
+            (
                 EntryPayload::Label {
                     target_id,
                     label: Some("checkpoint".to_owned()),
                 },
                 EntryResolution::Attached,
             ),
-        ];
-        let refs: Vec<PathEntry> = entries
-            .iter()
-            .map(|e| PathEntry {
-                entry: e,
-                resolution: e.resolution.clone(),
-            })
-            .collect();
+        ]);
 
         let cm = SlidingWindowContextManager::new();
         let estimator = HeuristicEstimator::new();
@@ -1386,38 +1376,31 @@ mod tests {
 
     #[test]
     fn fit_path_skips_non_message_payloads() {
-        let entries = [
-            test_entry(
+        let refs = paths(&[
+            (
                 EntryPayload::Message(ChatMessage::system_text("sys")),
                 EntryResolution::Full,
             ),
-            test_entry(
+            (
                 EntryPayload::ModelChange {
                     model: "gpt-4".to_owned(),
                 },
                 EntryResolution::Attached,
             ),
-            test_entry(
+            (
                 EntryPayload::Custom {
                     kind: "rho.diagnostics.v1".to_owned(),
                     data: json!({}),
                 },
                 EntryResolution::Attached,
             ),
-            test_entry(
+            (
                 EntryPayload::SessionInfo {
                     name: "test".to_owned(),
                 },
                 EntryResolution::Attached,
             ),
-        ];
-        let refs: Vec<PathEntry> = entries
-            .iter()
-            .map(|e| PathEntry {
-                entry: e,
-                resolution: e.resolution.clone(),
-            })
-            .collect();
+        ]);
 
         let cm = SlidingWindowContextManager::new();
         let estimator = HeuristicEstimator::new();
@@ -1446,12 +1429,12 @@ mod tests {
         };
 
         let first_kept = EntryId::new();
-        let entries = [
-            test_entry(
+        let refs = paths(&[
+            (
                 EntryPayload::Message(ChatMessage::system_text("sys")),
                 EntryResolution::Full,
             ),
-            test_entry(
+            (
                 EntryPayload::Compaction {
                     summary,
                     first_kept,
@@ -1459,14 +1442,7 @@ mod tests {
                 },
                 EntryResolution::Full,
             ),
-        ];
-        let refs: Vec<PathEntry> = entries
-            .iter()
-            .map(|e| PathEntry {
-                entry: e,
-                resolution: e.resolution.clone(),
-            })
-            .collect();
+        ]);
 
         let cm = SlidingWindowContextManager::new();
         let estimator = HeuristicEstimator::new();
@@ -1512,23 +1488,16 @@ mod tests {
         };
 
         let from_id = EntryId::new();
-        let entries = [
-            test_entry(
+        let refs = paths(&[
+            (
                 EntryPayload::Message(ChatMessage::system_text("sys")),
                 EntryResolution::Full,
             ),
-            test_entry(
+            (
                 EntryPayload::BranchSummary { summary, from_id },
                 EntryResolution::Full,
             ),
-        ];
-        let refs: Vec<PathEntry> = entries
-            .iter()
-            .map(|e| PathEntry {
-                entry: e,
-                resolution: e.resolution.clone(),
-            })
-            .collect();
+        ]);
 
         let cm = SlidingWindowContextManager::new();
         let estimator = HeuristicEstimator::new();
@@ -1540,12 +1509,12 @@ mod tests {
 
     #[test]
     fn fit_path_converts_custom_message_to_user() {
-        let entries = [
-            test_entry(
+        let refs = paths(&[
+            (
                 EntryPayload::Message(ChatMessage::system_text("sys")),
                 EntryResolution::Full,
             ),
-            test_entry(
+            (
                 EntryPayload::CustomMessage {
                     kind: "rho.diagnostics.v1".to_owned(),
                     content: vec![ContentBlock::Text {
@@ -1554,14 +1523,7 @@ mod tests {
                 },
                 EntryResolution::Full,
             ),
-        ];
-        let refs: Vec<PathEntry> = entries
-            .iter()
-            .map(|e| PathEntry {
-                entry: e,
-                resolution: e.resolution.clone(),
-            })
-            .collect();
+        ]);
 
         let cm = SlidingWindowContextManager::new();
         let estimator = HeuristicEstimator::new();
@@ -1580,21 +1542,15 @@ mod tests {
         )];
 
         // Create a very tight budget where schema overhead matters
-        let entries: Vec<Entry> = (0..20)
+        let refs: Vec<PathEntry> = (0..20)
             .map(|i| {
-                test_entry(
-                    EntryPayload::Message(ChatMessage::user_text(format!(
-                        "message {i} with padding"
-                    ))),
-                    EntryResolution::Full,
-                )
-            })
-            .collect();
-        let refs: Vec<PathEntry> = entries
-            .iter()
-            .map(|e| PathEntry {
-                entry: e,
-                resolution: e.resolution.clone(),
+                let entry: &'static Entry = Box::leak(Box::new(test_entry(EntryPayload::Message(
+                    ChatMessage::user_text(format!("message {i} with padding")),
+                ))));
+                PathEntry {
+                    entry,
+                    resolution: EntryResolution::Full,
+                }
             })
             .collect();
 
@@ -1638,39 +1594,32 @@ mod tests {
     fn pinned_entry_survives_eviction_while_unpinned_are_evicted() {
         // A pinned entry in the middle should survive eviction even when
         // the budget is too tight to keep everything.
-        let entries = [
-            test_entry(
+        let refs = paths(&[
+            (
                 EntryPayload::Message(ChatMessage::system_text("sys")),
                 EntryResolution::Full,
             ),
-            test_entry(
+            (
                 EntryPayload::Message(ChatMessage::user_text("important plan")),
                 EntryResolution::Pinned,
             ),
-            test_entry(
+            (
                 EntryPayload::Message(ChatMessage::assistant_text("ok")),
                 EntryResolution::Full,
             ),
-            test_entry(
+            (
                 EntryPayload::Message(ChatMessage::user_text("filler")),
                 EntryResolution::Full,
             ),
-            test_entry(
+            (
                 EntryPayload::Message(ChatMessage::assistant_text("ok too")),
                 EntryResolution::Full,
             ),
-            test_entry(
+            (
                 EntryPayload::Message(ChatMessage::user_text("current")),
                 EntryResolution::Full,
             ),
-        ];
-        let refs: Vec<PathEntry> = entries
-            .iter()
-            .map(|e| PathEntry {
-                entry: e,
-                resolution: e.resolution.clone(),
-            })
-            .collect();
+        ]);
 
         let cm = SlidingWindowContextManager::new();
         let estimator = HeuristicEstimator::new();
@@ -1694,23 +1643,16 @@ mod tests {
     #[test]
     fn pinned_entry_renders_like_full_in_context() {
         // A pinned entry should appear in the output like a Full entry.
-        let entries = [
-            test_entry(
+        let refs = paths(&[
+            (
                 EntryPayload::Message(ChatMessage::system_text("sys")),
                 EntryResolution::Full,
             ),
-            test_entry(
+            (
                 EntryPayload::Message(ChatMessage::user_text("pinned msg")),
                 EntryResolution::Pinned,
             ),
-        ];
-        let refs: Vec<PathEntry> = entries
-            .iter()
-            .map(|e| PathEntry {
-                entry: e,
-                resolution: e.resolution.clone(),
-            })
-            .collect();
+        ]);
 
         let cm = SlidingWindowContextManager::new();
         let estimator = HeuristicEstimator::new();
@@ -1727,16 +1669,16 @@ mod tests {
     fn outlined_tool_result_preserves_tool_call_id() {
         // An outlined Tool message must preserve its tool_call_id so the
         // Assistant+Tool pair integrity is maintained.
-        let entries = [
-            test_entry(
+        let refs = paths(&[
+            (
                 EntryPayload::Message(ChatMessage::system_text("sys")),
                 EntryResolution::Full,
             ),
-            test_entry(
+            (
                 EntryPayload::Message(assistant_with_tool_call("call_1")),
                 EntryResolution::Full,
             ),
-            test_entry(
+            (
                 EntryPayload::Message(ChatMessage::tool_result(
                     ToolCallId::from("call_1"),
                     "x".repeat(2000),
@@ -1745,14 +1687,7 @@ mod tests {
                     outline: "read_file: src/parser.rs (342 lines)".to_owned(),
                 },
             ),
-        ];
-        let refs: Vec<PathEntry> = entries
-            .iter()
-            .map(|e| PathEntry {
-                entry: e,
-                resolution: e.resolution.clone(),
-            })
-            .collect();
+        ]);
 
         let cm = SlidingWindowContextManager::new();
         let estimator = HeuristicEstimator::new();
@@ -1788,12 +1723,12 @@ mod tests {
     #[test]
     fn outlined_user_message_renders_as_user() {
         // Outlined User message renders as ChatMessage::User with outline text.
-        let entries = [
-            test_entry(
+        let refs = paths(&[
+            (
                 EntryPayload::Message(ChatMessage::system_text("sys")),
                 EntryResolution::Full,
             ),
-            test_entry(
+            (
                 EntryPayload::Message(ChatMessage::user_text(
                     "this is a very long user message that should be outlined",
                 )),
@@ -1801,14 +1736,7 @@ mod tests {
                     outline: "User: asked to refactor parser".to_owned(),
                 },
             ),
-        ];
-        let refs: Vec<PathEntry> = entries
-            .iter()
-            .map(|e| PathEntry {
-                entry: e,
-                resolution: e.resolution.clone(),
-            })
-            .collect();
+        ]);
 
         let cm = SlidingWindowContextManager::new();
         let estimator = HeuristicEstimator::new();
@@ -1827,12 +1755,12 @@ mod tests {
     #[test]
     fn outlined_assistant_preserves_tool_calls() {
         // Outlined Assistant with tool_calls preserves the tool_calls field.
-        let entries = [
-            test_entry(
+        let refs = paths(&[
+            (
                 EntryPayload::Message(ChatMessage::system_text("sys")),
                 EntryResolution::Full,
             ),
-            test_entry(
+            (
                 EntryPayload::Message(ChatMessage::Assistant {
                     content: vec![ContentBlock::Text {
                         text: "I'll read the files".to_owned(),
@@ -1851,14 +1779,7 @@ mod tests {
                     outline: "Assistant: 1 tool call (read_file)".to_owned(),
                 },
             ),
-        ];
-        let refs: Vec<PathEntry> = entries
-            .iter()
-            .map(|e| PathEntry {
-                entry: e,
-                resolution: e.resolution.clone(),
-            })
-            .collect();
+        ]);
 
         let cm = SlidingWindowContextManager::new();
         let estimator = HeuristicEstimator::new();
@@ -1888,25 +1809,18 @@ mod tests {
     #[test]
     fn summarized_entry_renders_as_reduced_text() {
         // Summarized entries render like outlined, but with the summary text.
-        let entries = [
-            test_entry(
+        let refs = paths(&[
+            (
                 EntryPayload::Message(ChatMessage::system_text("sys")),
                 EntryResolution::Full,
             ),
-            test_entry(
+            (
                 EntryPayload::Message(ChatMessage::user_text("long message")),
                 EntryResolution::Summarized {
                     summary: "Fixed parser bug".to_owned(),
                 },
             ),
-        ];
-        let refs: Vec<PathEntry> = entries
-            .iter()
-            .map(|e| PathEntry {
-                entry: e,
-                resolution: e.resolution.clone(),
-            })
-            .collect();
+        ]);
 
         let cm = SlidingWindowContextManager::new();
         let estimator = HeuristicEstimator::new();
@@ -1925,29 +1839,22 @@ mod tests {
     fn outlined_entry_consumes_fewer_tokens() {
         // A full entry at ~500 tokens, outlined at ~20 tokens.
         // Verify fit_path message list has the outlined version.
-        let entries = [
-            test_entry(
+        let refs = paths(&[
+            (
                 EntryPayload::Message(ChatMessage::system_text("sys")),
                 EntryResolution::Full,
             ),
-            test_entry(
+            (
                 EntryPayload::Message(ChatMessage::user_text("x".repeat(2000))),
                 EntryResolution::Outlined {
                     outline: "short outline".to_owned(),
                 },
             ),
-            test_entry(
+            (
                 EntryPayload::Message(ChatMessage::user_text("y".repeat(2000))),
                 EntryResolution::Full,
             ),
-        ];
-        let refs: Vec<PathEntry> = entries
-            .iter()
-            .map(|e| PathEntry {
-                entry: e,
-                resolution: e.resolution.clone(),
-            })
-            .collect();
+        ]);
 
         let cm = SlidingWindowContextManager::new();
         let estimator = HeuristicEstimator::new();
@@ -1991,16 +1898,16 @@ mod tests {
             }
         }
 
-        let entries = [
-            test_entry(
+        let refs = paths(&[
+            (
                 EntryPayload::Message(ChatMessage::system_text("sys")),
                 EntryResolution::Full,
             ),
-            test_entry(
+            (
                 EntryPayload::Message(assistant_with_tool_call("call_1")),
                 EntryResolution::Full,
             ),
-            test_entry(
+            (
                 EntryPayload::Message(ChatMessage::tool_result(
                     ToolCallId::from("call_1"),
                     "big content".to_owned(),
@@ -2009,14 +1916,7 @@ mod tests {
                     outline: "result outline".to_owned(),
                 },
             ),
-        ];
-        let refs: Vec<PathEntry> = entries
-            .iter()
-            .map(|e| PathEntry {
-                entry: e,
-                resolution: e.resolution.clone(),
-            })
-            .collect();
+        ]);
 
         let cm = TestManager;
         let estimator = HeuristicEstimator::new();
@@ -2033,43 +1933,36 @@ mod tests {
         // An outlined entry in a turn that would otherwise be evicted should
         // still participate (at reduced cost) and may help avoid eviction
         // of other turns.
-        let entries = [
-            test_entry(
+        let refs = paths(&[
+            (
                 EntryPayload::Message(ChatMessage::system_text("sys")),
                 EntryResolution::Full,
             ),
-            test_entry(
+            (
                 EntryPayload::Message(ChatMessage::user_text("first user")),
                 EntryResolution::Full,
             ),
-            test_entry(
+            (
                 EntryPayload::Message(ChatMessage::assistant_text("ok")),
                 EntryResolution::Full,
             ),
             // This outlined entry is between the two user anchors.
             // With a generous budget, it should appear.
-            test_entry(
+            (
                 EntryPayload::Message(ChatMessage::user_text("outlined task")),
                 EntryResolution::Outlined {
                     outline: "asked to read files".to_owned(),
                 },
             ),
-            test_entry(
+            (
                 EntryPayload::Message(ChatMessage::assistant_text("ok too")),
                 EntryResolution::Full,
             ),
-            test_entry(
+            (
                 EntryPayload::Message(ChatMessage::user_text("current")),
                 EntryResolution::Full,
             ),
-        ];
-        let refs: Vec<PathEntry> = entries
-            .iter()
-            .map(|e| PathEntry {
-                entry: e,
-                resolution: e.resolution.clone(),
-            })
-            .collect();
+        ]);
 
         let cm = SlidingWindowContextManager::new();
         let estimator = HeuristicEstimator::new();

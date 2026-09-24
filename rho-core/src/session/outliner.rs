@@ -546,7 +546,7 @@ mod tests {
     use crate::diagnostic::{DiagnosticSuggestion, SuggestionApplicability};
     use crate::message::{ChatMessage, ModelToolCall, ToolCallFunction};
     use crate::newtypes::{EntryId, ToolCallId, ToolName};
-    use crate::session::entry::{Entry, EntryPayload, EntryResolution};
+    use crate::session::entry::{Entry, EntryPayload};
     use std::time::SystemTime;
 
     /// Helper: construct an [`OutlineContext`] with tool name only.
@@ -572,7 +572,6 @@ mod tests {
             id: EntryId::new(),
             parent_id: None,
             timestamp: SystemTime::UNIX_EPOCH,
-            resolution: EntryResolution::Full,
             payload,
         }
     }

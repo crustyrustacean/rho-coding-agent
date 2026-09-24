@@ -169,7 +169,10 @@ mod tests {
 
         // The entry should have Custom payload with the correct kind
         let entry = session.entry(&id).unwrap();
-        assert!(matches!(entry.resolution, EntryResolution::Attached));
+        assert!(matches!(
+            EntryResolution::default_for(&entry.payload),
+            EntryResolution::Attached
+        ));
         if let EntryPayload::Custom { kind, data } = &entry.payload {
             assert_eq!(kind, "rho.diagnostics.v1");
             assert_eq!(data["error_count"], 3);
@@ -259,7 +262,10 @@ mod tests {
 
         // The entry should have CustomMessage payload with the correct kind
         let entry = session.entry(&id).unwrap();
-        assert!(matches!(entry.resolution, EntryResolution::Full));
+        assert!(matches!(
+            EntryResolution::default_for(&entry.payload),
+            EntryResolution::Full
+        ));
         if let EntryPayload::CustomMessage { kind, content } = &entry.payload {
             assert_eq!(kind, "rho.lint-summary.v1");
             assert!(!content.is_empty());

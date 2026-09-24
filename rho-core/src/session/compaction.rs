@@ -790,7 +790,7 @@ mod tests {
     use super::*;
     use crate::message::{ChatMessage, ModelToolCall, ToolCallFunction};
     use crate::newtypes::{EntryId, ToolCallId, ToolName};
-    use crate::session::entry::{Entry, EntryPayload, EntryResolution};
+    use crate::session::entry::{Entry, EntryPayload};
     use std::time::{Duration, SystemTime};
 
     /// Helper: create a test entry with the given payload and Full resolution.
@@ -799,7 +799,6 @@ mod tests {
             id: EntryId::new(),
             parent_id: None,
             timestamp: SystemTime::UNIX_EPOCH,
-            resolution: EntryResolution::Full,
             payload,
         }
     }
@@ -810,7 +809,6 @@ mod tests {
             id: EntryId::new(),
             parent_id: None,
             timestamp: ts,
-            resolution: EntryResolution::Full,
             payload,
         }
     }

@@ -8,6 +8,10 @@
 //!
 //! # Resolution and LLM context
 //!
+//! (Resolution is *not* a field on `Entry`; it lives in the session's overlay,
+//! and the "Default resolution" column below is what
+//! [`EntryResolution::default_for`] returns.)
+//!
 //! | Payload variant | Default resolution | In LLM context? |
 //! |---|---|---|
 //! | [`Message`](EntryPayload::Message) | Full | Yes (unless Compacted/Attached) |
@@ -31,9 +35,12 @@ use std::time::{Duration, SystemTime};
 
 /// A single node in the session tree.
 ///
-/// Every entry has an explicit [`EntryResolution`] that determines whether it
-/// participates in the model's context. Entries are linked by `parent_id` to
-/// form a tree; the session's `leaf` pointer identifies the current position.
+/// An entry is immutable data: it carries no resolution, only a payload.
+/// Whether it participates in the model's context is decided by the session's
+/// resolution overlay — see [`EntryResolution::default_for`] for the default
+/// and `Session::set_resolution` for changes. Entries are linked by `parent_id`
+/// to form a tree; the session's `leaf` pointer identifies the current
+/// position.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Entry {
     /// Unique identifier for this entry.
@@ -42,8 +49,6 @@ pub struct Entry {
     pub parent_id: Option<EntryId>,
     /// When this entry was created.
     pub timestamp: SystemTime,
-    /// Current resolution level — controls visibility to the model.
-    pub resolution: EntryResolution,
     /// The typed payload — what this entry actually contains.
     pub payload: EntryPayload,
 }
@@ -324,12 +329,11 @@ mod tests {
     use std::time::Duration;
 
     /// Helper: create a minimal `Entry` for testing.
-    fn test_entry(payload: EntryPayload, resolution: EntryResolution) -> Entry {
+    fn test_entry(payload: EntryPayload) -> Entry {
         Entry {
             id: EntryId::new(),
             parent_id: None,
             timestamp: SystemTime::UNIX_EPOCH,
-            resolution,
             payload,
         }
     }
@@ -658,40 +662,33 @@ mod tests {
 
     #[test]
     fn entry_with_message_round_trips() {
-        let entry = test_entry(
-            EntryPayload::Message(ChatMessage::assistant_text("done")),
-            EntryResolution::Full,
-        );
+        let entry = test_entry(EntryPayload::Message(ChatMessage::assistant_text("done")));
         let json = serde_json::to_string(&entry).unwrap();
         let back: Entry = serde_json::from_str(&json).unwrap();
         assert_eq!(entry, back);
     }
 
+    /// An `Entry` line no longer carries a resolution: adaptive resolution
+    /// lives in `Resolution` lines (see `session/persist.rs`) and in the
+    /// session's overlay. A v1 line that *does* carry the legacy field must
+    /// still deserialize, and the value is harvested by `open_session`.
     #[test]
-    fn entry_with_compacted_resolution_round_trips() {
-        let compacted_into = EntryId::new();
-        let entry = test_entry(
-            EntryPayload::Message(ChatMessage::user_text("old")),
-            EntryResolution::Compacted {
-                into: compacted_into.clone(),
-            },
+    fn entry_ignores_legacy_resolution_field_on_deserialize() {
+        let entry = test_entry(EntryPayload::Message(ChatMessage::user_text("old")));
+        let mut value = serde_json::to_value(&entry).unwrap();
+        assert!(
+            value.get("resolution").is_none(),
+            "a written Entry must not carry a resolution"
         );
-        let json = serde_json::to_string(&entry).unwrap();
-        let back: Entry = serde_json::from_str(&json).unwrap();
-        assert_eq!(entry, back);
-    }
+        value["resolution"] = serde_json::json!({
+            "Outlined": { "outline": "legacy" }
+        });
 
-    #[test]
-    fn entry_with_attached_resolution_round_trips() {
-        let entry = test_entry(
-            EntryPayload::ModelChange {
-                model: "qwen".to_owned(),
-            },
-            EntryResolution::Attached,
+        let back: Entry = serde_json::from_value(value).unwrap();
+        assert_eq!(
+            back, entry,
+            "the legacy field must not disturb deserialization"
         );
-        let json = serde_json::to_string(&entry).unwrap();
-        let back: Entry = serde_json::from_str(&json).unwrap();
-        assert_eq!(entry, back);
     }
 
     #[test]
@@ -701,7 +698,6 @@ mod tests {
             id: EntryId::new(),
             parent_id: Some(parent),
             timestamp: SystemTime::UNIX_EPOCH,
-            resolution: EntryResolution::Full,
             payload: EntryPayload::Message(ChatMessage::user_text("follow-up")),
         };
         let json = serde_json::to_string(&entry).unwrap();
@@ -757,21 +753,18 @@ mod tests {
 
     #[test]
     fn entry_with_assistant_tool_calls_round_trips() {
-        let entry = test_entry(
-            EntryPayload::Message(ChatMessage::Assistant {
-                finish_reason: None,
-                content: vec![],
-                tool_calls: vec![ModelToolCall {
-                    id: ToolCallId::from("call_1"),
-                    call_type: "function".to_owned(),
-                    function: ToolCallFunction {
-                        name: ToolName::from("read_file"),
-                        arguments: r#"{"path":"src/main.rs"}"#.to_owned(),
-                    },
-                }],
-            }),
-            EntryResolution::Full,
-        );
+        let entry = test_entry(EntryPayload::Message(ChatMessage::Assistant {
+            finish_reason: None,
+            content: vec![],
+            tool_calls: vec![ModelToolCall {
+                id: ToolCallId::from("call_1"),
+                call_type: "function".to_owned(),
+                function: ToolCallFunction {
+                    name: ToolName::from("read_file"),
+                    arguments: r#"{"path":"src/main.rs"}"#.to_owned(),
+                },
+            }],
+        }));
         let json = serde_json::to_string(&entry).unwrap();
         let back: Entry = serde_json::from_str(&json).unwrap();
         assert_eq!(entry, back);

@@ -157,7 +157,6 @@ impl Session {
             id: EntryId::new(),
             parent_id: self.leaf.clone(),
             timestamp: SystemTime::now(),
-            resolution: EntryResolution::Attached,
             payload: EntryPayload::LeafMoved {
                 from: old_leaf,
                 to: id.clone(),
@@ -369,7 +368,7 @@ mod tests {
         } else {
             panic!("expected LeafMoved payload, got {:?}", leaf_entry.payload);
         }
-        assert!(matches!(leaf_entry.resolution, EntryResolution::Attached));
+        assert_eq!(session.resolution_of(&leaf_id), EntryResolution::Attached);
     }
 
     #[test]
