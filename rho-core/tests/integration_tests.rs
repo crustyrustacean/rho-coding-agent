@@ -551,7 +551,7 @@ async fn stuck_loop_injects_nudge_after_threshold() {
     // The path should contain at least one tool result with "STUCK LOOP DETECTED".
     let path = session.path_to_root();
     let has_nudge = path.iter().any(|e| {
-        if let rho_core::session::EntryPayload::Message(msg) = &e.payload
+        if let rho_core::session::EntryPayload::Message(msg) = &e.entry.payload
             && let ChatMessage::Tool { content, .. } = msg
         {
             return content

@@ -103,6 +103,32 @@ pub enum EntryResolution {
 
 // ── EntryPayload ──────────────────────────────────────────────────────────────
 
+impl EntryResolution {
+    /// The default resolution for a payload, per the table in this module's
+    /// documentation.
+    ///
+    /// Used by the session's resolution overlay: an absent overlay entry
+    /// means "whatever this payload defaults to", which is what keeps the
+    /// overlay sparse. A new `EntryPayload` variant must add a row here (and
+    /// to the table-driven test below).
+    pub fn default_for(payload: &EntryPayload) -> Self {
+        match payload {
+            // LLM-visible content.
+            EntryPayload::Message(_)
+            | EntryPayload::Compaction { .. }
+            | EntryPayload::BranchSummary { .. }
+            | EntryPayload::CustomMessage { .. } => Self::Full,
+            // Metadata: preserved in the tree, out of the model's context.
+            EntryPayload::ModelChange { .. }
+            | EntryPayload::Label { .. }
+            | EntryPayload::SessionInfo { .. }
+            | EntryPayload::LeafMoved { .. }
+            | EntryPayload::Custom { .. }
+            | EntryPayload::SessionEnded { .. } => Self::Attached,
+        }
+    }
+}
+
 /// The typed content of a session entry.
 ///
 /// Each variant documents its default [`EntryResolution`] and whether it
@@ -507,6 +533,125 @@ mod tests {
         let json = serde_json::to_string(&payload).unwrap();
         let back: EntryPayload = serde_json::from_str(&json).unwrap();
         assert_eq!(payload, back);
+    }
+
+    // ── default_for table (one row per payload variant) ────────────────
+
+    /// A zeroed `CompactionSummary` for constructing table rows.
+    fn empty_summary() -> CompactionSummary {
+        CompactionSummary {
+            original_request: None,
+            current_request: None,
+            tool_calls: BTreeMap::new(),
+            key_findings: BTreeMap::new(),
+            phases: Vec::new(),
+            tokens_compacted: 0,
+            entry_count: 0,
+            time_span: Duration::ZERO,
+            notes: None,
+        }
+    }
+
+    /// `default_for` is the source of truth for an absent overlay entry.
+    /// Table-driven with one row per [`EntryPayload`] variant so a new
+    /// variant fails this test until its default is chosen.
+    #[test]
+    fn default_for_matches_documented_table() {
+        let cases: Vec<(&str, EntryPayload, EntryResolution)> = vec![
+            (
+                "Message",
+                EntryPayload::Message(ChatMessage::user_text("hi")),
+                EntryResolution::Full,
+            ),
+            (
+                "Compaction",
+                EntryPayload::Compaction {
+                    summary: empty_summary(),
+                    first_kept: EntryId::new(),
+                    tokens_before: 0,
+                },
+                EntryResolution::Full,
+            ),
+            (
+                "BranchSummary",
+                EntryPayload::BranchSummary {
+                    summary: empty_summary(),
+                    from_id: EntryId::new(),
+                },
+                EntryResolution::Full,
+            ),
+            (
+                "ModelChange",
+                EntryPayload::ModelChange {
+                    model: "gpt-4".to_owned(),
+                },
+                EntryResolution::Attached,
+            ),
+            (
+                "Label",
+                EntryPayload::Label {
+                    target_id: EntryId::new(),
+                    label: None,
+                },
+                EntryResolution::Attached,
+            ),
+            (
+                "SessionInfo",
+                EntryPayload::SessionInfo {
+                    name: "s".to_owned(),
+                },
+                EntryResolution::Attached,
+            ),
+            (
+                "LeafMoved",
+                EntryPayload::LeafMoved {
+                    from: None,
+                    to: EntryId::new(),
+                },
+                EntryResolution::Attached,
+            ),
+            (
+                "Custom",
+                EntryPayload::Custom {
+                    kind: "k".to_owned(),
+                    data: serde_json::json!({}),
+                },
+                EntryResolution::Attached,
+            ),
+            (
+                "CustomMessage",
+                EntryPayload::CustomMessage {
+                    kind: "k".to_owned(),
+                    content: vec![ContentBlock::Text {
+                        text: "x".to_owned(),
+                    }],
+                },
+                EntryResolution::Full,
+            ),
+            (
+                "SessionEnded",
+                EntryPayload::SessionEnded {
+                    reason: "quit".to_owned(),
+                },
+                EntryResolution::Attached,
+            ),
+        ];
+
+        // Guard the table itself: if a variant is added, this count changes
+        // and the list above must be extended.
+        assert_eq!(
+            cases.len(),
+            10,
+            "EntryPayload gained a variant — add a default_for row"
+        );
+
+        for (name, payload, expected) in cases {
+            assert_eq!(
+                EntryResolution::default_for(&payload),
+                expected,
+                "default_for({name}) should be {expected:?}"
+            );
+        }
     }
 
     // ── Full Entry round-trips ─────────────────────────────────────────────

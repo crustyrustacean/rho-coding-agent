@@ -64,6 +64,7 @@ impl Session {
             header,
             entries,
             append_order,
+            resolution: HashMap::new(),
             leaf,
             estimator: Box::new(HeuristicEstimator::new()),
             model: model.into(),
@@ -119,6 +120,7 @@ impl Session {
             },
             entries,
             append_order,
+            resolution: HashMap::new(),
             leaf,
             estimator: Box::new(HeuristicEstimator::new()),
             model: model.into(),
@@ -149,16 +151,20 @@ impl Session {
         persist::open_session(path)
     }
 
-    /// Construct a `Session` from pre-built components.
+    /// Construct a `Session` from pre-built components, seeding the
+    /// resolution overlay.
     ///
     /// Used by [`open_session`](persist::open_session) to reconstruct a
-    /// session from a JSONL file. This bypasses the normal constructor
-    /// because the header, entries, and leaf are already known.
-    pub(crate) fn new_internal(
+    /// session from JSONL, including any `Resolution` lines found in the file
+    /// (and the embedded resolutions of a v1 file). Bypasses the normal
+    /// constructor because the header, entries, leaf, and overlay are already
+    /// known.
+    pub(crate) fn new_internal_with_overlay(
         header: SessionHeader,
         entries: HashMap<EntryId, Entry>,
         leaf: Option<EntryId>,
         persist_state: PersistState,
+        resolution: HashMap<EntryId, EntryResolution>,
     ) -> Self {
         // Reconstruct append_order from the entries: sort by timestamp
         // as a stable approximation of append order.
@@ -173,6 +179,7 @@ impl Session {
             header,
             entries,
             append_order,
+            resolution,
             leaf,
             estimator: Box::new(HeuristicEstimator::new()),
             model: String::new(), // Model is not persisted yet (Phase 2.6)

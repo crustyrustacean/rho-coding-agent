@@ -878,7 +878,7 @@ async fn handle_clear(app: &mut App, id: &Value, transport: &dyn Transport) {
     info!("session cleared");
     let path = app.agent.session().path_to_root();
     if let Some(root_entry) = path.last() {
-        let root_id = root_entry.id.clone();
+        let root_id = root_entry.entry.id.clone();
         let _ = app.agent.session_mut().branch_to(&root_id);
         send(transport, &success_response(id, EmptyResult {})).await;
     } else {

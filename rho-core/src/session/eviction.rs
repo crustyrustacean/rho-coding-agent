@@ -26,10 +26,10 @@
 
 use crate::context::{TokenBudget, approximate_tokens, estimate_tool_schema_overhead};
 use crate::message::ChatMessage;
-use crate::session::Entry;
 use crate::session::entry::EntryPayload;
 use crate::session::entry::EntryResolution;
 use crate::session::estimator::TokenEstimator;
+use crate::session::{Entry, PathEntry};
 
 /// An action to downgrade an entry's resolution.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -68,10 +68,10 @@ impl DowngradePlan {
     /// saves ~90% of the entry's token cost. The exact savings depend on the
     /// generated outline/summary text.
     #[allow(dead_code)]
-    pub fn estimated_savings(&self, entries: &[&Entry]) -> usize {
+    pub fn estimated_savings(&self, entries: &[PathEntry<'_>]) -> usize {
         let entry_map: std::collections::HashMap<_, _> = entries
             .iter()
-            .map(|e| (&e.id, approximate_tokens_for_entry(e)))
+            .map(|pe| (&pe.entry.id, approximate_tokens_for_entry(pe.entry)))
             .collect();
 
         self.actions
@@ -95,13 +95,13 @@ impl DowngradePlan {
 ///
 /// Returns a list of turns, where each turn is a list of entry indices
 /// into the original `entries` slice.
-fn group_entries_into_turns(entries: &[&Entry]) -> Vec<Vec<usize>> {
+fn group_entries_into_turns(entries: &[PathEntry<'_>]) -> Vec<Vec<usize>> {
     let mut turns: Vec<Vec<usize>> = Vec::new();
     let mut i = 0;
 
     while i < entries.len() {
         if let EntryPayload::Message(ChatMessage::Assistant { tool_calls, .. }) =
-            &entries[i].payload
+            &entries[i].entry.payload
         {
             let ids: Vec<&str> = tool_calls.iter().map(|c| c.id.as_ref()).collect();
             let mut turn = vec![i];
@@ -109,7 +109,7 @@ fn group_entries_into_turns(entries: &[&Entry]) -> Vec<Vec<usize>> {
             // Absorb matching Tool results
             while i < entries.len() {
                 if let EntryPayload::Message(ChatMessage::Tool { tool_call_id, .. }) =
-                    &entries[i].payload
+                    &entries[i].entry.payload
                     && ids.contains(&tool_call_id.as_ref())
                 {
                     turn.push(i);
@@ -140,13 +140,14 @@ fn approximate_tokens_for_entry(entry: &Entry) -> usize {
 ///
 /// Outlined/Summarized entries count their reduced text. Full entries
 /// count their full content.
-fn estimate_tokens_at_resolution(entries: &[&Entry]) -> usize {
+fn estimate_tokens_at_resolution(entries: &[PathEntry<'_>]) -> usize {
     entries.iter().map(|e| estimate_entry_token_cost(e)).sum()
 }
 
 /// Estimate the token cost of a single entry at its current resolution.
-fn estimate_entry_token_cost(entry: &Entry) -> usize {
-    match &entry.resolution {
+fn estimate_entry_token_cost(path_entry: &PathEntry<'_>) -> usize {
+    let entry = path_entry.entry;
+    match &path_entry.resolution {
         EntryResolution::Full | EntryResolution::Pinned => approximate_tokens_for_entry(entry),
         EntryResolution::Outlined { outline } => {
             approximate_tokens(&ChatMessage::user_text(outline))
@@ -180,7 +181,7 @@ fn estimate_entry_token_cost(entry: &Entry) -> usize {
 /// - Never downgrades pinned entries
 /// - Never downgrades already-downgraded entries
 pub(crate) fn plan_downgrades(
-    entries: &[&Entry],
+    entries: &[PathEntry<'_>],
     budget: TokenBudget,
     estimator: &dyn TokenEstimator,
     tool_schemas: &[rho_ai::ToolDefinition],
@@ -193,15 +194,14 @@ pub(crate) fn plan_downgrades(
     let schema_overhead = estimate_tool_schema_overhead(tool_schemas, estimator);
     let system_overhead = entries
         .first()
-        .map_or(0, |e| approximate_tokens_for_entry(e));
+        .map_or(0, |e| approximate_tokens_for_entry(e.entry));
     let available = budget
         .prompt_budget()
         .saturating_sub(schema_overhead)
         .saturating_sub(system_overhead);
 
     // Step 2: Estimate current token usage (skip system entry at index 0)
-    let non_system_entries: Vec<&Entry> = entries[1..].to_vec();
-    let current_usage = estimate_tokens_at_resolution(&non_system_entries);
+    let current_usage = estimate_tokens_at_resolution(&entries[1..]);
 
     let excess = current_usage.saturating_sub(available);
     if excess == 0 {
@@ -216,7 +216,7 @@ pub(crate) fn plan_downgrades(
     let first_user_turn = turns.iter().position(|t| {
         t.first().is_some_and(|&idx| {
             matches!(
-                &entries[idx].payload,
+                &entries[idx].entry.payload,
                 EntryPayload::Message(ChatMessage::User { .. })
             )
         })
@@ -241,15 +241,15 @@ pub(crate) fn plan_downgrades(
         }
 
         for &entry_idx in turn {
-            let entry = entries[entry_idx];
+            let path_entry = &entries[entry_idx];
 
             // Skip already-downgraded, compacted, attached, or pinned entries
-            if !matches!(entry.resolution, EntryResolution::Full) {
+            if !matches!(path_entry.resolution, EntryResolution::Full) {
                 continue;
             }
 
             // Only downgrade entries with meaningful content
-            let tokens = approximate_tokens_for_entry(entry);
+            let tokens = approximate_tokens_for_entry(path_entry.entry);
             if tokens <= 10 {
                 continue; // Too small to bother
             }
@@ -261,8 +261,8 @@ pub(crate) fn plan_downgrades(
     // Step 6: Sort candidates — oldest turn first, largest entry first within a turn
     candidates.sort_by(|a, b| {
         a.0.cmp(&b.0).then_with(|| {
-            let tokens_a = approximate_tokens_for_entry(entries[a.1]);
-            let tokens_b = approximate_tokens_for_entry(entries[b.1]);
+            let tokens_a = approximate_tokens_for_entry(entries[a.1].entry);
+            let tokens_b = approximate_tokens_for_entry(entries[b.1].entry);
             tokens_b.cmp(&tokens_a) // largest first
         })
     });
@@ -278,15 +278,15 @@ pub(crate) fn plan_downgrades(
             break;
         }
 
-        let entry = entries[entry_idx];
-        if covered.contains(&entry.id) {
+        let path_entry = &entries[entry_idx];
+        if covered.contains(&path_entry.entry.id) {
             continue;
         }
-        covered.insert(entry.id.clone());
+        covered.insert(path_entry.entry.id.clone());
 
-        let tokens = approximate_tokens_for_entry(entry);
+        let tokens = approximate_tokens_for_entry(path_entry.entry);
         let action = DowngradeAction {
-            entry_id: entry.id.clone(),
+            entry_id: path_entry.entry.id.clone(),
             target: DowngradeTarget::Outline,
         };
         estimated_savings += tokens * 8 / 10;
@@ -297,7 +297,7 @@ pub(crate) fn plan_downgrades(
         if estimated_savings < excess {
             let extra = tokens / 10; // additional savings from Outline→Summarize
             actions.push(DowngradeAction {
-                entry_id: entry.id.clone(),
+                entry_id: path_entry.entry.id.clone(),
                 target: DowngradeTarget::Summarize,
             });
             estimated_savings += extra;
@@ -361,8 +361,14 @@ mod tests {
         )))
     }
 
-    fn as_refs(entries: &[Entry]) -> Vec<&Entry> {
-        entries.iter().collect()
+    fn as_refs(entries: &[Entry]) -> Vec<PathEntry<'_>> {
+        entries
+            .iter()
+            .map(|e| PathEntry {
+                entry: e,
+                resolution: e.resolution.clone(),
+            })
+            .collect()
     }
 
     fn tiny_budget() -> TokenBudget {
@@ -480,9 +486,12 @@ mod tests {
         assert!(!plan.is_empty(), "plan should have downgrade actions");
 
         let tool_action = plan.actions.iter().find(|a| {
-            let entry = refs.iter().find(|e| e.id == a.entry_id);
+            let entry = refs.iter().find(|e| e.entry.id == a.entry_id);
             entry.is_some_and(|e| {
-                matches!(&e.payload, EntryPayload::Message(ChatMessage::Tool { .. }))
+                matches!(
+                    &e.entry.payload,
+                    EntryPayload::Message(ChatMessage::Tool { .. })
+                )
             })
         });
         assert!(
@@ -751,7 +760,7 @@ mod tests {
 
     #[test]
     fn plan_downgrades_empty_entries() {
-        let refs: Vec<&Entry> = vec![];
+        let refs: Vec<PathEntry<'_>> = vec![];
         let estimator = HeuristicEstimator::new();
 
         let plan = plan_downgrades(&refs, TokenBudget::default(), &estimator, &[]);
@@ -798,7 +807,13 @@ mod tests {
             },
             payload: EntryPayload::Message(ChatMessage::user_text("x".repeat(1000))),
         };
-        assert_eq!(estimate_entry_token_cost(&entry), 0);
+        assert_eq!(
+            estimate_entry_token_cost(&PathEntry {
+                entry: &entry,
+                resolution: entry.resolution.clone(),
+            }),
+            0
+        );
     }
 
     #[test]
@@ -812,7 +827,10 @@ mod tests {
             },
             payload: EntryPayload::Message(ChatMessage::user_text("x".repeat(1000))),
         };
-        let tokens = estimate_entry_token_cost(&entry);
+        let tokens = estimate_entry_token_cost(&PathEntry {
+            entry: &entry,
+            resolution: entry.resolution.clone(),
+        });
         // "short" should be very few tokens (< 10)
         assert!(
             tokens < 10,
