@@ -1015,34 +1015,67 @@ impl LoopContext<'_> {
         }
         info!(phase = %self.phase, tool = %call.function.name, "phase updated");
 
-        // Auto-compact: proactively compact older entries when utilization
-        // crosses the auto-compact threshold.
-        if let Some(threshold) = self.auto_compact_threshold() {
-            let stats = self.session.context_stats();
-            if stats.utilization_percent() >= threshold {
-                let strategy = self.make_compaction_strategy();
-                let budget = self.session.message_budget();
-                let compact_threshold = budget / 4;
-                match self
-                    .session
-                    .compact_older_than(compact_threshold, strategy.as_ref())
-                    .await
-                {
-                    Ok(_) => {
-                        info!(
-                            utilization = %stats.utilization_percent(),
-                            compact_threshold,
-                            "auto-compacted context after tool execution"
-                        );
-                    }
-                    Err(e) => {
-                        warn!(error = %e, "auto-compact failed after tool execution");
-                    }
-                }
-            }
-        }
+        self.maybe_auto_compact().await;
 
         Ok(self.advance_to_next_call(remaining).await)
+    }
+
+    /// Auto-compact after a tool result, if utilization crossed the threshold.
+    ///
+    /// Snapshots `context_stats()` *before* compaction so the log can report
+    /// the utilization that triggered it, then re-snapshots after the await and
+    /// pushes the fresh snapshot to observers. Without that refresh a live UI
+    /// keeps rendering the pre-compaction number until the next model
+    /// round-trip (issue #50 items 2 and 3).
+    async fn maybe_auto_compact(&mut self) {
+        let Some(threshold) = self.auto_compact_threshold() else {
+            return;
+        };
+
+        let stats_before = self.session.context_stats();
+        if stats_before.utilization_percent() < threshold {
+            return;
+        }
+
+        let strategy = self.make_compaction_strategy();
+        let budget = self.session.message_budget();
+        let compact_threshold = budget / 4;
+
+        match self
+            .session
+            .compact_older_than(compact_threshold, strategy.as_ref())
+            .await
+        {
+            Ok(_) => {
+                let stats_after = self.session.context_stats();
+                info!(
+                    utilization_before = %stats_before.utilization_percent(),
+                    utilization_after = %stats_after.utilization_percent(),
+                    freed_tokens = stats_before
+                        .estimated_used
+                        .saturating_sub(stats_after.estimated_used),
+                    compact_threshold,
+                    "auto-compacted context after tool execution"
+                );
+                // Push a corrected context snapshot to live UIs. The usage
+                // delta is zero — this tick exists purely to refresh the
+                // context gauge.
+                let zero_delta = IterationUsage {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cached_tokens: 0,
+                    cost: 0.0,
+                    request_count: 0,
+                };
+                self.params
+                    .observer
+                    .on_usage(self.iterations, &zero_delta, &stats_after)
+                    .await;
+            }
+            Err(e) => {
+                warn!(error = %e, "auto-compact failed after tool execution");
+            }
+        }
     }
 
     // ── Truncation handling ──────────────────────────────────────────────
@@ -2075,6 +2108,185 @@ mod tests {
         let obs = ForceBlockObserver;
         let result = obs.on_tool_call_intercept("run_command", "git push");
         assert!(result.is_none(), "should allow normal calls");
+    }
+
+    // ── Auto-compaction post-stats tests (issue #50 items 2 & 3) ─────────
+    //
+    // Auto-compaction used to snapshot `context_stats()` *before* awaiting
+    // `compact_older_than`, then log/emit that stale value. A live UI kept
+    // rendering the utilization that triggered compaction until the next
+    // model round-trip. These tests pin the fix: after compaction succeeds,
+    // observers get a fresh snapshot whose utilization reflects the compacted
+    // context.
+
+    /// An observer that records each `on_usage` tick, tagging it by whether it
+    /// carried a non-zero usage delta. Auto-compaction pushes a *refresh* tick
+    /// with a zero delta; ordinary per-iteration ticks carry real usage. This
+    /// lets a test assert a post-compaction refresh actually happened rather
+    /// than inferring it from utilization movement.
+    #[derive(Default)]
+    struct CompactionStatsObserver {
+        /// `(utilization_percent, was_zero_delta_refresh)` per tick.
+        ticks: Arc<Mutex<Vec<(u8, bool)>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl AgentObserver for CompactionStatsObserver {
+        async fn on_usage(
+            &self,
+            _iteration: u32,
+            usage: &IterationUsage,
+            context: &crate::session::ContextStats,
+        ) {
+            let is_refresh =
+                usage.request_count == 0 && usage.input_tokens == 0 && usage.output_tokens == 0;
+            self.ticks
+                .lock()
+                .unwrap()
+                .push((context.utilization_percent(), is_refresh));
+        }
+    }
+
+    /// Build a session whose path is large enough to trip auto-compaction
+    /// when a tool result is appended.
+    ///
+    /// The budget is set so a single compaction frees a *visible* slice: the
+    /// threshold is `message_budget / 4`, so absorbing only that much would
+    /// move utilization by a few points. Filling several turns ensures the
+    /// range walk accumulates past the threshold and the freed fraction is
+    /// large enough to show up in a whole-percent utilization figure.
+    fn session_for_auto_compact() -> Session {
+        let mut session = Session::in_memory("test-model", Some("sys"), vec![], "/tmp");
+        // 8 turns of ~2k tokens each = ~16k tokens of history against a 32k
+        // budget, so the path starts around 50% and one compaction (which
+        // absorbs at least a quarter of the budget) is clearly visible.
+        for i in 0..8 {
+            let filler = "x".repeat(8_000);
+            session.append_user_message(&format!("turn {i}: {filler}"));
+            session.append_assistant_message(ChatMessage::assistant_text("ok"));
+        }
+        session
+    }
+
+    /// An in-crate approval gate that approves every call. `rho-test-helpers`
+    /// also provides one, but its `ApprovalGate` belongs to a second copy of
+    /// `rho-core` in the dev-dependency graph, so it can't be used here.
+    struct AlwaysApprove;
+
+    #[async_trait::async_trait]
+    impl crate::approval::ApprovalGate for AlwaysApprove {
+        async fn request_approval(
+            &self,
+            _call: &ModelToolCall,
+            _risk: crate::tool::ToolRisk,
+        ) -> crate::approval::ApprovalDecision {
+            crate::approval::ApprovalDecision::Approved
+        }
+    }
+
+    /// A no-op tool so the loop's tool-execution path runs. Returns a fixed
+    /// string; the content is irrelevant because the point of these tests is
+    /// the compaction/statistics path, not tool output.
+    struct NoopTool;
+
+    #[async_trait::async_trait]
+    impl crate::tool::Tool for NoopTool {
+        fn name(&self) -> crate::newtypes::ToolName {
+            crate::newtypes::ToolName::from("noop")
+        }
+
+        fn description(&self) -> &str {
+            "no-op"
+        }
+
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({ "type": "object", "properties": {} })
+        }
+
+        fn risk(&self) -> crate::tool::ToolRisk {
+            crate::tool::ToolRisk::Read
+        }
+
+        async fn execute(
+            &self,
+            _arguments: serde_json::Value,
+            _cancel: CancellationToken,
+        ) -> crate::error::Result<crate::tool::ToolOutcome> {
+            Ok(crate::tool::ToolOutcome::Immediate(
+                crate::tool::ToolResult::success("ok"),
+            ))
+        }
+    }
+
+    #[tokio::test]
+    async fn auto_compact_emits_fresh_context_stats_after_compaction() {
+        use rho_test_helpers::{MockChatClient, text_events, tool_call_events};
+
+        // A large path so utilization starts high; a budget that leaves the
+        // path well above the (1%) auto-compact trigger.
+        let mut session = session_for_auto_compact();
+        session = session.with_token_budget(TokenBudget::with_reserve(32_768, 0));
+
+        let before = session.context_stats();
+        assert!(
+            before.utilization_percent() >= 40,
+            "test setup should start moderately utilized, got {}%",
+            before.utilization_percent()
+        );
+
+        // Model asks for one tool call, then finishes.
+        let client = MockChatClient::new(vec![
+            tool_call_events("c1", "noop", "{}"),
+            text_events("done"),
+        ]);
+
+        let observer = Arc::new(CompactionStatsObserver::default());
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(NoopTool));
+        let config = AgentConfig {
+            auto_compact_threshold: 1, // always eligible
+            ..AgentConfig::default()
+        };
+        let params = LoopParams {
+            client: &client,
+            registry: &registry,
+            config: &config,
+            cancel: CancellationToken::new(),
+            gate: &AlwaysApprove,
+            observer: observer.as_ref(),
+            compaction_client: None,
+            steering: None,
+        };
+
+        let _ = run_loop(&mut session, "go", &params).await;
+
+        let ticks = observer.ticks.lock().unwrap().clone();
+        // Exactly one zero-delta refresh tick should exist, and it must report
+        // strictly lower utilization than the iteration tick that preceded it —
+        // that is the corrected snapshot a live UI needs.
+        let refreshes: Vec<usize> = ticks
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, is_refresh))| *is_refresh)
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(
+            refreshes.len(),
+            1,
+            "expected exactly one post-compaction refresh tick, got ticks {ticks:?}"
+        );
+        let at = refreshes[0];
+        assert!(
+            at > 0,
+            "refresh tick should follow an iteration tick, got {ticks:?}"
+        );
+        let (before_pct, _) = ticks[at - 1];
+        let (after_pct, _) = ticks[at];
+        assert!(
+            after_pct < before_pct,
+            "post-compaction utilization ({after_pct}%) should be lower than the \
+             pre-compaction snapshot ({before_pct}%)"
+        );
     }
 
     // ── build_llm_request tests ──────────────────────────────────────────
