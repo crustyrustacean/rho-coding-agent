@@ -91,6 +91,7 @@ pub mod estimator;
 pub mod eviction;
 pub mod extensions;
 pub mod header;
+pub mod log;
 pub mod outliner;
 pub mod persist;
 pub mod phase;
@@ -103,6 +104,7 @@ pub use entry::{CompactionPhase, CompactionSummary, Entry, EntryPayload, EntryRe
 pub use estimator::{HeuristicEstimator, TokenEstimator};
 pub use extensions::{ExtensionEntry, ExtensionMessageEntry};
 pub use header::SessionHeader;
+pub use log::SessionLog;
 pub use persist::PersistState;
 pub use persist::{SessionMetadata, find_latest_session, list_sessions};
 pub use persist::{default_save_path, open_session, project_hash};
@@ -112,7 +114,6 @@ use crate::context::{ContextManager, TokenBudget};
 use crate::newtypes::EntryId;
 use crate::redact::Redactor;
 
-use crate::tool::ToolResultDetails;
 use std::collections::HashMap;
 
 // ── Session ───────────────────────────────────────────────────────────────────
@@ -146,12 +147,9 @@ use std::collections::HashMap;
 ///
 /// Use [`open`](Session::open) to reload a previously persisted session.
 pub struct Session {
-    /// Session identity and origin metadata.
-    header: SessionHeader,
-    /// All entries in the session tree, indexed by ID.
-    entries: HashMap<EntryId, Entry>,
-    /// Append-ordered entry IDs (in the order they were added to the session).
-    append_order: Vec<EntryId>,
+    /// The append-only, branch-shared state: header, entries, append order,
+    /// the children index, the truncated-output store, and persistence.
+    log: SessionLog,
     /// Sparse resolution overlay, keyed by entry ID.
     ///
     /// An entry's resolution is *not* stored on the entry — entries are
@@ -181,33 +179,30 @@ pub struct Session {
     token_budget: TokenBudget,
     /// Secret redactor applied to tool results before they enter history.
     redactor: Redactor,
-    /// Full content of truncated tool results, indexed by entry ID.
-    ///
-    /// When a tool result exceeds the budget fraction and is truncated, the
-    /// full (redacted) content is stored here so it can be retrieved later
-    /// via [`get_full_result`](Session::get_full_result).
-    details_store: HashMap<EntryId, ToolResultDetails>,
-    /// Persistence state (save path, flushed count).
-    persist: PersistState,
     /// Cumulative API token usage across all LLM requests.
     api_usage: crate::session::context_stats::ApiUsage,
     /// Cached token overhead of the tool schemas.
     ///
     /// Set to `Some(n)` after the first computation and invalidated when
-    /// [`set_tools`](Session::set_tools) changes the schema set. Uses
-    /// [`Cell`] for interior mutability so the accessor remains `&self`.
-    schema_overhead_cache: std::cell::Cell<Option<usize>>,
+    /// [`set_tools`](Session::set_tools) changes the schema set.
+    ///
+    /// A `Mutex` rather than a `Cell` so `Session` stays `Sync` — the log/cursor
+    /// split (#65) needs `SessionLog` to be shareable across threads. A
+    /// poisoned lock is recovered rather than propagated: the cached value is
+    /// a pure memoization, so there is no invariant to violate and panicking
+    /// would be a gratuitous failure mode.
+    schema_overhead_cache: std::sync::Mutex<Option<usize>>,
 }
 
 impl std::fmt::Debug for Session {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Session")
-            .field("header", &self.header)
-            .field("entry_count", &self.entries.len())
+            .field("header", &self.log.header)
+            .field("entry_count", &self.log.entries.len())
             .field("leaf", &self.leaf)
             .field("model", &self.model)
             .field("token_budget", &self.token_budget)
-            .field("persist", &self.persist)
+            .field("persist", &self.log.persist)
             .finish_non_exhaustive()
     }
 }
@@ -371,8 +366,8 @@ mod tests {
         // Manually set the save path and flushed count to simulate persistence.
         // We can't use Session::new directly in tests because it writes to ~/.rho,
         // so we use in_memory + manual flush.
-        session.persist.save_path = Some(path.clone());
-        session.persist.flushed_count = 0;
+        session.log.persist.save_path = Some(path.clone());
+        session.log.persist.flushed_count = 0;
 
         // Flush to disk
         session.flush().unwrap();
@@ -384,7 +379,7 @@ mod tests {
         let reopened = Session::open(&path).unwrap();
 
         // Verify header
-        assert_eq!(reopened.header().id, session.header().id);
+        assert_eq!(reopened.header().id, session.log.header.id);
         assert_eq!(
             reopened.header().version,
             super::persist::SESSION_FORMAT_VERSION
@@ -425,8 +420,8 @@ mod tests {
         let nested = dir.path().join("a").join("b").join("session.jsonl");
 
         let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
-        session.persist.save_path = Some(nested.clone());
-        session.persist.flushed_count = 0;
+        session.log.persist.save_path = Some(nested.clone());
+        session.log.persist.flushed_count = 0;
 
         session.flush().unwrap();
 
@@ -439,8 +434,8 @@ mod tests {
         let path = dir.path().join("incremental.jsonl");
 
         let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
-        session.persist.save_path = Some(path.clone());
-        session.persist.flushed_count = 0;
+        session.log.persist.save_path = Some(path.clone());
+        session.log.persist.flushed_count = 0;
 
         // First flush writes the header + root entry
         session.flush().unwrap();
@@ -482,8 +477,8 @@ mod tests {
             )
             .unwrap();
 
-        session.persist.save_path = Some(path.clone());
-        session.persist.flushed_count = 0;
+        session.log.persist.save_path = Some(path.clone());
+        session.log.persist.flushed_count = 0;
         session.flush().unwrap();
 
         let reopened = Session::open(&path).unwrap();
@@ -506,8 +501,8 @@ mod tests {
         // Branch back to root
         session.branch_to(&root_id).unwrap();
 
-        session.persist.save_path = Some(path.clone());
-        session.persist.flushed_count = 0;
+        session.log.persist.save_path = Some(path.clone());
+        session.log.persist.flushed_count = 0;
         session.flush().unwrap();
 
         let reopened = Session::open(&path).unwrap();
@@ -570,8 +565,8 @@ mod tests {
 
         session.close("test completed");
 
-        session.persist.save_path = Some(path.clone());
-        session.persist.flushed_count = 0;
+        session.log.persist.save_path = Some(path.clone());
+        session.log.persist.flushed_count = 0;
         session.flush().unwrap();
 
         let reopened = Session::open(&path).unwrap();
@@ -659,10 +654,10 @@ mod tests {
 
         let mut session = Session::new("m", Some("sys"), vec![], cwd);
         // Redirect save path to our temp location
-        session.persist.save_path = Some(path.clone());
+        session.log.persist.save_path = Some(path.clone());
         // Reset flushed_count since we changed the path after initial auto-flush
         // (the initial root entry was auto-flushed to the original path)
-        session.persist.flushed_count = 0;
+        session.log.persist.flushed_count = 0;
 
         session.append_user_message("hello");
 

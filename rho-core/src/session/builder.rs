@@ -10,12 +10,12 @@ use crate::message::ChatMessage;
 use crate::newtypes::{EntryId, SessionId};
 use crate::redact::Redactor;
 
-use super::Session;
 use super::entry::{Entry, EntryPayload, EntryResolution};
 use super::estimator::{HeuristicEstimator, TokenEstimator};
 use super::header::SessionHeader;
 use super::persist;
 use super::persist::PersistState;
+use super::{Session, SessionLog};
 
 impl Session {
     /// Create a new session with JSONL persistence enabled.
@@ -59,10 +59,18 @@ impl Session {
 
         let save_path = persist::compute_save_path(&header);
 
+        // Build the log through `insert` so the children index is populated
+        // alongside the entries, then attach persistence.
+        let mut log = SessionLog::new(header);
+        for id in append_order {
+            if let Some(entry) = entries.get(&id) {
+                log.insert(entry.clone());
+            }
+        }
+        log.persist = PersistState::with_path(save_path, 0);
+
         Self {
-            header,
-            entries,
-            append_order,
+            log,
             resolution: HashMap::new(),
             leaf,
             estimator: Box::new(HeuristicEstimator::new()),
@@ -72,9 +80,7 @@ impl Session {
             context_manager: Box::new(SlidingWindowContextManager::new()),
             token_budget: TokenBudget::default(),
             redactor: Redactor::new(),
-            details_store: HashMap::new(),
-            schema_overhead_cache: std::cell::Cell::new(None),
-            persist: PersistState::with_path(save_path, 0),
+            schema_overhead_cache: std::sync::Mutex::new(None),
             api_usage: crate::session::context_stats::ApiUsage::default(),
             user_models: Vec::new(),
         }
@@ -108,16 +114,21 @@ impl Session {
             None
         };
 
+        let mut log = SessionLog::new(SessionHeader {
+            id: SessionId::new(),
+            version: persist::SESSION_FORMAT_VERSION,
+            created_at: SystemTime::now(),
+            cwd: cwd.into(),
+            parent_session: None,
+        });
+        for id in append_order {
+            if let Some(entry) = entries.get(&id) {
+                log.insert(entry.clone());
+            }
+        }
+
         Self {
-            header: SessionHeader {
-                id: SessionId::new(),
-                version: persist::SESSION_FORMAT_VERSION,
-                created_at: SystemTime::now(),
-                cwd: cwd.into(),
-                parent_session: None,
-            },
-            entries,
-            append_order,
+            log,
             resolution: HashMap::new(),
             leaf,
             estimator: Box::new(HeuristicEstimator::new()),
@@ -127,9 +138,7 @@ impl Session {
             context_manager: Box::new(SlidingWindowContextManager::new()),
             token_budget: TokenBudget::default(),
             redactor: Redactor::new(),
-            details_store: HashMap::new(),
-            schema_overhead_cache: std::cell::Cell::new(None),
-            persist: PersistState::in_memory(),
+            schema_overhead_cache: std::sync::Mutex::new(None),
             api_usage: crate::session::context_stats::ApiUsage::default(),
             user_models: Vec::new(),
         }
@@ -167,7 +176,7 @@ impl Session {
     /// issue #29.
     pub(crate) fn new_internal_with_overlay(
         header: SessionHeader,
-        entries: HashMap<EntryId, Entry>,
+        entries: &HashMap<EntryId, Entry>,
         append_order: Vec<EntryId>,
         leaf: Option<EntryId>,
         persist_state: PersistState,
@@ -179,10 +188,18 @@ impl Session {
             "append_order must list every entry exactly once"
         );
 
+        // Rebuild the log from the supplied file order, which re-derives the
+        // children index from `parent_id` (the index is not persisted).
+        let mut log = SessionLog::new(header);
+        log.persist = persist_state;
+        for id in append_order {
+            if let Some(entry) = entries.get(&id) {
+                log.insert(entry.clone());
+            }
+        }
+
         Self {
-            header,
-            entries,
-            append_order,
+            log,
             resolution,
             leaf,
             estimator: Box::new(HeuristicEstimator::new()),
@@ -192,9 +209,7 @@ impl Session {
             context_manager: Box::new(SlidingWindowContextManager::new()),
             token_budget: TokenBudget::default(),
             redactor: Redactor::new(),
-            details_store: HashMap::new(),
-            schema_overhead_cache: std::cell::Cell::new(None),
-            persist: persist_state,
+            schema_overhead_cache: std::sync::Mutex::new(None),
             api_usage: crate::session::context_stats::ApiUsage::default(),
             user_models: Vec::new(),
         }
@@ -262,7 +277,10 @@ impl Session {
     /// a different set of tools).
     pub fn set_tools(&mut self, tools: Vec<rho_ai::ToolDefinition>) {
         self.tools = tools;
-        self.schema_overhead_cache.set(None);
+        *self
+            .schema_overhead_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
     }
 
     /// Override the secret redactor (useful when resuming a session with
