@@ -96,25 +96,101 @@ pub enum JsonlLine {
     },
     /// A session tree entry.
     Entry(Entry),
-    /// A resolution change applied to an existing entry.
+    /// A resolution change applied to an existing entry, by one cursor.
     ///
     /// Resolution changes happen after an entry is flushed (the entry is
     /// already on disk), so they cannot be folded back into the `Entry` line.
     /// Each change is appended as its own line; replay applies them in file
-    /// order with last-write-wins.
+    /// order with last-write-wins **per cursor**.
     ///
-    /// `cursor` is reserved for the per-cursor overlay split (roadmap A3) and
-    /// is always `None` in format v2. The field is present so stamping it
-    /// later does not require a second format change.
+    /// `cursor` identifies whose overlay the change belongs to. Two cursors
+    /// over one log can resolve the same entry differently, so this field is
+    /// what keeps their changes from overwriting each other. `None` marks a
+    /// line written before cursors existed (format v2); those are adopted by
+    /// whichever cursor reopens the file.
     Resolution {
         /// The entry whose resolution changed.
         entry: crate::newtypes::EntryId,
         /// The new resolution for that entry.
         resolution: crate::session::entry::EntryResolution,
-        /// Cursor this change applies to. Always `None` in format v2.
+        /// Cursor this change applies to. `None` for pre-cursor (v2) files.
         #[serde(default)]
         cursor: Option<String>,
     },
+}
+
+/// A queued resolution change waiting to be written to disk.
+///
+/// Keyed on `(cursor, entry)` rather than entry alone: two cursors over one
+/// log can hold different resolutions for the *same* entry, and both must
+/// survive a round-trip. Keying on entry alone silently dropped one cursor's
+/// change.
+///
+/// `cursor` is `None` only for a queued legacy line; in practice the queue
+/// always stamps the writing cursor's id.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PendingResolution {
+    /// Queued changes, in insertion order. Replay is last-write-wins per
+    /// `(cursor, entry)`, so only the final value for each key matters.
+    changes: Vec<(
+        Option<crate::newtypes::CursorId>,
+        crate::newtypes::EntryId,
+        crate::session::entry::EntryResolution,
+    )>,
+}
+
+impl PendingResolution {
+    /// Number of queued changes.
+    pub fn len(&self) -> usize {
+        self.changes.len()
+    }
+
+    /// Whether nothing is queued.
+    pub fn is_empty(&self) -> bool {
+        self.changes.is_empty()
+    }
+
+    /// Drop every queued change.
+    pub fn clear(&mut self) {
+        self.changes.clear();
+    }
+
+    /// Queue a change, replacing any existing change for the same
+    /// `(cursor, entry)` pair.
+    ///
+    /// Replacing rather than appending keeps the queue bounded when the
+    /// eviction planner rewrites one entry several times before a flush. Order
+    /// is preserved so replay's last-write-wins rule reproduces the in-memory
+    /// sequence exactly.
+    pub fn push(
+        &mut self,
+        cursor: Option<crate::newtypes::CursorId>,
+        entry: crate::newtypes::EntryId,
+        resolution: crate::session::entry::EntryResolution,
+    ) {
+        if let Some(slot) = self
+            .changes
+            .iter_mut()
+            .find(|(c, e, _)| *c == cursor && *e == entry)
+        {
+            slot.2 = resolution;
+        } else {
+            self.changes.push((cursor, entry, resolution));
+        }
+    }
+
+    /// The queued changes in insertion order.
+    pub fn iter(
+        &self,
+    ) -> impl Iterator<
+        Item = &(
+            Option<crate::newtypes::CursorId>,
+            crate::newtypes::EntryId,
+            crate::session::entry::EntryResolution,
+        ),
+    > {
+        self.changes.iter()
+    }
 }
 
 /// Current on-disk session format version.
@@ -334,10 +410,7 @@ pub struct PersistState {
     /// queue is deliberately independent of `flushed_count`. `flush_session`
     /// drains it after writing any new entries — a `Resolution` line must
     /// never precede the `Entry` line it refers to.
-    pub pending_resolution: Vec<(
-        crate::newtypes::EntryId,
-        crate::session::entry::EntryResolution,
-    )>,
+    pub pending_resolution: PendingResolution,
 }
 
 impl PersistState {
@@ -346,7 +419,7 @@ impl PersistState {
         Self {
             save_path: None,
             flushed_count: 0,
-            pending_resolution: Vec::new(),
+            pending_resolution: PendingResolution::default(),
         }
     }
 
@@ -355,7 +428,7 @@ impl PersistState {
         Self {
             save_path: Some(path),
             flushed_count,
-            pending_resolution: Vec::new(),
+            pending_resolution: PendingResolution::default(),
         }
     }
 }
@@ -434,6 +507,13 @@ pub fn open_session(path: &Path) -> Result<Session> {
                 ))
             })?;
 
+    // Reopening continues the *same* cursor, so it adopts the id found in the
+    // file rather than minting a fresh one. Lines stamped with a different
+    // cursor belong to a sibling and are skipped; lines with `cursor: null`
+    // (written before cursors existed) belong to us and are adopted under a
+    // fresh id, which is stable for the rest of this session's life.
+    let persisted_cursor = first_cursor_id_in(&raw_lines);
+
     let ParsedBody {
         entries,
         append_order,
@@ -443,8 +523,15 @@ pub fn open_session(path: &Path) -> Result<Session> {
         legacy_resolutions,
     } = parse_body_lines(path, &raw_lines)?;
 
-    let resolution_overlay =
-        build_resolution_overlay(&entries, &resolution_changes, &legacy_resolutions, path);
+    let self_cursor = persisted_cursor.unwrap_or_default();
+
+    let resolution_overlay = build_resolution_overlay(
+        &entries,
+        &resolution_changes,
+        &legacy_resolutions,
+        path,
+        &self_cursor,
+    );
 
     // Determine the leaf.
     // The last entry in the file is always the leaf (entries are appended
@@ -472,6 +559,7 @@ pub fn open_session(path: &Path) -> Result<Session> {
         leaf,
         PersistState::with_path(path.to_path_buf(), entry_count),
         resolution_overlay,
+        self_cursor,
     );
 
     debug!(
@@ -683,17 +771,14 @@ fn write_header_line<W: Write>(writer: &mut W, session: &Session, save_path: &Pa
 /// written.
 fn write_resolution_lines<W: Write>(
     writer: &mut W,
-    changes: &[(
-        crate::newtypes::EntryId,
-        crate::session::entry::EntryResolution,
-    )],
+    changes: &PendingResolution,
     save_path: &Path,
 ) -> Result<()> {
-    for (entry_id, resolution) in changes {
+    for (cursor, entry_id, resolution) in changes.iter() {
         let line = JsonlLine::Resolution {
             entry: entry_id.clone(),
             resolution: resolution.clone(),
-            cursor: None,
+            cursor: cursor.as_ref().map(std::string::ToString::to_string),
         };
         let json = serde_json::to_string(&line).map_err(|e| {
             SessionError::Persistence(format!(
@@ -720,8 +805,11 @@ struct ParsedBody {
     last_entry_id: Option<crate::newtypes::EntryId>,
     /// Number of `Entry` lines parsed.
     entry_count: usize,
-    /// `Resolution` lines in file order; the caller applies last-write-wins.
+    /// `Resolution` lines in file order, each tagged with the cursor it
+    /// belongs to (`None` = written before cursors existed). The caller
+    /// applies last-write-wins for its own cursor.
     resolution_changes: Vec<(
+        Option<crate::newtypes::CursorId>,
         crate::newtypes::EntryId,
         crate::session::entry::EntryResolution,
     )>,
@@ -827,16 +915,7 @@ fn parse_body_lines(path: &Path, raw_lines: &[String]) -> Result<ParsedBody> {
                 resolution,
                 cursor,
             } => {
-                if cursor.is_some() {
-                    // Per-cursor resolution is roadmap A3; this build has no
-                    // cursor concept, so a stamped line cannot be applied.
-                    warn!(
-                        entry = %entry,
-                        "resolution line carries a cursor id, which this build does not support; ignoring"
-                    );
-                    continue;
-                }
-                resolution_changes.push((entry, resolution));
+                resolution_changes.push((cursor.map(Into::into), entry, resolution));
             }
         }
     }
@@ -860,9 +939,14 @@ fn parse_body_lines(path: &Path, raw_lines: &[String]) -> Result<ParsedBody> {
 /// out of the map, which is what keeps the overlay sparse.
 fn build_resolution_overlay(
     entries: &HashMap<crate::newtypes::EntryId, Entry>,
-    resolution_changes: &[(crate::newtypes::EntryId, EntryResolution)],
+    resolution_changes: &[(
+        Option<crate::newtypes::CursorId>,
+        crate::newtypes::EntryId,
+        EntryResolution,
+    )],
     legacy_resolutions: &[(crate::newtypes::EntryId, EntryResolution)],
     path: &Path,
+    self_cursor: &crate::newtypes::CursorId,
 ) -> HashMap<crate::newtypes::EntryId, EntryResolution> {
     let mut overlay: HashMap<crate::newtypes::EntryId, EntryResolution> = HashMap::new();
 
@@ -888,11 +972,37 @@ fn build_resolution_overlay(
     for (entry_id, resolution) in legacy_resolutions {
         apply(entry_id, resolution);
     }
-    for (entry_id, resolution) in resolution_changes {
+    for (cursor, entry_id, resolution) in resolution_changes {
+        // A line stamped with a sibling cursor's id must not leak into this
+        // cursor's overlay. `None` (pre-cursor v2 files) belongs to us.
+        if cursor.as_ref().is_some_and(|c| c != self_cursor) {
+            continue;
+        }
         apply(entry_id, resolution);
     }
 
     overlay
+}
+
+/// Recover the cursor id a session file was last written by.
+///
+/// Reopening *continues* the cursor that wrote the file, so it adopts this id
+/// rather than minting a fresh one. Without this, a session's own stamped
+/// `Resolution` lines would no longer match on reload and its overrides would
+/// be silently dropped.
+///
+/// Returns `None` for a file with no stamped lines (v1, or a v2 file whose only
+/// changes predate cursors), in which case the caller mints a fresh id and
+/// adopts the `cursor: null` lines under it.
+fn first_cursor_id_in(raw_lines: &[String]) -> Option<crate::newtypes::CursorId> {
+    raw_lines
+        .iter()
+        .filter_map(|line| serde_json::from_str::<JsonlLine>(line).ok())
+        .find_map(|line| match line {
+            JsonlLine::Resolution { cursor, .. } => cursor,
+            JsonlLine::Header { .. } | JsonlLine::Entry(_) => None,
+        })
+        .map(Into::into)
 }
 
 /// Compute the default save path for a new session.
@@ -935,6 +1045,7 @@ mod tests {
             None,
             PersistState::with_path(path, 0),
             HashMap::new(),
+            crate::newtypes::CursorId::new(),
         )
     }
 
@@ -946,6 +1057,182 @@ mod tests {
         let root = session.append_user_message("system");
         let user = session.append_user_message("hello");
         (root, user)
+    }
+
+    // ── Per-cursor resolution persistence (#65 step 3) ──────────────────
+
+    /// The load-bearing test: two cursors, one shared entry, different
+    /// resolutions, both survive a flush and reopen.
+    ///
+    /// Before the queue gained a cursor dimension, `pending_resolution` deduped
+    /// by entry id alone, so the second cursor's change replaced the first —
+    /// one cursor's intent vanished with no error.
+    #[test]
+    fn two_cursors_persist_different_resolutions_for_same_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cursors.jsonl");
+        let mut primary = file_backed_session(path.clone());
+        let (_root, user_id) = seed_two_entries(&mut primary);
+
+        // Two cursors, two different opinions about the same entry.
+        primary.pin_entry(&user_id).unwrap();
+        let mut forked = primary.fork();
+        forked
+            .set_resolution(
+                &user_id,
+                EntryResolution::Summarized {
+                    summary: "only this cursor summarises it".to_owned(),
+                },
+            )
+            .unwrap();
+        primary.flush().unwrap();
+
+        // Both changes are on disk, each stamped with its own cursor.
+        let contents = std::fs::read_to_string(&path).unwrap();
+        let resolution_lines: Vec<&str> = contents
+            .lines()
+            .filter(|line| line.contains(r#""type":"Resolution""#))
+            .collect();
+        assert_eq!(
+            resolution_lines.len(),
+            2,
+            "both cursors' changes must reach disk, got {resolution_lines:?}"
+        );
+        assert!(
+            resolution_lines
+                .iter()
+                .all(|line| !line.contains(r#""cursor":null"#)),
+            "every v3 line must be cursor-stamped, got {resolution_lines:?}"
+        );
+
+        // Reopening yields the primary cursor, which must see its own pin.
+        let reopened = Session::open(&path).unwrap();
+        assert!(
+            matches!(reopened.resolution_of(&user_id), EntryResolution::Pinned),
+            "the primary cursor's pin must survive reopen"
+        );
+    }
+
+    /// A `Resolution` line round-trips its cursor stamp.
+    #[test]
+    fn resolution_line_round_trips_with_cursor() {
+        let line = JsonlLine::Resolution {
+            entry: EntryId::new(),
+            resolution: EntryResolution::Pinned,
+            cursor: Some(crate::newtypes::CursorId::new().to_string()),
+        };
+        let json = serde_json::to_string(&line).unwrap();
+        let back: JsonlLine = serde_json::from_str(&json).unwrap();
+        assert_eq!(line, back);
+        assert!(
+            json.contains(r#""cursor":"#),
+            "the cursor field must be present on the wire, got {json}"
+        );
+    }
+
+    /// Files written before cursors existed carry `cursor: null`. Replay must
+    /// apply those to the reopened session's own cursor, or every existing
+    /// session silently loses its resolution overrides.
+    #[test]
+    fn legacy_resolution_line_without_cursor_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("legacy_cursor.jsonl");
+        let mut session = file_backed_session(path.clone());
+        let (_root, user_id) = seed_two_entries(&mut session);
+        session.pin_entry(&user_id).unwrap();
+        session.flush().unwrap();
+
+        // Rewrite the stamped cursor as an explicit null — the v2 shape.
+        // `cursor` serialises as the last field, so the trailing `,"cursor":"…"`
+        // is replaced with `,"cursor":null`.
+        let contents = std::fs::read_to_string(&path).unwrap();
+        let legacy = contents
+            .lines()
+            .map(|line| {
+                if line.contains(r#""type":"Resolution""#) {
+                    let cut = line
+                        .find(r#","cursor":"#)
+                        .unwrap_or_else(|| panic!("expected a cursor field: {line}"));
+                    format!("{},\"cursor\":null}}", &line[..cut])
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(&path, format!("{legacy}\n")).unwrap();
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains(r#""cursor":null"#),
+            "fixture should now look like a v2 file"
+        );
+
+        let reopened = Session::open(&path).unwrap();
+        assert!(
+            matches!(reopened.resolution_of(&user_id), EntryResolution::Pinned),
+            "a cursor-less Resolution line must still be honoured on reopen"
+        );
+    }
+
+    /// Dedupe is keyed on (cursor, entry), not entry alone.
+    #[test]
+    fn dedupe_is_per_cursor_not_global() {
+        use crate::newtypes::CursorId;
+
+        let entry = EntryId::new();
+        let cursor_a = CursorId::new();
+        let cursor_b = CursorId::new();
+        let mut queue = super::PendingResolution::default();
+
+        queue.push(
+            Some(cursor_a.clone()),
+            entry.clone(),
+            EntryResolution::Pinned,
+        );
+        queue.push(
+            Some(cursor_b),
+            entry.clone(),
+            EntryResolution::Summarized {
+                summary: "b".to_owned(),
+            },
+        );
+        assert_eq!(
+            queue.len(),
+            2,
+            "two cursors must retain separate changes for one entry"
+        );
+
+        // The same cursor re-writing the same entry replaces its own change.
+        queue.push(Some(cursor_a), entry, EntryResolution::Attached);
+        assert_eq!(
+            queue.len(),
+            2,
+            "a same-cursor rewrite must dedupe, not append"
+        );
+    }
+
+    /// `CursorId` follows the `EntryId` convention.
+    #[test]
+    fn cursor_id_is_unique_and_hex() {
+        let a = crate::newtypes::CursorId::new();
+        let b = crate::newtypes::CursorId::new();
+        assert_ne!(a, b, "cursor ids must be unique");
+        assert_eq!(a.to_string().len(), 16, "expected a 16-char hex prefix");
+        assert!(a.to_string().chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    /// `fork()` yields a distinct cursor over the same log.
+    #[test]
+    fn fork_yields_independent_cursor_id() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        session.append_user_message("first turn");
+        let forked = session.fork();
+        assert_ne!(
+            session.cursor_id(),
+            forked.cursor_id(),
+            "a fork must get its own cursor id"
+        );
     }
 
     /// Regression for #29: `append_order` was reconstructed by sorting a

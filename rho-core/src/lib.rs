@@ -118,7 +118,7 @@ pub use diagnostic::{
 pub use error::{Result, RhoError};
 pub use message::{ChatMessage, ContentBlock, ModelToolCall, ToolCallFunction};
 pub use model_match::{ModelCandidate, find_exact, format_suggestions, fuzzy_match};
-pub use newtypes::{DiagnosticCode, EntryId, FilePath, SessionId, ToolCallId, ToolName};
+pub use newtypes::{CursorId, DiagnosticCode, EntryId, FilePath, SessionId, ToolCallId, ToolName};
 pub use prompts::{base_prompt, compact_prompt};
 pub use provider::{OpenAiCompatibleProvider, Provider, ProviderRegistry, provider_factory};
 pub use redact::Redactor;

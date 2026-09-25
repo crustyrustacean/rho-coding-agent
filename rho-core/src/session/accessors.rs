@@ -243,17 +243,11 @@ impl Session {
         id: EntryId,
         resolution: crate::session::entry::EntryResolution,
     ) {
+        let cursor = self.cursor_id.clone();
         self.with_log_mut(|log| {
-            if let Some(slot) = log
-                .persist
+            log.persist
                 .pending_resolution
-                .iter_mut()
-                .find(|(pending_id, _)| pending_id == &id)
-            {
-                slot.1 = resolution;
-            } else {
-                log.persist.pending_resolution.push((id, resolution));
-            }
+                .push(Some(cursor), id, resolution);
         });
     }
 }

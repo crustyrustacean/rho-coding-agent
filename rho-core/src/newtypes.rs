@@ -327,6 +327,64 @@ impl std::fmt::Display for DiagnosticCode {
     }
 }
 
+/// A unique identifier for a cursor over a session log.
+///
+/// A cursor is one *view position* over the shared [`SessionLog`] — its own
+/// leaf pointer and its own resolution overlay. Forking a session yields a
+/// second cursor over the same log, so `CursorId` is what distinguishes
+/// their per-cursor state when both are persisted into one file.
+///
+/// Follows the [`EntryId`] convention: an 8-char hex prefix of a UUID v4.
+///
+/// [`SessionLog`]: crate::session::log::SessionLog
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+pub struct CursorId(String);
+
+impl CursorId {
+    /// Generates a brand new `CursorId` using the first 8 chars of a UUID v4.
+    pub fn new() -> Self {
+        Self::from(Uuid::new_v4())
+    }
+}
+
+impl Default for CursorId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl From<Uuid> for CursorId {
+    fn from(uuid: Uuid) -> Self {
+        let bytes = uuid.as_bytes();
+        // Same 16-hex-char prefix scheme as `EntryId`.
+        let prefix = format!(
+            "{:016x}",
+            u64::from_be_bytes([
+                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+            ])
+        );
+        Self(prefix)
+    }
+}
+
+impl From<String> for CursorId {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl From<&str> for CursorId {
+    fn from(s: &str) -> Self {
+        Self(s.to_owned())
+    }
+}
+
+impl std::fmt::Display for CursorId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

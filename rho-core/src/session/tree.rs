@@ -4,7 +4,7 @@ use std::time::SystemTime;
 use tracing::warn;
 
 use crate::error::Result;
-use crate::newtypes::EntryId;
+use crate::newtypes::{CursorId, EntryId};
 
 use super::Session;
 use super::entry::{CompactionSummary, Entry, EntryPayload, EntryResolution};
@@ -113,6 +113,31 @@ impl Session {
     /// authoritative sequence on reload — see issue #29).
     pub fn children(&self, id: &EntryId) -> Vec<EntryId> {
         self.with_log(|log| log.children_of(id).to_vec())
+    }
+
+    /// This cursor's identity.
+    ///
+    /// Two cursors over the same log differ only in their per-cursor state
+    /// (leaf position and resolution overlay); this id is what tells their
+    /// persisted state apart.
+    pub fn cursor_id(&self) -> CursorId {
+        self.cursor_id.clone()
+    }
+
+    /// Fork a second cursor over the same log.
+    ///
+    /// The returned cursor shares the log — entries appended through either are
+    /// visible to both — but owns its own leaf position, resolution overlay,
+    /// and [`CursorId`]. This is the primitive the branch surface builds on.
+    ///
+    /// This does **not** write a `LeafMoved` entry; it is a pure cursor
+    /// operation. Use [`branch_to`](Self::branch_to) to record an audited leaf
+    /// move within one cursor.
+    #[must_use]
+    pub fn fork(&self) -> Self {
+        let mut forked = self.clone();
+        forked.cursor_id = CursorId::new();
+        forked
     }
 
     /// Move the leaf pointer to an existing entry, recording a
