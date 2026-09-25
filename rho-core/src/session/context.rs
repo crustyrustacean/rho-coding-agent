@@ -3,7 +3,7 @@
 use super::context_stats::{
     PhaseTokenDistribution, ResolutionTokenDistribution, RoleTokenDistribution,
 };
-use super::{ContextStats, Entry, EntryId, EntryResolution, Session};
+use super::{ContextStats, Cursor, Entry, EntryId, EntryResolution};
 use crate::error::Result;
 use crate::message::ChatMessage;
 use crate::newtypes::ToolCallId;
@@ -11,7 +11,7 @@ use crate::session::entry::EntryPayload;
 use crate::session::error::SessionError;
 use crate::session::outliner::OutlineContext;
 
-impl Session {
+impl Cursor {
     // ── Resolution write path (#61) ─────────────────────────────────────
 
     /// Transition an entry to a new [`EntryResolution`].
@@ -20,7 +20,7 @@ impl Session {
     /// change is mirrored into the entry and queued for persistence, then
     /// flushed immediately so a crash cannot lose it — a resolution change
     /// to an already-flushed entry is otherwise invisible to
-    /// [`flush`](Session::flush), which only writes new entries.
+    /// [`flush`](Cursor::flush), which only writes new entries.
     ///
     /// # Transition rules
     ///
@@ -423,8 +423,8 @@ impl Session {
     ///    ID.
     ///
     /// The compacted entries are **not deleted** — they remain in the tree
-    /// at lower resolution, accessible via [`entry()`](Session::entry), but
-    /// bypassed by [`path_messages()`](Session::path_messages) and
+    /// at lower resolution, accessible via [`entry()`](Cursor::entry), but
+    /// bypassed by [`path_messages()`](Cursor::path_messages) and
     /// [`fit_path`](crate::context::ContextManager::fit_path).
     ///
     /// # Invariants
@@ -819,7 +819,7 @@ mod tests {
     /// default — the sparse-map contract.
     #[test]
     fn resolution_of_defaults_to_payload_default() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let user = session.append_user_message("hi");
         let state = session.append_custom_state("k".into(), serde_json::json!({}));
 
@@ -835,7 +835,7 @@ mod tests {
     /// `resolution_of`.
     #[test]
     fn resolution_of_reflects_overlay_after_set() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let id = session.append_user_message("hi");
 
         session
@@ -857,7 +857,7 @@ mod tests {
     /// resolution, and `path_entries` is chronological.
     #[test]
     fn path_entries_carry_effective_resolution() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let first = session.append_user_message("one");
         let second = session.append_user_message("two");
         session.outline_entry(&first).unwrap();
@@ -886,7 +886,7 @@ mod tests {
     /// `pin_entry` so the overlay is the single source of truth.
     #[tokio::test]
     async fn pinned_barrier_via_pin_entry_blocks_compaction_below_it() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let root = session.leaf().unwrap();
         let pinned = session.append_user_message("pinned");
         let _after = session.append_user_message("after");
@@ -910,7 +910,7 @@ mod tests {
     /// A `Full` entry may be outlined.
     #[test]
     fn set_resolution_full_to_outlined_is_allowed() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let id = session.append_user_message("hello");
 
         session
@@ -931,7 +931,7 @@ mod tests {
     /// A `Full` entry may be summarized.
     #[test]
     fn set_resolution_full_to_summarized_is_allowed() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let id = session.append_user_message("hello");
 
         session
@@ -954,7 +954,7 @@ mod tests {
     /// outline does not cover the excess.
     #[test]
     fn set_resolution_outlined_to_summarized_is_allowed() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let id = session.append_user_message("hello");
         session
             .set_resolution(
@@ -983,7 +983,7 @@ mod tests {
     /// `Full <-> Pinned` are both legal.
     #[test]
     fn set_resolution_full_pinned_round_trips() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let id = session.append_user_message("hello");
 
         session.pin_entry(&id).unwrap();
@@ -999,7 +999,7 @@ mod tests {
     /// Reverse transitions out of a reduced resolution are rejected.
     #[test]
     fn set_resolution_rejects_reverse_transitions() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let id = session.append_user_message("hello");
 
         // Full -> Outlined, then Outlined -> Full is rejected.
@@ -1035,7 +1035,7 @@ mod tests {
     /// `Compacted` is terminal: no transition out of it is legal.
     #[test]
     fn set_resolution_compacted_is_terminal() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let id = session.append_user_message("hello");
         let target = session.append_user_message("target");
         let other = session.append_user_message("other");
@@ -1077,7 +1077,7 @@ mod tests {
     /// metadata, not context participants.
     #[test]
     fn set_resolution_attached_is_terminal() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let id = session.append_custom_state("k".into(), serde_json::json!({}));
         assert!(matches!(
             session.resolution_of(&id),
@@ -1093,7 +1093,7 @@ mod tests {
     /// A missing entry id is an error, not a silent no-op.
     #[test]
     fn set_resolution_rejects_unknown_entry() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let missing = crate::newtypes::EntryId::from("deadbeef");
 
         let err = session
@@ -1109,7 +1109,7 @@ mod tests {
     /// repeated pin requests are idempotent.
     #[test]
     fn pin_entry_is_idempotent() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let id = session.append_user_message("hello");
 
         session.pin_entry(&id).unwrap();
@@ -1123,7 +1123,7 @@ mod tests {
     /// `unpin_entry` on a `Full` (never pinned) entry is a no-op.
     #[test]
     fn unpin_entry_is_idempotent() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let id = session.append_user_message("hello");
 
         session.unpin_entry(&id).unwrap();
@@ -1134,7 +1134,7 @@ mod tests {
 
     #[test]
     fn path_messages_returns_chronological_messages() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         session.append_user_message("hello");
         session.append_assistant_message(ChatMessage::assistant_text("hi"));
         session.append_user_message("how are you?");
@@ -1150,7 +1150,7 @@ mod tests {
 
     #[test]
     fn path_messages_filters_compacted_entries() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let user_id = session.append_user_message("hello");
         let _asst_id = session.append_assistant_message(ChatMessage::assistant_text("hi"));
 
@@ -1201,7 +1201,7 @@ mod tests {
 
     #[test]
     fn path_messages_filters_attached_entries() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         session.append_user_message("hello");
 
         // Add an Attached entry (label)
@@ -1218,7 +1218,7 @@ mod tests {
 
     #[test]
     fn path_messages_renders_compaction_summary() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         session.append_user_message("fix the bug");
         session.append_assistant_message(ChatMessage::assistant_text("ok"));
 
@@ -1280,7 +1280,7 @@ mod tests {
 
     #[test]
     fn path_messages_renders_branch_summary() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let root_id = session.leaf().unwrap();
         let from_id = session.append_user_message("hello");
 
@@ -1337,7 +1337,7 @@ mod tests {
             ),
         ];
 
-        let mut session = Session::in_memory("m", Some("sys"), tools, "/tmp")
+        let mut session = Cursor::in_memory("m", Some("sys"), tools, "/tmp")
             .with_token_budget(TokenBudget::with_reserve(500, 50));
 
         // Add enough messages that some would need to be evicted
@@ -1363,7 +1363,7 @@ mod tests {
 
     #[test]
     fn path_messages_without_tools_has_no_schema_overhead() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp")
             .with_token_budget(TokenBudget::new(32_768));
 
         session.append_user_message("hello");
@@ -1376,7 +1376,7 @@ mod tests {
 
     #[test]
     fn path_messages_after_branch_excludes_old_branch() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let root_id = session.leaf().unwrap();
         session.append_user_message("hello");
         let _asst_a_id = session.append_assistant_message(ChatMessage::assistant_text("reply A"));
@@ -1422,7 +1422,7 @@ mod tests {
 
     #[test]
     fn path_messages_empty_session() {
-        let session = Session::in_memory("m", None, vec![], "/tmp");
+        let session = Cursor::in_memory("m", None, vec![], "/tmp");
         let messages = session.path_messages();
         assert!(messages.is_empty());
     }
@@ -1506,7 +1506,7 @@ mod tests {
     async fn compact_older_than_transitions_resolution() {
         use crate::session::compaction::MechanicalCompactionStrategy;
 
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let _root_id = session.leaf().unwrap();
         let user_id = session.append_user_message("fix the bug");
         let _asst_id = session.append_assistant_message(ChatMessage::assistant_text("ok"));
@@ -1533,7 +1533,7 @@ mod tests {
     async fn compact_older_than_preserves_original_request() {
         use crate::session::compaction::MechanicalCompactionStrategy;
 
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         session.append_user_message("find the secret: TIGER-7742");
         session.append_assistant_message(ChatMessage::assistant_text("ok"));
         session.append_user_message("now read another file");
@@ -1557,7 +1557,7 @@ mod tests {
     async fn compact_older_than_compacted_entries_filtered_from_path() {
         use crate::session::compaction::MechanicalCompactionStrategy;
 
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let user_id = session.append_user_message("fix the bug");
         session.append_assistant_message(ChatMessage::assistant_text("ok"));
         session.append_user_message("read another file");
@@ -1633,7 +1633,7 @@ mod tests {
     async fn compact_older_than_does_not_compact_root() {
         use crate::session::compaction::MechanicalCompactionStrategy;
 
-        let mut session = Session::in_memory("m", Some("system prompt"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("system prompt"), vec![], "/tmp");
         let root_id = session.leaf().unwrap();
         session.append_user_message("hello");
         session.append_assistant_message(ChatMessage::assistant_text("hi"));
@@ -1652,7 +1652,7 @@ mod tests {
     async fn compact_older_than_does_not_compact_leaf() {
         use crate::session::compaction::MechanicalCompactionStrategy;
 
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         session.append_user_message("hello");
         session.append_assistant_message(ChatMessage::assistant_text("hi"));
 
@@ -1673,7 +1673,7 @@ mod tests {
     async fn compact_older_than_errors_on_too_few_entries() {
         use crate::session::compaction::MechanicalCompactionStrategy;
 
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         // Only the root entry exists — can't compact
         let strategy = MechanicalCompactionStrategy::new();
         let result = session.compact_older_than(1, &strategy).await;
@@ -1684,7 +1684,7 @@ mod tests {
     async fn compact_older_than_errors_when_threshold_not_exceeded() {
         use crate::session::compaction::MechanicalCompactionStrategy;
 
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         session.append_user_message("hello");
         session.append_assistant_message(ChatMessage::assistant_text("hi"));
 
@@ -1698,7 +1698,7 @@ mod tests {
     async fn compact_older_than_compacted_entries_still_in_tree() {
         use crate::session::compaction::MechanicalCompactionStrategy;
 
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let user_id = session.append_user_message("hello");
         session.append_assistant_message(ChatMessage::assistant_text("hi"));
 
@@ -1717,7 +1717,7 @@ mod tests {
     async fn compact_older_than_first_kept_references_valid_entry() {
         use crate::session::compaction::MechanicalCompactionStrategy;
 
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let _root_id = session.leaf().unwrap();
         session.append_user_message("msg1");
         let asst_id = session.append_assistant_message(ChatMessage::assistant_text("reply1"));
@@ -1763,7 +1763,7 @@ mod tests {
     async fn compact_older_than_does_not_resummarize_compacted_entries() {
         use crate::session::compaction::MechanicalCompactionStrategy;
 
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
 
         // A ~3000-char content block makes each assistant entry ~750 tokens,
         // so a threshold of 400 guarantees the compaction walk spans the
@@ -1912,8 +1912,8 @@ mod tests {
         heavy.key_findings = findings;
         let finding_heavy = compaction_entry(heavy);
 
-        let small = Session::estimate_entry_tokens_in_path(&empty);
-        let large = Session::estimate_entry_tokens_in_path(&finding_heavy);
+        let small = Cursor::estimate_entry_tokens_in_path(&empty);
+        let large = Cursor::estimate_entry_tokens_in_path(&finding_heavy);
 
         // The old heuristic ignored `key_findings`, so both estimated the
         // same tiny number. Findings (~2.5k tokens) must now be counted, so a
@@ -1942,7 +1942,7 @@ mod tests {
     async fn pinned_entry_survives_compaction() {
         use crate::session::compaction::MechanicalCompactionStrategy;
 
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let pinned_id = session.append_user_message("current task: land the reload fix");
         // Pin through the validated write path so the overlay knows about it.
         session.pin_entry(&pinned_id).unwrap();
@@ -1968,7 +1968,7 @@ mod tests {
     async fn pinned_entry_terminates_compaction_range() {
         use crate::session::compaction::MechanicalCompactionStrategy;
 
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let before_id = session.append_user_message("old context");
         let pinned_id = session.append_user_message("the plan");
         session
@@ -2006,7 +2006,7 @@ mod tests {
 
     #[test]
     fn outline_entry_transitions_resolution() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let user_id = session.append_user_message("hello");
 
         session.outline_entry(&user_id).unwrap();
@@ -2022,7 +2022,7 @@ mod tests {
 
     #[test]
     fn summarize_entry_transitions_resolution() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let user_id = session.append_user_message("hello");
 
         session.summarize_entry(&user_id).unwrap();
@@ -2038,7 +2038,7 @@ mod tests {
 
     #[test]
     fn outline_entry_renders_at_reduced_fidelity() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let long_text: String = "x".repeat(2000);
         let user_id = session.append_user_message(&long_text);
 
@@ -2063,7 +2063,7 @@ mod tests {
 
     #[test]
     fn outline_entry_errors_on_non_full_resolution() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let user_id = session.append_user_message("hello");
 
         // First outline it (valid)
@@ -2076,7 +2076,7 @@ mod tests {
 
     #[test]
     fn outline_entry_errors_on_missing_entry() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let fake_id = EntryId::new();
         let result = session.outline_entry(&fake_id);
         assert!(result.is_err(), "cannot outline a non-existent entry");
@@ -2084,7 +2084,7 @@ mod tests {
 
     #[test]
     fn outline_entry_works_on_pinned_entry() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let user_id = session.append_user_message("important plan");
 
         // Manually set resolution to Pinned (pin_entry API not yet implemented)
@@ -2107,7 +2107,7 @@ mod tests {
 
     #[test]
     fn outline_entry_preserves_original_payload() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let long_text: String = "x".repeat(2000);
         let user_id = session.append_user_message(&long_text);
 
@@ -2133,7 +2133,7 @@ mod tests {
     }
     #[test]
     fn summarize_entry_errors_on_non_full_resolution() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let user_id = session.append_user_message("hello");
 
         // Summarize it
@@ -2156,7 +2156,7 @@ mod tests {
 
         let user_id;
         {
-            let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+            let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
             user_id = session.append_user_message("hello world");
             session.outline_entry(&user_id).unwrap();
 
@@ -2167,7 +2167,7 @@ mod tests {
             session.flush().unwrap();
         }
 
-        let reopened = Session::open(&path).unwrap();
+        let reopened = Cursor::open(&path).unwrap();
         assert!(
             matches!(&reopened.resolution_of(&user_id), EntryResolution::Outlined { outline } if outline.contains("hello")),
             "outlined entry should survive JSONL round-trip"
@@ -2181,7 +2181,7 @@ mod tests {
 
         let user_id;
         {
-            let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+            let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
             user_id = session.append_user_message("hello world");
             session.summarize_entry(&user_id).unwrap();
 
@@ -2192,7 +2192,7 @@ mod tests {
             session.flush().unwrap();
         }
 
-        let reopened = Session::open(&path).unwrap();
+        let reopened = Cursor::open(&path).unwrap();
         assert!(
             matches!(&reopened.resolution_of(&user_id), EntryResolution::Summarized { summary } if summary.contains("hello")),
             "summarized entry should survive JSONL round-trip"
@@ -2206,7 +2206,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("old.jsonl");
 
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         session.append_user_message("hello");
         session.append_assistant_message(ChatMessage::assistant_text("hi"));
 
@@ -2217,7 +2217,7 @@ mod tests {
         session.flush().unwrap();
 
         // Reopen — no new variants in this file
-        let reopened = Session::open(&path).unwrap();
+        let reopened = Cursor::open(&path).unwrap();
         assert_eq!(reopened.entry_count(), 3); // root + user + assistant
         let messages = reopened.path_messages();
         assert_eq!(messages.len(), 3);
@@ -2227,7 +2227,7 @@ mod tests {
 
     #[test]
     fn prepare_context_downgrades_tool_result_when_over_budget() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp")
             .with_token_budget(TokenBudget::with_reserve(100, 50));
 
         let tool_id;
@@ -2277,7 +2277,7 @@ mod tests {
         // Budget: prompt = 100 - 50 = 50. A tool result is truncated above
         // 50% of prompt budget (25 tokens ≈ 100 chars), so keep each result
         // just under that while accumulating several of them.
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp")
             .with_token_budget(TokenBudget::with_reserve(100, 50));
 
         let tool_ids;
@@ -2322,7 +2322,7 @@ mod tests {
 
     #[test]
     fn prepare_context_does_nothing_when_within_budget() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp")
             .with_token_budget(TokenBudget::new(32_768));
 
         let tool_id;
@@ -2350,7 +2350,7 @@ mod tests {
 
     #[test]
     fn prepare_context_protects_first_user_turn() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp")
             .with_token_budget(TokenBudget::with_reserve(100, 50));
 
         let user_id = session.append_user_message("remember: TIGER-7742");
@@ -2367,7 +2367,7 @@ mod tests {
 
     #[test]
     fn prepare_context_protects_last_turn() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp")
             .with_token_budget(TokenBudget::with_reserve(100, 50));
 
         session.append_user_message("original");

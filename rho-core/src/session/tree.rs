@@ -6,7 +6,7 @@ use tracing::warn;
 use crate::error::Result;
 use crate::newtypes::{CursorId, EntryId};
 
-use super::Session;
+use super::Cursor;
 use super::entry::{CompactionSummary, Entry, EntryPayload, EntryResolution};
 use super::error::SessionError;
 
@@ -34,7 +34,7 @@ pub struct PathEntry {
     pub resolution: EntryResolution,
 }
 
-impl Session {
+impl Cursor {
     // ── Tree navigation ──────────────────────────────────────────────────
 
     /// Return all entries in append order (root → leaf).
@@ -96,8 +96,8 @@ impl Session {
     /// The leaf-to-root path in chronological order (oldest first), with each
     /// entry's effective resolution attached.
     ///
-    /// This is the shape [`path_messages`](Session::path_messages),
-    /// [`context_stats`](Session::context_stats), and the compaction walk all
+    /// This is the shape [`path_messages`](Cursor::path_messages),
+    /// [`context_stats`](Cursor::context_stats), and the compaction walk all
     /// consume.
     pub fn path_entries(&self) -> Vec<PathEntry> {
         self.path_to_root().into_iter().rev().collect()
@@ -146,7 +146,7 @@ impl Session {
     /// This is the core branching operation: after `branch_to(id)`, the
     /// leaf-to-root path passes through `id` instead of the previous leaf.
     /// The old branch remains in the tree and is accessible via
-    /// [`entry()`](Session::entry) and [`children()`](Session::children),
+    /// [`entry()`](Cursor::entry) and [`children()`](Cursor::children),
     /// but is no longer on the active path.
     ///
     /// # Errors
@@ -205,7 +205,7 @@ impl Session {
     /// Move the leaf to an existing entry and append a
     /// [`BranchSummary`](EntryPayload::BranchSummary) at the new position.
     ///
-    /// This combines [`branch_to`](Session::branch_to) with a summary of
+    /// This combines [`branch_to`](Cursor::branch_to) with a summary of
     /// why the branch happened. The `from_id` identifies the leaf position
     /// that was abandoned; the `summary` describes what was on that branch.
     ///
@@ -237,7 +237,7 @@ mod tests {
 
     #[test]
     fn path_to_root_returns_leaf_to_root_order() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let root_id = session.leaf().unwrap();
         let user_id = session.append_user_message("hello");
         let asst_id = session.append_assistant_message(ChatMessage::assistant_text("hi"));
@@ -254,13 +254,13 @@ mod tests {
 
     #[test]
     fn path_to_root_empty_when_no_leaf() {
-        let session = Session::in_memory("m", None, vec![], "/tmp");
+        let session = Cursor::in_memory("m", None, vec![], "/tmp");
         assert!(session.path_to_root().is_empty());
     }
 
     #[test]
     fn path_to_root_single_entry() {
-        let session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let root_id = session.leaf().unwrap();
         let path = session.path_to_root();
         assert_eq!(path.len(), 1);
@@ -269,7 +269,7 @@ mod tests {
 
     #[test]
     fn path_to_root_has_no_duplicates() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let root_id = session.leaf().unwrap();
         let id1 = session.append_user_message("msg1");
         let id2 = session.append_assistant_message(ChatMessage::assistant_text("reply1"));
@@ -288,7 +288,7 @@ mod tests {
 
     #[test]
     fn children_returns_direct_children_sorted_by_timestamp() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let root_id = session.leaf().unwrap();
 
         // Root has one child (the user message)
@@ -312,7 +312,7 @@ mod tests {
     /// after a branch hangs off the `LeafMoved` node rather than off `id`.
     #[test]
     fn children_returns_multiple_children_in_timestamp_order() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let pivot = session.leaf().unwrap();
         session.append_user_message("first");
 
@@ -343,7 +343,7 @@ mod tests {
 
     #[test]
     fn children_of_leaf_is_empty() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let root_id = session.leaf().unwrap();
         // The leaf has no children yet (no appends after it)
         // But actually, the leaf IS the root, and we haven't appended anything
@@ -362,7 +362,7 @@ mod tests {
 
     #[test]
     fn children_of_forked_entry_includes_both_branches() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let _root_id = session.leaf().unwrap();
         let user_id = session.append_user_message("hello");
 
@@ -393,14 +393,14 @@ mod tests {
 
     #[test]
     fn children_of_nonexistent_entry_is_empty() {
-        let session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let fake_id = EntryId::new();
         assert!(session.children(&fake_id).is_empty());
     }
 
     #[test]
     fn branch_to_moves_leaf() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let _root_id = session.leaf().unwrap();
         let user_id = session.append_user_message("hello");
         let _asst_id = session.append_assistant_message(ChatMessage::assistant_text("reply"));
@@ -417,7 +417,7 @@ mod tests {
 
     #[test]
     fn branch_to_writes_leaf_moved_entry() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let root_id = session.leaf().unwrap();
         let user_id = session.append_user_message("hello");
 
@@ -438,7 +438,7 @@ mod tests {
 
     #[test]
     fn branch_to_errors_on_nonexistent_entry() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let fake_id = EntryId::new();
         let result = session.branch_to(&fake_id);
         assert!(result.is_err());
@@ -451,7 +451,7 @@ mod tests {
 
     #[test]
     fn branch_to_is_noop_when_already_at_target() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let leaf_id = session.leaf().unwrap();
         let entry_count_before = session.entry_count();
 
@@ -464,7 +464,7 @@ mod tests {
 
     #[test]
     fn branch_to_then_append_extends_from_new_position() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let root_id = session.leaf().unwrap();
         let user_id = session.append_user_message("hello");
         let _asst_id = session.append_assistant_message(ChatMessage::assistant_text("reply A"));
@@ -492,7 +492,7 @@ mod tests {
 
     #[test]
     fn branch_to_old_branch_still_in_tree() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let _root_id = session.leaf().unwrap();
         let user_id = session.append_user_message("hello");
         let asst_a_id = session.append_assistant_message(ChatMessage::assistant_text("reply A"));
@@ -515,7 +515,7 @@ mod tests {
 
     #[test]
     fn branch_with_summary_appends_summary_after_branch() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let root_id = session.leaf().unwrap();
         let user_id = session.append_user_message("hello");
         let _asst_id = session.append_assistant_message(ChatMessage::assistant_text("reply A"));
@@ -556,7 +556,7 @@ mod tests {
 
     #[test]
     fn branch_with_summary_errors_on_nonexistent_entry() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let fake_id = EntryId::new();
         let summary = CompactionSummary {
             original_request: None,
@@ -581,7 +581,7 @@ mod tests {
 
     #[test]
     fn path_to_root_after_branch_reflects_new_path() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let root_id = session.leaf().unwrap();
         let user_id = session.append_user_message("hello");
         let asst_a_id = session.append_assistant_message(ChatMessage::assistant_text("reply A"));
@@ -612,7 +612,7 @@ mod tests {
         // depends on the path traversal (they are on the path since the leaf
         // points to them). The *filtering* of Attached entries from the model
         // context is done by fit_path (Task 8), not path_to_root.
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let root_id = session.leaf().unwrap();
         let _user_id = session.append_user_message("hello");
 

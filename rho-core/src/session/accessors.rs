@@ -9,13 +9,13 @@ use crate::newtypes::{EntryId, ToolCallId};
 use crate::redact::Redactor;
 use crate::tool::{ToolResult, ToolResultDetails};
 
-use super::Session;
+use super::Cursor;
 use super::entry::{Entry, EntryPayload};
 use super::estimator::TokenEstimator;
 use super::header::SessionHeader;
 use super::persist::{self, PersistState};
 
-impl Session {
+impl Cursor {
     // ── Accessors ─────────────────────────────────────────────────────────
 
     /// The session header (identity, version, creation time, cwd).
@@ -65,13 +65,13 @@ impl Session {
     /// Append a tool result message, applying secret redaction and
     /// bounded resolution first.
     ///
-    /// This is a convenience alias for [`append_tool_result`](Session::append_tool_result).
+    /// This is a convenience alias for [`append_tool_result`](Cursor::append_tool_result).
     /// It always applies redaction — there is no way to bypass the
     /// redactor through this API.
     ///
     /// If the result is truncated, the full content is stored in the
     /// session's details store and can be retrieved via
-    /// [`get_full_result`](Session::get_full_result).
+    /// [`get_full_result`](Cursor::get_full_result).
     ///
     /// Returns the [`EntryId`] of the new entry and the
     /// [`ToolResultDetails`] indicating whether truncation occurred.
@@ -158,7 +158,7 @@ impl Session {
     /// The cached tool schemas currently advertised to the model.
     ///
     /// This snapshot is captured at session start and only refreshed when
-    /// [`Session::set_tools`](crate::Session::set_tools) is called (e.g. after
+    /// [`Cursor::set_tools`](crate::Cursor::set_tools) is called (e.g. after
     /// an extension reload or session resume). Inspecting it lets callers
     /// detect drift between the live [`ToolRegistry`](crate::ToolRegistry) and
     /// what the session will actually send to the model.
@@ -186,8 +186,8 @@ impl Session {
 
     /// The path where this session would persist, or `None` for in-memory mode.
     ///
-    /// This is `Some(path)` for sessions created with [`Session::new`] and
-    /// `None` for sessions created with [`Session::in_memory`]. Returns a
+    /// This is `Some(path)` for sessions created with [`Cursor::new`] and
+    /// `None` for sessions created with [`Cursor::in_memory`]. Returns a
     /// clone, since the log is behind a lock.
     pub fn save_path(&self) -> Option<PathBuf> {
         self.with_log(|log| log.persist.save_path.clone())
@@ -263,7 +263,7 @@ mod tests {
 
     #[test]
     fn system_overhead_returns_nonzero_for_session_with_prompt() {
-        let session = Session::in_memory("m", Some("You are a helpful assistant."), vec![], "/tmp");
+        let session = Cursor::in_memory("m", Some("You are a helpful assistant."), vec![], "/tmp");
         let overhead = session.system_overhead();
         assert!(
             overhead > 0,
@@ -273,13 +273,13 @@ mod tests {
 
     #[test]
     fn system_overhead_returns_zero_without_prompt() {
-        let session = Session::in_memory("m", None, vec![], "/tmp");
+        let session = Cursor::in_memory("m", None, vec![], "/tmp");
         assert_eq!(session.system_overhead(), 0);
     }
 
     #[test]
     fn schema_overhead_returns_zero_without_tools() {
-        let session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         assert_eq!(session.schema_overhead(), 0);
     }
 
@@ -293,7 +293,7 @@ mod tests {
                 "properties": {"path": {"type": "string"}}
             }),
         )];
-        let session = Session::in_memory("m", Some("sys"), tools, "/tmp");
+        let session = Cursor::in_memory("m", Some("sys"), tools, "/tmp");
         assert!(
             session.schema_overhead() > 0,
             "schema overhead should be > 0 when tools are registered"
@@ -307,7 +307,7 @@ mod tests {
             "Read a file",
             serde_json::json!({"type": "object"}),
         )];
-        let session = Session::in_memory("m", Some("sys"), tools, "/tmp")
+        let session = Cursor::in_memory("m", Some("sys"), tools, "/tmp")
             .with_token_budget(TokenBudget::new(32_768));
 
         let budget = session.token_budget();
@@ -324,7 +324,7 @@ mod tests {
 
     #[test]
     fn message_budget_without_tools_or_prompt() {
-        let session = Session::in_memory("m", None, vec![], "/tmp")
+        let session = Cursor::in_memory("m", None, vec![], "/tmp")
             .with_token_budget(TokenBudget::new(10_000));
         assert_eq!(
             session.message_budget(),
@@ -342,7 +342,7 @@ mod tests {
                 "properties": {"path": {"type": "string"}}
             }),
         )];
-        let mut session = Session::in_memory("m", Some("sys"), tools, "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), tools, "/tmp");
 
         // First call computes and caches.
         let overhead_with_tools = session.schema_overhead();
@@ -373,7 +373,7 @@ mod tests {
     #[test]
     fn session_is_sync() {
         fn assert_sync<T: Sync>() {}
-        assert_sync::<Session>();
+        assert_sync::<Cursor>();
     }
 
     /// The schema-overhead memo must still hit after the `Cell` → `Mutex`
@@ -391,7 +391,7 @@ mod tests {
                 "properties": {"path": {"type": "string"}}
             }),
         )];
-        let session = Session::in_memory("m", Some("sys"), tools, "/tmp");
+        let session = Cursor::in_memory("m", Some("sys"), tools, "/tmp");
 
         let first = session.schema_overhead();
         assert!(first > 0, "overhead should be non-zero with tools present");
@@ -404,7 +404,7 @@ mod tests {
 
     #[test]
     fn get_full_result_returns_none_for_non_truncated_entry() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp")
             .with_token_budget(TokenBudget::new(32_768));
 
         let result = ToolResult::success("small output");
@@ -419,7 +419,7 @@ mod tests {
 
     #[test]
     fn get_full_result_returns_full_content_for_truncated_entry() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp")
             .with_token_budget(TokenBudget::with_reserve(100, 10));
 
         let huge_content = "x".repeat(2000);
@@ -448,7 +448,7 @@ mod tests {
 
     #[test]
     fn get_full_result_returns_none_for_nonexistent_entry() {
-        let session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let fake_id = EntryId::new();
         assert!(
             session.get_full_result(&fake_id).is_none(),
@@ -458,7 +458,7 @@ mod tests {
 
     #[test]
     fn details_store_independent_per_entry() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp")
             .with_token_budget(TokenBudget::with_reserve(100, 10));
 
         let huge = ToolResult::success("a".repeat(2000));

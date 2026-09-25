@@ -24,7 +24,7 @@ use serde::de::DeserializeOwned;
 /// - `"acme.linter.v2"`
 ///
 /// When the schema changes incompatibly, bump the version number. Consumers
-/// expecting the old version get `None` from [`super::Session::read_custom_state`].
+/// expecting the old version get `None` from [`super::Cursor::read_custom_state`].
 ///
 /// # Example
 ///
@@ -109,7 +109,7 @@ mod tests {
         clippy::cast_sign_loss,
         clippy::cast_precision_loss
     )]
-    use super::super::{EntryPayload, EntryResolution, Session};
+    use super::super::{Cursor, EntryPayload, EntryResolution};
     use super::*;
     use crate::message::{ChatMessage, ContentBlock};
     use crate::newtypes::EntryId;
@@ -159,7 +159,7 @@ mod tests {
 
     #[test]
     fn write_and_read_custom_state_round_trips() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
 
         let state = DiagnosticsState {
             error_count: 3,
@@ -188,7 +188,7 @@ mod tests {
 
     #[test]
     fn read_custom_state_returns_none_on_kind_mismatch() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
 
         // Write as v1
         let state = DiagnosticsState {
@@ -204,7 +204,7 @@ mod tests {
 
     #[test]
     fn read_custom_state_returns_none_on_nonexistent_entry() {
-        let session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let fake_id = EntryId::new();
         let result: Option<DiagnosticsState> = session.read_custom_state(&fake_id);
         assert_eq!(result, None, "nonexistent entry should return None");
@@ -212,7 +212,7 @@ mod tests {
 
     #[test]
     fn read_custom_state_returns_none_on_wrong_payload_type() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
 
         // Write a CustomMessage (Full resolution), not a Custom (Attached)
         let id = session.append_custom_message(
@@ -229,7 +229,7 @@ mod tests {
 
     #[test]
     fn write_custom_state_multiple_entries_independent() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
 
         let state1 = DiagnosticsState {
             error_count: 1,
@@ -252,7 +252,7 @@ mod tests {
 
     #[test]
     fn write_and_read_custom_message_round_trips() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
 
         let summary = LintSummary {
             warnings: 5,
@@ -280,7 +280,7 @@ mod tests {
 
     #[test]
     fn read_custom_message_returns_none_on_kind_mismatch() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
 
         // Write as v1
         let summary = LintSummary {
@@ -296,7 +296,7 @@ mod tests {
 
     #[test]
     fn read_custom_message_returns_none_on_nonexistent_entry() {
-        let session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let fake_id = EntryId::new();
         let result: Option<LintSummary> = session.read_custom_message(&fake_id);
         assert_eq!(result, None, "nonexistent entry should return None");
@@ -304,7 +304,7 @@ mod tests {
 
     #[test]
     fn read_custom_message_returns_none_on_wrong_payload_type() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
 
         // Write a Custom (Attached), not a CustomMessage (Full)
         let id = session.append_custom_state(
@@ -319,7 +319,7 @@ mod tests {
 
     #[test]
     fn extension_entry_kind_versioning_produces_clean_break() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
 
         // Write v1
         let v1 = DiagnosticsState {
@@ -353,7 +353,7 @@ mod tests {
 
     #[test]
     fn custom_state_is_filtered_from_path_messages() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         session.append_user_message("hello");
 
         // Write a custom state entry (Attached resolution)
@@ -373,7 +373,7 @@ mod tests {
 
     #[test]
     fn custom_message_appears_in_path_messages() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         session.append_user_message("hello");
 
         // Write a custom message entry (Full resolution)

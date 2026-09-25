@@ -55,7 +55,7 @@ pub struct SessionLog {
     ///
     /// When a tool result exceeds the budget fraction and is truncated, the
     /// full (redacted) content is stored here so it can be retrieved later via
-    /// `Session::get_full_result`.
+    /// `Cursor::get_full_result`.
     pub(crate) details: HashMap<EntryId, ToolResultDetails>,
     /// Persistence state (save path, flushed count, pending resolution queue).
     pub(crate) persist: PersistState,

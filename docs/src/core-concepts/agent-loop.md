@@ -23,13 +23,13 @@ Idle (done)
 
 ```rust
 pub async fn run_loop(
-    session: &mut Session,
+    cursor: &mut Cursor,
     message: &str,
     params: &LoopParams<'_>,
 ) -> Result<AgentResult>
 ```
 
-`run_loop` takes a `Session` and a `LoopParams` (bundle of LLM service, tool registry, config, cancellation token, approval gate, observer, and optional compaction client). A `CollectingObserver` is always active internally — it records tool call events into `AgentResult.tool_calls` automatically, so consumers don't need custom observers for structured output.
+`run_loop` takes a `Cursor` (aliased as `Session` for one release) and a `LoopParams` (bundle of LLM service, tool registry, config, cancellation token, approval gate, observer, and optional compaction client). A `CollectingObserver` is always active internally — it records tool call events into `AgentResult.tool_calls` automatically, so consumers don't need custom observers for structured output.
 
 It returns `Result<AgentResult>`, which captures:
 
@@ -155,4 +155,4 @@ If the model produces the same output `stuck_loop_threshold` times consecutively
 
 ## Session persistence
 
-Since `run_loop` operates on a `Session`, all appends (user messages, tool results) are automatically flushed to the JSONL session file if persistence is enabled. If the process crashes mid-loop, the session file contains everything up to the last successful append — at most one entry is lost.
+Since `run_loop` operates on a `Cursor`, all appends (user messages, tool results) are automatically flushed to the JSONL session file if persistence is enabled. If the process crashes mid-loop, the session file contains everything up to the last successful append — at most one entry is lost.

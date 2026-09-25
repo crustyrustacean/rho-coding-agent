@@ -148,12 +148,12 @@ use std::sync::Arc;
 ///
 /// Use [`open`](Session::open) to reload a previously persisted session.
 ///
-/// A `Session` is *one cursor* over a shared [`SessionLog`]. Cloning is cheap
-/// and yields a second cursor over the **same** log: entries appended through
-/// either are visible to both, while each cursor keeps its own leaf position,
-/// resolution overlay, and runtime configuration. This is what makes branching
-/// cheap and lets multiple cursors read one session concurrently.
-pub struct Session {
+/// A `Cursor` is one *view position* over a shared [`SessionLog`]. Cloning is
+/// cheap and yields a second cursor over the **same** log: entries appended
+/// through either are visible to both, while each cursor keeps its own leaf
+/// position, resolution overlay, and runtime configuration. This is what makes
+/// branching cheap and lets multiple cursors read one session concurrently.
+pub struct Cursor {
     /// The shared, append-only log: header, entries, append order, the
     /// children index, the truncated-output store, and persistence. Shared
     /// across every cursor over this session.
@@ -174,6 +174,10 @@ pub struct Session {
     /// This cursor's identity. Distinguishes its per-cursor state (leaf,
     /// resolution overlay) from a sibling cursor's when both are persisted
     /// into one log. Assigned at construction; a new one per [`fork`](Self::fork).
+    // `cursor_id` on `Cursor` reads correctly and matches `CursorId`,
+    // `cursor_id()`, and the `cursor` field on `JsonlLine::Resolution`.
+    // Renaming it to satisfy `struct_field_names` would obscure all of those.
+    #[allow(clippy::struct_field_names)]
     cursor_id: CursorId,
     /// Token estimator for budget-aware decisions. Shared across cursors:
     /// calibration is a property of the model, not of a branch.
@@ -209,7 +213,16 @@ pub struct Session {
     schema_overhead_cache: std::sync::Mutex<Option<usize>>,
 }
 
-impl Session {
+/// Compatibility alias for [`Cursor`].
+///
+/// The type was renamed in #65 to make the log/cursor split explicit: a
+/// "session" is the shared log, a `Cursor` is one position within it. This
+/// alias is kept for one release so downstream embedders are not broken, and
+/// will be removed in the next breaking release — new code should say
+/// `Cursor`.
+pub type Session = Cursor;
+
+impl Cursor {
     /// Run `f` with the shared log locked.
     ///
     /// Recovering from poisoning is deliberate: the log is a collection of
@@ -239,7 +252,7 @@ impl Session {
     }
 }
 
-impl Clone for Session {
+impl Clone for Cursor {
     /// Yields a second cursor over the **same** log.
     ///
     /// The log and the estimator are shared (both are `Arc`s); the leaf, the
@@ -267,7 +280,7 @@ impl Clone for Session {
     }
 }
 
-impl std::fmt::Debug for Session {
+impl std::fmt::Debug for Cursor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.with_log(|log| {
             f.debug_struct("Session")
