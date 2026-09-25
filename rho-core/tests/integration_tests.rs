@@ -991,7 +991,7 @@ async fn rho_ai_client_returns_http_error_when_server_unreachable() {
 fn base_prompt_used_as_default_system_message() {
     let prompt = rho_core::base_prompt();
     let session = Session::in_memory("model", Some(prompt), vec![], "/tmp");
-    assert_eq!(session.system_prompt(), Some(prompt));
+    assert_eq!(session.system_prompt().as_deref(), Some(prompt));
 }
 
 #[test]
@@ -1072,7 +1072,7 @@ fn compact_prompt_sha256_is_pinned() {
 #[test]
 fn custom_system_overrides_base_prompt() {
     let session = Session::in_memory("model", Some("custom system"), vec![], "/tmp");
-    assert_eq!(session.system_prompt(), Some("custom system"));
+    assert_eq!(session.system_prompt().as_deref(), Some("custom system"));
 }
 
 #[tokio::test]

@@ -305,7 +305,7 @@ impl Agent {
         let redactor = self.session.redactor().clone();
         let reasoning = self.session.reasoning_effort.clone();
         let tool_schemas = self.registry.tool_definitions();
-        let system_prompt = self.session.system_prompt().map(str::to_owned);
+        let system_prompt = self.session.system_prompt();
         let user_models = self.session.user_models.clone();
 
         let mut session = if self.session.save_path().is_some() {

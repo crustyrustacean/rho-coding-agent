@@ -321,7 +321,7 @@ fn read_session_metadata(path: &Path) -> Option<SessionMetadata> {
 ///
 /// When `save_path` is `None`, the session is in-memory mode — all flush
 /// operations are no-ops.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PersistState {
     /// Path to the JSONL file, or `None` for in-memory sessions.
     pub save_path: Option<PathBuf>,

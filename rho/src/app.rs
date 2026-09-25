@@ -159,13 +159,13 @@ impl App {
         let resumed = cli.r#continue || cli.session.is_some();
         if resumed {
             if let Some(path) = agent.session().save_path() {
-                P::session_resumed(path);
+                P::session_resumed(&path);
             }
         } else if let Some(path) = agent.session().save_path() {
             // Persisted mode (ephemeral has no save_path). Link the
             // SessionSummary tool to the new file and hint at prior sessions.
-            P::session_created(path);
-            rho_tools::SessionSummary::set_path(&session_path_holder, path.to_path_buf());
+            P::session_created(&path);
+            rho_tools::SessionSummary::set_path(&session_path_holder, path.clone());
             let previous = rho_core::list_sessions(&agent.session().header().cwd);
             if !previous.is_empty() {
                 P::previous_sessions_hint(previous.len());

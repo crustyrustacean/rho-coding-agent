@@ -1,6 +1,6 @@
 // Session read-only accessors, convenience aliases, and persistence helpers.
 
-use std::path::Path;
+use std::path::PathBuf;
 
 use crate::context::TokenBudget;
 use crate::error::Result;
@@ -19,8 +19,10 @@ impl Session {
     // ── Accessors ─────────────────────────────────────────────────────────
 
     /// The session header (identity, version, creation time, cwd).
-    pub fn header(&self) -> &SessionHeader {
-        &self.log.header
+    ///
+    /// Returns a clone: the log is behind a lock, so a borrow cannot outlive it.
+    pub fn header(&self) -> SessionHeader {
+        self.with_log(|log| log.header.clone())
     }
 
     /// The current leaf entry ID. `None` only if the session was constructed
@@ -30,8 +32,10 @@ impl Session {
     }
 
     /// Look up an entry by ID.
-    pub fn entry(&self, id: &EntryId) -> Option<&Entry> {
-        self.log.entries.get(id)
+    ///
+    /// Returns a clone: the log is behind a lock, so a borrow cannot outlive it.
+    pub fn entry(&self, id: &EntryId) -> Option<Entry> {
+        self.with_log(|log| log.entries.get(id).cloned())
     }
 
     /// The model identifier.
@@ -43,16 +47,18 @@ impl Session {
     ///
     /// Searches the entry tree for a `Message(System)` entry at the root
     /// and returns its text content.
-    pub fn system_prompt(&self) -> Option<&str> {
-        self.log.entries.values().find_map(|entry| {
-            if let EntryPayload::Message(ChatMessage::System { content }) = &entry.payload {
-                content.first().map(|b| {
-                    let ContentBlock::Text { text } = b;
-                    text.as_str()
-                })
-            } else {
-                None
-            }
+    pub fn system_prompt(&self) -> Option<String> {
+        self.with_log(|log| {
+            log.entries.values().find_map(|entry| {
+                if let EntryPayload::Message(ChatMessage::System { content }) = &entry.payload {
+                    content.first().map(|b| {
+                        let ContentBlock::Text { text } = b;
+                        text.clone()
+                    })
+                } else {
+                    None
+                }
+            })
         })
     }
 
@@ -79,9 +85,10 @@ impl Session {
 
     /// Retrieve the full (un-truncated) content of a tool result.
     ///
-    /// Returns `Some(&ToolResultDetails)` if the entry was truncated and
+    /// Returns `Some(ToolResultDetails)` if the entry was truncated and
     /// its full content was preserved; `None` if the entry was not
-    /// truncated or does not exist.
+    /// truncated or does not exist. The value is cloned, since the log is
+    /// behind a lock.
     ///
     /// # Example
     ///
@@ -92,8 +99,8 @@ impl Session {
     ///     // `full` is the ToolResultDetails::FullOutput variant
     /// }
     /// ```
-    pub fn get_full_result(&self, entry_id: &EntryId) -> Option<&ToolResultDetails> {
-        self.log.details.get(entry_id)
+    pub fn get_full_result(&self, entry_id: &EntryId) -> Option<ToolResultDetails> {
+        self.with_log(|log| log.details.get(entry_id).cloned())
     }
 
     /// The token budget.
@@ -108,7 +115,7 @@ impl Session {
     /// system prompt was set.
     pub fn system_overhead(&self) -> usize {
         self.system_prompt()
-            .map_or(0, |text| self.estimator.estimate(&self.model, text))
+            .map_or(0, |text| self.estimator.estimate(&self.model, &text))
     }
 
     /// Estimate the token overhead of the tool schemas.
@@ -165,26 +172,25 @@ impl Session {
     }
 
     /// Read-only access to the estimator.
+    ///
+    /// Calibration goes through this shared reference: `TokenEstimator::calibrate`
+    /// takes `&self` so the estimator can be shared across cursors.
     pub fn estimator(&self) -> &dyn TokenEstimator {
         self.estimator.as_ref()
     }
 
-    /// Mutable access to the estimator (for calibration).
-    pub fn estimator_mut(&mut self) -> &mut dyn TokenEstimator {
-        self.estimator.as_mut()
-    }
-
     /// Total number of entries in the tree.
     pub fn entry_count(&self) -> usize {
-        self.log.entries.len()
+        self.with_log(|log| log.entries.len())
     }
 
     /// The path where this session would persist, or `None` for in-memory mode.
     ///
     /// This is `Some(path)` for sessions created with [`Session::new`] and
-    /// `None` for sessions created with [`Session::in_memory`].
-    pub fn save_path(&self) -> Option<&Path> {
-        self.log.persist.save_path.as_deref()
+    /// `None` for sessions created with [`Session::in_memory`]. Returns a
+    /// clone, since the log is behind a lock.
+    pub fn save_path(&self) -> Option<PathBuf> {
+        self.with_log(|log| log.persist.save_path.clone())
     }
 
     /// Flush unwritten entries to the JSONL file.
@@ -201,9 +207,9 @@ impl Session {
         persist::flush_session(self)
     }
 
-    /// Read-only access to the persist state.
-    pub(crate) fn persist_state(&self) -> &PersistState {
-        &self.log.persist
+    /// A clone of the persist state.
+    pub(crate) fn persist_state(&self) -> PersistState {
+        self.with_log(|log| log.persist.clone())
     }
 
     /// Cumulative API token usage across all LLM requests.
@@ -218,12 +224,12 @@ impl Session {
 
     /// Update the flushed count after a successful flush.
     pub(crate) fn set_flushed_count(&mut self, count: usize) {
-        self.log.persist.flushed_count = count;
+        self.with_log_mut(|log| log.persist.flushed_count = count);
     }
 
     /// Clear the queued resolution changes after a successful flush.
     pub(crate) fn clear_pending_resolution(&mut self) {
-        self.log.persist.pending_resolution.clear();
+        self.with_log_mut(|log| log.persist.pending_resolution.clear());
     }
 
     /// Queue a resolution change for persistence.
@@ -237,17 +243,18 @@ impl Session {
         id: EntryId,
         resolution: crate::session::entry::EntryResolution,
     ) {
-        if let Some(slot) = self
-            .log
-            .persist
-            .pending_resolution
-            .iter_mut()
-            .find(|(pending_id, _)| pending_id == &id)
-        {
-            slot.1 = resolution;
-        } else {
-            self.log.persist.pending_resolution.push((id, resolution));
-        }
+        self.with_log_mut(|log| {
+            if let Some(slot) = log
+                .persist
+                .pending_resolution
+                .iter_mut()
+                .find(|(pending_id, _)| pending_id == &id)
+            {
+                slot.1 = resolution;
+            } else {
+                log.persist.pending_resolution.push((id, resolution));
+            }
+        });
     }
 }
 
@@ -438,7 +445,7 @@ mod tests {
             content,
         } = stored
         {
-            assert_eq!(*original_size, huge_content.len());
+            assert_eq!(original_size, huge_content.len());
             assert_eq!(content.len(), huge_content.len());
         } else {
             panic!("expected FullOutput in details store");
