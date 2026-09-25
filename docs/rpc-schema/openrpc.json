@@ -415,7 +415,7 @@
   "info": {
     "description": "Headless coding agent — JSON-RPC 2.0 protocol over stdin/stdout. Diagnostic output goes to stderr.",
     "title": "rho",
-    "version": "0.92.0"
+    "version": "0.92.2"
   },
   "methods": [
     {
@@ -1183,6 +1183,118 @@
             "tools"
           ],
           "title": "ListToolsResult",
+          "type": "object"
+        }
+      }
+    },
+    {
+      "description": "Fork the active cursor into a new branch sharing the same session log. Returns the new cursor id; the new branch is NOT made active — use `switchBranch` to move to it.",
+      "name": "fork",
+      "params": [],
+      "result": {
+        "description": "Result for `fork`.",
+        "name": "result",
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "cursorId": {
+              "description": "The id of the newly created cursor. The previously active cursor\nremains active — `fork` creates a branch, it does not switch to it.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cursorId"
+          ],
+          "title": "ForkResult",
+          "type": "object"
+        }
+      }
+    },
+    {
+      "description": "List every cursor in the session (the durable roster), flagging which one is active. Includes branches created in a previous run.",
+      "name": "listBranches",
+      "params": [],
+      "result": {
+        "description": "Result for `listBranches`.",
+        "name": "result",
+        "schema": {
+          "$defs": {
+            "BranchEntry": {
+              "description": "One branch in the `listBranches` result.",
+              "properties": {
+                "active": {
+                  "description": "Whether this is the cursor a subsequent `prompt` runs on.",
+                  "type": "boolean"
+                },
+                "cursorId": {
+                  "description": "The cursor's unique id.",
+                  "type": "string"
+                },
+                "leaf": {
+                  "description": "The entry id this cursor points at.",
+                  "type": "string"
+                },
+                "name": {
+                  "description": "Optional user-assigned label.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "cursorId",
+                "leaf",
+                "active"
+              ],
+              "type": "object"
+            }
+          },
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "branches": {
+              "items": {
+                "$ref": "#/$defs/BranchEntry"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "branches"
+          ],
+          "title": "ListBranchesResult",
+          "type": "object"
+        }
+      }
+    },
+    {
+      "description": "Make `cursorId` the active cursor; subsequent `prompt` calls run on it. The cursor is rebuilt at its persisted leaf with a fresh resolution overlay. A turn already in flight continues against the previous cursor — `abort` first for a clean handoff.",
+      "name": "switchBranch",
+      "params": [
+        {
+          "description": "The cursor to make active.",
+          "name": "cursorId",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "description": "Result for `switchBranch`.",
+        "name": "result",
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "cursorId": {
+              "description": "The cursor that is now active.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cursorId"
+          ],
+          "title": "SwitchBranchResult",
           "type": "object"
         }
       }

@@ -366,6 +366,35 @@ impl Agent {
         &mut self.session
     }
 
+    /// Replace the active session with `session`.
+    ///
+    /// This is how a host makes a different cursor active — e.g. switching to
+    /// a branch via `Cursor::fork()` / `Cursor::restore_cursor()`. A subsequent
+    /// turn runs on the supplied session.
+    ///
+    /// The caller is responsible for the cancellation token: switching while a
+    /// turn is in flight leaves that turn running against the old session. Hosts
+    /// that support branch switching should abort the current turn first.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `session` has no leaf, which would leave the agent
+    /// unable to build a path for the next turn.
+    pub fn set_session(
+        &mut self,
+        session: Session,
+    ) -> std::result::Result<(), crate::error::RhoError> {
+        if session.leaf().is_none() {
+            return Err(crate::error::RhoError::Session(
+                crate::session::error::SessionError::Persistence(
+                    "cannot switch to a session with no leaf".to_owned(),
+                ),
+            ));
+        }
+        self.session = session;
+        Ok(())
+    }
+
     /// The cooperative cancellation token (share clones to cancel from outside).
     #[must_use]
     pub fn cancel(&self) -> &CancellationToken {

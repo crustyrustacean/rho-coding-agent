@@ -40,6 +40,9 @@ const DISPATCHED_METHODS: &[&str] = &[
     "compact",
     "resumeSession",
     "listTools",
+    "fork",
+    "listBranches",
+    "switchBranch",
 ];
 
 /// The notifications the RPC observer actually emits (see `rpc.rs` and the

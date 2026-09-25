@@ -328,6 +328,58 @@ pub struct GetMessagesResult {
 #[serde(rename_all = "camelCase")]
 pub struct EmptyResult {}
 
+/// Params for `switchBranch`. `fork` takes none.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+pub struct SwitchBranchParams {
+    /// The cursor to make active.
+    pub cursor_id: String,
+}
+
+/// One branch in the `listBranches` result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct BranchEntry {
+    /// The cursor's unique id.
+    pub cursor_id: String,
+    /// The entry id this cursor points at.
+    pub leaf: String,
+    /// Optional user-assigned label.
+    pub name: Option<String>,
+    /// Whether this is the cursor a subsequent `prompt` runs on.
+    pub active: bool,
+}
+
+/// Result for `fork`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct ForkResult {
+    /// The id of the newly created cursor. The previously active cursor
+    /// remains active — `fork` creates a branch, it does not switch to it.
+    pub cursor_id: String,
+}
+
+/// Result for `listBranches`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct ListBranchesResult {
+    pub branches: Vec<BranchEntry>,
+}
+
+/// Result for `switchBranch`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct SwitchBranchResult {
+    /// The cursor that is now active.
+    pub cursor_id: String,
+}
+
 // ── Notification params ──────────────────────────────────────────────────────
 
 /// Params for the `agent/start` notification.

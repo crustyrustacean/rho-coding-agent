@@ -293,6 +293,24 @@ pub fn methods() -> Vec<Value> {
             result: result_spec::<ListToolsResult>,
         },
         MethodSpec {
+            name: "fork",
+            description: "Fork the active cursor into a new branch sharing the same session log. Returns the new cursor id; the new branch is NOT made active — use `switchBranch` to move to it.",
+            params: None,
+            result: result_spec::<ForkResult>,
+        },
+        MethodSpec {
+            name: "listBranches",
+            description: "List every cursor in the session (the durable roster), flagging which one is active. Includes branches created in a previous run.",
+            params: None,
+            result: result_spec::<ListBranchesResult>,
+        },
+        MethodSpec {
+            name: "switchBranch",
+            description: "Make `cursorId` the active cursor; subsequent `prompt` calls run on it. The cursor is rebuilt at its persisted leaf with a fresh resolution overlay. A turn already in flight continues against the previous cursor — `abort` first for a clean handoff.",
+            params: Some(params_spec::<SwitchBranchParams>),
+            result: result_spec::<SwitchBranchResult>,
+        },
+        MethodSpec {
             name: "approvalResponse",
             description: "Respond to an `approval/request`. `approved: false` with a `message` is a redirect: the user's instructions are injected and the tool batch is abandoned.",
             params: Some(params_spec::<ApprovalResponseParams>),
@@ -437,6 +455,9 @@ pub fn method_names() -> Vec<&'static str> {
         "reloadExtensions",
         "resumeSession",
         "listTools",
+        "fork",
+        "listBranches",
+        "switchBranch",
         "approvalResponse",
     ]
 }
