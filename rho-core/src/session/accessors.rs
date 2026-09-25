@@ -227,6 +227,22 @@ impl Cursor {
         self.with_log_mut(|log| log.persist.flushed_count = count);
     }
 
+    /// Clear the queued cursor positions after a successful flush.
+    pub(crate) fn clear_pending_cursors(&mut self) {
+        self.with_log_mut(|log| log.persist.pending_cursors.clear());
+    }
+
+    /// Queue this cursor's current leaf for persistence.
+    pub(crate) fn queue_cursor_position(&mut self) {
+        let Some(leaf) = self.leaf.clone() else {
+            return;
+        };
+        let id = self.cursor_id.to_string();
+        self.with_log_mut(|log| {
+            log.persist.pending_cursors.push(id, leaf, None);
+        });
+    }
+
     /// Clear the queued resolution changes after a successful flush.
     pub(crate) fn clear_pending_resolution(&mut self) {
         self.with_log_mut(|log| log.persist.pending_resolution.clear());

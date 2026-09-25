@@ -17,6 +17,20 @@ use super::persist;
 use super::persist::PersistState;
 use super::{Cursor, SessionLog};
 
+/// The cursor roster a [`Cursor`] is built with: which cursor this is, and
+/// every cursor the session knows about.
+///
+/// Bundled into one parameter so `new_internal_with_overlay` stays within a
+/// readable arity as the cursor work grew — the two belong together, since
+/// `self_id` is always one of `states`.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct CursorRoster {
+    /// The id of the cursor being opened.
+    pub self_id: crate::newtypes::CursorId,
+    /// Every cursor this session knows about.
+    pub states: Vec<super::persist::CursorState>,
+}
+
 impl Cursor {
     /// Create a new session with JSONL persistence enabled.
     ///
@@ -69,11 +83,12 @@ impl Cursor {
         }
         log.persist = PersistState::with_path(save_path, 0);
 
+        let cursor_id = crate::newtypes::CursorId::new();
         Self {
             log: std::sync::Arc::new(std::sync::Mutex::new(log)),
             resolution: HashMap::new(),
             leaf,
-            cursor_id: crate::newtypes::CursorId::new(),
+            cursor_id,
             estimator: std::sync::Arc::new(HeuristicEstimator::new()),
             model: model.into(),
             reasoning_effort: None,
@@ -128,11 +143,12 @@ impl Cursor {
             }
         }
 
+        let cursor_id = crate::newtypes::CursorId::new();
         Self {
             log: std::sync::Arc::new(std::sync::Mutex::new(log)),
             resolution: HashMap::new(),
             leaf,
-            cursor_id: crate::newtypes::CursorId::new(),
+            cursor_id,
             estimator: std::sync::Arc::new(HeuristicEstimator::new()),
             model: model.into(),
             reasoning_effort: None,
@@ -183,7 +199,7 @@ impl Cursor {
         leaf: Option<EntryId>,
         persist_state: PersistState,
         resolution: HashMap<EntryId, EntryResolution>,
-        cursor_id: crate::newtypes::CursorId,
+        cursors: CursorRoster,
     ) -> Self {
         debug_assert_eq!(
             append_order.len(),
@@ -200,12 +216,13 @@ impl Cursor {
                 log.insert(entry.clone());
             }
         }
+        log.cursors = cursors.states;
 
         Self {
             log: std::sync::Arc::new(std::sync::Mutex::new(log)),
             resolution,
             leaf,
-            cursor_id,
+            cursor_id: cursors.self_id,
             estimator: std::sync::Arc::new(HeuristicEstimator::new()),
             model: String::new(), // Model is not persisted yet (Phase 2.6)
             reasoning_effort: None,

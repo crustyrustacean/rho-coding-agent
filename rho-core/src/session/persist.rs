@@ -117,6 +117,25 @@ pub enum JsonlLine {
         #[serde(default)]
         cursor: Option<String>,
     },
+    /// A cursor's position in the log: which entries it is looking at.
+    ///
+    /// Written on every append, so the last `Cursor` line for a given id is
+    /// that cursor's current leaf. Replay builds the full roster from these,
+    /// which is how a reopened session knows about *every* cursor rather than
+    /// inferring one from file order.
+    ///
+    /// Files written before cursors existed have no such lines; the reader
+    /// then falls back to the pre-cursor behaviour of taking the last entry
+    /// in the file as the single leaf.
+    Cursor {
+        /// The cursor's id.
+        id: String,
+        /// The entry this cursor's leaf points at.
+        leaf: crate::newtypes::EntryId,
+        /// Optional human label for the cursor (e.g. a branch name).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
 }
 
 /// A queued resolution change waiting to be written to disk.
@@ -190,6 +209,66 @@ impl PendingResolution {
         ),
     > {
         self.changes.iter()
+    }
+}
+
+/// A cursor's persisted position in the log.
+///
+/// Returned by [`Cursor::cursors`](crate::session::Cursor::cursors) so a
+/// reopened session can enumerate every cursor it knows about, each with the
+/// leaf it was last at.
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct CursorState {
+    /// The cursor's id.
+    pub id: String,
+    /// The entry this cursor's leaf pointed at when last written.
+    pub leaf: crate::newtypes::EntryId,
+    /// Optional human label for the cursor.
+    pub name: Option<String>,
+}
+
+/// Queued cursor-position updates awaiting a flush.
+///
+/// Like [`PendingResolution`], this is independent of `flushed_count`: a leaf
+/// move applies to an entry that is already on disk. Dedupe is by cursor id —
+/// only that cursor's *latest* position matters, and appending on every
+/// append would otherwise grow the file without bound.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PendingCursors {
+    /// Latest position per cursor, in first-seen order.
+    entries: Vec<(String, crate::newtypes::EntryId, Option<String>)>,
+}
+
+impl PendingCursors {
+    /// Whether nothing is queued.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Drop every queued update.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+
+    /// Queue a cursor's current position, replacing any earlier one.
+    pub fn push(&mut self, id: String, leaf: crate::newtypes::EntryId, name: Option<String>) {
+        if let Some(slot) = self
+            .entries
+            .iter_mut()
+            .find(|(existing, _, _)| existing == &id)
+        {
+            slot.1 = leaf;
+            slot.2 = name;
+        } else {
+            self.entries.push((id, leaf, name));
+        }
+    }
+
+    /// The queued updates in first-seen cursor order.
+    pub fn iter(
+        &self,
+    ) -> impl Iterator<Item = &(String, crate::newtypes::EntryId, Option<String>)> {
+        self.entries.iter()
     }
 }
 
@@ -411,6 +490,12 @@ pub struct PersistState {
     /// drains it after writing any new entries — a `Resolution` line must
     /// never precede the `Entry` line it refers to.
     pub pending_resolution: PendingResolution,
+    /// Cursor positions not yet written to disk.
+    ///
+    /// Independent of `flushed_count` for the same reason as
+    /// `pending_resolution`: a cursor's leaf points at an entry that is
+    /// already on disk, and the update must survive a crash.
+    pub pending_cursors: PendingCursors,
 }
 
 impl PersistState {
@@ -420,6 +505,7 @@ impl PersistState {
             save_path: None,
             flushed_count: 0,
             pending_resolution: PendingResolution::default(),
+            pending_cursors: PendingCursors::default(),
         }
     }
 
@@ -429,6 +515,7 @@ impl PersistState {
             save_path: Some(path),
             flushed_count,
             pending_resolution: PendingResolution::default(),
+            pending_cursors: PendingCursors::default(),
         }
     }
 }
@@ -521,9 +608,24 @@ pub fn open_session(path: &Path) -> Result<Cursor> {
         entry_count,
         resolution_changes,
         legacy_resolutions,
+        cursor_states,
     } = parse_body_lines(path, &raw_lines)?;
 
-    let self_cursor = persisted_cursor.unwrap_or_default();
+    // Fold the `Cursor` lines into a roster, last line per cursor id winning.
+    let mut roster: Vec<CursorState> = Vec::new();
+    for state in cursor_states {
+        if let Some(slot) = roster.iter_mut().find(|c| c.id == state.id) {
+            *slot = state;
+        } else {
+            roster.push(state);
+        }
+    }
+
+    // Reopening continues a specific cursor. Prefer one the file actually
+    // recorded; fall back to the primary for a pre-cursor file.
+    let self_cursor = persisted_cursor
+        .or_else(|| roster.first().map(|c| c.id.clone().into()))
+        .unwrap_or_default();
 
     let resolution_overlay = build_resolution_overlay(
         &entries,
@@ -534,10 +636,15 @@ pub fn open_session(path: &Path) -> Result<Cursor> {
     );
 
     // Determine the leaf.
-    // The last entry in the file is always the leaf (entries are appended
-    // in order). Branch operations produce LeafMoved entries that become
-    // the leaf, then subsequent appends extend from there.
-    let leaf = last_entry_id;
+    //
+    // A `Cursor` line is authoritative: it is the position that cursor was
+    // actually at. Falling back to "last entry in the file" is the pre-cursor
+    // behaviour and is only correct when no `Cursor` lines exist.
+    let leaf = roster
+        .iter()
+        .find(|c| c.id == self_cursor.to_string())
+        .map(|c| c.leaf.clone())
+        .or(last_entry_id);
 
     // Build the session header.
     let header = SessionHeader {
@@ -559,7 +666,10 @@ pub fn open_session(path: &Path) -> Result<Cursor> {
         leaf,
         PersistState::with_path(path.to_path_buf(), entry_count),
         resolution_overlay,
-        self_cursor,
+        crate::session::builder::CursorRoster {
+            self_id: self_cursor,
+            states: roster,
+        },
     );
 
     debug!(
@@ -595,8 +705,12 @@ pub fn flush_session(session: &mut Cursor) -> Result<()> {
 
     let total_entries = session.entry_count();
     let pending_resolution = session.persist_state().pending_resolution.clone();
+    let pending_cursors = session.persist_state().pending_cursors.clone();
 
-    if persist.flushed_count >= total_entries && pending_resolution.is_empty() {
+    if persist.flushed_count >= total_entries
+        && pending_resolution.is_empty()
+        && pending_cursors.is_empty()
+    {
         // Nothing new to write.
         return Ok(());
     }
@@ -660,6 +774,7 @@ pub fn flush_session(session: &mut Cursor) -> Result<()> {
     // line never precedes the Entry it refers to. Last write wins on replay,
     // so repeats for the same entry are safe and order-preserving.
     write_resolution_lines(&mut writer, &pending_resolution, &save_path)?;
+    write_cursor_lines(&mut writer, &pending_cursors, &save_path)?;
 
     writer.flush().map_err(|e| {
         SessionError::Persistence(format!(
@@ -671,6 +786,7 @@ pub fn flush_session(session: &mut Cursor) -> Result<()> {
     // Update flushed count and clear the queue only after a successful write.
     session.set_flushed_count(total_entries);
     session.clear_pending_resolution();
+    session.clear_pending_cursors();
 
     debug!(
         path = %save_path.display(),
@@ -714,7 +830,7 @@ fn parse_header_line(
             PathBuf::from(cwd),
             parent_session,
         )),
-        JsonlLine::Entry(_) | JsonlLine::Resolution { .. } => {
+        JsonlLine::Entry(_) | JsonlLine::Resolution { .. } | JsonlLine::Cursor { .. } => {
             Err(SessionError::Persistence(format!(
                 "first line of session file is not a header: {}",
                 path.display()
@@ -795,6 +911,35 @@ fn write_resolution_lines<W: Write>(
     Ok(())
 }
 
+/// Serialise and write queued cursor positions, one line per cursor.
+///
+/// Like resolution changes, these are written *after* the entries so a
+/// `Cursor` line never precedes the `Entry` it points at. Last write wins per
+/// cursor id on replay.
+fn write_cursor_lines<W: Write>(
+    writer: &mut W,
+    cursors: &PendingCursors,
+    save_path: &Path,
+) -> Result<()> {
+    for (id, leaf, name) in cursors.iter() {
+        let line = JsonlLine::Cursor {
+            id: id.clone(),
+            leaf: leaf.clone(),
+            name: name.clone(),
+        };
+        let json = serde_json::to_string(&line).map_err(|e| {
+            SessionError::Persistence(format!("failed to serialize cursor {id}: {e}"))
+        })?;
+        writeln!(writer, "{json}").map_err(|e| {
+            SessionError::Persistence(format!(
+                "failed to write cursor {id} to {}: {e}",
+                save_path.display()
+            ))
+        })?;
+    }
+    Ok(())
+}
+
 /// Accumulated state from parsing a session file's body lines.
 struct ParsedBody {
     /// Every entry, keyed by id.
@@ -818,6 +963,9 @@ struct ParsedBody {
         crate::newtypes::EntryId,
         crate::session::entry::EntryResolution,
     )>,
+    /// `Cursor` lines in file order. The last line for a cursor id wins, so
+    /// the caller can fold them into a roster.
+    cursor_states: Vec<CursorState>,
 }
 
 /// Parse the body lines of a session file (everything after the header).
@@ -844,6 +992,7 @@ fn parse_body_lines(path: &Path, raw_lines: &[String]) -> Result<ParsedBody> {
         entry_count: 0,
         resolution_changes: Vec::new(),
         legacy_resolutions: Vec::new(),
+        cursor_states: Vec::new(),
     };
     let ParsedBody {
         entries,
@@ -852,6 +1001,7 @@ fn parse_body_lines(path: &Path, raw_lines: &[String]) -> Result<ParsedBody> {
         entry_count,
         resolution_changes,
         legacy_resolutions,
+        cursor_states,
     } = &mut body;
 
     let last_line_index = raw_lines.len();
@@ -916,6 +1066,9 @@ fn parse_body_lines(path: &Path, raw_lines: &[String]) -> Result<ParsedBody> {
                 cursor,
             } => {
                 resolution_changes.push((cursor.map(Into::into), entry, resolution));
+            }
+            JsonlLine::Cursor { id, leaf, name } => {
+                cursor_states.push(CursorState { id, leaf, name });
             }
         }
     }
@@ -1000,7 +1153,7 @@ fn first_cursor_id_in(raw_lines: &[String]) -> Option<crate::newtypes::CursorId>
         .filter_map(|line| serde_json::from_str::<JsonlLine>(line).ok())
         .find_map(|line| match line {
             JsonlLine::Resolution { cursor, .. } => cursor,
-            JsonlLine::Header { .. } | JsonlLine::Entry(_) => None,
+            JsonlLine::Header { .. } | JsonlLine::Entry(_) | JsonlLine::Cursor { .. } => None,
         })
         .map(Into::into)
 }
@@ -1024,6 +1177,200 @@ mod tests {
     use crate::session::entry::EntryResolution;
     use std::io::Write;
 
+    // ── Cursor roster persistence (#65 step 5) ─────────────────────────
+
+    /// A `Cursor` line round-trips its id and leaf.
+    #[test]
+    fn cursor_line_round_trips() {
+        let line = JsonlLine::Cursor {
+            id: crate::newtypes::CursorId::new().to_string(),
+            leaf: EntryId::new(),
+            name: Some("exploration".to_owned()),
+        };
+        let json = serde_json::to_string(&line).unwrap();
+        let back: JsonlLine = serde_json::from_str(&json).unwrap();
+        assert_eq!(line, back);
+    }
+
+    /// Reopening restores **both** cursors, each at its own leaf.
+    ///
+    /// Before cursor persistence, `open_session` took the leaf as "the last
+    /// entry in the file". With two cursors that is only correct for whichever
+    /// appended last — the other cursor's position was lost.
+    #[test]
+    fn reopen_restores_every_cursor_at_its_own_leaf() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cursors.jsonl");
+        let mut primary = file_backed_session(path.clone());
+        let root = primary.append_user_message("shared root");
+        primary.append_user_message("primary turn");
+
+        // A second cursor, branched back to the root and given its own turn.
+        let mut forked = primary.fork();
+        forked.branch_to(&root).unwrap();
+        forked.append_user_message("forked turn");
+        primary.flush().unwrap();
+        forked.flush().unwrap();
+
+        let reopened = Cursor::open(&path).unwrap();
+        let cursors = reopened.cursors();
+        assert_eq!(
+            cursors.len(),
+            2,
+            "both cursors must survive the round-trip, got {cursors:?}"
+        );
+
+        let primary_id = primary.cursor_id().to_string();
+        let forked_id = forked.cursor_id().to_string();
+        let found_primary = cursors
+            .iter()
+            .find(|c| c.id == primary_id)
+            .expect("primary cursor must be present");
+        let found_forked = cursors
+            .iter()
+            .find(|c| c.id == forked_id)
+            .expect("forked cursor must be present");
+
+        assert_ne!(
+            found_primary.leaf, found_forked.leaf,
+            "the two cursors must be restored at different positions"
+        );
+    }
+
+    /// The sibling cursor is preserved separately rather than merged into
+    /// whichever cursor happened to write last.
+    #[test]
+    fn reopen_keeps_siblings_distinct() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("leaf.jsonl");
+        let mut primary = file_backed_session(path.clone());
+        let root = primary.append_user_message("root");
+        primary.append_user_message("primary turn");
+
+        let mut forked = primary.fork();
+        forked.branch_to(&root).unwrap();
+        forked.append_user_message("forked turn");
+        primary.flush().unwrap();
+        forked.flush().unwrap();
+
+        let reopened = Cursor::open(&path).unwrap();
+        assert!(
+            reopened.leaf().is_some(),
+            "the reopened cursor must have a leaf"
+        );
+        assert_eq!(
+            reopened.cursors().len(),
+            2,
+            "the sibling cursor must be preserved separately, not merged"
+        );
+    }
+
+    /// A file with no `Cursor` lines still opens — the pre-cursor behaviour of
+    /// taking the last entry as the leaf.
+    #[test]
+    fn legacy_file_without_cursor_lines_opens() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("legacy.jsonl");
+        let mut session = file_backed_session(path.clone());
+        session.append_user_message("one");
+        session.append_user_message("two");
+        session.flush().unwrap();
+
+        // Strip any Cursor lines to emulate a pre-cursor file.
+        let contents = std::fs::read_to_string(&path).unwrap();
+        let stripped = contents
+            .lines()
+            .filter(|line| !line.contains(r#""type":"Cursor""#))
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(&path, format!("{stripped}\n")).unwrap();
+
+        let reopened = Cursor::open(&path).unwrap();
+        assert!(reopened.leaf().is_some(), "must still open");
+    }
+
+    /// Appending through a cursor writes its `Cursor` line, so the on-disk
+    /// roster is always current without a separate checkpoint step.
+    #[test]
+    fn appending_stamps_the_cursor_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("stamp.jsonl");
+        let mut session = file_backed_session(path.clone());
+        session.append_user_message("hello");
+        let cursor_id = session.cursor_id().to_string();
+        session.flush().unwrap();
+
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            contents.contains(r#""type":"Cursor""#),
+            "an append must stamp a Cursor line, got {contents}"
+        );
+        assert!(
+            contents.contains(&cursor_id),
+            "the Cursor line must carry this cursor's id"
+        );
+    }
+
+    /// `restore_cursor` rebuilds a sibling at its persisted position.
+    #[test]
+    fn restore_cursor_rebuilds_sibling_at_its_leaf() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("restore.jsonl");
+        let mut primary = file_backed_session(path.clone());
+        let root = primary.append_user_message("root");
+        primary.append_user_message("primary turn");
+
+        let mut forked = primary.fork();
+        forked.branch_to(&root).unwrap();
+        let forked_turn = forked.append_user_message("forked turn");
+        let forked_id = forked.cursor_id().to_string();
+        primary.flush().unwrap();
+        forked.flush().unwrap();
+
+        let reopened = Cursor::open(&path).unwrap();
+        let restored = reopened.restore_cursor(&forked_id).unwrap();
+
+        assert_eq!(restored.cursor_id().to_string(), forked_id);
+        assert_eq!(
+            restored.leaf(),
+            Some(forked_turn),
+            "the restored cursor must sit at the leaf it was persisted at"
+        );
+    }
+
+    /// Restoring an unknown cursor is an error, not a silent new cursor.
+    #[test]
+    fn restore_cursor_rejects_unknown_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("unknown.jsonl");
+        let mut session = file_backed_session(path.clone());
+        session.append_user_message("hello");
+        session.flush().unwrap();
+
+        let reopened = Cursor::open(&path).unwrap();
+        assert!(reopened.restore_cursor("does-not-exist").is_err());
+    }
+
+    /// A restored cursor's resolution overlay is independent — a pin made on
+    /// one cursor does not leak into a restored sibling.
+    #[test]
+    fn restore_cursor_has_independent_overlay() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("overlay.jsonl");
+        let mut primary = file_backed_session(path.clone());
+        let entry = primary.append_user_message("root");
+        primary.flush().unwrap();
+
+        let mut forked = primary.fork();
+        forked.pin_entry(&entry).unwrap();
+        let forked_id = forked.cursor_id().to_string();
+        forked.flush().unwrap();
+
+        let reopened = Cursor::open(&path).unwrap();
+        let restored = reopened.restore_cursor(&forked_id).unwrap();
+        assert_eq!(restored.resolution_of(&entry), EntryResolution::Full);
+    }
+
     /// Build a file-backed [`Session`] rooted at `path`, using the internal
     /// constructor so tests can point persistence at a temp file.
     ///
@@ -1045,7 +1392,7 @@ mod tests {
             None,
             PersistState::with_path(path, 0),
             HashMap::new(),
-            crate::newtypes::CursorId::new(),
+            crate::session::builder::CursorRoster::default(),
         )
     }
 
