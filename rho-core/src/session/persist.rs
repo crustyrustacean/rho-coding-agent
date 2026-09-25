@@ -420,16 +420,6 @@ pub fn open_session(path: &Path) -> Result<Session> {
         .into());
     }
 
-    // Read all entry lines.
-    let mut entries: HashMap<crate::newtypes::EntryId, Entry> = HashMap::new();
-    let mut last_entry_id: Option<crate::newtypes::EntryId> = None;
-    let mut entry_count: usize = 0;
-    // Resolution changes in file order. Last write wins on replay.
-    let mut resolution_changes: Vec<(
-        crate::newtypes::EntryId,
-        crate::session::entry::EntryResolution,
-    )> = Vec::new();
-
     // Read the remaining lines eagerly so an unparsable *final* line can be
     // told apart from corruption in the middle of the file. A crash mid-append
     // leaves a partial last line; the JSONL contract treats the rest of the
@@ -444,16 +434,14 @@ pub fn open_session(path: &Path) -> Result<Session> {
                 ))
             })?;
 
-    let mut legacy_resolutions: Vec<(crate::newtypes::EntryId, EntryResolution)> = Vec::new();
-    parse_body_lines(
-        path,
-        &raw_lines,
-        &mut entries,
-        &mut last_entry_id,
-        &mut entry_count,
-        &mut resolution_changes,
-        &mut legacy_resolutions,
-    )?;
+    let ParsedBody {
+        entries,
+        append_order,
+        last_entry_id,
+        entry_count,
+        resolution_changes,
+        legacy_resolutions,
+    } = parse_body_lines(path, &raw_lines)?;
 
     let resolution_overlay =
         build_resolution_overlay(&entries, &resolution_changes, &legacy_resolutions, path);
@@ -480,6 +468,7 @@ pub fn open_session(path: &Path) -> Result<Session> {
     let session = Session::new_internal_with_overlay(
         header,
         entries,
+        append_order,
         leaf,
         PersistState::with_path(path.to_path_buf(), entry_count),
         resolution_overlay,
@@ -721,11 +710,33 @@ fn write_resolution_lines<W: Write>(
     Ok(())
 }
 
+/// Accumulated state from parsing a session file's body lines.
+struct ParsedBody {
+    /// Every entry, keyed by id.
+    entries: HashMap<crate::newtypes::EntryId, Entry>,
+    /// Entry ids in JSONL file order — the authoritative append order (#29).
+    append_order: Vec<crate::newtypes::EntryId>,
+    /// The last entry id seen in the file (the leaf).
+    last_entry_id: Option<crate::newtypes::EntryId>,
+    /// Number of `Entry` lines parsed.
+    entry_count: usize,
+    /// `Resolution` lines in file order; the caller applies last-write-wins.
+    resolution_changes: Vec<(
+        crate::newtypes::EntryId,
+        crate::session::entry::EntryResolution,
+    )>,
+    /// v1 inline resolutions harvested from legacy `Entry` lines.
+    legacy_resolutions: Vec<(
+        crate::newtypes::EntryId,
+        crate::session::entry::EntryResolution,
+    )>,
+}
+
 /// Parse the body lines of a session file (everything after the header).
 ///
-/// Populates `entries`, `last_entry_id`, and `entry_count` from `Entry`
-/// lines, and appends `Resolution` changes to `resolution_changes` in file
-/// order (the caller applies them last-write-wins).
+/// Populates [`ParsedBody`]: entries, their file order, the leaf, and the
+/// resolution replay inputs. `Resolution` lines are collected in file order so
+/// the caller can apply them last-write-wins.
 ///
 /// # Torn-tail tolerance
 ///
@@ -737,21 +748,24 @@ fn write_resolution_lines<W: Write>(
 ///
 /// Returns [`crate::error::RhoError`] if a non-final line cannot be
 /// deserialized.
-fn parse_body_lines(
-    path: &Path,
-    raw_lines: &[String],
-    entries: &mut HashMap<crate::newtypes::EntryId, Entry>,
-    last_entry_id: &mut Option<crate::newtypes::EntryId>,
-    entry_count: &mut usize,
-    resolution_changes: &mut Vec<(
-        crate::newtypes::EntryId,
-        crate::session::entry::EntryResolution,
-    )>,
-    legacy_resolutions: &mut Vec<(
-        crate::newtypes::EntryId,
-        crate::session::entry::EntryResolution,
-    )>,
-) -> Result<()> {
+fn parse_body_lines(path: &Path, raw_lines: &[String]) -> Result<ParsedBody> {
+    let mut body = ParsedBody {
+        entries: HashMap::new(),
+        append_order: Vec::new(),
+        last_entry_id: None,
+        entry_count: 0,
+        resolution_changes: Vec::new(),
+        legacy_resolutions: Vec::new(),
+    };
+    let ParsedBody {
+        entries,
+        append_order,
+        last_entry_id,
+        entry_count,
+        resolution_changes,
+        legacy_resolutions,
+    } = &mut body;
+
     let last_line_index = raw_lines.len();
 
     for (line_index, raw_line) in raw_lines.iter().enumerate() {
@@ -799,7 +813,13 @@ fn parse_body_lines(
                     legacy_resolutions.push((entry.id.clone(), resolution));
                 }
                 *last_entry_id = Some(entry.id.clone());
-                entries.insert(entry.id.clone(), entry);
+                // File order is the append order: the JSONL log is append-only,
+                // so a later line is always a later append. Sorting by
+                // timestamp instead would be non-deterministic on ties (#29).
+                let id = last_entry_id.clone().expect("just set");
+                if entries.insert(id.clone(), entry).is_none() {
+                    append_order.push(id);
+                }
                 *entry_count += 1;
             }
             JsonlLine::Resolution {
@@ -820,7 +840,7 @@ fn parse_body_lines(
             }
         }
     }
-    Ok(())
+    Ok(body)
 }
 
 /// Build the sparse resolution overlay for a session being opened.
@@ -911,6 +931,7 @@ mod tests {
         Session::new_internal_with_overlay(
             header,
             HashMap::new(),
+            Vec::new(),
             None,
             PersistState::with_path(path, 0),
             HashMap::new(),
@@ -925,6 +946,67 @@ mod tests {
         let root = session.append_user_message("system");
         let user = session.append_user_message("hello");
         (root, user)
+    }
+
+    /// Regression for #29: `append_order` was reconstructed by sorting a
+    /// `HashMap`'s values by timestamp. When two entries share a timestamp the
+    /// stable sort preserves whatever order the `HashMap` happened to iterate
+    /// in, which is randomised per process — so a reload could produce a
+    /// different append order than the file was written in.
+    ///
+    /// The fix uses JSONL file order as the append order. This test writes
+    /// entries with *identical* timestamps in a known order and asserts the
+    /// reload preserves it.
+    #[test]
+    fn reopen_preserves_file_order_when_timestamps_tie() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tied.jsonl");
+
+        // Build a file by hand: three entries, byte-identical timestamps.
+        let timestamp =
+            std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        let header = serde_json::json!({
+            "type": "Header",
+            "id": "tie00001",
+            "version": SESSION_FORMAT_VERSION,
+            "created_at_secs": 1_700_000_000u64,
+            "cwd": "/tmp/test",
+            "parent_session": null
+        });
+        let mut file = std::fs::File::create(&path).unwrap();
+        writeln!(file, "{header}").unwrap();
+
+        // Deliberately not in id order: file order is b, a, c.
+        let ids = ["bbbbbbbb", "aaaaaaaa", "cccccccc"];
+        for (i, id) in ids.iter().enumerate() {
+            let entry = Entry {
+                id: EntryId::from(*id),
+                parent_id: if i == 0 {
+                    None
+                } else {
+                    Some(EntryId::from(ids[i - 1]))
+                },
+                timestamp,
+                payload: crate::session::EntryPayload::Message(
+                    crate::message::ChatMessage::user_text(format!("m{i}")),
+                ),
+            };
+            let line = JsonlLine::Entry(entry);
+            writeln!(file, "{}", serde_json::to_string(&line).unwrap()).unwrap();
+        }
+        drop(file);
+
+        let session = open_session(&path).unwrap();
+        let order: Vec<String> = session
+            .entries_in_order()
+            .iter()
+            .map(|e| e.id.to_string())
+            .collect();
+        assert_eq!(
+            order,
+            vec!["bbbbbbbb", "aaaaaaaa", "cccccccc"],
+            "reload must preserve JSONL file order, not a timestamp-sorted order"
+        );
     }
 
     // ── Resolution persistence regression tests (#61) ──────────────────
