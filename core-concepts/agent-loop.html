@@ -200,12 +200,12 @@ Idle (done)
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>pub async fn run_loop(
-    session: &amp;mut Session,
+    cursor: &amp;mut Cursor,
     message: &amp;str,
     params: &amp;LoopParams&lt;'_&gt;,
 ) -&gt; Result&lt;AgentResult&gt;
 <span class="boring">}</span></code></pre></pre>
-<p><code>run_loop</code> takes a <code>Session</code> and a <code>LoopParams</code> (bundle of LLM service, tool registry, config, cancellation token, approval gate, observer, and optional compaction client). A <code>CollectingObserver</code> is always active internally — it records tool call events into <code>AgentResult.tool_calls</code> automatically, so consumers don't need custom observers for structured output.</p>
+<p><code>run_loop</code> takes a <code>Cursor</code> (aliased as <code>Session</code> for one release) and a <code>LoopParams</code> (bundle of LLM service, tool registry, config, cancellation token, approval gate, observer, and optional compaction client). A <code>CollectingObserver</code> is always active internally — it records tool call events into <code>AgentResult.tool_calls</code> automatically, so consumers don't need custom observers for structured output.</p>
 <p>It returns <code>Result&lt;AgentResult&gt;</code>, which captures:</p>
 <div class="table-wrapper"><table><thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead><tbody>
 <tr><td><code>reply</code></td><td><code>String</code></td><td>The model's final text reply</td></tr>
@@ -308,7 +308,7 @@ Idle (done)
 <h2 id="stuck-loop-detection"><a class="header" href="#stuck-loop-detection">Stuck-loop detection</a></h2>
 <p>If the model produces the same output <code>stuck_loop_threshold</code> times consecutively (default: 3), a nudge is injected prompting the model to try a different approach.</p>
 <h2 id="session-persistence"><a class="header" href="#session-persistence">Session persistence</a></h2>
-<p>Since <code>run_loop</code> operates on a <code>Session</code>, all appends (user messages, tool results) are automatically flushed to the JSONL session file if persistence is enabled. If the process crashes mid-loop, the session file contains everything up to the last successful append — at most one entry is lost.</p>
+<p>Since <code>run_loop</code> operates on a <code>Cursor</code>, all appends (user messages, tool results) are automatically flushed to the JSONL session file if persistence is enabled. If the process crashes mid-loop, the session file contains everything up to the last successful append — at most one entry is lost.</p>
 
                     </main>
 
