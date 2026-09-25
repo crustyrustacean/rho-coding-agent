@@ -92,13 +92,14 @@ impl Session {
     /// planner) goes through this rather than reading `Entry::resolution`
     /// directly.
     pub fn resolution_of(&self, id: &EntryId) -> EntryResolution {
-        let Some(entry) = self.log.entries.get(id) else {
+        let Some(payload) = self.with_log(|log| log.entries.get(id).map(|e| e.payload.clone()))
+        else {
             return EntryResolution::Full;
         };
         self.resolution
             .get(id)
             .cloned()
-            .unwrap_or_else(|| EntryResolution::default_for(&entry.payload))
+            .unwrap_or_else(|| EntryResolution::default_for(&payload))
     }
 
     /// Whether the resolution overlay holds no entries.
@@ -111,7 +112,7 @@ impl Session {
 
     /// Read an entry's current resolution, or an error if the entry is absent.
     fn entry_resolution(&self, id: &EntryId) -> Result<EntryResolution> {
-        if !self.log.entries.contains_key(id) {
+        if !self.with_log(|log| log.entries.contains_key(id)) {
             return Err(crate::error::RhoError::Session(SessionError::Persistence(
                 format!("entry {id} not found"),
             )));
@@ -201,11 +202,13 @@ impl Session {
     /// persist them in one pass.
     fn outline_entry_inner(&mut self, id: &EntryId, flush: bool) -> Result<()> {
         // Fetch with an immutable borrow to build the outline.
-        let entry = self.log.entries.get(id).ok_or_else(|| {
-            crate::error::RhoError::Session(SessionError::Persistence(format!(
-                "entry {id} not found"
-            )))
-        })?;
+        let entry = self
+            .with_log(|log| log.entries.get(id).cloned())
+            .ok_or_else(|| {
+                crate::error::RhoError::Session(SessionError::Persistence(format!(
+                    "entry {id} not found"
+                )))
+            })?;
 
         // This precondition is deliberately stricter than the generic transition
         // table: re-outlining is an error even when the regenerated outline is
@@ -221,8 +224,8 @@ impl Session {
             .into());
         }
 
-        let ctx = self.resolve_outline_context(entry);
-        let outline = super::outliner::generate_outline(entry, &ctx);
+        let ctx = self.resolve_outline_context(&entry);
+        let outline = super::outliner::generate_outline(&entry, &ctx);
 
         // Route the mutation through the validated, persisted write path.
         self.set_resolution_inner(id, EntryResolution::Outlined { outline }, flush)
@@ -255,7 +258,7 @@ impl Session {
         // Like `outline_entry_inner`, this precondition is stricter than the
         // generic transition table: re-summarizing an already-summarized entry
         // is an error even when the text is unchanged.
-        if !self.log.entries.contains_key(id) {
+        if !self.with_log(|log| log.entries.contains_key(id)) {
             return Err(SessionError::Persistence(format!("entry {id} not found")).into());
         }
         let current = self.resolution_of(id);
@@ -270,9 +273,11 @@ impl Session {
         }
 
         // Resolve context while we still have an immutable borrow.
-        let entry = self.log.entries.get(id).expect("presence checked above");
-        let ctx = self.resolve_outline_context(entry);
-        let summary = super::outliner::generate_summary(entry, &ctx);
+        let entry = self
+            .with_log(|log| log.entries.get(id).cloned())
+            .expect("presence checked above");
+        let ctx = self.resolve_outline_context(&entry);
+        let summary = super::outliner::generate_summary(&entry, &ctx);
 
         // Route the mutation through the validated, persisted write path.
         self.set_resolution_inner(id, EntryResolution::Summarized { summary }, flush)
@@ -364,7 +369,7 @@ impl Session {
         };
 
         // Retrieve structured details from the details store.
-        let details = self.log.details.get(&entry.id).cloned();
+        let details = self.with_log(|log| log.details.get(&entry.id).cloned());
 
         OutlineContext {
             tool_name,
@@ -384,7 +389,7 @@ impl Session {
             return (None, None);
         };
 
-        let Some(parent) = self.log.entries.get(parent_id) else {
+        let Some(parent) = self.with_log(|log| log.entries.get(parent_id).cloned()) else {
             return (None, None);
         };
 
@@ -489,7 +494,7 @@ impl Session {
             }
 
             cumulative_tokens += super::truncation::estimate_entry_tokens_for_compaction(
-                path_entry.entry,
+                &path_entry.entry,
                 &self.model,
                 self.estimator.as_ref(),
             );
@@ -523,7 +528,7 @@ impl Session {
         let to_compact: Vec<&Entry> = chronological[1..compact_end]
             .iter()
             .filter(|pe| matches!(pe.resolution, EntryResolution::Full))
-            .map(|pe| pe.entry)
+            .map(|pe| &pe.entry)
             .collect();
         if to_compact.is_empty() {
             return Err(SessionError::Persistence(
@@ -706,7 +711,7 @@ impl Session {
         let mut compacted_entry_count: usize = 0;
 
         for path_entry in &chronological {
-            let entry = path_entry.entry;
+            let entry = &path_entry.entry;
             // Count compacted entries (they don't consume context, but we
             // track how many have been compacted for diagnostics).
             if matches!(path_entry.resolution, EntryResolution::Compacted { .. }) {
@@ -783,7 +788,7 @@ impl Session {
             completion_reserve: budget.completion_reserve,
             estimated_used: used,
             message_count: messages.len(),
-            entry_count: self.log.entries.len(),
+            entry_count: self.with_log(|log| log.entries.len()),
             path_entry_count: chronological.len(),
             role_tokens,
             resolution_tokens,
@@ -2155,8 +2160,10 @@ mod tests {
             user_id = session.append_user_message("hello world");
             session.outline_entry(&user_id).unwrap();
 
-            session.log.persist.save_path = Some(path.clone());
-            session.log.persist.flushed_count = 0;
+            session.with_log_mut(|log| {
+                log.persist.save_path = Some(path.clone());
+                log.persist.flushed_count = 0;
+            });
             session.flush().unwrap();
         }
 
@@ -2178,8 +2185,10 @@ mod tests {
             user_id = session.append_user_message("hello world");
             session.summarize_entry(&user_id).unwrap();
 
-            session.log.persist.save_path = Some(path.clone());
-            session.log.persist.flushed_count = 0;
+            session.with_log_mut(|log| {
+                log.persist.save_path = Some(path.clone());
+                log.persist.flushed_count = 0;
+            });
             session.flush().unwrap();
         }
 
@@ -2201,8 +2210,10 @@ mod tests {
         session.append_user_message("hello");
         session.append_assistant_message(ChatMessage::assistant_text("hi"));
 
-        session.log.persist.save_path = Some(path.clone());
-        session.log.persist.flushed_count = 0;
+        session.with_log_mut(|log| {
+            log.persist.save_path = Some(path.clone());
+            log.persist.flushed_count = 0;
+        });
         session.flush().unwrap();
 
         // Reopen — no new variants in this file

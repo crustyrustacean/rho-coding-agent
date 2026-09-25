@@ -68,10 +68,10 @@ impl DowngradePlan {
     /// saves ~90% of the entry's token cost. The exact savings depend on the
     /// generated outline/summary text.
     #[allow(dead_code)]
-    pub fn estimated_savings(&self, entries: &[PathEntry<'_>]) -> usize {
+    pub fn estimated_savings(&self, entries: &[PathEntry]) -> usize {
         let entry_map: std::collections::HashMap<_, _> = entries
             .iter()
-            .map(|pe| (&pe.entry.id, approximate_tokens_for_entry(pe.entry)))
+            .map(|pe| (&pe.entry.id, approximate_tokens_for_entry(&pe.entry)))
             .collect();
 
         self.actions
@@ -95,7 +95,7 @@ impl DowngradePlan {
 ///
 /// Returns a list of turns, where each turn is a list of entry indices
 /// into the original `entries` slice.
-fn group_entries_into_turns(entries: &[PathEntry<'_>]) -> Vec<Vec<usize>> {
+fn group_entries_into_turns(entries: &[PathEntry]) -> Vec<Vec<usize>> {
     let mut turns: Vec<Vec<usize>> = Vec::new();
     let mut i = 0;
 
@@ -140,15 +140,16 @@ fn approximate_tokens_for_entry(entry: &Entry) -> usize {
 ///
 /// Outlined/Summarized entries count their reduced text. Full entries
 /// count their full content.
-fn estimate_tokens_at_resolution(entries: &[PathEntry<'_>]) -> usize {
-    entries.iter().map(|e| estimate_entry_token_cost(e)).sum()
+fn estimate_tokens_at_resolution(entries: &[PathEntry]) -> usize {
+    entries.iter().map(estimate_entry_token_cost).sum()
 }
 
 /// Estimate the token cost of a single entry at its current resolution.
-fn estimate_entry_token_cost(path_entry: &PathEntry<'_>) -> usize {
-    let entry = path_entry.entry;
+fn estimate_entry_token_cost(path_entry: &PathEntry) -> usize {
     match &path_entry.resolution {
-        EntryResolution::Full | EntryResolution::Pinned => approximate_tokens_for_entry(entry),
+        EntryResolution::Full | EntryResolution::Pinned => {
+            approximate_tokens_for_entry(&path_entry.entry)
+        }
         EntryResolution::Outlined { outline } => {
             approximate_tokens(&ChatMessage::user_text(outline))
         }
@@ -181,7 +182,7 @@ fn estimate_entry_token_cost(path_entry: &PathEntry<'_>) -> usize {
 /// - Never downgrades pinned entries
 /// - Never downgrades already-downgraded entries
 pub(crate) fn plan_downgrades(
-    entries: &[PathEntry<'_>],
+    entries: &[PathEntry],
     budget: TokenBudget,
     estimator: &dyn TokenEstimator,
     tool_schemas: &[rho_ai::ToolDefinition],
@@ -194,7 +195,7 @@ pub(crate) fn plan_downgrades(
     let schema_overhead = estimate_tool_schema_overhead(tool_schemas, estimator);
     let system_overhead = entries
         .first()
-        .map_or(0, |e| approximate_tokens_for_entry(e.entry));
+        .map_or(0, |e| approximate_tokens_for_entry(&e.entry));
     let available = budget
         .prompt_budget()
         .saturating_sub(schema_overhead)
@@ -249,7 +250,7 @@ pub(crate) fn plan_downgrades(
             }
 
             // Only downgrade entries with meaningful content
-            let tokens = approximate_tokens_for_entry(path_entry.entry);
+            let tokens = approximate_tokens_for_entry(&path_entry.entry);
             if tokens <= 10 {
                 continue; // Too small to bother
             }
@@ -261,8 +262,8 @@ pub(crate) fn plan_downgrades(
     // Step 6: Sort candidates — oldest turn first, largest entry first within a turn
     candidates.sort_by(|a, b| {
         a.0.cmp(&b.0).then_with(|| {
-            let tokens_a = approximate_tokens_for_entry(entries[a.1].entry);
-            let tokens_b = approximate_tokens_for_entry(entries[b.1].entry);
+            let tokens_a = approximate_tokens_for_entry(&entries[a.1].entry);
+            let tokens_b = approximate_tokens_for_entry(&entries[b.1].entry);
             tokens_b.cmp(&tokens_a) // largest first
         })
     });
@@ -284,7 +285,7 @@ pub(crate) fn plan_downgrades(
         }
         covered.insert(path_entry.entry.id.clone());
 
-        let tokens = approximate_tokens_for_entry(path_entry.entry);
+        let tokens = approximate_tokens_for_entry(&path_entry.entry);
         let action = DowngradeAction {
             entry_id: path_entry.entry.id.clone(),
             target: DowngradeTarget::Outline,
@@ -360,11 +361,11 @@ mod tests {
         )))
     }
 
-    fn as_refs(entries: &[Entry]) -> Vec<PathEntry<'_>> {
+    fn as_refs(entries: &[Entry]) -> Vec<PathEntry> {
         entries
             .iter()
             .map(|e| PathEntry {
-                entry: e,
+                entry: e.clone(),
                 resolution: EntryResolution::default_for(&e.payload),
             })
             .collect()
@@ -593,7 +594,7 @@ mod tests {
 
         // Mark the pinned entry at the PathEntry layer, which is where the
         // planner reads resolution from.
-        let refs: Vec<PathEntry<'_>> = refs
+        let refs: Vec<PathEntry> = refs
             .into_iter()
             .map(|pe| {
                 if pe.entry.id == pinned_id {
@@ -629,7 +630,7 @@ mod tests {
         let refs = as_refs(&entries);
         let estimator = HeuristicEstimator::new();
 
-        let refs: Vec<PathEntry<'_>> = refs
+        let refs: Vec<PathEntry> = refs
             .into_iter()
             .map(|pe| {
                 if pe.entry.id == outlined_id {
@@ -785,7 +786,7 @@ mod tests {
 
     #[test]
     fn plan_downgrades_empty_entries() {
-        let refs: Vec<PathEntry<'_>> = vec![];
+        let refs: Vec<PathEntry> = vec![];
         let estimator = HeuristicEstimator::new();
 
         let plan = plan_downgrades(&refs, TokenBudget::default(), &estimator, &[]);
@@ -831,7 +832,7 @@ mod tests {
         };
         assert_eq!(
             estimate_entry_token_cost(&PathEntry {
-                entry: &entry,
+                entry: entry.clone(),
                 resolution: EntryResolution::Compacted {
                     into: EntryId::new(),
                 },
@@ -849,7 +850,7 @@ mod tests {
             payload: EntryPayload::Message(ChatMessage::user_text("x".repeat(1000))),
         };
         let tokens = estimate_entry_token_cost(&PathEntry {
-            entry: &entry,
+            entry: entry.clone(),
             resolution: EntryResolution::Outlined {
                 outline: "short".to_owned(),
             },

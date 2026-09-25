@@ -195,7 +195,7 @@ pub trait ContextManager: Send + Sync {
     /// produced by reversing `path_to_root()`.
     fn fit_path(
         &self,
-        entries: &[PathEntry<'_>],
+        entries: &[PathEntry],
         budget: TokenBudget,
         estimator: &dyn TokenEstimator,
         tool_schemas: &[rho_ai::ToolDefinition],
@@ -203,7 +203,7 @@ pub trait ContextManager: Send + Sync {
         // Step 1–4: Convert entries to messages, respecting resolution.
         let mut messages = Vec::with_capacity(entries.len());
         for path_entry in entries {
-            let entry = path_entry.entry;
+            let entry = &path_entry.entry;
             // Skip entries that don't participate in the model's context.
             // Outlined/summarized entries render at reduced fidelity.
             let reduced_text: Option<&str> = match &path_entry.resolution {
@@ -706,7 +706,7 @@ impl ContextManager for SlidingWindowContextManager {
     #[allow(clippy::too_many_lines)]
     fn fit_path(
         &self,
-        entries: &[PathEntry<'_>],
+        entries: &[PathEntry],
         budget: TokenBudget,
         estimator: &dyn TokenEstimator,
         tool_schemas: &[rho_ai::ToolDefinition],
@@ -715,7 +715,7 @@ impl ContextManager for SlidingWindowContextManager {
         let mut messages = Vec::with_capacity(entries.len());
         let mut pinned_indices = Vec::new();
         for path_entry in entries {
-            let entry = path_entry.entry;
+            let entry = &path_entry.entry;
             let reduced_text: Option<&str> = match &path_entry.resolution {
                 EntryResolution::Compacted { .. } | EntryResolution::Attached => continue,
                 EntryResolution::Full => None,
@@ -1276,11 +1276,11 @@ mod tests {
 
     /// Helper: build the `PathEntry` slice `fit_path` consumes from
     /// `(payload, resolution)` pairs.
-    fn paths(specs: &[(EntryPayload, EntryResolution)]) -> Vec<PathEntry<'static>> {
+    fn paths(specs: &[(EntryPayload, EntryResolution)]) -> Vec<PathEntry> {
         specs
             .iter()
             .map(|(payload, resolution)| PathEntry {
-                entry: Box::leak(Box::new(test_entry(payload.clone()))),
+                entry: test_entry(payload.clone()),
                 resolution: resolution.clone(),
             })
             .collect()
@@ -1543,14 +1543,11 @@ mod tests {
 
         // Create a very tight budget where schema overhead matters
         let refs: Vec<PathEntry> = (0..20)
-            .map(|i| {
-                let entry: &'static Entry = Box::leak(Box::new(test_entry(EntryPayload::Message(
-                    ChatMessage::user_text(format!("message {i} with padding")),
-                ))));
-                PathEntry {
-                    entry,
-                    resolution: EntryResolution::Full,
-                }
+            .map(|i| PathEntry {
+                entry: test_entry(EntryPayload::Message(ChatMessage::user_text(format!(
+                    "message {i} with padding"
+                )))),
+                resolution: EntryResolution::Full,
             })
             .collect();
 

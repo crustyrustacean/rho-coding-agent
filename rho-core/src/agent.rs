@@ -1348,7 +1348,7 @@ impl LoopContext<'_> {
             // Sandbox path resolution failures are the #1 reason small models
             // get stuck in retry loops. Append a hint so the model can
             // self-correct without wasting iterations.
-            let cwd = self.session.header().cwd.to_string_lossy();
+            let cwd = self.session.header().cwd.to_string_lossy().into_owned();
             format!(
                 "{base}\n\nHint: paths are resolved relative to the sandbox root ({cwd}). \
                     Use a path relative to that root (e.g. \"rho-ai/src/openai.rs\"), \

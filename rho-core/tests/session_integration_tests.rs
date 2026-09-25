@@ -997,7 +997,7 @@ fn unknown_model_bootstrap_conservative() {
 /// Estimator calibration persists across serialisation round-trips.
 #[test]
 fn estimator_calibration_persists_across_serialization() {
-    let mut est = HeuristicEstimator::new();
+    let est = HeuristicEstimator::new();
     let before = est.ratio_for("test-model");
     est.calibrate("test-model", 1000, 500);
     let after = est.ratio_for("test-model");
@@ -1018,7 +1018,7 @@ fn estimator_calibration_persists_across_serialization() {
 /// below 10% for a known true ratio.
 #[test]
 fn estimator_convergence_unit_test() {
-    let mut est = HeuristicEstimator::new();
+    let est = HeuristicEstimator::new();
     let true_ratio = 3.0_f32;
     let content_chars = 3000_usize;
 
@@ -1198,7 +1198,7 @@ async fn tool_call_turn_integrity_after_branch() {
 fn test_helper_in_memory_session_works() {
     let session = in_memory_session(Some("custom sys prompt"), vec![]);
     assert_eq!(
-        session.system_prompt(),
+        session.system_prompt().as_deref(),
         Some("custom sys prompt"),
         "in_memory_session should use the provided system prompt"
     );
@@ -1210,7 +1210,7 @@ fn test_helper_in_memory_session_works() {
 fn test_helper_in_memory_session_default_prompt() {
     let session = in_memory_session(None, vec![]);
     assert_eq!(
-        session.system_prompt(),
+        session.system_prompt().as_deref(),
         Some("you are a test assistant"),
         "in_memory_session should use default prompt when None"
     );

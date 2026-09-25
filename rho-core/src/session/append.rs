@@ -104,7 +104,9 @@ impl Session {
         // Both FullOutput (truncated results) and Diagnostics (compiler output)
         // are preserved — only None is skipped.
         if !matches!(details, ToolResultDetails::None) {
-            self.log.details.insert(id.clone(), details.clone());
+            self.with_log_mut(|log| {
+                log.details.insert(id.clone(), details.clone());
+            });
         }
 
         (id, details)
@@ -217,7 +219,7 @@ impl Session {
     /// Looks up the entry at `id`, verifies that its `kind` matches
     /// `E::KIND`, and deserializes the `data` field into `E`.
     pub fn read_custom_state<E: super::ExtensionEntry>(&self, id: &EntryId) -> Option<E> {
-        let entry = self.log.entries.get(id)?;
+        let entry = self.with_log(|log| log.entries.get(id).cloned())?;
         match &entry.payload {
             EntryPayload::Custom { kind, data } if kind == E::KIND => {
                 serde_json::from_value(data.clone()).ok()
@@ -245,7 +247,7 @@ impl Session {
     /// Looks up the entry at `id`, verifies that its `kind` matches
     /// `E::KIND`, and reconstructs the typed value from the content blocks.
     pub fn read_custom_message<E: super::ExtensionMessageEntry>(&self, id: &EntryId) -> Option<E> {
-        let entry = self.log.entries.get(id)?;
+        let entry = self.with_log(|log| log.entries.get(id).cloned())?;
         match &entry.payload {
             EntryPayload::CustomMessage { kind, content } if kind == E::KIND => {
                 E::from_content_blocks(content)
@@ -277,7 +279,7 @@ impl Session {
         };
         // `SessionLog::insert` maintains the children index alongside the
         // entry map and append order, so every insert must go through it.
-        let id = self.log.insert(entry);
+        let id = self.with_log_mut(|log| log.insert(entry));
         self.leaf = Some(id.clone());
 
         // Auto-flush: write the new entry to disk immediately.
