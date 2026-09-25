@@ -50,7 +50,7 @@ use crate::error::{Result, RhoError};
 use crate::message::ChatMessage;
 use crate::message::{ModelToolCall, ToolCallFunction};
 use crate::newtypes::{ToolCallId, ToolName};
-use crate::session::Session;
+use crate::session::Cursor;
 use crate::tool::{CancellationToken, Tool, ToolRegistry, ToolResult, ToolRisk};
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -718,8 +718,8 @@ enum State {
 /// Takes the stable [`LoopParams`] and adds per-invocation mutable state
 /// (session, repetition tracking, iteration count).
 struct LoopContext<'a> {
-    /// The conversation session (tree-shaped, persisted).
-    session: &'a mut Session,
+    /// The conversation cursor (tree-shaped view over a shared log).
+    session: &'a mut Cursor,
     /// Stable context (client, registry, config, cancel, gate, observer).
     params: &'a LoopParams<'a>,
     /// Stuck-loop detection: maps `(tool_name, arguments)` → `(last_output, count)`.
@@ -1497,7 +1497,7 @@ impl LoopContext<'_> {
 /// - Any fatal error from the client or tool registry
 #[tracing::instrument(skip_all, fields(input_len = message.len()))]
 pub async fn run_loop(
-    session: &mut Session,
+    session: &mut Cursor,
     message: &str,
     params: &LoopParams<'_>,
 ) -> Result<AgentResult> {
@@ -1586,7 +1586,7 @@ fn classify_loop_error(e: RhoError) -> RhoError {
 ///
 /// Cancellation ([`AgentError::Cancelled`]) is user-initiated and is not
 /// recorded.
-fn record_turn_error(session: &mut Session, error: &RhoError) {
+fn record_turn_error(session: &mut Cursor, error: &RhoError) {
     if matches!(error, RhoError::Agent(AgentError::Cancelled)) {
         return;
     }
@@ -1610,7 +1610,7 @@ fn record_turn_error(session: &mut Session, error: &RhoError) {
 /// Converts session messages to [`LlmMessage`] via [`ChatMessage::to_llm_message`],
 /// maps tool schemas to [`ToolDefinition`](rho_ai::ToolDefinition), and sets
 /// `max_tokens` from the session's token budget.
-fn build_llm_request(session: &Session) -> rho_ai::LlmRequest {
+fn build_llm_request(session: &Cursor) -> rho_ai::LlmRequest {
     let fitted = session.path_messages();
     let fitted = sanitize_tool_pairing(&fitted);
     let llm_messages: Vec<rho_ai::LlmMessage> =
@@ -1897,7 +1897,7 @@ pub(crate) async fn consume_stream(
 /// [`LengthTruncated`]: AssistantResponse::LengthTruncated
 pub(crate) fn route_response(
     acc: &rho_ai::AccumulatedResponse,
-    session: &mut Session,
+    session: &mut Cursor,
 ) -> Result<AssistantResponse> {
     use crate::message::ContentBlock;
 
@@ -2155,8 +2155,8 @@ mod tests {
     /// move utilization by a few points. Filling several turns ensures the
     /// range walk accumulates past the threshold and the freed fraction is
     /// large enough to show up in a whole-percent utilization figure.
-    fn session_for_auto_compact() -> Session {
-        let mut session = Session::in_memory("test-model", Some("sys"), vec![], "/tmp");
+    fn session_for_auto_compact() -> Cursor {
+        let mut session = Cursor::in_memory("test-model", Some("sys"), vec![], "/tmp");
         // 8 turns of ~2k tokens each = ~16k tokens of history against a 32k
         // budget, so the path starts around 50% and one compaction (which
         // absorbs at least a quarter of the budget) is clearly visible.
@@ -2295,8 +2295,8 @@ mod tests {
         system: Option<&str>,
         user_msgs: &[&str],
         tools: Vec<ToolDefinition>,
-    ) -> Session {
-        let mut session = Session::in_memory("test-model", system, tools, "/tmp");
+    ) -> Cursor {
+        let mut session = Cursor::in_memory("test-model", system, tools, "/tmp");
         for msg in user_msgs {
             session.append_user_message(msg);
         }

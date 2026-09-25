@@ -43,13 +43,13 @@
 //!
 //! # In-memory mode
 //!
-//! `Session::in_memory()` creates a session that skips all disk operations.
+//! `Cursor::in_memory()` creates a session that skips all disk operations.
 //! Used by tests and ephemeral sessions.
 
 use crate::error::Result;
 use crate::session::entry::{Entry, EntryResolution};
 use crate::session::error::SessionError;
-use crate::session::{Session, SessionHeader};
+use crate::session::{Cursor, SessionHeader};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
@@ -456,7 +456,7 @@ impl PersistState {
 /// - The first line is not a valid header.
 /// - Any entry line cannot be deserialized.
 /// - The session has no entries after the header.
-pub fn open_session(path: &Path) -> Result<Session> {
+pub fn open_session(path: &Path) -> Result<Cursor> {
     let file = std::fs::File::open(path).map_err(|e| {
         SessionError::Persistence(format!(
             "failed to open session file {}: {e}",
@@ -549,10 +549,10 @@ pub fn open_session(path: &Path) -> Result<Session> {
         parent_session: parent_session.map(PathBuf::from),
     };
 
-    // We need to construct a Session, but Session has private fields.
+    // We need to construct a Cursor, but Session has private fields.
     // We'll use a builder approach: create a minimal session and then
     // replace its internals.
-    let session = Session::new_internal_with_overlay(
+    let session = Cursor::new_internal_with_overlay(
         header,
         &entries,
         append_order,
@@ -586,7 +586,7 @@ pub fn open_session(path: &Path) -> Result<Session> {
 /// - The parent directories cannot be created.
 /// - The file cannot be opened for appending.
 /// - A write fails.
-pub fn flush_session(session: &mut Session) -> Result<()> {
+pub fn flush_session(session: &mut Cursor) -> Result<()> {
     let persist = session.persist_state();
     let save_path = match &persist.save_path {
         Some(p) => p.clone(),
@@ -733,7 +733,7 @@ fn parse_header_line(
 ///
 /// Returns [`crate::error::RhoError`] if the header cannot be serialised or
 /// written.
-fn write_header_line<W: Write>(writer: &mut W, session: &Session, save_path: &Path) -> Result<()> {
+fn write_header_line<W: Write>(writer: &mut W, session: &Cursor, save_path: &Path) -> Result<()> {
     let header = session.header();
     let header_line = JsonlLine::Header {
         id: header.id.to_string(),
@@ -1030,7 +1030,7 @@ mod tests {
     /// The session starts with a root system-message entry and no unwritten
     /// entries. Callers append via the normal public API to exercise the
     /// real flush path.
-    fn file_backed_session(path: PathBuf) -> Session {
+    fn file_backed_session(path: PathBuf) -> Cursor {
         let header = SessionHeader {
             id: crate::newtypes::SessionId::from("test0001"),
             version: SESSION_FORMAT_VERSION,
@@ -1038,7 +1038,7 @@ mod tests {
             cwd: std::env::temp_dir(),
             parent_session: None,
         };
-        Session::new_internal_with_overlay(
+        Cursor::new_internal_with_overlay(
             header,
             &HashMap::new(),
             Vec::new(),
@@ -1053,7 +1053,7 @@ mod tests {
     ///
     /// Exercises the real append/flush path so the file exists on disk before
     /// a resolution change is applied.
-    fn seed_two_entries(session: &mut Session) -> (EntryId, EntryId) {
+    fn seed_two_entries(session: &mut Cursor) -> (EntryId, EntryId) {
         let root = session.append_user_message("system");
         let user = session.append_user_message("hello");
         (root, user)
@@ -1106,7 +1106,7 @@ mod tests {
         );
 
         // Reopening yields the primary cursor, which must see its own pin.
-        let reopened = Session::open(&path).unwrap();
+        let reopened = Cursor::open(&path).unwrap();
         assert!(
             matches!(reopened.resolution_of(&user_id), EntryResolution::Pinned),
             "the primary cursor's pin must survive reopen"
@@ -1168,7 +1168,7 @@ mod tests {
             "fixture should now look like a v2 file"
         );
 
-        let reopened = Session::open(&path).unwrap();
+        let reopened = Cursor::open(&path).unwrap();
         assert!(
             matches!(reopened.resolution_of(&user_id), EntryResolution::Pinned),
             "a cursor-less Resolution line must still be honoured on reopen"
@@ -1225,7 +1225,7 @@ mod tests {
     /// `fork()` yields a distinct cursor over the same log.
     #[test]
     fn fork_yields_independent_cursor_id() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         session.append_user_message("first turn");
         let forked = session.fork();
         assert_ne!(

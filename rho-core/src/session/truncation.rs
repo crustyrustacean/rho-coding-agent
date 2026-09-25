@@ -67,7 +67,7 @@ pub(crate) fn chars_to_fit_tokens(
 /// Estimate the token count for an entry, using the calibrated estimator
 /// for message content.
 ///
-/// This is used by [`Session::compact_older_than`] to decide which entries
+/// This is used by [`Cursor::compact_older_than`] to decide which entries
 /// to compact. It differs from the compaction module's `estimate_entry_tokens`
 /// by using the calibrated estimator rather than a fixed chars/4 heuristic,
 /// giving more accurate budget decisions.

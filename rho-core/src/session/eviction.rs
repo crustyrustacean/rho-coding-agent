@@ -6,7 +6,7 @@
 //! The planner function takes the current entry path and budget,
 //! and returns a list of downgrade actions specifying which entries
 //! should be downgraded and to what resolution. The caller (typically
-//! `Session::path_messages`) applies these actions.
+//! `Cursor::path_messages`) applies these actions.
 //!
 //! # Downgrade priority
 //!

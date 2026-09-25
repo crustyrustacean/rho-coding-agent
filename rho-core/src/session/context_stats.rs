@@ -116,7 +116,7 @@ impl ApiUsage {
 
 /// A snapshot of context window usage.
 ///
-/// Returned by [`Session::context_stats`](super::Session::context_stats) so
+/// Returned by [`Cursor::context_stats`](super::Cursor::context_stats) so
 /// the REPL and TUI can display how full the context window is, how many
 /// entries are in the active leaf-to-root path, and how much budget remains.
 #[derive(Clone, Debug, Default)]

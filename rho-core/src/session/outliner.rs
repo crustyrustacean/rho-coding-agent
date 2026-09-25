@@ -7,7 +7,7 @@
 //!
 //! The outline context carries optional metadata (tool name, arguments,
 //! structured diagnostics) resolved by the caller (typically
-//! `Session::outline_entry`).
+//! `Cursor::outline_entry`).
 
 use crate::diagnostic::{Diagnostic, DiagnosticLevel};
 use crate::message::{ChatMessage, ContentBlock, ModelToolCall};

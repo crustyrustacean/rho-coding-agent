@@ -7,14 +7,14 @@
 // LeafMoved entries are written only when the leaf moves to a non-adjacent
 // position (during branch operations, not normal append).
 
-use super::{Entry, EntryId, EntryPayload, Session};
+use super::{Cursor, Entry, EntryId, EntryPayload};
 use crate::message::ChatMessage;
 use crate::newtypes::ToolCallId;
 use crate::tool::{ToolResult, ToolResultDetails};
 use std::time::SystemTime;
 use tracing::warn;
 
-impl Session {
+impl Cursor {
     // ── Public append operations ────────────────────────────────────────
 
     /// Append a user text message.
@@ -38,7 +38,7 @@ impl Session {
     /// estimator), it is truncated at a UTF-8-safe character boundary. The
     /// truncated content goes into the entry's `Message` payload; the *full*
     /// content is preserved in the session's details store and can be retrieved
-    /// later via [`get_full_result`](Session::get_full_result).
+    /// later via [`get_full_result`](Cursor::get_full_result).
     ///
     /// A `warn!` log is emitted when truncation occurs.
     ///
@@ -268,7 +268,7 @@ impl Session {
     ///
     /// The entry's resolution is not stored on it: a new entry always sits at
     /// its payload's default, and any later change goes through
-    /// [`set_resolution`](Session::set_resolution), which records an overlay
+    /// [`set_resolution`](Cursor::set_resolution), which records an overlay
     /// entry and a `Resolution` line.
     fn append_entry(&mut self, payload: EntryPayload) -> EntryId {
         let entry = Entry {
@@ -315,7 +315,7 @@ mod tests {
 
     #[test]
     fn append_user_message_creates_entry_linked_to_leaf() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let root_id = session.leaf().unwrap();
         let user_id = session.append_user_message("hello");
 
@@ -334,7 +334,7 @@ mod tests {
 
     #[test]
     fn append_user_message_without_system_prompt() {
-        let mut session = Session::in_memory("m", None, vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", None, vec![], "/tmp");
         assert!(session.leaf().is_none());
 
         let user_id = session.append_user_message("hello");
@@ -345,7 +345,7 @@ mod tests {
 
     #[test]
     fn append_assistant_message_links_to_previous() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let user_id = session.append_user_message("hello");
         let asst_id = session.append_assistant_message(ChatMessage::assistant_text("hi there"));
 
@@ -356,7 +356,7 @@ mod tests {
 
     #[test]
     fn multiple_appends_form_chain() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let root = session.leaf().unwrap();
 
         let id1 = session.append_user_message("msg1");
@@ -373,7 +373,7 @@ mod tests {
 
     #[test]
     fn tool_result_that_fits_is_not_truncated() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp")
             .with_token_budget(TokenBudget::new(32_768));
 
         let result = ToolResult::success("small output");
@@ -397,7 +397,7 @@ mod tests {
     #[test]
     fn oversized_tool_result_is_truncated_with_full_output_preserved() {
         // Use a tiny budget so even moderate output triggers truncation
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp")
             .with_token_budget(TokenBudget::with_reserve(100, 10)); // prompt_budget = 90, half = 45 tokens
 
         // 2000 chars at 2.5 chars/token ≈ 800 tokens — well over the 45 token limit
@@ -441,7 +441,7 @@ mod tests {
 
     #[test]
     fn truncation_point_is_utf8_safe() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp")
             .with_token_budget(TokenBudget::with_reserve(100, 10));
 
         // Build a string with multi-byte characters
@@ -471,7 +471,7 @@ mod tests {
 
     #[test]
     fn append_compaction_creates_entry() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let user_id = session.append_user_message("hello");
 
         let summary = super::super::CompactionSummary {
@@ -498,7 +498,7 @@ mod tests {
 
     #[test]
     fn append_branch_summary_creates_entry() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let from_id = session.append_user_message("hello");
 
         let summary = super::super::CompactionSummary {
@@ -524,7 +524,7 @@ mod tests {
 
     #[test]
     fn append_label_creates_attached_entry() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let target = session.append_user_message("hello");
 
         let id = session.append_label(target, Some("checkpoint".to_owned()));
@@ -538,7 +538,7 @@ mod tests {
 
     #[test]
     fn append_custom_state_creates_attached_entry() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
 
         let id = session.append_custom_state(
             "rho.diagnostics.v1".to_owned(),
@@ -559,7 +559,7 @@ mod tests {
 
     #[test]
     fn append_custom_message_creates_full_entry() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
 
         let id = session.append_custom_message(
             "rho.diagnostics.v1".to_owned(),

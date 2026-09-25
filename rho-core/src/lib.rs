@@ -128,8 +128,8 @@ pub use rho_ai::ToolDefinition;
 pub use sandbox::{SandboxRoot, find_project_root};
 pub use schema::ToolSchema;
 pub use session::{
-    CompactionPhase, CompactionStrategy, CompactionSummary, ContextStats, Entry, EntryPayload,
-    EntryResolution, ExtensionEntry, ExtensionMessageEntry, HeuristicEstimator,
+    CompactionPhase, CompactionStrategy, CompactionSummary, ContextStats, Cursor, Entry,
+    EntryPayload, EntryResolution, ExtensionEntry, ExtensionMessageEntry, HeuristicEstimator,
     MechanicalCompactionStrategy, PersistState, Session, SessionHeader, SessionMetadata,
     TokenEstimator, find_latest_session, list_sessions,
 };

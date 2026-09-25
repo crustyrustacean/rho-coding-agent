@@ -38,7 +38,7 @@ use std::time::{Duration, SystemTime};
 /// An entry is immutable data: it carries no resolution, only a payload.
 /// Whether it participates in the model's context is decided by the session's
 /// resolution overlay — see [`EntryResolution::default_for`] for the default
-/// and `Session::set_resolution` for changes. Entries are linked by `parent_id`
+/// and `Cursor::set_resolution` for changes. Entries are linked by `parent_id`
 /// to form a tree; the session's `leaf` pointer identifies the current
 /// position.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

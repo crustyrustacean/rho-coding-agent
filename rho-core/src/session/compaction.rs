@@ -4,7 +4,7 @@
 //! *compacted* — summarised into a [`CompactionSummary`] and transitioned from
 //! [`Full`](super::entry::EntryResolution::Full) to
 //! [`Compacted`](super::entry::EntryResolution::Compacted) resolution. The original entries
-//! remain in the tree (accessible via [`Session::entry`]), but are bypassed by
+//! remain in the tree (accessible via [`Cursor::entry`]), but are bypassed by
 //! the path messages builder, which instead renders the summary as
 //! a synthetic `User` message.
 //!
@@ -23,7 +23,7 @@
 //! resolution framing: keep fine detail where it matters, coarsen where it
 //! doesn't.
 //!
-//! [`Session::entry`]: crate::session::Session::entry
+//! [`Cursor::entry`]: crate::session::Cursor::entry
 
 use crate::error::Result;
 use crate::message::ChatMessage;

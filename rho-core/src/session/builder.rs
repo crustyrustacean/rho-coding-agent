@@ -15,9 +15,9 @@ use super::estimator::{HeuristicEstimator, TokenEstimator};
 use super::header::SessionHeader;
 use super::persist;
 use super::persist::PersistState;
-use super::{Session, SessionLog};
+use super::{Cursor, SessionLog};
 
-impl Session {
+impl Cursor {
     /// Create a new session with JSONL persistence enabled.
     ///
     /// The system prompt (if provided) becomes the first [`Entry`] with
@@ -25,7 +25,7 @@ impl Session {
     /// this root entry.
     ///
     /// The session will auto-flush to `~/.rho/sessions/<project-hash>/` on
-    /// each append operation. Use [`Session::in_memory`] to skip persistence.
+    /// each append operation. Use [`Cursor::in_memory`] to skip persistence.
     pub fn new(
         model: impl Into<String>,
         system_prompt: Option<&str>,
@@ -89,8 +89,8 @@ impl Session {
 
     /// Create a new in-memory session that performs no disk I/O.
     ///
-    /// This is the same as [`Session::new`] except no JSONL file is created
-    /// and [`flush`](Session::flush) is a no-op. Used by tests and ephemeral
+    /// This is the same as [`Cursor::new`] except no JSONL file is created
+    /// and [`flush`](Cursor::flush) is a no-op. Used by tests and ephemeral
     /// sessions.
     pub fn in_memory(
         model: impl Into<String>,
@@ -310,7 +310,7 @@ mod tests {
 
     #[test]
     fn new_session_with_system_prompt_has_root_entry() {
-        let session = Session::in_memory("test-model", Some("you are helpful"), vec![], "/tmp");
+        let session = Cursor::in_memory("test-model", Some("you are helpful"), vec![], "/tmp");
         let leaf = session
             .leaf()
             .expect("leaf should be set after construction");
@@ -328,14 +328,14 @@ mod tests {
 
     #[test]
     fn new_session_without_system_prompt_has_no_entries() {
-        let session = Session::in_memory("test-model", None, vec![], "/tmp");
+        let session = Cursor::in_memory("test-model", None, vec![], "/tmp");
         assert!(session.leaf().is_none());
         assert_eq!(session.entry_count(), 0);
     }
 
     #[test]
     fn builder_methods_override_defaults() {
-        let session = Session::in_memory("m", Some("sys"), vec![], "/tmp")
+        let session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp")
             .with_token_budget(TokenBudget::new(4096));
         assert_eq!(session.token_budget().context_window, 4096);
     }
@@ -358,69 +358,105 @@ mod tests {
             thinking: rho_ai::ModelThinking::default(),
         };
         let session =
-            Session::in_memory("m", Some("sys"), vec![], "/tmp").with_user_models(vec![model]);
+            Cursor::in_memory("m", Some("sys"), vec![], "/tmp").with_user_models(vec![model]);
         assert_eq!(session.user_models.len(), 1);
         assert_eq!(session.user_models[0].id, "custom/id");
     }
 
     #[test]
     fn header_has_correct_version() {
-        let session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         assert_eq!(session.header().version, persist::SESSION_FORMAT_VERSION);
     }
 
     #[test]
     fn header_cwd_matches_constructor() {
-        let session = Session::in_memory("m", Some("sys"), vec![], "/project");
+        let session = Cursor::in_memory("m", Some("sys"), vec![], "/project");
         assert_eq!(session.header().cwd, PathBuf::from("/project"));
     }
 
     #[test]
     fn header_session_id_is_unique() {
-        let s1 = Session::in_memory("m", Some("sys"), vec![], "/tmp");
-        let s2 = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let s1 = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
+        let s2 = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         assert_ne!(s1.header().id, s2.header().id);
     }
 
     #[test]
     fn set_model_updates_model() {
-        let mut session = Session::in_memory("old-model", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("old-model", Some("sys"), vec![], "/tmp");
         session.set_model("new-model");
         assert_eq!(session.model(), "new-model");
     }
 
     #[test]
     fn estimator_default_is_heuristic() {
-        let session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let tokens = session.estimator().estimate("test-model", "hello");
         assert!(tokens > 0);
     }
 
     #[test]
     fn estimator_allows_calibration_through_shared_ref() {
-        let session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         // `calibrate` takes `&self` so it works through a shared reference
         // (the estimator is held as `Arc<dyn TokenEstimator>`).
         session.estimator().calibrate("test-model", 10, 12);
     }
 
+    // ── Rename guards (A3 step 4) ─────────────────────────────────────
+
+    /// Compile-time guard: `Cursor` is the real type and `Session` is a
+    /// compatibility alias for it.
+    ///
+    /// #65 keeps `pub type Session = Cursor` for one release so downstream
+    /// embedders are not broken. This test fails to compile if the alias is
+    /// dropped early, and documents the deprecation window rather than
+    /// leaving it to be noticed at a use site.
+    #[test]
+    fn session_is_an_alias_of_cursor() {
+        fn accepts_cursor(_: &crate::session::Cursor) {}
+        fn accepts_session_alias(_: &crate::session::Session) {}
+
+        let cursor = crate::session::Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
+        accepts_cursor(&cursor);
+        accepts_session_alias(&cursor);
+    }
+
+    /// The alias is a true alias, not a second type: a value built as
+    /// `Session` is usable everywhere a `Cursor` is expected.
+    #[test]
+    fn session_alias_constructs_and_forks() {
+        let session: crate::session::Session =
+            crate::session::Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let cursor: crate::session::Cursor = session.clone();
+        // `clone` copies the cursor id — a clone continues the same cursor.
+        // `fork` is what mints a new one.
+        assert_eq!(session.cursor_id(), cursor.cursor_id());
+        assert_ne!(
+            session.cursor_id(),
+            session.fork().cursor_id(),
+            "forking must mint a fresh cursor id"
+        );
+    }
+
     // ── Clone / shared-log semantics (A3 PR 2) ──────────────────────────
 
-    /// Compile-time guard: `Session` must stay `Clone`.
+    /// Compile-time guard: `Cursor` must stay `Clone`.
     ///
     /// Cloning is what makes "two cursors over one log" expressible. If this
     /// stops compiling, the log is no longer shareable.
     #[test]
-    fn session_is_clone() {
+    fn cursor_is_clone() {
         fn assert_clone<T: Clone>() {}
-        assert_clone::<Session>();
+        assert_clone::<Cursor>();
     }
 
     /// A clone shares the log (entries, index, persistence) but owns its own
     /// leaf and resolution overlay.
     #[test]
     fn clone_shares_log_but_not_leaf() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let root = session.leaf().unwrap();
         // Append first: `branch_to` is a documented no-op when the target is
         // already the leaf, so branching from the root would leave both
@@ -461,7 +497,7 @@ mod tests {
     /// not change what another cursor over the same log sees.
     #[test]
     fn clone_has_independent_resolution_overlay() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let user_id = session.append_user_message("pin me");
         let forked = session.clone();
 
@@ -480,7 +516,7 @@ mod tests {
     /// Entries appended through one clone are visible from the other.
     #[test]
     fn append_on_one_clone_visible_by_the_other() {
-        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let before = session.entry_count();
         let forked = session.clone();
 
@@ -497,7 +533,7 @@ mod tests {
     /// of a branch, so this sharing is intended.
     #[test]
     fn clone_shares_estimator_state() {
-        let session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
         let forked = session.clone();
 
         let content = "x".repeat(1000);
@@ -515,7 +551,7 @@ mod tests {
 
     #[test]
     fn open_nonexistent_file_returns_error() {
-        let result = Session::open(Path::new("/nonexistent/path/session.jsonl"));
+        let result = Cursor::open(Path::new("/nonexistent/path/session.jsonl"));
         assert!(result.is_err(), "opening nonexistent file should fail");
     }
 
@@ -524,7 +560,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("empty.jsonl");
         std::fs::write(&path, "").unwrap();
-        let result = Session::open(&path);
+        let result = Cursor::open(&path);
         assert!(result.is_err(), "opening empty file should fail");
     }
 
@@ -544,7 +580,7 @@ mod tests {
         let json = serde_json::to_string(&header).unwrap();
         std::fs::write(&path, format!("{json}\n")).unwrap();
 
-        let result = Session::open(&path);
+        let result = Cursor::open(&path);
         // A header-only file has no entries — the session should be created
         // but with an empty tree.
         assert!(result.is_ok(), "header-only file should open");
