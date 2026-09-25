@@ -111,7 +111,7 @@ pub use persist::{default_save_path, open_session, project_hash};
 pub use tree::PathEntry;
 
 use crate::context::{ContextManager, TokenBudget};
-use crate::newtypes::EntryId;
+use crate::newtypes::{CursorId, EntryId};
 use crate::redact::Redactor;
 
 use std::collections::HashMap;
@@ -171,6 +171,10 @@ pub struct Session {
     resolution: HashMap<EntryId, EntryResolution>,
     /// The current leaf position. Always `Some` after construction. Per-cursor.
     leaf: Option<EntryId>,
+    /// This cursor's identity. Distinguishes its per-cursor state (leaf,
+    /// resolution overlay) from a sibling cursor's when both are persisted
+    /// into one log. Assigned at construction; a new one per [`fork`](Self::fork).
+    cursor_id: CursorId,
     /// Token estimator for budget-aware decisions. Shared across cursors:
     /// calibration is a property of the model, not of a branch.
     estimator: std::sync::Arc<dyn TokenEstimator>,
@@ -248,6 +252,7 @@ impl Clone for Session {
             log: Arc::clone(&self.log),
             resolution: self.resolution.clone(),
             leaf: self.leaf.clone(),
+            cursor_id: self.cursor_id.clone(),
             estimator: Arc::clone(&self.estimator),
             model: self.model.clone(),
             reasoning_effort: self.reasoning_effort.clone(),

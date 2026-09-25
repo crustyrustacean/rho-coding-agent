@@ -73,6 +73,7 @@ impl Session {
             log: std::sync::Arc::new(std::sync::Mutex::new(log)),
             resolution: HashMap::new(),
             leaf,
+            cursor_id: crate::newtypes::CursorId::new(),
             estimator: std::sync::Arc::new(HeuristicEstimator::new()),
             model: model.into(),
             reasoning_effort: None,
@@ -131,6 +132,7 @@ impl Session {
             log: std::sync::Arc::new(std::sync::Mutex::new(log)),
             resolution: HashMap::new(),
             leaf,
+            cursor_id: crate::newtypes::CursorId::new(),
             estimator: std::sync::Arc::new(HeuristicEstimator::new()),
             model: model.into(),
             reasoning_effort: None,
@@ -181,6 +183,7 @@ impl Session {
         leaf: Option<EntryId>,
         persist_state: PersistState,
         resolution: HashMap<EntryId, EntryResolution>,
+        cursor_id: crate::newtypes::CursorId,
     ) -> Self {
         debug_assert_eq!(
             append_order.len(),
@@ -202,6 +205,7 @@ impl Session {
             log: std::sync::Arc::new(std::sync::Mutex::new(log)),
             resolution,
             leaf,
+            cursor_id,
             estimator: std::sync::Arc::new(HeuristicEstimator::new()),
             model: String::new(), // Model is not persisted yet (Phase 2.6)
             reasoning_effort: None,
