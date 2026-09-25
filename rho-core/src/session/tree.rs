@@ -124,6 +124,59 @@ impl Cursor {
         self.cursor_id.clone()
     }
 
+    /// Every cursor this session knows about, and where each was last
+    /// positioned.
+    ///
+    /// Reconstructed from the file's `Cursor` lines, so a session opened from
+    /// a pre-cursor file reports only the cursor it was opened as. A cursor
+    /// that has been forked but never appended through still appears, at
+    /// wherever it was when it was created.
+    pub fn cursors(&self) -> Vec<crate::session::persist::CursorState> {
+        self.with_log(|log| log.cursors.clone())
+    }
+
+    /// Restore a sibling cursor's position, returning a new cursor over the
+    /// same log.
+    ///
+    /// This is the read-side counterpart to [`fork`](Self::fork): it rebuilds
+    /// a cursor that a previous process left in the file, rather than minting
+    /// a new one. The returned cursor shares this session's log and carries
+    /// the id it was persisted under, so resolution changes recorded for it
+    /// apply again.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `id` is not a known cursor, or if that cursor's
+    /// recorded leaf is not present in the log.
+    pub fn restore_cursor(&self, id: &str) -> crate::error::Result<Self> {
+        let state = self
+            .cursors()
+            .into_iter()
+            .find(|c| c.id == id)
+            .ok_or_else(|| {
+                crate::error::RhoError::Session(crate::session::error::SessionError::Persistence(
+                    format!("unknown cursor: {id}"),
+                ))
+            })?;
+
+        if self.entry(&state.leaf).is_none() {
+            return Err(crate::error::RhoError::Session(
+                crate::session::error::SessionError::Persistence(format!(
+                    "cursor {id} points at entry {}, which is not in this log",
+                    state.leaf
+                )),
+            ));
+        }
+
+        let mut restored = self.clone();
+        restored.cursor_id = id.into();
+        restored.leaf = Some(state.leaf.clone());
+        // The overlay is per-cursor; start empty and let the persisted
+        // `Resolution` lines for this cursor be re-applied on the next flush.
+        restored.resolution.clear();
+        Ok(restored)
+    }
+
     /// Fork a second cursor over the same log.
     ///
     /// The returned cursor shares the log — entries appended through either are
@@ -136,7 +189,27 @@ impl Cursor {
     #[must_use]
     pub fn fork(&self) -> Self {
         let mut forked = self.clone();
-        forked.cursor_id = CursorId::new();
+        let new_id = CursorId::new();
+        forked.cursor_id = new_id.clone();
+
+        // Register the new cursor in the shared roster and queue its
+        // position, so a fork that never appends is still recoverable from
+        // the file. This writes to the shared log — `fork` is not a pure
+        // read — but it does not append an entry, so the log's shape is
+        // unchanged.
+        let leaf = forked.leaf.clone();
+        let id = new_id.to_string();
+        if let Some(leaf) = leaf.clone() {
+            forked.with_log_mut(|log| {
+                log.cursors_push(crate::session::persist::CursorState {
+                    id: id.clone(),
+                    leaf: leaf.clone(),
+                    name: None,
+                });
+                log.persist.pending_cursors.push(id, leaf, None);
+            });
+        }
+
         forked
     }
 
@@ -190,6 +263,10 @@ impl Cursor {
         // The LeafMoved entry itself becomes the new leaf so subsequent
         // appends link from here.
         self.leaf = Some(moved_id);
+        // A leaf move is the other way a cursor's position changes, so record
+        // it here too. Doing it at the leaf-move sites rather than on every
+        // flush keeps a bare flush() from stamping a stale position.
+        self.queue_cursor_position();
 
         // Auto-flush the new entry.
         if let Err(e) = self.flush() {

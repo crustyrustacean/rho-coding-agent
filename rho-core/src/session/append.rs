@@ -281,6 +281,9 @@ impl Cursor {
         // entry map and append order, so every insert must go through it.
         let id = self.with_log_mut(|log| log.insert(entry));
         self.leaf = Some(id.clone());
+        // Record this cursor's new position before flushing, so the on-disk
+        // roster stays in step with the leaf.
+        self.queue_cursor_position();
 
         // Auto-flush: write the new entry to disk immediately.
         // A crashed process loses at most one in-flight entry.

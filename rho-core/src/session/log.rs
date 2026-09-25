@@ -45,6 +45,13 @@ pub struct SessionLog {
     ///
     /// This is also the JSONL file order — the authoritative append order.
     pub(crate) order: Vec<EntryId>,
+    /// Every cursor known to this session, and where each was last
+    /// positioned.
+    ///
+    /// Shared, because cursors are a property of the log: two cursors over
+    /// one log must both be discoverable, and a fork registered by one cursor
+    /// has to be visible to the other.
+    pub(crate) cursors: Vec<super::persist::CursorState>,
     /// Parent → direct children index, mirroring `parent_id` for every entry.
     ///
     /// Each entry's id appears under its parent's key, in append order. An
@@ -68,6 +75,7 @@ impl SessionLog {
             header,
             entries: HashMap::new(),
             order: Vec::new(),
+            cursors: Vec::new(),
             children: HashMap::new(),
             details: HashMap::new(),
             persist: PersistState::in_memory(),
@@ -92,6 +100,16 @@ impl SessionLog {
         }
         self.order.push(id.clone());
         id
+    }
+
+    /// Record a cursor in the shared roster, replacing any earlier entry for
+    /// the same id.
+    pub(crate) fn cursors_push(&mut self, state: super::persist::CursorState) {
+        if let Some(slot) = self.cursors.iter_mut().find(|c| c.id == state.id) {
+            *slot = state;
+        } else {
+            self.cursors.push(state);
+        }
     }
 
     /// The direct children of `id`, in append (== timestamp) order.
