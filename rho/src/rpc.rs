@@ -85,13 +85,14 @@ use rho_core::{
     tool::CancellationToken,
 };
 use rho_protocol::{
-    AgentErrorParams, AgentStartParams, ApprovalRequestParams, EmptyResult, ExtensionEntry,
-    GetMessagesResult, GetStateResult, ListExtensionsResult, ListModelsResult, ListProvidersResult,
-    ListSessionsResult, ListToolsResult, MessageDeltaParams, ModelEntry, NewSessionResult,
-    PromptErrorResult, PromptParams, PromptResult, ProviderEntry, ReadyParams,
-    ReasoningDeltaParams, ResumeSessionParams, ResumeSessionResult, SessionEntry, SetModelParams,
-    SetModelResult, StateChangeParams, ToolCallParams, ToolDeniedParams, ToolEntry,
-    ToolResultParams, UsageContextWire, UsageDeltaWire, UsageParams, notification,
+    AgentErrorParams, AgentStartParams, ApprovalRequestParams, BranchEntry, EmptyResult,
+    ExtensionEntry, ForkResult, GetMessagesResult, GetStateResult, ListBranchesResult,
+    ListExtensionsResult, ListModelsResult, ListProvidersResult, ListSessionsResult,
+    ListToolsResult, MessageDeltaParams, ModelEntry, NewSessionResult, PromptErrorResult,
+    PromptParams, PromptResult, ProviderEntry, ReadyParams, ReasoningDeltaParams,
+    ResumeSessionParams, ResumeSessionResult, SessionEntry, SetModelParams, SetModelResult,
+    StateChangeParams, SwitchBranchParams, SwitchBranchResult, ToolCallParams, ToolDeniedParams,
+    ToolEntry, ToolResultParams, UsageContextWire, UsageDeltaWire, UsageParams, notification,
 };
 use rho_protocol::{ReadResult, StdioTransport, Transport};
 use serde_json::{Value, json};
@@ -659,6 +660,24 @@ async fn dispatch_request(
             }
         },
         "listTools" => handle_list_tools(app, id, &*transport).await,
+        "fork" => handle_fork(app, id, &*transport).await,
+        "listBranches" => handle_list_branches(app, id, &*transport).await,
+        "switchBranch" => match serde_json::from_value::<SwitchBranchParams>(params) {
+            Ok(p) if !p.cursor_id.is_empty() => {
+                handle_switch_branch(app, p, id, &*transport).await;
+            }
+            _ => {
+                send(
+                    &*transport,
+                    &error_response(
+                        id,
+                        INVALID_PARAMS,
+                        "switchBranch requires a non-empty 'cursorId' param",
+                    ),
+                )
+                .await;
+            }
+        },
         _ => {
             debug!(method = %method, "unknown RPC method");
             send(
@@ -903,6 +922,111 @@ async fn handle_new_session(app: &mut App, id: &Value, transport: &dyn Transport
     send(
         transport,
         &success_response(id, NewSessionResult { session_id, path }),
+    )
+    .await;
+}
+
+/// Fork the active cursor into a new branch, sharing the same log.
+///
+/// The new branch is registered in the session's cursor roster and persisted,
+/// but is **not** made active — a subsequent `prompt` still runs on the cursor
+/// that was active when `fork` was called. Use `switchBranch` to move across.
+async fn handle_fork(app: &mut App, id: &Value, transport: &dyn Transport) {
+    let forked = app.agent.session().fork();
+    let cursor_id = forked.cursor_id().to_string();
+    info!(cursor_id = %cursor_id, "forked session cursor via RPC");
+    send(transport, &success_response(id, ForkResult { cursor_id })).await;
+}
+
+/// List every cursor in the session, flagging the active one.
+///
+/// Reads the durable cursor roster, so branches from a previous run are
+/// included. Ordering follows the roster, which is creation order.
+async fn handle_list_branches(app: &App, id: &Value, transport: &dyn Transport) {
+    let session = app.agent.session();
+    let active_id = session.cursor_id().to_string();
+    let branches = session
+        .cursors()
+        .into_iter()
+        .map(|c| BranchEntry {
+            active: c.id == active_id,
+            cursor_id: c.id,
+            leaf: c.leaf.to_string(),
+            name: c.name,
+        })
+        .collect();
+
+    send(
+        transport,
+        &success_response(id, ListBranchesResult { branches }),
+    )
+    .await;
+}
+
+/// Make `cursorId` the active cursor. Subsequent prompts run on it.
+///
+/// The target is rebuilt from the roster at its persisted leaf, with a fresh
+/// resolution overlay so pins made on another branch do not leak across.
+///
+/// A turn already in flight continues against the *previous* cursor — switching
+/// does not abort it. Clients that need a clean handoff should `abort` first;
+/// this is a known limitation of the serial MVP, tracked for the concurrent
+/// per-cursor work.
+async fn handle_switch_branch(
+    app: &mut App,
+    params: SwitchBranchParams,
+    id: &Value,
+    transport: &dyn Transport,
+) {
+    if params.cursor_id == app.agent.session().cursor_id().to_string() {
+        // Already active — succeed idempotently rather than erroring.
+        send(
+            transport,
+            &success_response(
+                id,
+                SwitchBranchResult {
+                    cursor_id: params.cursor_id,
+                },
+            ),
+        )
+        .await;
+        return;
+    }
+
+    let restored = match app.agent.session().restore_cursor(&params.cursor_id) {
+        Ok(cursor) => cursor,
+        Err(e) => {
+            send(
+                transport,
+                &error_response(
+                    id,
+                    INVALID_PARAMS,
+                    &format!("unknown cursor '{}': {e}", params.cursor_id),
+                ),
+            )
+            .await;
+            return;
+        }
+    };
+
+    if let Err(e) = app.agent.set_session(restored) {
+        send(
+            transport,
+            &error_response(id, INTERNAL_ERROR, &format!("switch failed: {e}")),
+        )
+        .await;
+        return;
+    }
+
+    info!(cursor_id = %params.cursor_id, "switched active session cursor");
+    send(
+        transport,
+        &success_response(
+            id,
+            SwitchBranchResult {
+                cursor_id: params.cursor_id,
+            },
+        ),
     )
     .await;
 }
@@ -2816,6 +2940,197 @@ mod tests {
         assert!(
             second.contains("STEER MSG"),
             "steering message was not injected before the second LLM call; second request: {second}",
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 12. Branching: fork / listBranches / switchBranch
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// A `fork` response carries a cursor id distinct from the original.
+    #[tokio::test]
+    async fn fork_returns_new_cursor_id() {
+        let events = rpc_run(
+            MockChatClient::new(vec![]),
+            echo_registry(),
+            &[r#"{"jsonrpc":"2.0","method":"fork","id":1}"#],
+        )
+        .await;
+
+        let resp = &responses(&events)[0];
+        assert!(resp.get("error").is_none(), "fork failed: {resp}");
+        let new_id = resp["result"]["cursorId"]
+            .as_str()
+            .expect("cursorId present");
+        assert!(!new_id.is_empty());
+    }
+    /// After a fork the roster has both cursors, and exactly one is active.
+    #[tokio::test]
+    async fn list_branches_includes_forked_and_marks_active() {
+        let events = rpc_run(
+            MockChatClient::new(vec![]),
+            echo_registry(),
+            &[
+                r#"{"jsonrpc":"2.0","method":"fork","id":1}"#,
+                r#"{"jsonrpc":"2.0","method":"listBranches","id":2}"#,
+            ],
+        )
+        .await;
+
+        let resp = responses(&events)
+            .into_iter()
+            .find(|r| r["result"]["branches"].is_array())
+            .expect("listBranches response");
+        let branches = resp["result"]["branches"].as_array().unwrap();
+        assert_eq!(branches.len(), 2, "expected the original plus one fork");
+        let active: Vec<_> = branches
+            .iter()
+            .filter(|b| b["active"].as_bool() == Some(true))
+            .collect();
+        assert_eq!(active.len(), 1, "exactly one cursor must be active");
+    }
+
+    /// A `Transport` that records everything written, for tests that need to
+    /// inspect a response mid-sequence. Reads always report EOF, so it is only
+    /// usable with direct `dispatch_request` calls — never with `run_rpc_on`.
+    #[derive(Default)]
+    struct RecordingTransport {
+        written: std::sync::Mutex<Vec<Value>>,
+    }
+
+    impl RecordingTransport {
+        /// Take the single response written since the last call.
+        fn take_response(&self) -> Value {
+            let mut written = self.written.lock().unwrap();
+            assert_eq!(written.len(), 1, "expected exactly one response");
+            written.pop().expect("just asserted non-empty")
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Transport for RecordingTransport {
+        async fn read_message(&self) -> ReadResult {
+            ReadResult::Eof
+        }
+
+        async fn write_message(&self, value: &Value) -> anyhow::Result<()> {
+            self.written.lock().unwrap().push(value.clone());
+            Ok(())
+        }
+    }
+
+    /// Switching makes the target active: the roster's `active` flag moves.
+    ///
+    /// Driven imperatively through `dispatch_request` rather than `rpc_run`
+    /// because the fork's id is only known at runtime — a second `rpc_run`
+    /// builds a *different* `App` with different random cursor ids.
+    #[tokio::test]
+    async fn switch_branch_makes_target_active() {
+        let mut app = test_app(MockChatClient::new(vec![]), echo_registry());
+        let recorder = Arc::new(RecordingTransport::default());
+        let transport: Arc<dyn Transport> = recorder.clone();
+
+        dispatch_request(&mut app, "fork", json!({}), &json!(1), transport.clone()).await;
+        let forked = recorder.take_response();
+        let fork_id = forked["result"]["cursorId"]
+            .as_str()
+            .expect("fork returns a cursorId")
+            .to_owned();
+
+        dispatch_request(
+            &mut app,
+            "listBranches",
+            json!({}),
+            &json!(2),
+            transport.clone(),
+        )
+        .await;
+        let listed = recorder.take_response();
+        let branches = listed["result"]["branches"]
+            .as_array()
+            .expect("branches array")
+            .clone();
+        assert_eq!(branches.len(), 2, "original plus one fork");
+        assert_eq!(
+            branches
+                .iter()
+                .filter(|b| b["active"].as_bool() == Some(true))
+                .count(),
+            1,
+            "exactly one active before the switch"
+        );
+
+        dispatch_request(
+            &mut app,
+            "switchBranch",
+            json!({ "cursorId": fork_id }),
+            &json!(3),
+            transport.clone(),
+        )
+        .await;
+        let switched = recorder.take_response();
+        assert!(
+            switched.get("error").is_none(),
+            "switchBranch failed: {switched}"
+        );
+
+        dispatch_request(&mut app, "listBranches", json!({}), &json!(4), transport).await;
+        let after = recorder.take_response();
+        let active: Vec<&Value> = after["result"]["branches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|b| b["active"].as_bool() == Some(true))
+            .collect();
+        assert_eq!(active.len(), 1, "exactly one active after the switch");
+        assert_eq!(active[0]["cursorId"].as_str(), Some(fork_id.as_str()));
+    }
+
+    /// An unknown cursor id is a JSON-RPC error, not a silent no-op.
+    #[tokio::test]
+    async fn switch_branch_unknown_id_returns_error() {
+        let events = rpc_run(
+            MockChatClient::new(vec![]),
+            echo_registry(),
+            &[r#"{"jsonrpc":"2.0","method":"switchBranch","params":{"cursorId":"nope"},"id":1}"#],
+        )
+        .await;
+
+        let resp = &responses(&events)[0];
+        assert!(
+            resp.get("error").is_some(),
+            "expected an error response, got {resp}"
+        );
+    }
+
+    /// `switchBranch` with no `cursorId` is an invalid-params error.
+    #[tokio::test]
+    async fn switch_branch_missing_param_returns_error() {
+        let events = rpc_run(
+            MockChatClient::new(vec![]),
+            echo_registry(),
+            &[r#"{"jsonrpc":"2.0","method":"switchBranch","id":1}"#],
+        )
+        .await;
+
+        let resp = &responses(&events)[0];
+        assert_eq!(resp["error"]["code"], INVALID_PARAMS);
+    }
+
+    /// A fork shares the log; it must not create a second file on disk.
+    #[tokio::test]
+    async fn fork_preserves_single_log_file() {
+        let app = test_app(MockChatClient::new(vec![]), echo_registry());
+        let before = app.agent.session().entry_count();
+        let original_path = app.agent.session().save_path();
+
+        let forked = app.agent.session().fork();
+        let forked_path = forked.save_path();
+
+        assert_eq!(before, forked.entry_count(), "fork shares the log");
+        assert_eq!(
+            original_path, forked_path,
+            "a fork must not open a second session file"
         );
     }
 }

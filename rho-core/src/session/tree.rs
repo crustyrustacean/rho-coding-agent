@@ -131,8 +131,20 @@ impl Cursor {
     /// a pre-cursor file reports only the cursor it was opened as. A cursor
     /// that has been forked but never appended through still appears, at
     /// wherever it was when it was created.
+    ///
+    /// The active cursor is always present, even if it has not been written
+    /// yet — a session whose first turn has not been flushed still has exactly
+    /// one cursor, and reporting an empty roster would misrepresent it.
     pub fn cursors(&self) -> Vec<crate::session::persist::CursorState> {
-        self.with_log(|log| log.cursors.clone())
+        let mut cursors = self.with_log(|log| log.cursors.clone());
+        if !cursors.iter().any(|c| c.id == self.cursor_id.to_string()) {
+            cursors.push(crate::session::persist::CursorState {
+                id: self.cursor_id.to_string(),
+                leaf: self.leaf.clone().unwrap_or_default(),
+                name: None,
+            });
+        }
+        cursors
     }
 
     /// Restore a sibling cursor's position, returning a new cursor over the
