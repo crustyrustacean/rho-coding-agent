@@ -70,14 +70,14 @@ impl Session {
         log.persist = PersistState::with_path(save_path, 0);
 
         Self {
-            log,
+            log: std::sync::Arc::new(std::sync::Mutex::new(log)),
             resolution: HashMap::new(),
             leaf,
-            estimator: Box::new(HeuristicEstimator::new()),
+            estimator: std::sync::Arc::new(HeuristicEstimator::new()),
             model: model.into(),
             reasoning_effort: None,
             tools,
-            context_manager: Box::new(SlidingWindowContextManager::new()),
+            context_manager: std::sync::Arc::new(SlidingWindowContextManager::new()),
             token_budget: TokenBudget::default(),
             redactor: Redactor::new(),
             schema_overhead_cache: std::sync::Mutex::new(None),
@@ -128,14 +128,14 @@ impl Session {
         }
 
         Self {
-            log,
+            log: std::sync::Arc::new(std::sync::Mutex::new(log)),
             resolution: HashMap::new(),
             leaf,
-            estimator: Box::new(HeuristicEstimator::new()),
+            estimator: std::sync::Arc::new(HeuristicEstimator::new()),
             model: model.into(),
             reasoning_effort: None,
             tools,
-            context_manager: Box::new(SlidingWindowContextManager::new()),
+            context_manager: std::sync::Arc::new(SlidingWindowContextManager::new()),
             token_budget: TokenBudget::default(),
             redactor: Redactor::new(),
             schema_overhead_cache: std::sync::Mutex::new(None),
@@ -199,14 +199,14 @@ impl Session {
         }
 
         Self {
-            log,
+            log: std::sync::Arc::new(std::sync::Mutex::new(log)),
             resolution,
             leaf,
-            estimator: Box::new(HeuristicEstimator::new()),
+            estimator: std::sync::Arc::new(HeuristicEstimator::new()),
             model: String::new(), // Model is not persisted yet (Phase 2.6)
             reasoning_effort: None,
             tools: vec![], // Tools are not persisted yet (Phase 2.6)
-            context_manager: Box::new(SlidingWindowContextManager::new()),
+            context_manager: std::sync::Arc::new(SlidingWindowContextManager::new()),
             token_budget: TokenBudget::default(),
             redactor: Redactor::new(),
             schema_overhead_cache: std::sync::Mutex::new(None),
@@ -219,7 +219,7 @@ impl Session {
 
     /// Override the context manager.
     #[must_use]
-    pub fn with_context_manager(mut self, cm: Box<dyn ContextManager>) -> Self {
+    pub fn with_context_manager(mut self, cm: std::sync::Arc<dyn ContextManager>) -> Self {
         self.context_manager = cm;
         self
     }
@@ -255,7 +255,7 @@ impl Session {
 
     /// Override the token estimator.
     #[must_use]
-    pub fn with_estimator(mut self, estimator: Box<dyn TokenEstimator>) -> Self {
+    pub fn with_estimator(mut self, estimator: std::sync::Arc<dyn TokenEstimator>) -> Self {
         self.estimator = estimator;
         self
     }
@@ -393,9 +393,120 @@ mod tests {
     }
 
     #[test]
-    fn estimator_mut_allows_calibration() {
+    fn estimator_allows_calibration_through_shared_ref() {
+        let session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        // `calibrate` takes `&self` so it works through a shared reference
+        // (the estimator is held as `Arc<dyn TokenEstimator>`).
+        session.estimator().calibrate("test-model", 10, 12);
+    }
+
+    // ── Clone / shared-log semantics (A3 PR 2) ──────────────────────────
+
+    /// Compile-time guard: `Session` must stay `Clone`.
+    ///
+    /// Cloning is what makes "two cursors over one log" expressible. If this
+    /// stops compiling, the log is no longer shareable.
+    #[test]
+    fn session_is_clone() {
+        fn assert_clone<T: Clone>() {}
+        assert_clone::<Session>();
+    }
+
+    /// A clone shares the log (entries, index, persistence) but owns its own
+    /// leaf and resolution overlay.
+    #[test]
+    fn clone_shares_log_but_not_leaf() {
         let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
-        session.estimator_mut().calibrate("test-model", 10, 12);
+        let root = session.leaf().unwrap();
+        // Append first: `branch_to` is a documented no-op when the target is
+        // already the leaf, so branching from the root would leave both
+        // cursors on the same node and assert nothing.
+        session.append_user_message("first turn");
+        let before = session.entry_count();
+
+        let mut forked = session.clone();
+        let original_leaf = session.leaf();
+        forked.branch_to(&root).unwrap();
+
+        // The log is shared: the fork's LeafMoved entry is visible from the
+        // original session.
+        assert_eq!(
+            session.entry_count(),
+            forked.entry_count(),
+            "clones must share the same log"
+        );
+        assert_eq!(
+            session.entry_count(),
+            before + 1,
+            "the branch writes one LeafMoved entry to the shared log"
+        );
+        assert_ne!(
+            session.leaf(),
+            forked.leaf(),
+            "each cursor owns its own leaf"
+        );
+        // The original cursor is unaffected by the fork's leaf move.
+        assert_eq!(
+            session.leaf(),
+            original_leaf,
+            "the fork must not move the original cursor's leaf"
+        );
+    }
+
+    /// A cursor's resolution overlay is its own: pinning on one cursor does
+    /// not change what another cursor over the same log sees.
+    #[test]
+    fn clone_has_independent_resolution_overlay() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let user_id = session.append_user_message("pin me");
+        let forked = session.clone();
+
+        session.pin_entry(&user_id).unwrap();
+
+        assert!(
+            matches!(session.resolution_of(&user_id), EntryResolution::Pinned),
+            "the pinning cursor sees Pinned"
+        );
+        assert!(
+            matches!(forked.resolution_of(&user_id), EntryResolution::Full),
+            "a sibling cursor is unaffected — the overlay is per-cursor"
+        );
+    }
+
+    /// Entries appended through one clone are visible from the other.
+    #[test]
+    fn append_on_one_clone_visible_by_the_other() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let before = session.entry_count();
+        let forked = session.clone();
+
+        session.append_user_message("only on the original");
+        assert_eq!(
+            forked.entry_count(),
+            before + 1,
+            "an append through one clone must be visible to the other"
+        );
+    }
+
+    /// The estimator is shared: calibration through one clone improves the
+    /// ratios seen by the other. Calibration is a property of the model, not
+    /// of a branch, so this sharing is intended.
+    #[test]
+    fn clone_shares_estimator_state() {
+        let session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let forked = session.clone();
+
+        let content = "x".repeat(1000);
+        let before = session.estimator().estimate("shared-model", &content);
+        session
+            .estimator()
+            .calibrate("shared-model", before, before * 2);
+        let after = forked.estimator().estimate("shared-model", &content);
+
+        assert_ne!(
+            before, after,
+            "calibration through one clone must be visible via the other"
+        );
     }
 
     #[test]

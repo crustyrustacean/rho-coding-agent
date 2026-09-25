@@ -115,6 +115,7 @@ use crate::newtypes::EntryId;
 use crate::redact::Redactor;
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 // ── Session ───────────────────────────────────────────────────────────────────
 
@@ -146,10 +147,17 @@ use std::collections::HashMap;
 /// the on-disk log is an append-only record of every entry.
 ///
 /// Use [`open`](Session::open) to reload a previously persisted session.
+///
+/// A `Session` is *one cursor* over a shared [`SessionLog`]. Cloning is cheap
+/// and yields a second cursor over the **same** log: entries appended through
+/// either are visible to both, while each cursor keeps its own leaf position,
+/// resolution overlay, and runtime configuration. This is what makes branching
+/// cheap and lets multiple cursors read one session concurrently.
 pub struct Session {
-    /// The append-only, branch-shared state: header, entries, append order,
-    /// the children index, the truncated-output store, and persistence.
-    log: SessionLog,
+    /// The shared, append-only log: header, entries, append order, the
+    /// children index, the truncated-output store, and persistence. Shared
+    /// across every cursor over this session.
+    log: std::sync::Arc<std::sync::Mutex<SessionLog>>,
     /// Sparse resolution overlay, keyed by entry ID.
     ///
     /// An entry's resolution is *not* stored on the entry — entries are
@@ -158,11 +166,14 @@ pub struct Session {
     /// the map sparse: only entries whose resolution was explicitly changed
     /// occupy space. [`set_resolution`](Self::set_resolution) is the only
     /// write path.
+    ///
+    /// Per-cursor, so two cursors may resolve a shared ancestor differently.
     resolution: HashMap<EntryId, EntryResolution>,
-    /// The current leaf position. Always `Some` after construction.
+    /// The current leaf position. Always `Some` after construction. Per-cursor.
     leaf: Option<EntryId>,
-    /// Token estimator for budget-aware decisions.
-    estimator: Box<dyn TokenEstimator>,
+    /// Token estimator for budget-aware decisions. Shared across cursors:
+    /// calibration is a property of the model, not of a branch.
+    estimator: std::sync::Arc<dyn TokenEstimator>,
     /// Model identifier.
     pub model: String,
     /// Reasoning effort for thinking-capable models.
@@ -173,8 +184,8 @@ pub struct Session {
     /// `route_response` (exact id) before the built-in catalog so sessions
     /// for unresolvable models still accrue cost.
     pub user_models: Vec<rho_ai::Model>,
-    /// Context window manager applied before each request.
-    context_manager: Box<dyn ContextManager>,
+    /// Context window manager applied before each request. Per-cursor.
+    context_manager: std::sync::Arc<dyn ContextManager>,
     /// Token budget for the context manager.
     token_budget: TokenBudget,
     /// Secret redactor applied to tool results before they enter history.
@@ -194,16 +205,75 @@ pub struct Session {
     schema_overhead_cache: std::sync::Mutex<Option<usize>>,
 }
 
+impl Session {
+    /// Run `f` with the shared log locked.
+    ///
+    /// Recovering from poisoning is deliberate: the log is a collection of
+    /// plain data structures, and a panic elsewhere leaves them consistent.
+    /// Propagating the poison would make one unrelated panic permanently
+    /// brick the session.
+    ///
+    /// # Locking discipline
+    ///
+    /// The closure must not `await` and must not call back into `Session`
+    /// (which would re-lock). Read several fields under one lock rather than
+    /// locking repeatedly.
+    pub(crate) fn with_log<R>(&self, f: impl FnOnce(&SessionLog) -> R) -> R {
+        f(&self
+            .log
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
+    }
+
+    /// Run `f` with the shared log locked mutably. See [`with_log`](Self::with_log)
+    /// for the locking discipline and the rationale for poison recovery.
+    pub(crate) fn with_log_mut<R>(&self, f: impl FnOnce(&mut SessionLog) -> R) -> R {
+        f(&mut self
+            .log
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
+    }
+}
+
+impl Clone for Session {
+    /// Yields a second cursor over the **same** log.
+    ///
+    /// The log and the estimator are shared (both are `Arc`s); the leaf, the
+    /// resolution overlay, the context manager, and the runtime config are
+    /// copied. The schema-overhead memo starts empty — it is a pure cache, and
+    /// recomputing it on a fresh cursor avoids handing a sibling a stale value
+    /// that may have been computed against different tools.
+    fn clone(&self) -> Self {
+        Self {
+            log: Arc::clone(&self.log),
+            resolution: self.resolution.clone(),
+            leaf: self.leaf.clone(),
+            estimator: Arc::clone(&self.estimator),
+            model: self.model.clone(),
+            reasoning_effort: self.reasoning_effort.clone(),
+            tools: self.tools.clone(),
+            user_models: self.user_models.clone(),
+            context_manager: Arc::clone(&self.context_manager),
+            token_budget: self.token_budget,
+            redactor: self.redactor.clone(),
+            api_usage: self.api_usage.clone(),
+            schema_overhead_cache: std::sync::Mutex::new(None),
+        }
+    }
+}
+
 impl std::fmt::Debug for Session {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Session")
-            .field("header", &self.log.header)
-            .field("entry_count", &self.log.entries.len())
-            .field("leaf", &self.leaf)
-            .field("model", &self.model)
-            .field("token_budget", &self.token_budget)
-            .field("persist", &self.log.persist)
-            .finish_non_exhaustive()
+        self.with_log(|log| {
+            f.debug_struct("Session")
+                .field("header", &log.header)
+                .field("entry_count", &log.entries.len())
+                .field("leaf", &self.leaf)
+                .field("model", &self.model)
+                .field("token_budget", &self.token_budget)
+                .field("persist", &log.persist)
+                .finish_non_exhaustive()
+        })
     }
 }
 
@@ -217,6 +287,18 @@ mod tests {
     )]
     use super::*;
     use crate::message::{ChatMessage, ContentBlock};
+    /// Point this in-memory session at a temp file and reset the flushed
+    /// cursor, so tests can drive the real persistence path.
+    fn redirect_persistence(session: &mut Session, path: &Path) {
+        session.with_log_mut(|log| {
+            log.persist.save_path = Some(path.to_path_buf());
+            log.persist.flushed_count = 0;
+        });
+    }
+    /// The session header (locked log).
+    fn header_of(session: &Session) -> SessionHeader {
+        session.header()
+    }
     use crate::session::context_stats::{
         PhaseTokenDistribution, ResolutionTokenDistribution, RoleTokenDistribution,
     };
@@ -366,8 +448,7 @@ mod tests {
         // Manually set the save path and flushed count to simulate persistence.
         // We can't use Session::new directly in tests because it writes to ~/.rho,
         // so we use in_memory + manual flush.
-        session.log.persist.save_path = Some(path.clone());
-        session.log.persist.flushed_count = 0;
+        redirect_persistence(&mut session, &path);
 
         // Flush to disk
         session.flush().unwrap();
@@ -379,7 +460,7 @@ mod tests {
         let reopened = Session::open(&path).unwrap();
 
         // Verify header
-        assert_eq!(reopened.header().id, session.log.header.id);
+        assert_eq!(reopened.header().id, header_of(&session).id);
         assert_eq!(
             reopened.header().version,
             super::persist::SESSION_FORMAT_VERSION
@@ -420,8 +501,7 @@ mod tests {
         let nested = dir.path().join("a").join("b").join("session.jsonl");
 
         let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
-        session.log.persist.save_path = Some(nested.clone());
-        session.log.persist.flushed_count = 0;
+        redirect_persistence(&mut session, &nested);
 
         session.flush().unwrap();
 
@@ -434,8 +514,7 @@ mod tests {
         let path = dir.path().join("incremental.jsonl");
 
         let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
-        session.log.persist.save_path = Some(path.clone());
-        session.log.persist.flushed_count = 0;
+        redirect_persistence(&mut session, &path);
 
         // First flush writes the header + root entry
         session.flush().unwrap();
@@ -477,8 +556,7 @@ mod tests {
             )
             .unwrap();
 
-        session.log.persist.save_path = Some(path.clone());
-        session.log.persist.flushed_count = 0;
+        redirect_persistence(&mut session, &path);
         session.flush().unwrap();
 
         let reopened = Session::open(&path).unwrap();
@@ -501,8 +579,7 @@ mod tests {
         // Branch back to root
         session.branch_to(&root_id).unwrap();
 
-        session.log.persist.save_path = Some(path.clone());
-        session.log.persist.flushed_count = 0;
+        redirect_persistence(&mut session, &path);
         session.flush().unwrap();
 
         let reopened = Session::open(&path).unwrap();
@@ -565,8 +642,7 @@ mod tests {
 
         session.close("test completed");
 
-        session.log.persist.save_path = Some(path.clone());
-        session.log.persist.flushed_count = 0;
+        redirect_persistence(&mut session, &path);
         session.flush().unwrap();
 
         let reopened = Session::open(&path).unwrap();
@@ -653,11 +729,9 @@ mod tests {
         let cwd = dir.path();
 
         let mut session = Session::new("m", Some("sys"), vec![], cwd);
-        // Redirect save path to our temp location
-        session.log.persist.save_path = Some(path.clone());
-        // Reset flushed_count since we changed the path after initial auto-flush
-        // (the initial root entry was auto-flushed to the original path)
-        session.log.persist.flushed_count = 0;
+        // Redirect save path to our temp location and reset flushed_count
+        // since we changed the path after the initial auto-flush.
+        redirect_persistence(&mut session, &path);
 
         session.append_user_message("hello");
 

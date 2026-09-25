@@ -2445,7 +2445,7 @@ mod tests {
         // known cwd so the save path lands in our temp dir.
         let mut session = Session::new("test-model", Some("system prompt"), vec![], &dir);
         session.flush().unwrap();
-        let save_path = session.save_path().unwrap().to_path_buf();
+        let save_path = session.save_path().unwrap();
 
         let path_str = save_path.display().to_string().replace('\\', "/");
 

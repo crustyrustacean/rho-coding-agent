@@ -60,7 +60,11 @@ pub trait TokenEstimator: Send + Sync {
     /// `estimated` is what this estimator predicted; `actual` is what the API
     /// reported in `prompt_tokens`. Implementations may use this to refine
     /// future estimates.
-    fn calibrate(&mut self, model: &str, estimated: usize, actual: usize);
+    ///
+    /// Takes `&self` so the estimator can be shared as `Arc<dyn TokenEstimator>`
+    /// across cursors over a session log. Implementations that mutate state use
+    /// interior mutability.
+    fn calibrate(&self, model: &str, estimated: usize, actual: usize);
 }
 
 // ── HeuristicEstimator ────────────────────────────────────────────────────────
@@ -91,11 +95,46 @@ pub trait TokenEstimator: Send + Sync {
 ///
 /// The estimator's per-model ratios can be serialized to JSON and restored,
 /// enabling calibration persistence across sessions (Phase 2.6+).
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Debug)]
 pub struct HeuristicEstimator {
     /// Per-model chars-per-token ratio. Bootstrapped from defaults; refined by [`calibrate`](HeuristicEstimator::calibrate)().
-    #[serde(default = "default_ratios")]
-    ratios: HashMap<String, f32>,
+    ///
+    /// Behind a `Mutex` so the estimator can be shared as `Arc<dyn TokenEstimator>`:
+    /// [`calibrate`](TokenEstimator::calibrate) refines these ratios after every
+    /// model round-trip, and calibration is a property of the *model* rather
+    /// than of a session branch — so cursors over one log should share it.
+    ratios: std::sync::Mutex<HashMap<String, f32>>,
+}
+
+/// Serialises as a bare `{"model": ratio}` map, matching the pre-`Mutex`
+/// representation. The lock is an implementation detail and must not leak into
+/// the on-disk shape, so this is hand-rolled rather than derived.
+impl Serialize for HeuristicEstimator {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.lock_ratios().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for HeuristicEstimator {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let ratios = HashMap::<String, f32>::deserialize(deserializer)?;
+        Ok(Self {
+            ratios: std::sync::Mutex::new(ratios),
+        })
+    }
+}
+
+impl Clone for HeuristicEstimator {
+    /// Clones a snapshot of the ratios rather than sharing the lock.
+    ///
+    /// The intended sharing path is the session holding `Arc<dyn TokenEstimator>`;
+    /// this exists for callers that genuinely want an independent estimator
+    /// (e.g. a per-thread copy with its own calibration state).
+    fn clone(&self) -> Self {
+        Self {
+            ratios: std::sync::Mutex::new(self.ratios()),
+        }
+    }
 }
 
 /// α for the exponential moving average during calibration.
@@ -129,7 +168,7 @@ impl HeuristicEstimator {
     /// Create a new estimator with default bootstrap ratios.
     pub fn new() -> Self {
         Self {
-            ratios: default_ratios(),
+            ratios: std::sync::Mutex::new(default_ratios()),
         }
     }
 
@@ -153,15 +192,17 @@ impl HeuristicEstimator {
     /// Tries exact match first, then prefix match (case-insensitive),
     /// then the unknown default.
     pub fn ratio_for(&self, model: &str) -> f32 {
+        let ratios = self.lock_ratios();
+
         // Exact match
-        if let Some(&ratio) = self.ratios.get(model) {
+        if let Some(&ratio) = ratios.get(model) {
             return ratio;
         }
 
         // Substring match (case-insensitive): "Qwen/Qwen2.5-Coder-14B-Instruct" contains "qwen",
         // "google/gemma-4-26b-a4b" contains "gemma".
         let model_lower = model.to_ascii_lowercase();
-        for (prefix, &ratio) in &self.ratios {
+        for (prefix, &ratio) in &*ratios {
             if model_lower.contains(&prefix.to_ascii_lowercase()) {
                 return ratio;
             }
@@ -171,8 +212,19 @@ impl HeuristicEstimator {
     }
 
     /// The current per-model ratios (for inspection / serialization).
-    pub fn ratios(&self) -> &HashMap<String, f32> {
-        &self.ratios
+    pub fn ratios(&self) -> HashMap<String, f32> {
+        self.lock_ratios().clone()
+    }
+
+    /// Lock the ratio map, recovering from poisoning.
+    ///
+    /// A poisoned lock means some other thread panicked while holding it, but
+    /// the map itself is a plain `HashMap` that is always left in a consistent
+    /// state — there is no invariant to violate, so recovery is safe.
+    fn lock_ratios(&self) -> std::sync::MutexGuard<'_, HashMap<String, f32>> {
+        self.ratios
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
@@ -181,13 +233,31 @@ impl TokenEstimator for HeuristicEstimator {
         self.estimate_for_model(model, content)
     }
 
-    fn calibrate(&mut self, model: &str, estimated: usize, actual: usize) {
+    fn calibrate(&self, model: &str, estimated: usize, actual: usize) {
         if actual == 0 {
             // Avoid division by zero; skip this calibration point.
             return;
         }
 
-        let current_ratio = self.ratio_for(model);
+        // Take the lock once for the whole read-modify-write. Calling
+        // `ratio_for` here would re-lock and deadlock — `std::sync::Mutex` is
+        // not reentrant.
+        let mut ratios = self.lock_ratios();
+
+        // Current ratio for this model: exact match, then prefix match, then
+        // the unknown default. Mirrors `ratio_for`, inlined to avoid the
+        // second lock acquisition.
+        let current_ratio = ratios
+            .get(model)
+            .copied()
+            .or_else(|| {
+                let model_lower = model.to_ascii_lowercase();
+                ratios
+                    .iter()
+                    .find(|(prefix, _)| model_lower.contains(&prefix.to_ascii_lowercase()))
+                    .map(|(_, &ratio)| ratio)
+            })
+            .unwrap_or(UNKNOWN_CHARS_PER_TOKEN);
 
         // The actual chars-per-token observed in this request.
         // We know `estimated = chars / current_ratio`, so `chars = estimated * current_ratio`.
@@ -205,7 +275,7 @@ impl TokenEstimator for HeuristicEstimator {
 
         // Store under the exact model name the caller provided.
         // Prefix-matched models get their own entry after first calibration.
-        self.ratios.insert(model.to_owned(), new_ratio);
+        ratios.insert(model.to_owned(), new_ratio);
     }
 }
 
@@ -286,7 +356,7 @@ mod tests {
 
     #[test]
     fn calibrate_updates_ratio() {
-        let mut est = HeuristicEstimator::new();
+        let est = HeuristicEstimator::new();
         let before = est.ratio_for("test-model");
         assert_eq!(before, UNKNOWN_CHARS_PER_TOKEN);
 
@@ -310,7 +380,7 @@ mod tests {
 
     #[test]
     fn calibrate_converges_within_10_percent_by_third_call() {
-        let mut est = HeuristicEstimator::new();
+        let est = HeuristicEstimator::new();
 
         // Simulate a model where the true ratio is 3.0 chars/token.
         // Unknown bootstrap is 2.5.
@@ -338,7 +408,7 @@ mod tests {
 
     #[test]
     fn calibrate_handles_zero_actual_gracefully() {
-        let mut est = HeuristicEstimator::new();
+        let est = HeuristicEstimator::new();
         let before = est.ratio_for("zero-model");
         est.calibrate("zero-model", 100, 0);
         let after = est.ratio_for("zero-model");
@@ -348,7 +418,7 @@ mod tests {
 
     #[test]
     fn calibration_does_not_affect_other_models() {
-        let mut est = HeuristicEstimator::new();
+        let est = HeuristicEstimator::new();
         let gemma_before = est.ratio_for("gemma");
         est.calibrate("test-model", 100, 50);
         let gemma_after = est.ratio_for("gemma");
@@ -360,14 +430,14 @@ mod tests {
 
     #[test]
     fn serialization_round_trip() {
-        let mut est = HeuristicEstimator::new();
+        let est = HeuristicEstimator::new();
         est.calibrate("test-model", 100, 50);
-        let before = est.ratios().clone();
+        let before = est.ratios();
 
         let json = serde_json::to_string(&est).unwrap();
         let back: HeuristicEstimator = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(back.ratios(), &before);
+        assert_eq!(back.ratios(), before);
     }
 
     #[test]
@@ -387,7 +457,7 @@ mod tests {
 
     #[test]
     fn exact_match_takes_priority_over_prefix() {
-        let mut est = HeuristicEstimator::new();
+        let est = HeuristicEstimator::new();
         // Calibrate "gemma" to a different value
         est.calibrate("gemma", 100, 200);
         let custom_ratio = est.ratio_for("gemma");

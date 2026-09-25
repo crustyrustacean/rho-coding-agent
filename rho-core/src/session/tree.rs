@@ -19,10 +19,17 @@ use super::error::SessionError;
 /// Carrying the resolution alongside the entry means readers never reach
 /// into [`Entry::resolution`] themselves — the value they get is already
 /// resolved through the session's overlay.
+///
+/// Entries are cloned out of the shared log, so callers pay an allocation per
+/// path entry. That is the cost of putting the log behind a lock; the path is
+/// built at most once per model request.
 #[derive(Clone, Debug)]
-pub struct PathEntry<'a> {
+pub struct PathEntry {
     /// The entry itself.
-    pub entry: &'a Entry,
+    ///
+    /// Owned rather than borrowed: the log lives behind a lock, so a
+    /// reference into it cannot outlive the guard.
+    pub entry: Entry,
     /// The entry's effective resolution, after overlay lookup.
     pub resolution: EntryResolution,
 }
@@ -35,11 +42,12 @@ impl Session {
     /// This is used by [`flush_session`](super::persist::flush_session) to write
     /// entries in the correct order.
     pub(crate) fn entries_in_order(&self) -> Vec<Entry> {
-        self.log
-            .order
-            .iter()
-            .filter_map(|id| self.log.entries.get(id).cloned())
-            .collect()
+        self.with_log(|log| {
+            log.order
+                .iter()
+                .filter_map(|id| log.entries.get(id).cloned())
+                .collect()
+        })
     }
 
     /// Walk from the current leaf back to the root, collecting entries.
@@ -53,7 +61,7 @@ impl Session {
     /// Does not panic — but if the tree is corrupt (a `parent_id` references
     /// a non-existent entry), the walk stops at the last reachable entry
     /// and a `warn!` is emitted.
-    pub fn path_to_root(&self) -> Vec<PathEntry<'_>> {
+    pub fn path_to_root(&self) -> Vec<PathEntry> {
         let Some(mut current_id) = self.leaf.clone() else {
             return Vec::new();
         };
@@ -62,7 +70,7 @@ impl Session {
         let mut seen = std::collections::HashSet::new();
 
         loop {
-            let Some(entry) = self.log.entries.get(&current_id) else {
+            let Some(entry) = self.with_log(|log| log.entries.get(&current_id).cloned()) else {
                 warn!(id = %current_id, "path_to_root: entry not found, tree may be corrupt");
                 break;
             };
@@ -72,10 +80,11 @@ impl Session {
                 break;
             }
 
-            let resolution = self.resolution_of(&current_id);
+            let resolution = self.resolution_of(&entry.id);
+            let parent_id = entry.parent_id.clone();
             path.push(PathEntry { entry, resolution });
 
-            match &entry.parent_id {
+            match &parent_id {
                 Some(parent_id) => current_id = parent_id.clone(),
                 None => break, // reached root
             }
@@ -90,7 +99,7 @@ impl Session {
     /// This is the shape [`path_messages`](Session::path_messages),
     /// [`context_stats`](Session::context_stats), and the compaction walk all
     /// consume.
-    pub fn path_entries(&self) -> Vec<PathEntry<'_>> {
+    pub fn path_entries(&self) -> Vec<PathEntry> {
         self.path_to_root().into_iter().rev().collect()
     }
 
@@ -103,7 +112,7 @@ impl Session {
     /// (append order and timestamp order agree, and append order is the
     /// authoritative sequence on reload — see issue #29).
     pub fn children(&self, id: &EntryId) -> Vec<EntryId> {
-        self.log.children_of(id).to_vec()
+        self.with_log(|log| log.children_of(id).to_vec())
     }
 
     /// Move the leaf pointer to an existing entry, recording a
@@ -126,7 +135,7 @@ impl Session {
     /// and the method returns `Ok(())`.
     pub fn branch_to(&mut self, id: &EntryId) -> Result<()> {
         // Validate that the target exists
-        if !self.log.entries.contains_key(id) {
+        if !self.with_log(|log| log.entries.contains_key(id)) {
             return Err(SessionError::EntryNotFound(id.to_string()).into());
         }
 
@@ -152,7 +161,7 @@ impl Session {
         };
         // Route through `SessionLog::insert` so the children index records
         // this node under its parent like any other append.
-        let moved_id = self.log.insert(moved_entry);
+        let moved_id = self.with_log_mut(|log| log.insert(moved_entry));
         // The LeafMoved entry itself becomes the new leaf so subsequent
         // appends link from here.
         self.leaf = Some(moved_id);
