@@ -467,7 +467,7 @@ pub fn open_session(path: &Path) -> Result<Session> {
     // replace its internals.
     let session = Session::new_internal_with_overlay(
         header,
-        entries,
+        &entries,
         append_order,
         leaf,
         PersistState::with_path(path.to_path_buf(), entry_count),
@@ -930,7 +930,7 @@ mod tests {
         };
         Session::new_internal_with_overlay(
             header,
-            HashMap::new(),
+            &HashMap::new(),
             Vec::new(),
             None,
             PersistState::with_path(path, 0),

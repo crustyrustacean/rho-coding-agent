@@ -35,9 +35,10 @@ impl Session {
     /// This is used by [`flush_session`](super::persist::flush_session) to write
     /// entries in the correct order.
     pub(crate) fn entries_in_order(&self) -> Vec<Entry> {
-        self.append_order
+        self.log
+            .order
             .iter()
-            .filter_map(|id| self.entries.get(id).cloned())
+            .filter_map(|id| self.log.entries.get(id).cloned())
             .collect()
     }
 
@@ -61,7 +62,7 @@ impl Session {
         let mut seen = std::collections::HashSet::new();
 
         loop {
-            let Some(entry) = self.entries.get(&current_id) else {
+            let Some(entry) = self.log.entries.get(&current_id) else {
                 warn!(id = %current_id, "path_to_root: entry not found, tree may be corrupt");
                 break;
             };
@@ -93,29 +94,16 @@ impl Session {
         self.path_to_root().into_iter().rev().collect()
     }
 
-    /// Return the direct children of an entry, sorted by timestamp (oldest
+    /// Return the direct children of an entry, in append order (oldest
     /// first).
     ///
-    /// This scans all entries to find those whose `parent_id` matches the
-    /// given `id`. The scan is O(n) where n is the total number of entries;
-    /// for sessions with up to tens of thousands of entries this is fine.
-    /// A reverse index can be added later if needed.
+    /// This is an index lookup against [`SessionLog`]'s parent→children map,
+    /// maintained as entries are inserted. The children are stored in append
+    /// order, which is the same ordering the previous timestamp sort produced
+    /// (append order and timestamp order agree, and append order is the
+    /// authoritative sequence on reload — see issue #29).
     pub fn children(&self, id: &EntryId) -> Vec<EntryId> {
-        let mut child_ids: Vec<EntryId> = self
-            .entries
-            .values()
-            .filter(|e| e.parent_id.as_ref() == Some(id))
-            .map(|e| e.id.clone())
-            .collect();
-
-        // Sort by timestamp for deterministic ordering
-        child_ids.sort_by(|a, b| {
-            let ta = self.entries.get(a).map(|e| e.timestamp);
-            let tb = self.entries.get(b).map(|e| e.timestamp);
-            ta.cmp(&tb)
-        });
-
-        child_ids
+        self.log.children_of(id).to_vec()
     }
 
     /// Move the leaf pointer to an existing entry, recording a
@@ -138,7 +126,7 @@ impl Session {
     /// and the method returns `Ok(())`.
     pub fn branch_to(&mut self, id: &EntryId) -> Result<()> {
         // Validate that the target exists
-        if !self.entries.contains_key(id) {
+        if !self.log.entries.contains_key(id) {
             return Err(SessionError::EntryNotFound(id.to_string()).into());
         }
 
@@ -162,9 +150,9 @@ impl Session {
                 to: id.clone(),
             },
         };
-        let moved_id = moved_entry.id.clone();
-        self.entries.insert(moved_id.clone(), moved_entry);
-        self.append_order.push(moved_id.clone());
+        // Route through `SessionLog::insert` so the children index records
+        // this node under its parent like any other append.
+        let moved_id = self.log.insert(moved_entry);
         // The LeafMoved entry itself becomes the new leaf so subsequent
         // appends link from here.
         self.leaf = Some(moved_id);
@@ -274,6 +262,49 @@ mod tests {
         let children = session.children(&root_id);
         assert_eq!(children.len(), 1);
         assert_eq!(children[0], user_id);
+    }
+
+    // ── children() index (A3 PR 1) ─────────────────────────────────────
+    //
+    // `children()` used to scan every entry and sort by timestamp. The
+    // `SessionLog` index must produce identical results, including on the
+    // non-linear appends that branching produces.
+
+    /// With several children, `children()` must return them in ascending
+    /// timestamp order — the same contract the old O(n)-scan sort provided.
+    ///
+    /// Tree shape note: `branch_to(id)` writes a `LeafMoved` entry whose
+    /// parent is `id` and makes *that* the new leaf, so anything appended
+    /// after a branch hangs off the `LeafMoved` node rather than off `id`.
+    #[test]
+    fn children_returns_multiple_children_in_timestamp_order() {
+        let mut session = Session::in_memory("m", Some("sys"), vec![], "/tmp");
+        let pivot = session.leaf().unwrap();
+        session.append_user_message("first");
+
+        // Two branch-backs from the same pivot produce several direct children
+        // of `pivot` (a message plus LeafMoved audit nodes).
+        session.branch_to(&pivot).unwrap();
+        session.append_assistant_message(ChatMessage::assistant_text("A"));
+        session.branch_to(&pivot).unwrap();
+        session.append_assistant_message(ChatMessage::assistant_text("B"));
+
+        let children = session.children(&pivot);
+        assert!(
+            children.len() >= 2,
+            "pivot should have multiple children, got {:?}",
+            children.len()
+        );
+
+        // The contract under test: ascending timestamp order.
+        let timestamps: Vec<_> = children
+            .iter()
+            .map(|id| session.entry(id).expect("child entry").timestamp)
+            .collect();
+        assert!(
+            timestamps.windows(2).all(|w| w[0] <= w[1]),
+            "children() must be timestamp-ordered, got {timestamps:?}"
+        );
     }
 
     #[test]

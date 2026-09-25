@@ -104,7 +104,7 @@ impl Session {
         // Both FullOutput (truncated results) and Diagnostics (compiler output)
         // are preserved — only None is skipped.
         if !matches!(details, ToolResultDetails::None) {
-            self.details_store.insert(id.clone(), details.clone());
+            self.log.details.insert(id.clone(), details.clone());
         }
 
         (id, details)
@@ -217,7 +217,7 @@ impl Session {
     /// Looks up the entry at `id`, verifies that its `kind` matches
     /// `E::KIND`, and deserializes the `data` field into `E`.
     pub fn read_custom_state<E: super::ExtensionEntry>(&self, id: &EntryId) -> Option<E> {
-        let entry = self.entries.get(id)?;
+        let entry = self.log.entries.get(id)?;
         match &entry.payload {
             EntryPayload::Custom { kind, data } if kind == E::KIND => {
                 serde_json::from_value(data.clone()).ok()
@@ -245,7 +245,7 @@ impl Session {
     /// Looks up the entry at `id`, verifies that its `kind` matches
     /// `E::KIND`, and reconstructs the typed value from the content blocks.
     pub fn read_custom_message<E: super::ExtensionMessageEntry>(&self, id: &EntryId) -> Option<E> {
-        let entry = self.entries.get(id)?;
+        let entry = self.log.entries.get(id)?;
         match &entry.payload {
             EntryPayload::CustomMessage { kind, content } if kind == E::KIND => {
                 E::from_content_blocks(content)
@@ -269,15 +269,15 @@ impl Session {
     /// [`set_resolution`](Session::set_resolution), which records an overlay
     /// entry and a `Resolution` line.
     fn append_entry(&mut self, payload: EntryPayload) -> EntryId {
-        let id = EntryId::new();
         let entry = Entry {
-            id: id.clone(),
+            id: EntryId::new(),
             parent_id: self.leaf.clone(),
             timestamp: SystemTime::now(),
             payload,
         };
-        self.entries.insert(id.clone(), entry);
-        self.append_order.push(id.clone());
+        // `SessionLog::insert` maintains the children index alongside the
+        // entry map and append order, so every insert must go through it.
+        let id = self.log.insert(entry);
         self.leaf = Some(id.clone());
 
         // Auto-flush: write the new entry to disk immediately.
