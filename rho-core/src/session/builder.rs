@@ -157,21 +157,27 @@ impl Session {
     /// (and the embedded resolutions of a v1 file). Bypasses the normal
     /// constructor because the header, entries, leaf, and overlay are already
     /// known.
+    ///
+    /// `append_order` is supplied by the caller in **file order**. It must not
+    /// be reconstructed by sorting `entries`: the JSONL log is append-only, so
+    /// line order *is* the append order, and a stable sort by timestamp is
+    /// non-deterministic whenever two entries share a timestamp (common on
+    /// Windows, where clock granularity is coarse) because the input order
+    /// comes from a `HashMap` iteration that is randomised per process. See
+    /// issue #29.
     pub(crate) fn new_internal_with_overlay(
         header: SessionHeader,
         entries: HashMap<EntryId, Entry>,
+        append_order: Vec<EntryId>,
         leaf: Option<EntryId>,
         persist_state: PersistState,
         resolution: HashMap<EntryId, EntryResolution>,
     ) -> Self {
-        // Reconstruct append_order from the entries: sort by timestamp
-        // as a stable approximation of append order.
-        let mut append_order: Vec<(std::time::SystemTime, EntryId)> = entries
-            .values()
-            .map(|e| (e.timestamp, e.id.clone()))
-            .collect();
-        append_order.sort_by_key(|a| a.0);
-        let append_order: Vec<EntryId> = append_order.into_iter().map(|(_, id)| id).collect();
+        debug_assert_eq!(
+            append_order.len(),
+            entries.len(),
+            "append_order must list every entry exactly once"
+        );
 
         Self {
             header,
