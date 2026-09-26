@@ -88,11 +88,12 @@ use rho_protocol::{
     AgentErrorParams, AgentStartParams, ApprovalRequestParams, BranchEntry, EmptyResult,
     ExtensionEntry, ForkResult, GetMessagesResult, GetStateResult, ListBranchesResult,
     ListExtensionsResult, ListModelsResult, ListProvidersResult, ListSessionsResult,
-    ListToolsResult, MessageDeltaParams, ModelEntry, NewSessionResult, PromptErrorResult,
-    PromptParams, PromptResult, ProviderEntry, ReadyParams, ReasoningDeltaParams,
-    ResumeSessionParams, ResumeSessionResult, SessionEntry, SetModelParams, SetModelResult,
-    StateChangeParams, SwitchBranchParams, SwitchBranchResult, ToolCallParams, ToolDeniedParams,
-    ToolEntry, ToolResultParams, UsageContextWire, UsageDeltaWire, UsageParams, notification,
+    ListToolsResult, MessageDeltaParams, ModelEntry, NameBranchParams, NameBranchResult,
+    NewSessionResult, PromptErrorResult, PromptParams, PromptResult, ProviderEntry, ReadyParams,
+    ReasoningDeltaParams, ResumeSessionParams, ResumeSessionResult, SessionEntry, SetModelParams,
+    SetModelResult, StateChangeParams, SwitchBranchParams, SwitchBranchResult, ToolCallParams,
+    ToolDeniedParams, ToolEntry, ToolResultParams, UsageContextWire, UsageDeltaWire, UsageParams,
+    notification,
 };
 use rho_protocol::{ReadResult, StdioTransport, Transport};
 use serde_json::{Value, json};
@@ -662,6 +663,22 @@ async fn dispatch_request(
         "listTools" => handle_list_tools(app, id, &*transport).await,
         "fork" => handle_fork(app, id, &*transport).await,
         "listBranches" => handle_list_branches(app, id, &*transport).await,
+        "nameBranch" => match serde_json::from_value::<NameBranchParams>(params) {
+            Ok(p) if !p.cursor_id.is_empty() => {
+                handle_name_branch(app, p, id, &*transport).await;
+            }
+            _ => {
+                send(
+                    &*transport,
+                    &error_response(
+                        id,
+                        INVALID_PARAMS,
+                        "nameBranch requires a non-empty 'cursorId' param",
+                    ),
+                )
+                .await;
+            }
+        },
         "switchBranch" => match serde_json::from_value::<SwitchBranchParams>(params) {
             Ok(p) if !p.cursor_id.is_empty() => {
                 handle_switch_branch(app, p, id, &*transport).await;
@@ -961,6 +978,50 @@ async fn handle_list_branches(app: &App, id: &Value, transport: &dyn Transport) 
         &success_response(id, ListBranchesResult { branches }),
     )
     .await;
+}
+
+/// Label a branch so `listBranches` can show something meaningful.
+///
+/// An empty or whitespace-only `name` clears the label. The name is stored on
+/// the cursor's roster entry and persisted with it.
+async fn handle_name_branch(
+    app: &mut App,
+    params: NameBranchParams,
+    id: &Value,
+    transport: &dyn Transport,
+) {
+    match app
+        .agent
+        .session_mut()
+        .name_cursor(&params.cursor_id, &params.name)
+    {
+        Ok(()) => {
+            let name = params.name.trim();
+            let name = (!name.is_empty()).then(|| name.to_owned());
+            send(
+                transport,
+                &success_response(
+                    id,
+                    NameBranchResult {
+                        cursor_id: params.cursor_id.clone(),
+                        name,
+                    },
+                ),
+            )
+            .await;
+        }
+        Err(e) => {
+            send(
+                transport,
+                &error_response(
+                    id,
+                    INVALID_PARAMS,
+                    &format!("could not name cursor '{}': {e}", params.cursor_id),
+                ),
+            )
+            .await;
+        }
+    }
 }
 
 /// Make `cursorId` the active cursor. Subsequent prompts run on it.
@@ -3132,5 +3193,104 @@ mod tests {
             original_path, forked_path,
             "a fork must not open a second session file"
         );
+    }
+
+    // ── nameBranch ─────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn name_branch_sets_label_visible_in_list() {
+        let mut app = test_app(MockChatClient::new(vec![]), echo_registry());
+        let recorder = Arc::new(RecordingTransport::default());
+        let transport: Arc<dyn Transport> = recorder.clone();
+
+        let cursor_id = app.agent.session().cursor_id().to_string();
+
+        dispatch_request(
+            &mut app,
+            "nameBranch",
+            json!({ "cursorId": cursor_id, "name": "baseline" }),
+            &json!(1),
+            transport.clone(),
+        )
+        .await;
+        let named = recorder.take_response();
+        assert!(named.get("error").is_none(), "nameBranch failed: {named}");
+        assert_eq!(named["result"]["name"].as_str(), Some("baseline"));
+
+        dispatch_request(
+            &mut app,
+            "listBranches",
+            json!({}),
+            &json!(2),
+            transport.clone(),
+        )
+        .await;
+        let listed = recorder.take_response();
+        assert_eq!(
+            listed["result"]["branches"][0]["name"].as_str(),
+            Some("baseline"),
+            "the label must show in listBranches"
+        );
+    }
+
+    #[tokio::test]
+    async fn name_branch_empty_clears_label() {
+        let mut app = test_app(MockChatClient::new(vec![]), echo_registry());
+        let recorder = Arc::new(RecordingTransport::default());
+        let transport: Arc<dyn Transport> = recorder.clone();
+        let cursor_id = app.agent.session().cursor_id().to_string();
+
+        dispatch_request(
+            &mut app,
+            "nameBranch",
+            json!({ "cursorId": cursor_id, "name": "temp" }),
+            &json!(1),
+            transport.clone(),
+        )
+        .await;
+        let _ = recorder.take_response();
+
+        dispatch_request(
+            &mut app,
+            "nameBranch",
+            json!({ "cursorId": cursor_id, "name": "  " }),
+            &json!(2),
+            transport.clone(),
+        )
+        .await;
+        let cleared = recorder.take_response();
+        assert!(
+            cleared["result"]["name"].is_null(),
+            "a blank name must clear the label, got {cleared}"
+        );
+    }
+
+    #[tokio::test]
+    async fn name_branch_unknown_cursor_errors() {
+        let mut app = test_app(MockChatClient::new(vec![]), echo_registry());
+        let recorder = Arc::new(RecordingTransport::default());
+        let transport: Arc<dyn Transport> = recorder.clone();
+
+        dispatch_request(
+            &mut app,
+            "nameBranch",
+            json!({ "cursorId": "nope", "name": "x" }),
+            &json!(1),
+            transport,
+        )
+        .await;
+        let resp = recorder.take_response();
+        assert!(resp.get("error").is_some(), "expected an error: {resp}");
+    }
+
+    #[tokio::test]
+    async fn name_branch_missing_cursor_id_is_invalid_params() {
+        let events = rpc_run(
+            MockChatClient::new(vec![]),
+            echo_registry(),
+            &[r#"{"jsonrpc":"2.0","method":"nameBranch","params":{"name":"x"},"id":1}"#],
+        )
+        .await;
+        assert_eq!(responses(&events)[0]["error"]["code"], INVALID_PARAMS);
     }
 }

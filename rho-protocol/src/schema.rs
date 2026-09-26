@@ -311,6 +311,12 @@ pub fn methods() -> Vec<Value> {
             result: result_spec::<SwitchBranchResult>,
         },
         MethodSpec {
+            name: "nameBranch",
+            description: "Give a branch a human-readable label, shown by `listBranches`. An empty or whitespace-only `name` clears the label. Persisted with the cursor roster.",
+            params: Some(params_spec::<NameBranchParams>),
+            result: result_spec::<NameBranchResult>,
+        },
+        MethodSpec {
             name: "approvalResponse",
             description: "Respond to an `approval/request`. `approved: false` with a `message` is a redirect: the user's instructions are injected and the tool batch is abandoned.",
             params: Some(params_spec::<ApprovalResponseParams>),
@@ -458,6 +464,7 @@ pub fn method_names() -> Vec<&'static str> {
         "fork",
         "listBranches",
         "switchBranch",
+        "nameBranch",
         "approvalResponse",
     ]
 }

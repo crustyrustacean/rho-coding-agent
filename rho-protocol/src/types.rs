@@ -371,6 +371,29 @@ pub struct ListBranchesResult {
     pub branches: Vec<BranchEntry>,
 }
 
+/// Params for `nameBranch`. An empty/whitespace `name` clears the label.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+pub struct NameBranchParams {
+    /// The cursor to label.
+    pub cursor_id: String,
+    /// The human-readable label.
+    pub name: String,
+}
+
+/// Result for `nameBranch`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct NameBranchResult {
+    /// The cursor that was labelled.
+    pub cursor_id: String,
+    /// The label now on it (`None` when cleared).
+    pub name: Option<String>,
+}
+
 /// Result for `switchBranch`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(JsonSchema))]

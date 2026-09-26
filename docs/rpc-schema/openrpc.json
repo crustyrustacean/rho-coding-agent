@@ -1300,6 +1300,53 @@
       }
     },
     {
+      "description": "Give a branch a human-readable label, shown by `listBranches`. An empty or whitespace-only `name` clears the label. Persisted with the cursor roster.",
+      "name": "nameBranch",
+      "params": [
+        {
+          "description": "The cursor to label.",
+          "name": "cursorId",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "description": "The human-readable label.",
+          "name": "name",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "description": "Result for `nameBranch`.",
+        "name": "result",
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "cursorId": {
+              "description": "The cursor that was labelled.",
+              "type": "string"
+            },
+            "name": {
+              "description": "The label now on it (`None` when cleared).",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cursorId"
+          ],
+          "title": "NameBranchResult",
+          "type": "object"
+        }
+      }
+    },
+    {
       "description": "Respond to an `approval/request`. `approved: false` with a `message` is a redirect: the user's instructions are injected and the tool batch is abandoned.",
       "name": "approvalResponse",
       "params": [

@@ -198,6 +198,9 @@ impl Cursor {
     /// This does **not** write a `LeafMoved` entry; it is a pure cursor
     /// operation. Use [`branch_to`](Self::branch_to) to record an audited leaf
     /// move within one cursor.
+    ///
+    /// The new branch is unnamed; call [`name_cursor`](Self::name_cursor) to
+    /// give it a label.
     #[must_use]
     pub fn fork(&self) -> Self {
         let mut forked = self.clone();
@@ -223,6 +226,51 @@ impl Cursor {
         }
 
         forked
+    }
+
+    /// Give a cursor a human-readable label.
+    ///
+    /// The name is stored on the cursor's roster entry and persisted with it,
+    /// so it survives a reopen. `listBranches` surfaces it. An empty or
+    /// whitespace-only name clears the label (`None`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `cursor_id` is not a known cursor in this session.
+    pub fn name_cursor(&mut self, cursor_id: &str, name: &str) -> Result<()> {
+        let trimmed = name.trim();
+        let new_name = (!trimmed.is_empty()).then(|| trimmed.to_owned());
+        let leaf = self
+            .cursors()
+            .into_iter()
+            .find(|c| c.id == cursor_id)
+            .ok_or_else(|| {
+                crate::error::RhoError::Session(SessionError::Persistence(format!(
+                    "unknown cursor: {cursor_id}"
+                )))
+            })?
+            .leaf;
+
+        self.with_log_mut(|log| {
+            log.cursors_push(crate::session::persist::CursorState {
+                id: cursor_id.to_owned(),
+                leaf: leaf.clone(),
+                name: new_name.clone(),
+            });
+            // Re-queue with the name so the next flush writes it; the queued
+            // leaf must be preserved, so read the current one rather than
+            // re-deriving it.
+            let current_leaf = log
+                .cursors
+                .iter()
+                .find(|c| c.id == cursor_id)
+                .map(|c| c.leaf.clone())
+                .unwrap_or(leaf.clone());
+            log.persist
+                .pending_cursors
+                .push(cursor_id.to_owned(), current_leaf, new_name.clone());
+        });
+        Ok(())
     }
 
     /// Move the leaf pointer to an existing entry, recording a
@@ -716,5 +764,88 @@ mod tests {
             leaf_entry.entry.payload,
             EntryPayload::LeafMoved { .. }
         ));
+    }
+
+    // ── Cursor naming ───────────────────────────────────────────────────
+
+    fn name_of(session: &Cursor, id: &str) -> Option<String> {
+        session
+            .cursors()
+            .into_iter()
+            .find(|c| c.id == id)
+            .and_then(|c| c.name)
+    }
+
+    #[test]
+    fn name_cursor_sets_and_reads_back() {
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
+        let id = session.cursor_id().to_string();
+        session.name_cursor(&id, "baseline").unwrap();
+        assert_eq!(name_of(&session, &id).as_deref(), Some("baseline"));
+    }
+
+    #[test]
+    fn name_cursor_trims_whitespace() {
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
+        let id = session.cursor_id().to_string();
+        session.name_cursor(&id, "  spaced  ").unwrap();
+        assert_eq!(name_of(&session, &id).as_deref(), Some("spaced"));
+    }
+
+    #[test]
+    fn name_cursor_empty_clears_the_label() {
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
+        let id = session.cursor_id().to_string();
+        session.name_cursor(&id, "temp").unwrap();
+        session.name_cursor(&id, "   ").unwrap();
+        assert_eq!(name_of(&session, &id), None);
+    }
+
+    #[test]
+    fn name_cursor_rejects_unknown_id() {
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
+        assert!(session.name_cursor("nope", "x").is_err());
+    }
+
+    /// The load-bearing case: a position update must not erase a name.
+    ///
+    /// `queue_cursor_position` used to push `None` for the name on every
+    /// append/branch, which silently cleared a label the user had set.
+    #[test]
+    fn position_update_preserves_the_name() {
+        let mut session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
+        let id = session.cursor_id().to_string();
+        session.name_cursor(&id, "keep me").unwrap();
+
+        // An append re-queues this cursor's position.
+        session.append_user_message("hello");
+        assert_eq!(
+            name_of(&session, &id).as_deref(),
+            Some("keep me"),
+            "an append must not clear the cursor's name"
+        );
+
+        // So must a leaf move.
+        session.append_user_message("second");
+        assert_eq!(name_of(&session, &id).as_deref(), Some("keep me"));
+    }
+
+    #[test]
+    fn fork_is_unnamed_then_nameable() {
+        let session = Cursor::in_memory("m", Some("sys"), vec![], "/tmp");
+        let forked = session.fork();
+        let fork_id = forked.cursor_id().to_string();
+        assert_eq!(name_of(&session, &fork_id), None, "forks start unnamed");
+
+        // The roster is shared, so naming through the fork is visible to the
+        // original — they are two views of one log.
+        let mut forked = session.fork();
+        forked
+            .name_cursor(&fork_id, "alternative approach")
+            .unwrap();
+        assert_eq!(
+            name_of(&session, &fork_id).as_deref(),
+            Some("alternative approach")
+        );
     }
 }
