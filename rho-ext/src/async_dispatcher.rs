@@ -50,9 +50,23 @@ struct AsyncTask {
 /// lifetime (the background thread exits when the process does).
 pub struct AsyncDispatcher {
     /// Channel sender for dispatching tasks.
-    tx: mpsc::Sender<AsyncTask>,
-    /// Handle to the background thread (kept for correctness, not joined).
-    _thread: JoinHandle<()>,
+    ///
+    ///  so [] can close the channel and join the worker.
+    tx: Option<mpsc::Sender<AsyncTask>>,
+    /// Handle to the background thread.
+    ///
+    /// Retained so [`Drop`] can join it. Dropping it without joining detaches
+    /// the thread, which leaves a live tokio runtime running past process exit.
+    thread: Option<JoinHandle<()>>,
+}
+
+impl Drop for AsyncDispatcher {
+    fn drop(&mut self) {
+        // `global()` lives in a `OnceLock`, so this runs at process teardown
+        // rather than at a convenient point — which is exactly when a detached
+        // thread holding a tokio runtime is most likely to trip over the exit.
+        crate::runtime::detach_or_join(&mut self.tx, &mut self.thread);
+    }
 }
 
 impl AsyncDispatcher {
@@ -82,8 +96,8 @@ impl AsyncDispatcher {
         });
 
         Self {
-            tx,
-            _thread: thread,
+            tx: Some(tx),
+            thread: Some(thread),
         }
     }
 
@@ -106,6 +120,8 @@ impl AsyncDispatcher {
         let (reply_tx, reply_rx) = mpsc::channel();
 
         self.tx
+            .as_ref()
+            .expect("dispatcher sender present")
             .send(AsyncTask {
                 future: Box::pin(future),
                 reply: reply_tx,
@@ -146,8 +162,8 @@ mod tests {
         });
 
         AsyncDispatcher {
-            tx,
-            _thread: thread,
+            tx: Some(tx),
+            thread: Some(thread),
         }
     }
 

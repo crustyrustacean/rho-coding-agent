@@ -559,13 +559,30 @@ impl ExtensionRuntime {
 
 impl Drop for ExtensionRuntime {
     fn drop(&mut self) {
-        // Close the channel and detach the thread.
-        // We can't block in Drop (it's sync, and the caller may be in an async context),
-        // so we don't join — just let the thread exit naturally.
-        self.tx.take();
-        // JoinHandle drops without joining — the thread is detached and will exit
-        // because the channel is closed.
-        self.handle.take();
+        detach_or_join(&mut self.tx, &mut self.handle);
+    }
+}
+
+/// Close a worker's channel and **wait** for its thread to exit.
+///
+/// Blocking on [`thread::JoinHandle::join`] inside `Drop` is safe even when the
+/// caller is in an async context: it parks the calling thread rather than
+/// blocking an executor worker, and a detached thread holding a live V8 isolate
+/// can outlive the process and abort it.
+///
+/// Shared by [`ExtensionRuntime`] and [`crate::async_dispatcher::AsyncDispatcher`];
+/// the same reasoning applies to both.
+pub(crate) fn detach_or_join<T: Send + 'static>(
+    tx: &mut Option<mpsc::Sender<T>>,
+    handle: &mut Option<thread::JoinHandle<()>>,
+) {
+    // Close the channel so the worker's `recv()` loop returns and it can exit.
+    tx.take();
+    // Wait for it. A panic in the worker is reported by the existing explicit
+    // shutdown paths; here the runtime is already going away, so the result is
+    // deliberately ignored.
+    if let Some(handle) = handle.take() {
+        let _ = handle.join();
     }
 }
 
@@ -1236,6 +1253,38 @@ mod tests {
         // After shutdown, call should fail
         let err = rt.call_tool("noop", "").await.unwrap_err();
         assert!(matches!(err, ExtensionError::RuntimeShutdown));
+    }
+
+    /// `detach_or_join` must block until the worker thread has actually
+    /// returned, not just signal it to stop. A detached thread still holding a
+    /// V8 isolate can outlive the process and abort it (SIGABRT) — which is what
+    /// CI saw *after every test had already passed*.
+    #[test]
+    fn detach_or_join_waits_for_the_worker() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let exited = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&exited);
+        let (tx, rx) = mpsc::channel::<()>();
+        let handle = thread::spawn(move || {
+            // Exit only once the channel closes, then linger long enough that a
+            // non-joining implementation would still be running when we assert.
+            let _ = rx.recv();
+            thread::sleep(std::time::Duration::from_millis(150));
+            flag.store(true, Ordering::SeqCst);
+        });
+
+        let mut tx_opt = Some(tx);
+        let mut handle_opt = Some(handle);
+        detach_or_join(&mut tx_opt, &mut handle_opt);
+
+        assert!(
+            exited.load(Ordering::SeqCst),
+            "detach_or_join returned before the worker finished; it detached              instead of joining"
+        );
+        assert!(tx_opt.is_none(), "sender must be dropped");
+        assert!(handle_opt.is_none(), "handle must be taken");
     }
 
     #[tokio::test]
