@@ -2245,4 +2245,59 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].id, "eee55555");
     }
+
+    /// A cursor's name must survive a reopen — it is part of the roster, and
+    /// the roster is what `listBranches` reads after a restart.
+    #[test]
+    fn cursor_name_survives_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("named.jsonl");
+        let mut primary = file_backed_session(path.clone());
+        primary.append_user_message("hello");
+        let id = primary.cursor_id().to_string();
+        primary.name_cursor(&id, "baseline").unwrap();
+        primary.flush().unwrap();
+
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            contents.contains("baseline"),
+            "the Cursor line must carry the name; file was:
+{contents}"
+        );
+
+        let reopened = Cursor::open(&path).unwrap();
+        let name = reopened
+            .cursors()
+            .into_iter()
+            .find(|c| c.id == id)
+            .and_then(|c| c.name);
+        assert_eq!(
+            name.as_deref(),
+            Some("baseline"),
+            "a reopened session must restore the cursor's name"
+        );
+    }
+
+    /// Renaming after a position update still persists: the name is carried on
+    /// the queued Cursor line, not only in the in-memory roster.
+    #[test]
+    fn cursor_rename_persists_despite_later_appends() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rename.jsonl");
+        let mut session = file_backed_session(path.clone());
+        let id = session.cursor_id().to_string();
+        session.append_user_message("first");
+        session.name_cursor(&id, "renamed").unwrap();
+        // An append re-queues the position; the name must survive it.
+        session.append_user_message("second");
+        session.flush().unwrap();
+
+        let reopened = Cursor::open(&path).unwrap();
+        let name = reopened
+            .cursors()
+            .into_iter()
+            .find(|c| c.id == id)
+            .and_then(|c| c.name);
+        assert_eq!(name.as_deref(), Some("renamed"));
+    }
 }

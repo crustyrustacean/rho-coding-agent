@@ -239,7 +239,14 @@ impl Cursor {
         };
         let id = self.cursor_id.to_string();
         self.with_log_mut(|log| {
-            log.persist.pending_cursors.push(id, leaf, None);
+            // Preserve the roster's current name: a position update must not
+            // clear a label the user set via name_cursor.
+            let name = log
+                .cursors
+                .iter()
+                .find(|c| c.id == id)
+                .and_then(|c| c.name.clone());
+            log.persist.pending_cursors.push(id, leaf, name);
         });
     }
 

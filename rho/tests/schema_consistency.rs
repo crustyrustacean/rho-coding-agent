@@ -43,6 +43,7 @@ const DISPATCHED_METHODS: &[&str] = &[
     "fork",
     "listBranches",
     "switchBranch",
+    "nameBranch",
 ];
 
 /// The notifications the RPC observer actually emits (see `rpc.rs` and the
