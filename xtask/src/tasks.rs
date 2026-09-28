@@ -231,7 +231,20 @@ pub fn test(release: bool, extra_args: &[String]) -> Result<()> {
         spawn("test", "cargo", &args)
     } else {
         eprintln!("note: cargo-nextest not found, falling back to cargo test");
-        let mut args: Vec<&str> = vec!["test", "--workspace", "--exclude", "xtask"];
+        // `rho-ext` is excluded from the workspace run and tested separately,
+        // single-threaded: it embeds V8 and its tests create one isolate per
+        // test, so running them concurrently in a single process aborts the
+        // binary under load. `nextest` (above) gives this for free via
+        // process-per-test; the plain-`cargo test` path has to ask for it.
+        // See issue #83.
+        let mut args: Vec<&str> = vec![
+            "test",
+            "--workspace",
+            "--exclude",
+            "xtask",
+            "--exclude",
+            "rho-ext",
+        ];
         if release {
             args.push("--release");
         }
