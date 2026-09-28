@@ -1128,6 +1128,279 @@ async fn tool_execution_error_still_appends_tool_result() {
     );
 }
 
+/// Records every `on_tool_result` notification the loop emits.
+#[derive(Default)]
+struct ToolResultObserver {
+    results: std::sync::Arc<std::sync::Mutex<Vec<(String, bool, String)>>>,
+}
+
+#[async_trait::async_trait]
+impl rho_core::AgentObserver for ToolResultObserver {
+    async fn on_tool_result(&self, name: &str, result: &ToolResult) {
+        self.results.lock().unwrap().push((
+            name.to_string(),
+            result.is_error,
+            result.output.clone(),
+        ));
+    }
+}
+
+#[tokio::test]
+async fn tool_execution_error_notifies_observer_with_is_error() {
+    // Regression: the execution-`Err` arm used to `return` before calling
+    // `on_tool_result`, so a failing tool produced NO notification at all.
+    // Live UIs (rho-ui, rho-egui) render a tool call as "running" until a
+    // result arrives, so failures looked permanently stuck, and the `is_error`
+    // field on the wire was never set to true.
+    //
+    // This pins the observer half of the contract. The session-append half is
+    // covered by `tool_execution_error_still_appends_tool_result` above.
+    let client = MockChatClient::new(vec![
+        tool_call_events("call_1", "fail_tool", r#"{"path":"test"}"#),
+        text_events("recovered"),
+    ]);
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Box::new(FailingTool {
+        name: "fail_tool",
+        error_message: "something went wrong".into(),
+    }));
+
+    let config = AgentConfig::default();
+    let mut session = Session::in_memory("mock", None, registry.tool_definitions(), "/tmp");
+
+    let observer = ToolResultObserver::default();
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
+        cancel: CancellationToken::new(),
+        gate: &AutoApproveGate,
+        observer: &observer,
+        compaction_client: None,
+        steering: None,
+    };
+    let result = run_loop(&mut session, "trigger the failing tool", &params).await;
+    assert!(result.is_ok(), "expected ok, got: {result:?}");
+
+    let results = observer.results.lock().unwrap().clone();
+    assert_eq!(
+        results.len(),
+        1,
+        "expected exactly one tool-result notification, got {results:?}"
+    );
+    let (name, is_error, output) = &results[0];
+    assert_eq!(
+        name, "fail_tool",
+        "notification should name the failing tool"
+    );
+    assert!(
+        *is_error,
+        "failing tool must report is_error=true so UIs render a failure, not a success"
+    );
+    assert!(
+        output.contains("something went wrong"),
+        "notification should carry the error text, got: {output:?}"
+    );
+}
+
+#[tokio::test]
+async fn successful_tool_result_notifies_observer_without_is_error() {
+    // The mirror of the test above: make sure the fix didn't invert the flag.
+    let client = MockChatClient::new(vec![
+        tool_call_events("call_1", "echo_tool", "{}"),
+        text_events("done"),
+    ]);
+
+    let registry = fixed_registry("echo_tool", "echo output".into(), ToolRisk::Read);
+    let config = AgentConfig::default();
+    let mut session = Session::in_memory("mock", None, registry.tool_definitions(), "/tmp");
+
+    let observer = ToolResultObserver::default();
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
+        cancel: CancellationToken::new(),
+        gate: &AutoApproveGate,
+        observer: &observer,
+        compaction_client: None,
+        steering: None,
+    };
+    let result = run_loop(&mut session, "trigger the tool", &params).await;
+    assert!(result.is_ok(), "expected ok, got: {result:?}");
+
+    let results = observer.results.lock().unwrap().clone();
+    assert_eq!(
+        results.len(),
+        1,
+        "expected one notification, got {results:?}"
+    );
+    let (name, is_error, _) = &results[0];
+    assert_eq!(name, "echo_tool");
+    assert!(!*is_error, "successful tool must report is_error=false");
+}
+
+/// A stuck-loop nudge replaces a tool result that already produced output.
+///
+/// `check_stuck_loop` returns `Some(ToolResult::error(nudge))`, so observers
+/// receive an *error* result even though the tool itself succeeded.
+#[tokio::test]
+async fn stuck_loop_nudge_notifies_observer_with_is_error() {
+    // Regression: the stuck-loop arm returned without calling
+    // `on_tool_result`, the same bug as the execution-`Err` arm. A stuck loop
+    // is exactly the case where a user most needs to see the UI stop spinning:
+    // without the notification, the call stays "running" while the agent has
+    // already given up on it.
+    //
+    // This complements `stuck_loop_injects_nudge_after_threshold` above, which
+    // asserts the nudge reaches the *session*. That test uses a `NopObserver`,
+    // so the observer half of the same event was never checked — which is how
+    // the missing notification survived.
+    //
+    // `FixedResponseTool` returns the same string every call, so N identical
+    // calls trip the detector on the Nth (`entry.1` is pre-incremented against
+    // the threshold, then reset to 0 after firing).
+    let client = MockChatClient::new(vec![
+        tool_call_events("call_1", "echo_tool", "{}"),
+        tool_call_events("call_2", "echo_tool", "{}"),
+        tool_call_events("call_3", "echo_tool", "{}"),
+        text_events("recovered from the nudge"),
+    ]);
+
+    let registry = fixed_registry("echo_tool", "same result".into(), ToolRisk::Read);
+    let config = AgentConfig {
+        stuck_loop_threshold: 3,
+        max_iterations: 10,
+        ..AgentConfig::default()
+    };
+    let mut session = Session::in_memory("mock", None, registry.tool_definitions(), "/tmp");
+
+    let observer = ToolResultObserver::default();
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
+        cancel: CancellationToken::new(),
+        gate: &AutoApproveGate,
+        observer: &observer,
+        compaction_client: None,
+        steering: None,
+    };
+    let result = run_loop(&mut session, "do something", &params).await;
+    assert!(result.is_ok(), "expected ok, got: {result:?}");
+
+    let results = observer.results.lock().unwrap().clone();
+    assert_eq!(
+        results.len(),
+        3,
+        "every tool call must be finalized, including the stuck-loop one; got {results:?}"
+    );
+
+    // The first two calls succeed normally.
+    for (i, (name, is_error, _)) in results.iter().take(2).enumerate() {
+        assert_eq!(name, "echo_tool", "call {} named wrong", i + 1);
+        assert!(!*is_error, "call {} should be a success", i + 1);
+    }
+
+    // The third trips the detector and receives the nudge.
+    let (name, is_error, output) = &results[2];
+    assert_eq!(name, "echo_tool");
+    assert!(
+        *is_error,
+        "the stuck-loop nudge is a ToolResult::error, so is_error must be true"
+    );
+    assert!(
+        output.contains("STUCK LOOP"),
+        "expected the stuck-loop nudge text, got: {output:?}"
+    );
+}
+
+#[tokio::test]
+async fn stuck_loop_threshold_zero_notifies_plain_successes() {
+    // With detection disabled, repeated identical calls stay plain successes
+    // and must not be turned into error results. Pins that the fix doesn't
+    // fire the nudge when the detector is off.
+    let client = MockChatClient::new(vec![
+        tool_call_events("call_1", "echo_tool", "{}"),
+        tool_call_events("call_2", "echo_tool", "{}"),
+        text_events("done"),
+    ]);
+
+    let registry = fixed_registry("echo_tool", "same result".into(), ToolRisk::Read);
+    let config = AgentConfig {
+        stuck_loop_threshold: 0, // disabled
+        max_iterations: 10,
+        ..AgentConfig::default()
+    };
+    let mut session = Session::in_memory("mock", None, registry.tool_definitions(), "/tmp");
+
+    let observer = ToolResultObserver::default();
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
+        cancel: CancellationToken::new(),
+        gate: &AutoApproveGate,
+        observer: &observer,
+        compaction_client: None,
+        steering: None,
+    };
+    let result = run_loop(&mut session, "loop", &params).await;
+    assert!(result.is_ok(), "expected ok, got: {result:?}");
+
+    let results = observer.results.lock().unwrap().clone();
+    assert_eq!(results.len(), 2, "got {results:?}");
+    assert!(
+        results.iter().all(|(_, is_error, _)| !*is_error),
+        "detection disabled: no call should be reported as an error; got {results:?}"
+    );
+}
+
+#[tokio::test]
+async fn calls_below_stuck_threshold_notify_plain_successes() {
+    // Repeats under the threshold are normal progress and must keep the real
+    // result, not a nudge.
+    let client = MockChatClient::new(vec![
+        tool_call_events("call_1", "echo_tool", "{}"),
+        tool_call_events("call_2", "echo_tool", "{}"),
+        text_events("done"),
+    ]);
+
+    let registry = fixed_registry("echo_tool", "same result".into(), ToolRisk::Read);
+    let config = AgentConfig {
+        stuck_loop_threshold: 5,
+        max_iterations: 10,
+        ..AgentConfig::default()
+    };
+    let mut session = Session::in_memory("mock", None, registry.tool_definitions(), "/tmp");
+
+    let observer = ToolResultObserver::default();
+    let params = LoopParams {
+        client: &client,
+        registry: &registry,
+        config: &config,
+        cancel: CancellationToken::new(),
+        gate: &AutoApproveGate,
+        observer: &observer,
+        compaction_client: None,
+        steering: None,
+    };
+    let result = run_loop(&mut session, "call twice", &params).await;
+    assert!(result.is_ok(), "expected ok, got: {result:?}");
+
+    let results = observer.results.lock().unwrap().clone();
+    assert_eq!(results.len(), 2, "got {results:?}");
+    assert!(
+        results.iter().all(|(_, is_error, _)| !*is_error),
+        "below the threshold every call is a plain success; got {results:?}"
+    );
+    assert!(
+        results.iter().all(|(_, _, out)| out == "same result"),
+        "the real tool output must be preserved; got {results:?}"
+    );
+}
+
 // ── Length truncation recovery ────────────────────────────────────────────────
 
 /// When the model returns `finish_reason=length` with empty content and
