@@ -35,6 +35,7 @@ pub mod rust;
 pub mod search;
 pub mod session_summary;
 pub mod shell;
+pub mod wait_for;
 
 pub use session_summary::SessionSummary;
 
@@ -53,6 +54,7 @@ pub use memory::MemoryTool;
 pub use rust::{CargoCheck, CargoClippy, CargoFix, CargoTest, RustcExplain, RustdocTool};
 pub use search::{FindFiles, SearchFiles};
 pub use shell::{CommandDenylist, PowerShellExecutor, RunCommand};
+pub use wait_for::WaitFor;
 
 use rho_core::{SandboxRoot, ToolRegistry};
 
@@ -123,8 +125,13 @@ pub fn register_all(
     let executor = make_executor()?;
     let denylist = CommandDenylist::from_config(config);
     registry.register(Box::new(RunCommand {
-        root,
+        root: root.clone(),
         executor,
+        denylist: denylist.clone(),
+    }));
+    registry.register(Box::new(WaitFor {
+        root,
+        executor: make_executor()?,
         denylist,
     }));
 
