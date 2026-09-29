@@ -3,7 +3,7 @@
 //! Builds a [`rho_core::Agent`] entirely from code — no CLI, no config file,
 //! no tracing subscriber, no extensions — and runs one prompt against a mock
 //! provider. This is the acceptance proof that the kernel is embeddable: every
-//! consumer (the `rho` binary, a Makepad or web frontend, headless scripts,
+//! consumer (the `rho` binary, the `rho-egui` desktop UI, headless scripts,
 //! benches) is a thin wrapper around this same API.
 //!
 //! Run with: `cargo run -p rho-core --example agent_hello`
