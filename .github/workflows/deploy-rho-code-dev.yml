@@ -40,7 +40,12 @@ jobs:
 
       - name: Deploy to Cloudflare Pages
         working-directory: rho-code-dev
-        run: wrangler pages deploy dist/ --project-name=rho-code-dev --branch=main
+        # `--branch=trunk` must match the Pages project's *production branch*,
+        # which is set in the Cloudflare dashboard (Pages project → Settings →
+        # Builds & deployments) and is NOT derived from this repo. It is `trunk`
+        # here, matching the old rho-code-dev workflow, so a wrong value would
+        # silently publish to a preview URL instead of rho-code.dev.
+        run: wrangler pages deploy dist/ --project-name=rho-code-dev --branch=trunk
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

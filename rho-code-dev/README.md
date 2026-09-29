@@ -47,8 +47,12 @@ Needs `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, or an authenticated
 
 ## Notes
 
-- The Cloudflare Pages project is `rho-code-dev`; the project already exists, so
-  the workflow only deploys to it. Create it first if it ever needs recreating:
-  `npx wrangler pages project create rho-code-dev --production-branch trunk`.
+- The Cloudflare Pages project is `rho-code-dev`. It already exists, so the
+  workflow only deploys to it and never creates one.
+- The deploy pins `--branch=trunk` deliberately. The Pages **production branch is
+  set in the Cloudflare dashboard**, not in this repo. It is `trunk` here,
+  matching the workflow that has always deployed this site. A wrong value
+  publishes to a *preview* URL, which looks like a successful deploy and isn't
+  one — check the dashboard if the site 404s after a deploy.
 - Taxus is built from `trunk` rather than installed, so the site build is
   cached and reproducible.

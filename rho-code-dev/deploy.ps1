@@ -27,8 +27,10 @@ try {
     }
 
     # ── Deploy ─────────────────────────────────────────────────────────────
+    # --branch must match the Pages project's production branch, set in the
+    # Cloudflare dashboard (not this repo). It is `trunk`.
     Write-Host "==> Deploying to Cloudflare Pages..." -ForegroundColor Cyan
-    npx wrangler pages deploy dist/ --project-name=rho-code-dev
+    npx wrangler pages deploy dist/ --project-name=rho-code-dev --branch=trunk
     if ($LASTEXITCODE -ne 0) {
         Write-Error "Deploy failed."
         exit 1
