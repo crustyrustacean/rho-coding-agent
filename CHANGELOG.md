@@ -1,3 +1,36 @@
+## [0.93.0] - 2026-09-29
+
+### 🚀 Features
+
+- *(session)* Persist the cursor roster so branches survive reopen
+- *(rpc)* Expose fork / listBranches / switchBranch for branch management
+- *(session)* Name branches so listBranches is readable
+- *(tools)* Add wait_for so waiting on external state costs one iteration
+
+### 🐛 Bug Fixes
+
+- *(agent)* Re-snapshot context stats after auto-compaction
+- *(session)* Use JSONL file order as the append order on reload
+- *(ext)* Join worker threads on drop instead of detaching them
+- *(ext)* Serialise rho-ext tests in CI; document the V8 concurrency model
+- *(agent)* Notify observers on the tool-error and stuck-loop paths
+- *(shell)* Bound run_command with a timeout and kill the process tree
+- *(site)* Pin the deploy to --branch=trunk, matching the production branch
+
+### 🚜 Refactor
+
+- *(session)* Extract SessionLog and make Session Sync
+- *(session)* Share the log behind Arc<Mutex>, make Session Clone
+- *(session)* Give cursors identity and cursor-stamped resolutions
+- *(core)* Rename Session to Cursor, keep Session as an alias
+
+### 📚 Documentation
+
+- Make rho-egui the official UI; retire rho-ui and rho-code
+
+### ⚙️ Miscellaneous Tasks
+
+- *(site)* Move the rho-code.dev landing page into this repo
 ## [0.92.2] - 2026-09-24
 
 ### 🐛 Bug Fixes
