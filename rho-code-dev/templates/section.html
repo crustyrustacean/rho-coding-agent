@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+
+{% block title %}{{ section.title }} - {{ site.name }}{% endblock %}
+{% block description %}{{ section.description }}{% endblock %}
+{% block og_title %}{{ section.title }} - {{ site.name }}{% endblock %}
+{% block og_description %}{{ section.description }}{% endblock %}
+{% block twitter_title %}{{ section.title }} - {{ site.name }}{% endblock %}
+{% block twitter_description %}{{ section.description }}{% endblock %}
+
+{% block content %}
+<article class="landing-page">
+    <section class="hero-section">
+        <h1>{{ section.title }}</h1>
+        {% if section.description %}
+        <p class="hero-description">{{ section.description }}</p>
+        {% endif %}
+    </section>
+    
+    <div class="content">
+        {{ section.content | safe }}
+    </div>
+    
+    {% if section.pages %}
+    <section class="pages-section">
+        <h2>Pages</h2>
+        <div class="page-grid">
+            {% for page in section.pages %}
+            <article class="page-card">
+                <h3><a href="{{ page.path }}">{{ page.title }}</a></h3>
+                {% if page.description %}
+                <p>{{ page.description }}</p>
+                {% endif %}
+            </article>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+</article>
+{% endblock %}

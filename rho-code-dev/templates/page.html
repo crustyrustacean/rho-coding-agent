@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page.title }} - {{ site.name }}{% endblock %}
+{% block description %}{{ page.description }}{% endblock %}
+{% block og_title %}{{ page.title }} - {{ site.name }}{% endblock %}
+{% block og_description %}{{ page.description }}{% endblock %}
+{% block twitter_title %}{{ page.title }} - {{ site.name }}{% endblock %}
+{% block twitter_description %}{{ page.description }}{% endblock %}
+
+{% block content %}
+<article>
+    {% if page.hero %}
+    <picture>
+      <source srcset="{{ page.hero.srcset | safe }}" type="{{ page.hero.mime_type | safe }}">
+      <img src="{{ page.hero.src | safe }}" alt="{{ page.hero.alt }}"
+           width="{{ page.hero.width }}" height="{{ page.hero.height }}"
+           loading="eager" decoding="async">
+    </picture>
+    {% endif %}
+    <h1>{{ page.title }}</h1>
+    {% if page.description %}
+    <p class="description">{{ page.description }}</p>
+    {% endif %}
+    {{ page.content | safe }}
+</article>
+{% endblock %}

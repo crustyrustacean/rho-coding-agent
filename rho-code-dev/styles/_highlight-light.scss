@@ -1,0 +1,80 @@
+pre.highlight {
+  background-color: #f6f8fa;
+  border: 1px solid #e1e4e8;
+  border-radius: 6px;
+  padding: 16px;
+  overflow-x: auto;
+  font-size: 0.875rem;
+  line-height: 1.45;
+
+  code {
+    background: none;
+    border: none;
+    padding: 0;
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  }
+}
+
+// Keywords: let, fn, struct, enum, impl, pub, use, mod, etc.
+.hl-keyword        { color: #d73a49; }
+
+// Strings and string-like literals
+.hl-string         { color: #032f62; }
+.hl-string-special { color: #032f62; font-style: italic; }
+
+// Comments
+.hl-comment        { color: #6a737d; font-style: italic; }
+
+// Functions and macros
+.hl-function       { color: #6f42c1; }
+.hl-function-builtin { color: #6f42c1; }
+.hl-function-macro { color: #6f42c1; font-weight: 600; }
+
+// Types
+.hl-type           { color: #005cc5; }
+.hl-type-builtin   { color: #005cc5; }
+
+// Constants and numbers
+.hl-constant       { color: #005cc5; }
+.hl-constant-builtin { color: #005cc5; }
+.hl-number         { color: #005cc5; }
+
+// Constructors (Some, Ok, Err, etc.)
+.hl-constructor    { color: #e36209; }
+
+// Variables
+.hl-variable           { color: #24292e; }
+.hl-variable-builtin   { color: #e36209; }
+.hl-variable-parameter { color: #e36209; }
+
+// Properties and labels
+.hl-property       { color: #005cc5; }
+.hl-label          { color: #e36209; }
+
+// Attributes (#[derive], #[cfg], etc.)
+.hl-attribute      { color: #6a737d; }
+
+// Operators (=, +, -, etc.)
+.hl-operator       { color: #d73a49; }
+
+// Punctuation
+.hl-punctuation           { color: #24292e; }
+.hl-punctuation-bracket   { color: #24292e; }
+.hl-punctuation-delimiter { color: #24292e; }
+
+// Tags (for HTML/XML if added later)
+.hl-tag            { color: #22863a; }
+
+pre:not(.highlight) {
+  background-color: #f6f8fa;
+  border: 1px solid #e1e4e8;
+  border-radius: 6px;
+  padding: 16px;
+  overflow-x: auto;
+
+  code {
+    background: none;
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-size: 0.875rem;
+  }
+}

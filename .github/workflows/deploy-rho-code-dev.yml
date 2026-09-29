@@ -1,0 +1,46 @@
+name: Deploy rho-code.dev to Cloudflare Pages
+
+on:
+  push:
+    branches: [trunk]
+    paths:
+      - 'rho-code-dev/**'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: cloudflare-pages-deploy
+      cancel-in-progress: true
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Built from source rather than `cargo install --git` so the site always
+      # builds against the same revision of taxus that the rest of the
+      # workspace pins, and so the build is cached.
+      - name: Build taxus binary
+        run: git clone --depth 1 --branch trunk https://github.com/crustyrustacean/taxus.git /tmp/taxus && cargo build --release --manifest-path /tmp/taxus/Cargo.toml -p taxus
+
+      - name: Build the site
+        working-directory: rho-code-dev
+        run: /tmp/taxus/target/release/taxus build --dir .
+
+      - name: Install wrangler
+        run: npm install -g wrangler
+
+      - name: Deploy to Cloudflare Pages
+        working-directory: rho-code-dev
+        run: wrangler pages deploy dist/ --project-name=rho-code-dev --branch=main
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

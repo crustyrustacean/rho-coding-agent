@@ -1,0 +1,10 @@
+[site]
+name = "rho"
+base_url = "https://rho-code.dev"
+
+[build]
+content_dir = "content"
+output_dir = "dist"
+static_dir = "static"
+styles_dir = "styles"
+templates_dir = "templates"
