@@ -557,7 +557,7 @@ xtask ────────────────────────�
 <blockquote>
 <p>A runnable version of the example below lives at <code>rho-core/examples/agent_hello.rs</code> (<code>cargo run -p rho-core --example agent_hello</code>).</p>
 </blockquote>
-<p><code>rho-core</code> is an embeddable library: <code>Agent</code> (built via <code>AgentBuilder</code>) owns the long-lived agent state and exposes a programmatic API, so every consumer — the <code>rho</code> binary's RPC loop, a Makepad or web frontend, headless scripts, benches — is a thin wrapper. Construction is decoupled from CLI flags, config files, and stdio.</p>
+<p><code>rho-core</code> is an embeddable library: <code>Agent</code> (built via <code>AgentBuilder</code>) owns the long-lived agent state and exposes a programmatic API, so every consumer — the <code>rho</code> binary's RPC loop, the <a href="https://github.com/crustyrustacean/rho-egui">rho-egui</a> desktop UI, headless scripts, benches — is a thin wrapper. Construction is decoupled from CLI flags, config files, and stdio.</p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>use rho_core::{Agent, AgentBuilder, TurnInputs};
