@@ -18,6 +18,11 @@
     </picture>
     {% endif %}
     <h1>{{ page.title }}</h1>
+    {% if page.path is starting_with(pat="/features/") %}
+    <nav class="back-nav">
+        <a href="/features/">&larr; Back to Features</a>
+    </nav>
+    {% endif %}
     {% if page.description %}
     <p class="description">{{ page.description }}</p>
     {% endif %}
