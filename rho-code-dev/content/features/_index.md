@@ -1,13 +1,13 @@
 +++
 title = "Features"
-description = "The four pillars in detail - privacy, stability, frontends, and extensions."
+description = "The four pillars - private by default, forged in Rust, frontend-agnostic, and extendible in TypeScript."
 +++
 
 <div class="pillar-grid">
 
 <div class="pillar-card">
 
-### [Private](/features/privacy/)
+<h3><a href="/features/privacy/">Private</a></h3>
 
 **It asks before it does.**
 
@@ -19,7 +19,7 @@ leaves your machine.
 
 <div class="pillar-card">
 
-### [Stable](/features/stability/)
+<h3><a href="/features/stability/">Stable</a></h3>
 
 **Forged in Rust.**
 
@@ -30,7 +30,7 @@ compiler diagnostics and 1600+ tests gating every commit.
 
 <div class="pillar-card">
 
-### [Flexible](/features/frontends/)
+<h3><a href="/features/frontends/">Flexible</a></h3>
 
 **The frontend is yours.**
 
@@ -42,7 +42,7 @@ commitment.
 
 <div class="pillar-card">
 
-### [Extendible](/features/extensions/)
+<h3><a href="/features/extensions/">Extendible</a></h3>
 
 **Write tools in TypeScript.**
 
