@@ -19,21 +19,5 @@
     <div class="content">
         {{ section.content | safe }}
     </div>
-    
-    {% if section.pages %}
-    <section class="pages-section">
-        <h2>Pages</h2>
-        <div class="page-grid">
-            {% for page in section.pages %}
-            <article class="page-card">
-                <h3><a href="{{ page.path }}">{{ page.title }}</a></h3>
-                {% if page.description %}
-                <p>{{ page.description }}</p>
-                {% endif %}
-            </article>
-            {% endfor %}
-        </div>
-    </section>
-    {% endif %}
 </article>
 {% endblock %}
