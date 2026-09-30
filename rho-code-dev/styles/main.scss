@@ -1,355 +1,689 @@
-// Color palette - Modern developer theme
+/* taxus — gettaxus.org styles */
+
+/* ── Variables ── */
 :root {
-  --color-bg: #0d1117;           // Deep dark background
-  --color-bg-secondary: #161b22;  // Slightly lighter panels
-  --color-text: #f0f6fc;         // High contrast white text
-  --color-text-secondary: #8b949e; // Muted gray text
-  --color-accent: #58a6ff;       // GitHub blue
-  --color-accent-hover: #79c0ff; // Lighter blue for hover
-  --color-success: #3fb950;      // Green for success states
-  --color-border: #30363d;       // Subtle borders
-  --color-code-bg: #161b22;      // Code block background
-  
-  --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
-  --font-family-mono: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
-  
-  --container-width: 1200px;
-  --border-radius: 8px;
-  --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+  --bg: #0e1117;
+  --bg-surface: #161b22;
+  --text: #c9d1d9;
+  --text-muted: #8b949e;
+
+  /* yew foliage greens */
+  --accent: #7c8cf8;
+  --accent-hover: #93a0fa;
+  --accent-soft: rgba(124, 140, 248, 0.12);
+
+  /* yew berry red */
+  --berry: #e05c5c;
+  --berry-hover: #f07070;
+  --berry-soft: rgba(224, 92, 92, 0.12);
+
+  --border: #30363d;
+
+  --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+  --font-body: system-ui, sans-serif;
 }
 
-// Reset and base styles
-* {
-  margin: 0;
-  padding: 0;
+/* ── CSS Reset ── */
+*, *::before, *::after {
   box-sizing: border-box;
 }
 
-html {
-  scroll-behavior: smooth;
+*:not(dialog) {
+  margin: 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    interpolate-size: allow-keywords;
+  }
 }
 
 body {
-  font-family: var(--font-family);
-  line-height: 1.7;
-  color: var(--color-text);
-  background: var(--color-bg);
-  font-size: 16px;
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
 }
 
-.container {
-  max-width: var(--container-width);
-  margin: 0 auto;
-  padding: 0 2rem;
-  
-  @media (max-width: 768px) {
-    padding: 0 1rem;
-  }
+img, picture, video, canvas, svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
 }
 
-// Typography
-h1, h2, h3, h4, h5, h6 {
-  line-height: 1.3;
-  margin-bottom: 1rem;
-  font-weight: 700;
+input, button, textarea, select {
+  font: inherit;
 }
 
-h1 {
-  font-size: 2.5rem;
-  
-  @media (max-width: 768px) {
-    font-size: 2rem;
-  }
+p, h1, h2, h3, h4, h5, h6 {
+  overflow-wrap: break-word;
 }
 
-h2 {
-  font-size: 1.875rem;
-  color: var(--color-accent);
-  
-  @media (max-width: 768px) {
-    font-size: 1.5rem;
-  }
+p { text-wrap: pretty; }
+h1, h2, h3, h4, h5, h6 { text-wrap: balance; }
+
+#root, #__next {
+  isolation: isolate;
 }
 
-h3 {
-  font-size: 1.5rem;
+/* ── Base ── */
+body {
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: clamp(1rem, 1.5vw, 1.125rem);
+  line-height: 1.6;
 }
 
-p {
-  margin-bottom: 1.5rem;
-  color: var(--color-text-secondary);
-  
-  &:last-child {
-    margin-bottom: 0;
-  }
+.page {
+  min-height: 100vh;
+  display: grid;
+  /* Explicit minmax(0, 1fr) column: the implicit `auto` track sizes to
+     the widest item min-content, so a single wide <pre> line silently
+     laid the whole page out wider than the viewport (540px on phones),
+     pushing the header nav and every paragraph off-screen. minmax(0, ..)
+     pins the track to the viewport and lets `pre` scroll internally. */
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto 1fr auto;
 }
 
-a {
-  color: var(--color-accent);
+header, main, footer {
+  /* min(48rem, 100%): the auto margins disable grid-item stretch, so each
+     of these sizes by shrink-to-fit — floored by its min-content width.
+     A wide <pre> gives main a ~540px min-content floor, laying the page
+     out wider than phones; the 100% cap pins width to the grid track. */
+  max-inline-size: min(48rem, 100%);
+  margin-inline: auto;
+  padding-inline: 1.5rem;
+}
+
+/* ── Header ── */
+header {
+  padding-block: 4rem 2rem;
+  text-align: center;
+}
+
+header .logo {
+  width: 64px;
+  height: 64px;
+  margin-inline: auto;
+  margin-block-end: 1.25rem;
+}
+
+header h1 {
+  font-family: var(--font-mono);
+  font-size: clamp(2rem, 5vw, 3rem);
+  color: var(--accent);
+  letter-spacing: 0.04em;
+}
+
+header h2 {
+  font-family: var(--font-mono);
+  font-size: clamp(1.1rem, 2.5vw, 1.4rem);
+  color: var(--text);
+  font-weight: 400;
+  margin-block-start: 0.5rem;
+}
+
+header p {
+  color: var(--text-muted);
+  margin-block-start: 1rem;
+  max-inline-size: 36rem;
+  margin-inline: auto;
+}
+
+header p a {
+  color: var(--accent);
+  text-underline-offset: 3px;
+  transition: color 150ms ease;
+}
+
+header p a:hover {
+  color: var(--accent-hover);
+}
+
+header nav {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-block-start: 1.5rem;
+}
+
+header nav a {
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
   text-decoration: none;
-  transition: color 0.2s ease;
-  
-  &:hover {
-    color: var(--color-accent-hover);
-  }
+  padding: 0.6em 1.4em;
+  border-radius: 0.375rem;
+  font-weight: 600;
+  transition:
+    background-color 200ms ease-out,
+    color 200ms ease-out,
+    border-color 200ms ease-out,
+    transform 200ms ease-out;
+}
+
+.btn-primary {
+  background-color: var(--berry);
+  color: #fff;
+  border: none;
+}
+
+.btn-primary:hover {
+  background-color: var(--berry-hover);
+  transform: translateY(-1px);
+}
+
+.btn-primary:focus-visible {
+  outline: 2px solid var(--berry);
+  outline-offset: 3px;
+}
+
+.btn-secondary {
+  border: 1px solid var(--berry);
+  color: var(--berry);
+  background-color: transparent;
+}
+
+.btn-secondary:hover {
+  background-color: var(--berry-soft);
+  transform: translateY(-1px);
+}
+
+.btn-secondary:focus-visible {
+  outline: 2px solid var(--berry);
+  outline-offset: 3px;
+}
+
+/* ── Main ── */
+main {
+  display: flex;
+  flex-direction: column;
+  gap: 2.5rem;
+  padding-block: 2rem;
+}
+
+/* ── Section / Prose Content ── */
+.section-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  /* Flex/grid children default to min-width: auto and refuse to shrink
+     below their content's intrinsic width — the classic cause of
+     invisible horizontal page overflow when markdown content contains
+     a long token. Force shrinkability so containment below can work. */
+  min-width: 0;
+}
+
+/* Any long unbreakable sequence in prose (URLs pasted as text, long
+   code spans, hyphenless compounds) breaks instead of pushing the
+   layout wider than the viewport. */
+.section-content p,
+.section-content h1,
+.section-content h2,
+.section-content h3,
+.section-content li {
+  overflow-wrap: break-word;
+}
+
+.section-content h1 {
+  font-family: var(--font-mono);
+  font-size: clamp(1.5rem, 3.5vw, 2rem);
+  color: var(--text);
+  font-weight: 700;
+  padding-block-end: 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.section-content h2 {
+  font-family: var(--font-mono);
+  font-size: clamp(1.1rem, 2.5vw, 1.35rem);
+  color: var(--accent);
+  font-weight: 600;
+  margin-block-start: 0.75rem;
+}
+
+.section-content h3 {
+  font-family: var(--font-mono);
+  font-size: 1.05rem;
+  color: var(--text);
+  font-weight: 600;
+  margin-block-start: 0.5rem;
+}
+
+.section-content p {
+  color: var(--text);
+  line-height: 1.75;
+}
+
+.section-content ol,
+.section-content ul {
+  padding-inline-start: 1.5rem;
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.section-content ol {
+  list-style: decimal;
+}
+
+.section-content li::marker {
+  color: var(--berry);
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.section-content li {
+  line-height: 1.65;
+  padding-inline-start: 0.25rem;
+}
+
+/* ── Section Page List (child pages) ── */
+.sub-nav {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding-block: 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.sub-nav a {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  text-decoration: none;
+  padding: 0.4em 1em;
+  border-radius: 0.375rem;
+  border: 1px solid var(--berry);
+  color: var(--berry);
+  background-color: transparent;
+  transition:
+    background-color 150ms ease,
+    color 150ms ease,
+    transform 150ms ease;
+}
+
+.sub-nav a:hover {
+  background-color: var(--berry-soft);
+  transform: translateY(-1px);
+}
+
+.sub-nav a:focus-visible {
+  outline: 2px solid var(--berry);
+  outline-offset: 3px;
+}
+
+.section-pages {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-block-start: 1rem;
+  padding-block-start: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.section-pages a {
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  color: var(--accent);
+  text-decoration: none;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.375rem;
+  border: 1px solid transparent;
+  transition:
+    border-color 150ms ease,
+    background-color 150ms ease;
+}
+
+.section-pages a:hover {
+  border-color: var(--border);
+  background-color: var(--bg-surface);
+}
+
+.section-page-title {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.section-page-desc {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  font-family: var(--font-body);
+}
+
+/* ── Code ── */
+pre {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border);
+  padding: 1.25rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  margin-block: 1rem;
 }
 
 code {
-  background: var(--color-code-bg);
-  padding: 0.2em 0.4em;
-  border-radius: 4px;
-  font-family: var(--font-family-mono);
-  font-size: 0.875em;
-  color: var(--color-text);
-  border: 1px solid var(--color-border);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
 }
 
-hr {
-  border: none;
-  height: 1px;
-  background: var(--color-border);
-  margin: 3rem 0;
+pre code {
+  color: var(--text);
 }
 
-// Header
-.site-header {
-  background: var(--color-bg-secondary);
-  border-bottom: 1px solid var(--color-border);
-  padding: 1rem 0;
-  position: sticky;
-  top: 0;
-  z-index: 100;
-  backdrop-filter: blur(10px);
-  
-  .header-content {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    
-    @media (max-width: 768px) {
-      flex-direction: column;
-      gap: 1rem;
-    }
-  }
-  
-  .logo {
-    display: flex;
-    align-items: baseline;
-    gap: 0.75rem;
-    
-    h1 {
-      font-size: 1.75rem;
-      margin: 0;
-      font-weight: 800;
-      background: linear-gradient(135deg, var(--color-accent), var(--color-success));
-      background-clip: text;
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-    }
-    
-    .tagline {
-      font-size: 0.875rem;
-      color: var(--color-text-secondary);
-      font-weight: 500;
-    }
-  }
-  
-  .main-nav {
-    display: flex;
-    gap: 1.5rem;
-    align-items: center;
-    
-    .nav-link {
-      padding: 0.5rem 1rem;
-      border-radius: var(--border-radius);
-      font-weight: 500;
-      transition: all 0.2s ease;
-      
-      &:hover {
-        background: var(--color-border);
-      }
-      
-      &.cta {
-        background: var(--color-accent);
-        color: white;
-        
-        &:hover {
-          background: var(--color-accent-hover);
-          transform: translateY(-1px);
-        }
-      }
-    }
-  }
+.hl-keyword        { color: #cba6f7; }
+.hl-string         { color: #a6e3a1; }
+.hl-string-special { color: #a6e3a1; font-style: italic; }
+.hl-comment        { color: #6c7086; font-style: italic; }
+.hl-function       { color: #89b4fa; }
+.hl-function-builtin { color: #89b4fa; }
+.hl-function-macro { color: #89b4fa; font-weight: 600; }
+.hl-type           { color: #f9e2af; }
+.hl-type-builtin   { color: #f9e2af; }
+.hl-constant       { color: #fab387; }
+.hl-constant-builtin { color: #fab387; }
+.hl-number         { color: #fab387; }
+.hl-constructor    { color: #f38ba8; }
+.hl-variable           { color: #cdd6f4; }
+.hl-variable-builtin   { color: #f38ba8; }
+.hl-variable-parameter { color: #eba0ac; }
+.hl-property       { color: #89dceb; }
+.hl-label          { color: #f38ba8; }
+.hl-attribute      { color: #6c7086; }
+.hl-operator       { color: #89dceb; }
+.hl-punctuation           { color: #9399b2; }
+.hl-punctuation-bracket   { color: #9399b2; }
+.hl-punctuation-delimiter { color: #9399b2; }
+.hl-tag            { color: #a6e3a1; }
+
+p code {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border);
+  padding: 0.15em 0.4em;
+  border-radius: 0.25rem;
+  color: var(--accent-hover);
 }
 
-// Main content
-.main-content {
-  padding: 4rem 0;
-  min-height: calc(100vh - 200px);
+/* ── Tables ── */
+.section-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-block: 1rem;
+  font-size: 0.95em;
 }
 
-// Landing page specific styles
-.hero-section {
-  text-align: center;
-  margin-bottom: 4rem;
-  
-  h1 {
-    font-size: 3.5rem;
-    margin-bottom: 1.5rem;
-    background: linear-gradient(135deg, var(--color-text), var(--color-accent));
-    background-clip: text;
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    
-    @media (max-width: 768px) {
-      font-size: 2.5rem;
-    }
-    
-    strong {
-      color: var(--color-accent);
-      font-weight: 900;
-    }
-  }
-  
-  p {
-    font-size: 1.25rem;
-    color: var(--color-text-secondary);
-    max-width: 600px;
-    margin: 0 auto 2rem;
-  }
+.section-content thead {
+  border-bottom: 2px solid var(--accent);
 }
 
-// Feature sections
-.feature-section {
-  margin-bottom: 3rem;
-  
-  h2 {
-    margin-bottom: 1rem;
-    
-    strong {
-      font-weight: 900;
-    }
-  }
-  
-  p {
-    font-size: 1.125rem;
-  }
+.section-content th {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--accent);
+  text-align: left;
+  padding: 0.75rem 1rem;
 }
 
-// Feature list
-ul {
-  list-style: none;
-  margin: 2rem 0;
-  
-  li {
-    margin-bottom: 1rem;
-    padding-left: 1.5rem;
-    position: relative;
-    color: var(--color-text-secondary);
-    
-    &::before {
-      content: "→";
-      position: absolute;
-      left: 0;
-      color: var(--color-accent);
-      font-weight: bold;
-    }
-    
-    strong {
-      color: var(--color-text);
-    }
-  }
+.section-content td {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
 }
 
-// Call to action
-.cta-section {
-  text-align: center;
-  padding: 3rem 2rem;
-  background: var(--color-bg-secondary);
-  border-radius: var(--border-radius);
-  border: 1px solid var(--color-border);
-  margin: 4rem 0;
-  
-  p {
-    font-size: 1.25rem;
-    margin-bottom: 2rem;
-  }
-  
-  .cta-links {
-    display: flex;
-    gap: 1rem;
-    justify-content: center;
-    
-    @media (max-width: 768px) {
-      flex-direction: column;
-      align-items: center;
-    }
-    
-    a {
-      display: inline-block;
-      padding: 0.875rem 2rem;
-      border-radius: var(--border-radius);
-      font-weight: 600;
-      text-decoration: none;
-      transition: all 0.2s ease;
-      
-      &:first-child {
-        background: var(--color-accent);
-        color: white;
-        
-        &:hover {
-          background: var(--color-accent-hover);
-          transform: translateY(-2px);
-          box-shadow: var(--shadow);
-        }
-      }
-      
-      &:last-child {
-        border: 1px solid var(--color-border);
-        color: var(--color-text);
-        
-        &:hover {
-          border-color: var(--color-accent);
-          color: var(--color-accent);
-        }
-      }
-    }
-  }
+.section-content tbody tr:hover {
+  background-color: var(--bg-surface);
 }
 
-// Footer
+.section-content tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* ── Links (prose) ── */
+a:not(nav a):not([class^="btn"]):not(.section-pages a) {
+  color: var(--accent);
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+  transition: color 150ms ease;
+}
+
+a:not(nav a):not([class^="btn"]):not(.section-pages a):hover {
+  color: var(--accent-hover);
+}
+
+/* ── Footer ── */
 footer {
+  padding-block: 2rem;
   text-align: center;
-  padding: 2rem 0;
-  border-top: 1px solid var(--color-border);
-  color: var(--color-text-secondary);
-  font-size: 0.875rem;
-
-  a {
-    color: var(--color-text-secondary);
-    text-decoration: underline;
-    text-underline-offset: 2px;
-
-    &:hover {
-      color: var(--color-accent);
-    }
-  }
-
-  .footer-built-with {
-    margin-top: 0.5rem;
-    font-size: 0.8rem;
-  }
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  border-top: 1px solid var(--border);
+  margin-block-start: 2rem;
 }
 
-// Responsive adjustments
-@media (max-width: 768px) {
-  .main-content {
-    padding: 2rem 0;
+footer a {
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: color 150ms ease;
+}
+
+footer a:hover {
+  color: var(--accent);
+}
+
+footer p + p {
+  margin-block-start: 0.5rem;
+}
+
+/* ── Islands ── */
+.island-wrapper {
+  max-inline-size: 48rem;
+  margin-inline: auto;
+  padding-inline: 1.5rem;
+  padding-block: 1.5rem 2.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.island-label {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+}
+
+.island-label::before {
+  content: "⬡ ";
+  color: var(--accent);
+}
+
+/* styles for the counter component itself —
+   adjust selectors to match your Yew component's rendered HTML */
+.counter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 0.6rem 1rem;
+}
+
+.counter-value {
+  font-family: var(--font-mono);
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text);
+  min-width: 2ch;
+  text-align: center;
+}
+
+.counter button {
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0.3em 0.7em;
+  border-radius: 0.375rem;
+  border: 1px solid var(--border);
+  background-color: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease,
+    transform 150ms ease;
+}
+
+.counter button:hover {
+  border-color: var(--berry);
+  color: var(--berry);
+  background-color: var(--berry-soft);
+  transform: translateY(-1px);
+}
+
+.counter button:active {
+  transform: translateY(0);
+}
+
+.counter button:focus-visible {
+  outline: 2px solid var(--berry);
+  outline-offset: 3px;
+}
+
+/* styles for the search-box component */
+.search-container.search-box {
+  max-inline-size: 48rem;
+  margin-inline: auto;
+  padding-inline: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.search-input {
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  padding: 0.6rem 1rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border);
+  background-color: var(--bg-surface);
+  color: var(--text);
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.search-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.search-results {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.search-result {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  transition:
+    border-color 150ms ease,
+    background-color 150ms ease;
+}
+
+.search-result:hover {
+  border-color: var(--accent);
+  background-color: var(--bg);
+}
+
+.search-result-link {
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.search-result-link:hover {
+  color: var(--accent-hover);
+}
+
+.search-result-summary {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-block-start: 0.35rem;
+  line-height: 1.5;
+}
+
+/* ── Responsive ── */
+@media (max-width: 640px) {
+  header {
+    padding-block: 2.5rem 1.5rem;
   }
-  
-  .feature-section {
-    margin-bottom: 2rem;
+
+  /* Nav buttons: wrap into a compact grid instead of stacking six
+     full-width bars. Two per row fits all labels without truncation;
+     grid handles equal sizing without stretch-to-full-width, which
+     made each button span the entire 48rem container on phones. */
+  header nav {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+    justify-content: center;
   }
+
+  header nav a {
+    text-align: center;
+    padding: 0.5em 0.75em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Odd items (e.g. a lone 7th link) span both columns rather than
+     stretching to full width alone. */
+  header nav a:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+
+  /* Prose tables overflow the 1.5rem-padded column on phones; scroll
+     them inside their own box instead of breaking the page layout. */
+  .section-content table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  /* Search input inherits page padding plus its own; trim the doubled
+     padding so the field aligns with surrounding content edges. */
+  .search-container.search-box {
+    padding-inline: 0;
+  }
+}
+/* install page hint box (shortcodes/box.html) */
+.install-hint {
+  background-color: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: 0.5rem;
+  padding: 1rem 1.25rem;
+  margin-block: 1.5rem;
+  font-size: 0.95em;
+}
+
+.install-hint p {
+  margin: 0;
 }

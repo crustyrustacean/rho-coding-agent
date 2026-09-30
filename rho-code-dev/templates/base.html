@@ -1,82 +1,46 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="robots" content="index, follow">
+  <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  {% set default_description = "rho is a local AI coding agent for Rust developers. Runs entirely locally, understands your codebase, and helps you build software faster." %}
-
-  <!-- Open Graph -->
-  <meta property="og:title" content="{% block og_title %}{{ site.name }}{% endblock %}">
-  <meta property="og:description" content="{% block og_description %}{{ default_description }}{% endblock %}">
-  <meta property="og:url" content="{{ site.base_url | safe }}{% if current_path %}{{ current_path | safe }}{% else %}/{% endif %}">
-  <meta property="og:type" content="website">
-
-  <meta property="og:image" content="https://rho-code.dev/static/favicon.png">
-  <meta property="og:locale" content="en_US">
-  <meta property="og:site_name" content="{{ site.name }}">
-  <meta name="twitter:card" content="summary_large_image">
-  <!-- Twitter Card -->
-  <meta name="twitter:card_image" content="https://rho-code.dev/static/favicon.png">
-  <meta name="twitter:title" content="{% block twitter_title %}{{ site.name }}{% endblock %}">
-  <meta name="twitter:description" content="{% block twitter_description %}{{ default_description }}{% endblock %}">
-
-  <!-- JSON-LD Structured Data -->
-  <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "WebSite",
-    "name": "{{ site.name }}",
-    "url": "{{ site.base_url | safe }}{% if current_path %}{{ current_path | safe }}{% else %}/{% endif %}",
-    "description": "{{ default_description }}",
-    "applicationCategory": "DeveloperApplication",
-    "operatingSystem": ["Linux", "macOS", "Windows"],
-    "sameAs": ["https://github.com/crustyrustacean/rho-coding-agent"],
-    "author": {
-      "@type": "Person",
-      "name": "Jeffery D Mitchell",
-      "url": "https://jeff-mitchell.dev"
-    }
-  }
-  </script>
-
-  <!-- Privacy-friendly analytics by Plausible -->
-  <script async src="https://plausible.io/js/pa-l3N6HpmLIpjsBGBYFpV0C.js"></script>
-  <script>window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}}; plausible.init()</script>
-
   <title>{% block title %}{{ site.name }}{% endblock %}</title>
-  <meta name="description" content="{% block description %}{{ default_description }}{% endblock %}">
+  {% if page?.description %}
+  <meta name="description" content="{{ page.description }}">
+  {% elif section?.description %}
+  <meta name="description" content="{{ section.description }}">
+  {% else %}
+  <meta name="description" content="{% block description %}{{ site.description }}{% endblock %}">
+  {% endif %}
+  <meta name="robots" content="index, follow">
+  <meta name="author" content="{{ site.author }}">
+
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="{% block og_title %}{{ site.name }}{% endblock %}">
+  <meta property="og:description" content="{% block og_description %}{{ site.description }}{% endblock %}">
+  <meta property="og:url" content="{{ site.base_url }}{{ page?.path | default(value='/') }}">
+  <meta property="og:image" content="{{ site.base_url }}/static/favicon.png">
+  <meta property="og:site_name" content="{{ site.name }}">
+
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="{% block twitter_title %}{{ site.name }}{% endblock %}">
+  <meta name="twitter:description" content="{% block twitter_description %}{{ site.description }}{% endblock %}">
+  <meta name="twitter:image" content="{{ site.base_url }}/static/favicon.png">
 
   <link rel="icon" type="image/png" href="/static/favicon.png">
   <link rel="stylesheet" href="/css/main.css">
+  <link rel="stylesheet" href="/css/_highlight-dark.css" media="(prefers-color-scheme: dark)">
+  <link rel="stylesheet" href="/css/_highlight-light.css" media="(prefers-color-scheme: light)">
 </head>
 <body>
-  <header class="site-header">
-    <div class="container">
-      <div class="header-content">
-        <div class="logo">
-          <h1>{{ site.name }}</h1>
-          <span class="tagline">coding agent</span>
-        </div>
-        <nav class="main-nav">
-          <a href="https://crustyrustacean.github.io/rho-coding-agent" target="_blank" class="nav-link">Documentation</a>
-          <a href="https://github.com/crustyrustacean/rho-coding-agent#installation" target="_blank" class="nav-link cta">Get Started</a>
-        </nav>
-      </div>
-    </div>
-  </header>
-
-  <main class="main-content">
-    <div class="container">
+  <div class="page">
+    {% include "partials/header.html" %}
+    <main>
       {% block content %}{% endblock %}
-    </div>
-  </main>
-
-  <footer>
-    <p>&copy; {{ now.year }} <a href="https://jeff-mitchell.dev" target="_blank" rel="noopener">Jeffery D Mitchell</a></p>
-    <p class="footer-built-with">Built with <a href="https://get-taxus-org.pages.dev" target="_blank" rel="noopener">Taxus</a></p>
-  </footer>
-
-  <!-- General interactivity via plain JavaScript -->
+    </main>
+    {% include "partials/footer.html" %}
+  </div>
+  <!-- No WASM island here: taxus's SearchBox needs a Trunk-built client and
+       this site doesn't ship one. `static/scripts.js` covers the rest. -->
   <script src="/static/scripts.js"></script>
 </body>
 </html>

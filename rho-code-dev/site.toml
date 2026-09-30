@@ -1,6 +1,8 @@
 [site]
 name = "rho"
 base_url = "https://rho-code.dev"
+description = "rho is a coding agent you pair with — written in Rust, runs on your machine, and asks before it does anything."
+author = "Jeffery D. Mitchell"
 
 [build]
 content_dir = "content"
