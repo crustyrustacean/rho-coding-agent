@@ -730,3 +730,44 @@ footer p + p {
   font-size: 0.92em;
   color: var(--text-muted);
 }
+
+/* ── Tool cards (/tools) ── */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+  gap: 1rem;
+  margin-block: 0;
+}
+
+.tool-card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 1.25rem 1.5rem;
+}
+
+.tool-card h3 {
+  margin-top: 0;
+  margin-bottom: 0.5rem;
+  color: var(--accent);
+  font-size: 1.1rem;
+}
+
+.tool-card h3 a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.tool-card h3 a:hover {
+  text-decoration: underline;
+}
+
+.tool-card code {
+  font-size: 0.85em;
+  color: var(--accent-hover);
+}
+
+.tool-card p {
+  font-size: 0.92em;
+  color: var(--text-muted);
+}
