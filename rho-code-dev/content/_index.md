@@ -7,7 +7,7 @@ description = "A coding agent you pair with. Written in Rust, runs on your machi
 
 <div class="pillar-card">
 
-### Private
+### [Private](/features/privacy/)
 
 **It asks before it does.**
 
@@ -20,7 +20,7 @@ hosted model and tell it to.
 
 <div class="pillar-card">
 
-### Stable
+### [Stable](/features/stability/)
 
 **Forged in Rust.**
 
@@ -31,7 +31,7 @@ format, lint, audit, build, and 1600+ tests before it lands.
 
 <div class="pillar-card">
 
-### Flexible
+### [Flexible](/features/frontends/)
 
 **The frontend is yours.**
 
@@ -42,7 +42,7 @@ the official rho-egui desktop app, a terminal client, or something you build.
 
 <div class="pillar-card">
 
-### Extendible
+### [Extendible](/features/extensions/)
 
 **Write tools in TypeScript.**
 
