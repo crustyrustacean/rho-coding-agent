@@ -1,6 +1,6 @@
 +++
 title = "Features"
-description = "What rho can do - approval gates, structured diagnostics, sandboxing, and branchable sessions."
+description = "The four pillars - private by default, forged in Rust, frontend-agnostic, and extendible in TypeScript."
 +++
 
-Everything below is on by default. Nothing here is a premium tier.
+The landing page says it short. This says it properly.

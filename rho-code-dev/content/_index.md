@@ -27,41 +27,50 @@ desktop UI. It spawns `rho` in the background and talks to it over JSON-RPC.
 
 <section class="feature-section">
 
-## **It asks before it acts**
+## **Private — it asks before it does**
 
-Every write, edit, and command goes through an approval gate. rho will not
-touch a file or run a shell command without you saying yes, and you can answer
-"no, do it differently" with instructions instead of just refusing.
-
-</section>
-
-<section class="feature-section">
-
-## **It knows what your code is doing**
-
-`cargo check` and `cargo clippy` come back as structured diagnostics, not raw
-text. rho reads the error codes and the source spans, so it can fix the actual
-problem rather than pattern-matching on a wall of compiler output.
+Your code doesn't leave your machine unless you point rho at a hosted model,
+and you get a clear warning the first time you do. Every write, edit, and
+command passes an approval gate — and you can answer "no, do it differently"
+with instructions, not just a refusal. Secrets are redacted before anything
+reaches the model.
 
 </section>
 
 <section class="feature-section">
 
-## **Your code stays yours**
+## **Stable — forged in Rust**
 
-rho runs on your machine. There's no cloud round-trip for your source, no
-telemetry, and a file sandbox that confines every operation to the project
-root. What the model sees, it sees because you chose to point it there.
+No runtime panics swallowing your work mid-edit, no GC pauses in a tool loop.
+The same code that runs the agent runs its 1600+ tests, and the workspace
+gates every commit on format, lint, audit, build, and test before it lands.
+`cargo check` and `cargo clippy` come back as structured diagnostics — error
+codes and source spans — so the model fixes the actual problem rather than
+pattern-matching on a wall of compiler output.
 
 </section>
 
 <section class="feature-section">
 
-## **Sessions you can go back to**
+## **Flexible — the frontend is yours**
 
-Work is a tree, not a log. Fork a branch, try a different approach, and switch
-back — the transcript and the context window follow you. Branches survive a
-restart.
+rho is headless by design. It speaks JSON-RPC 2.0 over stdin/stdout, so any
+UI can drive it: the official [rho-egui](https://github.com/crustyrustacean/rho-egui)
+desktop app, a terminal client, or something you build. Swap frontends
+without changing anything about how the agent works — and swap models the
+same way, local or hosted, per project.
+
+</section>
+
+<section class="feature-section">
+
+## **Extendible — write tools in TypeScript**
+
+Need a tool rho doesn't ship? Write it in TypeScript: a single `.ts` file
+exporting a manifest, running in its own V8 isolate with a host API for
+files, commands, and logging. `risk` on each tool feeds the same approval
+gate as the built-ins, so an extension can't quietly escalate. `/reload`
+picks up changes without a restart.
 
 </section>
 
