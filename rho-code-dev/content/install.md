@@ -73,7 +73,11 @@ leave your machine. You should read it the first time.
 
 ## If something goes wrong
 
-Check the diagnostics in your project's `.rho/config.toml` — budget, approval
-policy, and command denylist are all set there. The
-[documentation](https://crustyrustacean.github.io/rho-coding-agent) covers
+rho keeps two records worth knowing about. Session data — the full entry
+history for every project — lives under `~/.rho/sessions`, filed by project.
+And `logs/` inside the project holds the runtime logs for the work you did
+there. When something misbehaves, the session file tells you *what the agent
+saw*; the log tells you *what the agent did*.
+
+The [documentation](https://crustyrustacean.github.io/rho-coding-agent) covers
 providers, extensions, and configuration in full.
