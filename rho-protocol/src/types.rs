@@ -252,23 +252,6 @@ pub struct SessionEntry {
     pub entry_count: u64,
 }
 
-/// Result for `listExtensions`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-#[serde(rename_all = "camelCase")]
-pub struct ListExtensionsResult {
-    pub extensions: Vec<ExtensionEntry>,
-}
-
-/// A single extension entry in `listExtensions`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-#[serde(rename_all = "camelCase")]
-pub struct ExtensionEntry {
-    pub name: String,
-    pub tools: Vec<String>,
-}
-
 /// Result for `listTools`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
@@ -321,8 +304,7 @@ pub struct GetMessagesResult {
     pub messages: Vec<serde_json::Value>,
 }
 
-/// Empty result for methods that return no data (`abort`, `clear`, `compact`,
-/// `reloadExtensions`).
+/// Empty result for methods that return no data (`abort`, `clear`, `compact`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]

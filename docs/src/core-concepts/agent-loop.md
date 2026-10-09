@@ -129,7 +129,7 @@ pub trait AgentObserver: Send + Sync {
 
 `run_loop` always creates a `CollectingObserver` internally — it records tool call events (name, arguments, outcome, duration) into `ToolCallRecord`s that populate `AgentResult.tool_calls`. This is independent of the `observer` in `LoopParams` and requires no action from consumers. Any observer passed via `LoopParams` still receives all callbacks as before; the `CollectingObserver` runs alongside it.
 
-When extensions are loaded, the `CompositeObserver` fans out every call to both the RPC observer and the extension `DenoObserver`s. For `on_tool_call_intercept`, the **first `Block` wins** — if any extension blocks a tool call, execution is denied immediately.
+For `on_tool_call_intercept`, the returned `InterceptResult` decides whether the call proceeds — a `Block` denies execution immediately.
 
 The observer is called:
 - At every state transition (`on_state_change`)

@@ -541,7 +541,7 @@ mod tests {
         let ranges = vec![(start, end, &edit)];
 
         let warnings = check_node_splitting(source, &ranges);
-        assert!(!warnings.is_empty());
+        assert_ne!(warnings, [] as [std::string::String; 0]);
         assert!(warnings[0].contains("string_content") || warnings[0].contains("string_literal"));
     }
 
@@ -558,7 +558,7 @@ mod tests {
         let ranges = vec![(start, end, &edit)];
 
         let warnings = check_node_splitting(source, &ranges);
-        assert!(warnings.is_empty());
+        assert_eq!(warnings, [] as [std::string::String; 0]);
     }
 
     #[test]

@@ -39,8 +39,6 @@ echo '{"jsonrpc":"2.0","method":"prompt","params":{"message":"explain this funct
 | `listProviders` | — | List configured providers with reachability |
 | `getSessionStats` | — | Return token budget / usage info |
 | `listSessions` | — | List previous sessions for project |
-| `listExtensions` | — | List loaded extensions and tools |
-| `reloadExtensions` | — | Reload extensions from disk |
 | `compact` | — | Trigger context compaction |
 | `resumeSession` | `{path: string}` | Resume a previous session from JSONL |
 | `newSession` | — | Start a fresh session (preserves model, provider, tools) |

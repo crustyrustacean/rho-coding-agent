@@ -88,7 +88,6 @@ fn root_defs() -> Value {
     for name in names {
         let schema = match name.as_str() {
             "ApiUsageWire" => schema_of::<ApiUsageWire>(),
-            "ExtensionEntry" => schema_of::<ExtensionEntry>(),
             "ModelEntry" => schema_of::<ModelEntry>(),
             "PhaseTokenDistWire" => schema_of::<PhaseTokenDistWire>(),
             "ProviderEntry" => schema_of::<ProviderEntry>(),
@@ -269,18 +268,6 @@ pub fn methods() -> Vec<Value> {
             result: result_spec::<ListSessionsResult>,
         },
         MethodSpec {
-            name: "listExtensions",
-            description: "List loaded extensions and the tools each contributes.",
-            params: None,
-            result: result_spec::<ListExtensionsResult>,
-        },
-        MethodSpec {
-            name: "reloadExtensions",
-            description: "Hot-reload extensions from disk (mtime-based change detection).",
-            params: None,
-            result: result_spec::<EmptyResult>,
-        },
-        MethodSpec {
             name: "resumeSession",
             description: "Resume a previous session from its JSONL file.",
             params: Some(params_spec::<ResumeSessionParams>),
@@ -457,8 +444,6 @@ pub fn method_names() -> Vec<&'static str> {
         "listProviders",
         "getSessionStats",
         "listSessions",
-        "listExtensions",
-        "reloadExtensions",
         "resumeSession",
         "listTools",
         "fork",

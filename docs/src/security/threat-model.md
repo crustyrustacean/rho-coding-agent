@@ -13,7 +13,6 @@ rho takes untrusted input (LLM output), interprets it as instructions, and execu
 | Secret exposure in tool output | Best-effort redaction | Approval gate |
 | Prompt injection via file content | Untrusted-data framing (`<context>` / `<context:end>`) | Approval gate |
 | Supply-chain prompt attack | Project context file trust (SHA-256 hash) | User confirmation on first load |
-| Extension command injection | Structured argument substitution | Approval gate |
 | Runaway tool-call loop | Max iteration guard (default: 32) | Stuck-loop detection |
 | Credential at rest | Env var references (no plaintext in config) | Optional credential store (future) |
 

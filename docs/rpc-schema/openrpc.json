@@ -43,25 +43,6 @@
       ],
       "type": "object"
     },
-    "ExtensionEntry": {
-      "description": "A single extension entry in `listExtensions`.",
-      "properties": {
-        "name": {
-          "type": "string"
-        },
-        "tools": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "name",
-        "tools"
-      ],
-      "type": "object"
-    },
     "ModelEntry": {
       "description": "A single model entry in `listModels`.",
       "properties": {
@@ -463,7 +444,7 @@
       "name": "abort",
       "params": [],
       "result": {
-        "description": "Empty result for methods that return no data (`abort`, `clear`, `compact`,\n`reloadExtensions`).",
+        "description": "Empty result for methods that return no data (`abort`, `clear`, `compact`).",
         "name": "result",
         "schema": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -477,7 +458,7 @@
       "name": "clear",
       "params": [],
       "result": {
-        "description": "Empty result for methods that return no data (`abort`, `clear`, `compact`,\n`reloadExtensions`).",
+        "description": "Empty result for methods that return no data (`abort`, `clear`, `compact`).",
         "name": "result",
         "schema": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -519,7 +500,7 @@
       "name": "compact",
       "params": [],
       "result": {
-        "description": "Empty result for methods that return no data (`abort`, `clear`, `compact`,\n`reloadExtensions`).",
+        "description": "Empty result for methods that return no data (`abort`, `clear`, `compact`).",
         "name": "result",
         "schema": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1034,66 +1015,6 @@
       }
     },
     {
-      "description": "List loaded extensions and the tools each contributes.",
-      "name": "listExtensions",
-      "params": [],
-      "result": {
-        "description": "Result for `listExtensions`.",
-        "name": "result",
-        "schema": {
-          "$defs": {
-            "ExtensionEntry": {
-              "description": "A single extension entry in `listExtensions`.",
-              "properties": {
-                "name": {
-                  "type": "string"
-                },
-                "tools": {
-                  "items": {
-                    "type": "string"
-                  },
-                  "type": "array"
-                }
-              },
-              "required": [
-                "name",
-                "tools"
-              ],
-              "type": "object"
-            }
-          },
-          "$schema": "https://json-schema.org/draft/2020-12/schema",
-          "properties": {
-            "extensions": {
-              "items": {
-                "$ref": "#/$defs/ExtensionEntry"
-              },
-              "type": "array"
-            }
-          },
-          "required": [
-            "extensions"
-          ],
-          "title": "ListExtensionsResult",
-          "type": "object"
-        }
-      }
-    },
-    {
-      "description": "Hot-reload extensions from disk (mtime-based change detection).",
-      "name": "reloadExtensions",
-      "params": [],
-      "result": {
-        "description": "Empty result for methods that return no data (`abort`, `clear`, `compact`,\n`reloadExtensions`).",
-        "name": "result",
-        "schema": {
-          "$schema": "https://json-schema.org/draft/2020-12/schema",
-          "title": "EmptyResult",
-          "type": "object"
-        }
-      }
-    },
-    {
       "description": "Resume a previous session from its JSONL file.",
       "name": "resumeSession",
       "params": [
@@ -1371,7 +1292,7 @@
         }
       ],
       "result": {
-        "description": "Empty result for methods that return no data (`abort`, `clear`, `compact`,\n`reloadExtensions`).",
+        "description": "Empty result for methods that return no data (`abort`, `clear`, `compact`).",
         "name": "result",
         "schema": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",

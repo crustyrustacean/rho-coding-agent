@@ -58,7 +58,7 @@ async fn captures_stdout() {
         .expect("execution should succeed");
 
     assert!(output.stdout.contains("hello world"));
-    assert!(output.stderr.is_empty());
+    assert_eq!(output.stderr, "");
     assert_eq!(output.exit_code, 0);
 }
 
@@ -135,7 +135,7 @@ async fn respects_working_directory() {
         .expect("execution should succeed");
 
     // The output should contain the current directory (resolved from ".").
-    assert!(!output.stdout.trim().is_empty());
+    assert_ne!(output.stdout.trim(), "");
 }
 
 // ── Cancellation ──────────────────────────────────────────────────────────────

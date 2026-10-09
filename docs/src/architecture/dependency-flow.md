@@ -5,8 +5,6 @@ Dependencies flow downward only. A crate may depend on crates below it in the st
 ```
 rho (binary) ──────────────────────────────────────────
     │
-    ├── rho-ext ──── rho-core ──── rho-ai ──────────────
-    │
     ├── rho-tools ── rho-highlight ── rho-core ─────────
     │           └──── rho-memory ── rho-core ────────────
     │
@@ -18,8 +16,7 @@ xtask ────────────────────────�
 
 | Crate | Depends on | Notes |
 |---|---|---|
-| `rho` | `rho-core`, `rho-tools`, `rho-ext`, `rho-ai` | Headless JSON-RPC 2.0 agent |
-| `rho-ext` | `rho-core`, `deno_core`, `deno_ast` | TypeScript extension runtime |
+| `rho` | `rho-core`, `rho-tools`, `rho-ai` | Headless JSON-RPC 2.0 agent |
 | `rho-tools` | `rho-core`, `rho-highlight`, `rho-memory` | Tool implementations; highlight for node-splitting, memory for `MemoryTool` |
 | `rho-memory` | `rho-core` | Persistent knowledge base (SQLite/FTS5) |
 | `rho-highlight` | `rho-core` | Tree-sitter grammar; uses core diagnostic types |
@@ -33,16 +30,14 @@ xtask ────────────────────────�
 | Dependency | Used by | Purpose |
 |---|---|---|
 | `reqwest` | `rho-ai` | HTTP client for model API |
-| `tokio` | `rho-core`, `rho-tools`, `rho-ext` | Async runtime |
+| `tokio` | `rho-core`, `rho-tools` | Async runtime |
 | `serde` / `serde_json` | everywhere | Serialization |
 | `toml` | `rho-core` | Configuration parsing |
 | `tree-sitter` + grammars | `rho-highlight` | Syntax analysis |
 | `ignore` | `rho-tools` | `.gitignore`-aware directory listing |
 | `clap` | `rho` | CLI argument parsing |
-| `tracing` | `rho-core`, `rho-ext` | Structured logging |
-| `deno_core` | `rho-ext` | V8 JavaScript runtime |
-| `deno_ast` | `rho-ext` | TypeScript transpilation |
-| `thiserror` | `rho-core`, `rho-ext` | Error type derivation |
+| `tracing` | `rho-core` | Structured logging |
+| `thiserror` | `rho-core` | Error type derivation |
 | `futures` | `rho-ai` | Stream traits for SSE |
 | `sqlx` | `rho-memory` | SQLite + FTS5 for the knowledge base |
 ## What this buys you

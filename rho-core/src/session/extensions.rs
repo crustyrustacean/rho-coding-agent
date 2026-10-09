@@ -105,6 +105,7 @@ pub trait ExtensionMessageEntry: Serialize + DeserializeOwned + 'static {
 #[cfg(test)]
 mod tests {
     #![allow(
+        clippy::assert_is_empty,
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
         clippy::cast_precision_loss

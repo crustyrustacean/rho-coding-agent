@@ -1,6 +1,6 @@
 //! Reusable JSON-RPC 2.0 client for rho frontends.
 //!
-//! Every existing frontend (the Deno TUI, both desktop GUIs) hand-rolls the
+//! Every existing frontend (the TUI, desktop GUIs) hand-rolls the
 //! same three pieces: request/response correlation keyed by id, a response
 //! timeout, and a loop that routes notifications to UI handlers and responses
 //! to pending futures. This module is that code, written once.

@@ -147,6 +147,9 @@ pub struct AccumulatedToolCall {
 }
 
 #[cfg(test)]
+/// These tests intentionally use `assert!(x.is_empty())`-style assertions; the
+/// clippy 1.99 `assert_is_empty` lint disagrees. Allow it here.
+#[allow(clippy::assert_is_empty)]
 mod tests {
     use super::*;
     use crate::message::{ModelToolCall, ToolCallFunction};

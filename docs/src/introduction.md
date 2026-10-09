@@ -14,7 +14,6 @@ Design priorities:
 - **Remote ready** — external providers (OpenAI, Groq, etc.) with consent warnings
 - **Safe by default** — destructive actions require your approval
 - **Rust-native** — structured compiler diagnostics, tree-sitter syntax analysis, not text scraping
-- **Extensible** — custom tools and hooks via TypeScript extensions (V8/deno-core), hot-reloadable at runtime
 
 ## Platform support
 
@@ -29,7 +28,6 @@ rho runs on Windows, macOS, and Linux. PowerShell 7+ (`pwsh`) is the primary she
 - Manage conversation state across sessions with tree-structured persistence and session discovery
 - Observe agent activity in real time (reasoning, tool calls, errors) via the `AgentObserver` trait
 - Get structured results from `run_loop` via `AgentResult` (reply, iterations, token usage, tool call history, duration, finish reason) without custom observers
-- Extend rho with TypeScript extensions that add tools, hooks, and commands — hot-reloadable at runtime
 - Compact old conversation turns to stay within context limits
 - Monitor context window usage with a live status bar, `getSessionStats` RPC method, and enhanced token distribution stats
 - Graduated resolution (Outlined/Summarized) with selective per-entry eviction before turn-level eviction

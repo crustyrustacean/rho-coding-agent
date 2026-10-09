@@ -445,7 +445,7 @@ mod tests {
     #[test]
     fn tool_description_is_not_empty() {
         let tool = CratesIoLookup::new();
-        assert!(!tool.description().is_empty());
+        assert_ne!(tool.description(), "");
         assert!(tool.description().contains("search"));
         assert!(tool.description().contains("info"));
         assert!(tool.description().contains("versions"));

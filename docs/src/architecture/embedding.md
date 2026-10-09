@@ -11,7 +11,7 @@ let mut agent = Agent::builder()
     .config(cfg)              // or .load_config_at(sandbox), or pure setters
     .ephemeral()              // in-memory session (also: persisted / resume / continue_last)
     .model("gpt-4o")
-    .tools(tool_registry)     // host registers tools/extensions/memory
+    .tools(tool_registry)     // host registers tools/memory
     .build()?;                // -> Result<Agent, AgentBuildError>
 
 // Headless / embedder default (auto-approve gate, no-op observer, no steering):
@@ -27,7 +27,7 @@ let result = agent.run_turn(prompt, &TurnInputs {
 }).await?;
 ```
 
-**Separation principle.** The kernel owns *"I am a configured agent; run a prompt."* Host-only concerns stay *out* of `rho-core` and are composed on top by the host (`App` in the `rho` binary): the TypeScript extension runtime (`rho-ext`), the tracing subscriber, interactive consent prompts, and startup banners. Per-turn, per-connection inputs (observer / approval gate / steering / cancel token) are supplied via `TurnInputs` because they are tied to a UI connection and may change between turns (e.g. on extension reload). `rho-core` therefore has no dependency on `rho-ext` or `tracing-appender`.
+**Separation principle.** The kernel owns *"I am a configured agent; run a prompt."* Host-only concerns stay *out* of `rho-core` and are composed on top by the host (`App` in the `rho` binary): the tracing subscriber, interactive consent prompts, and startup banners. Per-turn, per-connection inputs (observer / approval gate / steering / cancel token) are supplied via `TurnInputs` because they are tied to a UI connection and may change between turns. `rho-core` therefore has no dependency on `tracing-appender`.
 
 **Consent / presenter seam.** External-provider consent is enforced inside the builder: if external providers are configured and consent was not granted (`.accept_external_consent()`), `build()` returns `AgentBuildError::ExternalConsentRequired`. The kernel emits diagnostics through `tracing` and returns structured errors; the host formats human-facing banners (the `rho` binary uses `RpcPresenter` to stderr, separate from the JSON-RPC stdout channel).
 

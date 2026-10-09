@@ -457,7 +457,7 @@ mod tests {
             memory: Arc::new(rt.block_on(Memory::open_in_memory()).unwrap()),
         };
         let desc = tool.description();
-        assert!(!desc.is_empty());
+        assert_ne!(desc, "");
         assert!(desc.contains("store"));
         assert!(desc.contains("search"));
         assert!(desc.contains("get"));

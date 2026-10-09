@@ -786,7 +786,11 @@ fn summarise_arguments(arguments: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    #![allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::assert_is_empty
+    )]
     use super::*;
     use crate::message::{ChatMessage, ModelToolCall, ToolCallFunction};
     use crate::newtypes::{EntryId, ToolCallId, ToolName};

@@ -202,9 +202,9 @@ rho treats model output as untrusted and applies defense-in-depth:
 ┌─────────────────────────────────────────────────┐
 │                   rho (binary)                   │  ← Headless JSON-RPC 2.0 agent
 ├─────────────────────────────────────────────────┤
-│  rho-ext          rho-tools                       │  ← Extensions   /  Built-in tools
+│            rho-tools      rho-memory             │  ← Built-in tools / Knowledge base
 ├─────────────────────────────────────────────────┤
-│            rho-memory      rho-highlight           │  ← Siblings of rho-tools
+│            rho-highlight                          │  ← Tree-sitter syntax analysis
 ├─────────────────────────────────────────────────┤
 │                   rho-core                       │  ← Agent kernel: loop, types, traits, config
 ├─────────────────────────────────────────────────┤
@@ -213,7 +213,7 @@ rho treats model output as untrusted and applies defense-in-depth:
    rho-test-helpers   ← Dev-only: mocks, fixtures, tempdir helpers
 ```
 
-**Dependency rule:** crates only depend on layers below them. `rho-ai` is the lowest layer; `rho-core` depends on it for the `LlmService` trait. `rho-highlight` and `rho-memory` depend on `rho-core`. `rho-tools` depends on `rho-core`, `rho-highlight`, and `rho-memory`. `rho-ext` depends on `rho-core` for trait implementations. The binary assembles everything.
+**Dependency rule:** crates only depend on layers below them. `rho-ai` is the lowest layer; `rho-core` depends on it for the `LlmService` trait. `rho-highlight` and `rho-memory` depend on `rho-core`. `rho-tools` depends on `rho-core`, `rho-highlight`, and `rho-memory`. The binary assembles everything.
 
 ## Development
 
@@ -249,9 +249,8 @@ rho/                  # Headless JSON-RPC 2.0 agent
     main.rs           # Thin: parse CLI, build App, run
     lib.rs            # Module declarations
     cli.rs            # CLI argument parsing
-    app.rs            # App struct — startup orchestration, extension loading, AgentResult extraction
+    app.rs            # App struct — startup orchestration, AgentResult extraction
     model.rs          # Model resolution
-    ext_observer.rs   # CompositeObserver — fans out to RPC + extension observers
     rpc.rs            # JSON-RPC 2.0 protocol (methods, notifications, approval gate)
     rpc_wire.rs        # Typed wire-format structs (params, results, notifications)
     transport.rs       # Transport trait (StdioTransport)
@@ -259,7 +258,6 @@ rho/                  # Headless JSON-RPC 2.0 agent
     presenter/
       rpc.rs          # RpcPresenter — diagnostic output to stderr
 rho-ai/               # Unified LLM provider abstraction (streaming, retry, SSE)
-rho-ext/              # TypeScript extension runtime (V8/deno-core)
 rho-core/             # Agent kernel (loop, types, traits, config)
 rho-tools/            # Built-in tools (files, shell, rust tooling, memory)
 rho-memory/           # Persistent knowledge base (SQLite/FTS5)
