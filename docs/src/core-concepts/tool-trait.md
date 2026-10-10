@@ -37,7 +37,7 @@ Every tool has a `ToolRisk` that determines whether it needs human approval:
 | `Read` | Cannot modify state | Auto-approved | `ReadFile`, `ListDir`, `CargoCheck` |
 | `Write` | May create or modify files | Requires approval | `WriteFile`, `EditFile`, `CargoFix` |
 | `Destructive` | May cause irreversible effects | Requires approval | `RunCommand` |
-| `Network` | Makes network requests | Requires approval | Extension tools that call `fetch()` |
+| `Network` | Makes network requests | Requires approval | Tools that call `fetch()` |
 
 The approval policy can override these defaults per-tool via config.
 
@@ -49,7 +49,7 @@ The approval policy can override these defaults per-tool via config.
 - `is_error: bool` — whether the tool reported an error (e.g., non-zero exit code)
 - `details: ToolResultDetails` — structured data *not* sent to the model
 
-The `details` field carries richer information for tools and extensions:
+The `details` field carries richer information for tools:
 
 | Variant | Purpose |
 |---|---|
@@ -95,11 +95,3 @@ rho ships with 16 built-in tools, all registered in `rho-tools::register_all()` 
 | `crates_io_lookup` | Read | Search and inspect crate metadata on crates.io |
 | `session_summary` | Read | Compressed numbered history of user requests and outcomes |
 | `memory` | Read | Store, search, and manage project-local knowledge (via `rho-memory`) |
-
-## Extension tools
-
-TypeScript extensions can register additional tools via `rho-ext`. Each extension tool is wrapped in a `DenoTool` that implements the same `Tool` trait. Extension tools appear alongside built-in tools in the `ToolRegistry` and are visible to the model via the tool schema.
-
-Extension tools are discovered at startup from `~/.rho/extensions/` and `.rho/extensions/`. They can be hot-reloaded at runtime via the `reloadExtensions` RPC method.
-
-See [Extensions](../extensions.md) for details.

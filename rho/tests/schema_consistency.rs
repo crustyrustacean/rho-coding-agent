@@ -35,8 +35,6 @@ const DISPATCHED_METHODS: &[&str] = &[
     "listProviders",
     "getSessionStats",
     "listSessions",
-    "listExtensions",
-    "reloadExtensions",
     "compact",
     "resumeSession",
     "listTools",

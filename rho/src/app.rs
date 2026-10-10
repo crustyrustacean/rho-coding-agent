@@ -2,10 +2,9 @@
 //!
 //! [`App`] is a thin host shell around a [`rho_core::Agent`]: it owns the
 //! agent plus the host-only concerns the kernel stays ignorant of — the
-//! TypeScript extension loader/observers and the tracing guard. [`App::build`]
-//! runs the host setup (sandbox, config, memory, tools, extensions, context
-//! files, system prompt) and then maps the CLI into an [`rho_core::AgentBuilder`]
-//! to assemble the kernel [`rho_core::Agent`].
+//! tracing guard. [`App::build`] runs the host setup (sandbox, config,
+//! memory, tools, context files, system prompt) and then maps the CLI into
+//! an [`rho_core::AgentBuilder`] to assemble the kernel [`rho_core::Agent`].
 
 use crate::cli::Cli;
 use crate::presenter::RpcPresenter as P;
@@ -16,8 +15,6 @@ use rho_core::{
     context_files::{ContextFile, ContextScanner, TrustStore},
     find_project_root,
 };
-use rho_ext::DenoObserver;
-use rho_ext::loader::ExtensionLoader;
 use rho_memory::Memory;
 use rho_tools::register_all;
 use std::io;
@@ -30,15 +27,11 @@ use tracing_subscriber::EnvFilter;
 /// Long-lived runtime state for the `rho` agent.
 ///
 /// A thin host shell: the kernel state lives in [`Agent`]; this struct adds
-/// only the host-only extension runtime and the tracing guard. Constructed by
-/// [`App::build`]; call [`App::run`] to start the RPC loop.
+/// only the tracing guard. Constructed by [`App::build`]; call [`App::run`]
+/// to start the RPC loop.
 pub struct App {
     /// The kernel agent (session, providers, tools, config, cancel).
     pub(crate) agent: Agent,
-    /// Extension loader (manages TypeScript extension runtimes).
-    pub(crate) ext_loader: ExtensionLoader,
-    /// Extension observers (one per loaded extension).
-    pub(crate) ext_observers: Vec<DenoObserver>,
     /// Keeps the tracing non-blocking writer alive until `App` is dropped.
     pub(crate) _log_guard: WorkerGuard,
 }
@@ -47,9 +40,9 @@ impl App {
     /// Build the application from CLI arguments.
     ///
     /// Runs the host setup (tracing, sandbox, config, memory, tools,
-    /// extensions, context files, system prompt) and then maps the CLI into an
+    /// context files, system prompt) and then maps the CLI into an
     /// [`AgentBuilder`] to assemble the kernel [`Agent`]. Host-only concerns
-    /// (extensions, tracing, consent diagnostics, banners) stay here; the
+    /// (tracing, consent diagnostics, banners) stay here; the
     /// kernel owns providers/model/budget/session.
     ///
     /// # Errors
@@ -59,68 +52,28 @@ impl App {
     #[allow(clippy::too_many_lines)]
     pub async fn build(cli: Cli) -> Result<Self> {
         // ── Host: tracing ───────────────────────────────────────────────
-        let _log_guard = Self::init_tracing();
+        let log_guard = Self::init_tracing();
 
         // ── Host: sandbox + config ──────────────────────────────────────
         let sandbox = resolve_sandbox(&cli)?;
         let config = load_config(&sandbox);
 
-        // ── Host: memory + built-in tools + extensions ──────────────────
+        // ── Host: memory + built-in tools ───────────────────────────────
         let mut tool_registry = ToolRegistry::new();
         let memory = open_memory(&sandbox, &config).await;
         let session_path_holder =
             register_all(&mut tool_registry, sandbox.clone(), &config, memory.clone())
                 .context("no PowerShell found on PATH — install PowerShell 7+ (pwsh) or ensure Windows PowerShell (powershell) is available")?;
 
-        let mut ext_loader = ExtensionLoader::new(
-            config.extensions.clone(),
-            sandbox.path().to_path_buf(),
-            rho_core::denylist::CommandDenylist::from_config(&config),
-        );
-        let ext_dirs = extension_dirs(sandbox.path());
-        if !ext_dirs.is_empty() {
-            if let Err(e) = ext_loader.load_all(&ext_dirs) {
-                P::extension_load_error(&e.to_string());
-            }
-            ext_loader.register_tools(&mut tool_registry);
-            P::extensions_loaded(ext_loader.len());
-        }
-        let ext_observers = ext_loader.build_observers();
-
         // ── Host: context files (headless: auto-deny untrusted) + prompt ──
         let context_files = scan_context_files(&sandbox);
-        let mut system_prompt = compose_full_system_prompt(
+        let system_prompt = compose_full_system_prompt(
             &sandbox,
             &context_files,
             &config,
             cli.system.as_deref(),
             cli.compact,
         );
-
-        // Inject extension awareness so the model knows about loaded extensions.
-        if !ext_loader.is_empty() {
-            use std::fmt::Write;
-            let _ = write!(system_prompt, "\n\n# Loaded Extensions\n\n");
-            system_prompt.push_str(
-                "The following extensions are active and have contributed tools \
-                 to your tool registry. You may use these tools normally.\n",
-            );
-            for (ext_name, tool_names) in ext_loader.extension_tools() {
-                let _ = write!(system_prompt, "\n- **{ext_name}**: ");
-                if tool_names.is_empty() {
-                    system_prompt.push_str("(no tools)\n");
-                } else {
-                    system_prompt.push('`');
-                    system_prompt.push_str(&tool_names.join("`, `"));
-                    system_prompt.push('`');
-                    system_prompt.push('\n');
-                }
-            }
-            system_prompt.push_str(
-                "\nExtension tools appear in your tool definitions alongside \
-                 built-in tools. Use them the same way.\n",
-            );
-        }
 
         // ── Map CLI → AgentBuilder; build the kernel Agent ───────────────
         let mut builder = Agent::builder()
@@ -171,17 +124,12 @@ impl App {
                 P::previous_sessions_hint(previous.len());
             }
         }
-        // Propagate the resolved model id to extensions (rho.getModel()).
-        ext_loader.set_model_all(agent.session().model()).await;
         // Budget diagnostics.
         log_budget_diagnostics(agent.session());
 
         Ok(Self {
             agent,
-            ext_loader,
-            ext_observers,
-            #[allow(clippy::used_underscore_binding)]
-            _log_guard,
+            _log_guard: log_guard,
         })
     }
 
@@ -201,8 +149,7 @@ impl App {
     }
 
     /// Switch the active model at runtime, optionally targeting a provider via
-    /// `provider:model` syntax. Delegates the core switch to the agent and
-    /// propagates the new model id to all loaded extensions.
+    /// `provider:model` syntax. Delegates the core switch to the agent.
     ///
     /// # Errors
     ///
@@ -210,11 +157,7 @@ impl App {
     /// advertised by any provider, or [`SwitchModelError::UnknownProvider`] if
     /// the `provider:` prefix names a provider that isn't configured.
     pub(crate) async fn set_model(&mut self, spec: &str) -> Result<(), SwitchModelError> {
-        self.agent.switch_model(spec).await?;
-        self.ext_loader
-            .set_model_all(self.agent.session().model())
-            .await;
-        Ok(())
+        self.agent.switch_model(spec).await
     }
 
     /// Trigger context compaction on the active session (mechanical strategy,
@@ -229,13 +172,10 @@ impl App {
 
     /// Run the agent in headless RPC mode.
     ///
-    /// Fires extension `onLoad` hooks, then starts the JSONL command loop.
-    ///
     /// # Errors
     ///
     /// Returns an error if the RPC loop encounters a fatal I/O failure.
     pub async fn run(self) -> Result<()> {
-        self.ext_loader.fire_on_load().await;
         crate::rpc::run_rpc(self).await
     }
 
@@ -359,29 +299,4 @@ fn log_budget_diagnostics(session: &Session) {
         let pct = (100_usize.saturating_mul(total_overhead) / prompt.max(1)) as u32;
         P::budget_overhead_warning(pct);
     }
-}
-
-/// Build the list of extension directories to scan.
-///
-/// Checks for:
-/// - User-level: `~/.rho/extensions/`
-/// - Project-level: `.rho/extensions/` (relative to sandbox root)
-pub fn extension_dirs(sandbox_path: &std::path::Path) -> Vec<std::path::PathBuf> {
-    let mut dirs = Vec::new();
-
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .map(std::path::PathBuf::from)
-        .unwrap_or_default();
-    let user_ext = home.join(".rho").join("extensions");
-    if user_ext.is_dir() {
-        dirs.push(user_ext);
-    }
-
-    let project_ext = sandbox_path.join(".rho").join("extensions");
-    if project_ext.is_dir() && !dirs.contains(&project_ext) {
-        dirs.push(project_ext);
-    }
-
-    dirs
 }

@@ -3,7 +3,6 @@ members = [
     "rho",
     "rho-ai",
     "rho-core",
-    "rho-ext",
     "rho-highlight",
     "rho-memory",
     "rho-protocol",

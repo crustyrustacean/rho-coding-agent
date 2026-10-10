@@ -57,18 +57,6 @@ impl RpcPresenter {
              consider --compact or increasing token_budget in .rho/config.toml"
         );
     }
-
-    /// Extensions loaded successfully.
-    pub fn extensions_loaded(count: usize) {
-        if count > 0 {
-            eprintln!("extensions: {count} loaded");
-        }
-    }
-
-    /// Extension load error.
-    pub fn extension_load_error(msg: &str) {
-        eprintln!("warning: extension load error: {msg}");
-    }
 }
 
 #[cfg(test)]
@@ -82,11 +70,5 @@ mod tests {
     fn startup_methods_do_not_panic() {
         RpcPresenter::config_warning("bad config");
         RpcPresenter::budget_overhead_warning(75);
-    }
-
-    #[test]
-    fn extension_methods_do_not_panic() {
-        RpcPresenter::extensions_loaded(3);
-        RpcPresenter::extension_load_error("bad extension");
     }
 }

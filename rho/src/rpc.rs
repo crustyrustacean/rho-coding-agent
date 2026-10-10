@@ -28,8 +28,6 @@
 //! | `listProviders`    | —                           | List configured providers with reachability |
 //! | `getSessionStats`  | —                           | Return token budget / usage info   |
 //! | `listSessions`     | —                           | List previous sessions for project |
-//! | `listExtensions`   | —                           | List loaded extensions and tools   |
-//! | `reloadExtensions` | —                           | Reload extensions from disk        |
 //! | `compact`          | —                           | Trigger context compaction         |
 //! | `resumeSession`    | `{path: string}`            | Resume a previous session from JSONL |
 //! | `listTools`        | —                           | List registered tools with schemas |
@@ -74,7 +72,6 @@
 //! | -32603 | Internal error       |
 
 use crate::app::App;
-use crate::ext_observer::CompositeObserver;
 use crate::wire_conversions::{
     agent_end_wire, risk_label, session_stats_wire, state_name, with_api_usage,
 };
@@ -86,14 +83,13 @@ use rho_core::{
 };
 use rho_protocol::{
     AgentErrorParams, AgentStartParams, ApprovalRequestParams, BranchEntry, EmptyResult,
-    ExtensionEntry, ForkResult, GetMessagesResult, GetStateResult, ListBranchesResult,
-    ListExtensionsResult, ListModelsResult, ListProvidersResult, ListSessionsResult,
-    ListToolsResult, MessageDeltaParams, ModelEntry, NameBranchParams, NameBranchResult,
-    NewSessionResult, PromptErrorResult, PromptParams, PromptResult, ProviderEntry, ReadyParams,
-    ReasoningDeltaParams, ResumeSessionParams, ResumeSessionResult, SessionEntry, SetModelParams,
-    SetModelResult, StateChangeParams, SwitchBranchParams, SwitchBranchResult, ToolCallParams,
-    ToolDeniedParams, ToolEntry, ToolResultParams, UsageContextWire, UsageDeltaWire, UsageParams,
-    notification,
+    ForkResult, GetMessagesResult, GetStateResult, ListBranchesResult, ListModelsResult,
+    ListProvidersResult, ListSessionsResult, ListToolsResult, MessageDeltaParams, ModelEntry,
+    NameBranchParams, NameBranchResult, NewSessionResult, PromptErrorResult, PromptParams,
+    PromptResult, ProviderEntry, ReadyParams, ReasoningDeltaParams, ResumeSessionParams,
+    ResumeSessionResult, SessionEntry, SetModelParams, SetModelResult, StateChangeParams,
+    SwitchBranchParams, SwitchBranchResult, ToolCallParams, ToolDeniedParams, ToolEntry,
+    ToolResultParams, UsageContextWire, UsageDeltaWire, UsageParams, notification,
 };
 use rho_protocol::{ReadResult, StdioTransport, Transport};
 use serde_json::{Value, json};
@@ -643,8 +639,6 @@ async fn dispatch_request(
         "listProviders" => handle_list_providers(app, id, &*transport).await,
         "getSessionStats" => handle_get_session_stats(app, id, &*transport).await,
         "listSessions" => handle_list_sessions(app, id, &*transport).await,
-        "listExtensions" => handle_list_extensions(app, id, &*transport).await,
-        "reloadExtensions" => handle_reload_extensions(app, id, &*transport).await,
         "compact" => handle_compact(app, id, &*transport).await,
         "resumeSession" => match serde_json::from_value::<ResumeSessionParams>(params) {
             Ok(p) if !p.path.is_empty() => handle_resume_session(app, p, id, &*transport).await,
@@ -736,13 +730,6 @@ async fn handle_prompt(
     let observer = RpcObserver {
         transport: Arc::clone(&transport),
     };
-    let composite = CompositeObserver::new({
-        let mut obs: Vec<&dyn AgentObserver> = vec![&observer];
-        for ext_obs in &app.ext_observers {
-            obs.push(ext_obs);
-        }
-        obs
-    });
     let gate = RpcApprovalGate {
         transport: Arc::clone(&transport),
         approval_rx: Arc::clone(approval_rx),
@@ -751,7 +738,7 @@ async fn handle_prompt(
     // the slot if a prior abort left it cancelled (see `resolve_turn_cancel`).
     let turn_cancel = resolve_turn_cancel(&cancel);
     let inputs = rho_core::TurnInputs {
-        observer: &composite,
+        observer: &observer,
         gate: &gate,
         steering: Some(steering),
         cancel: turn_cancel,
@@ -1156,23 +1143,6 @@ async fn handle_list_sessions(app: &App, id: &Value, transport: &dyn Transport) 
     .await;
 }
 
-/// List loaded extensions and their tools.
-async fn handle_list_extensions(app: &App, id: &Value, transport: &dyn Transport) {
-    let extensions: Vec<ExtensionEntry> = app
-        .ext_loader
-        .extension_tools()
-        .into_iter()
-        .map(|(name, tools)| ExtensionEntry { name, tools })
-        .collect();
-    send(
-        transport,
-        &success_response(id, ListExtensionsResult { extensions }),
-    )
-    .await;
-}
-
-/// Resume a previous session from a JSONL file path.
-///
 /// Replaces the current session with the loaded one, restoring the
 /// model, tools, and token budget from the current app configuration.
 /// The opened session continues appending to the same JSONL file.
@@ -1253,58 +1223,6 @@ async fn handle_list_tools(app: &App, id: &Value, transport: &dyn Transport) {
         .collect();
     send(transport, &success_response(id, ListToolsResult { tools })).await;
 }
-
-/// Reload extensions from disk.
-async fn handle_reload_extensions(app: &mut App, id: &Value, transport: &dyn Transport) {
-    let dirs = crate::app::extension_dirs(&app.agent.session().header().cwd);
-    let fresh_config =
-        rho_core::ConfigLoader::load(&app.agent.session().header().cwd).unwrap_or_default();
-    app.ext_loader.set_config(fresh_config.extensions);
-    match app.ext_loader.reload(&dirs, app.agent.registry_mut()).await {
-        Ok(report) => {
-            info!(
-                added = report.added.len(),
-                reloaded = report.reloaded.len(),
-                removed = report.removed.len(),
-                failed = report.failed.len(),
-                "extensions reloaded"
-            );
-            app.ext_observers = app.ext_loader.build_observers();
-            // Extension tools changed (added/reloaded/removed): sync the
-            // session's cached tool schemas so subsequent turns advertise the
-            // new tool definitions to the model. Without this, the Session
-            // keeps the stale schemas captured at start/last-sync and newly
-            // loaded tools are invisible to the model mid-conversation.
-            if report.has_changes() {
-                let schemas = app.agent.registry().tool_definitions();
-                app.agent.session_mut().set_tools(schemas);
-            }
-            send(
-                transport,
-                &success_response(
-                    id,
-                    json!({
-                        "added": report.added.len(),
-                        "reloaded": report.reloaded.len(),
-                        "removed": report.removed.len(),
-                        "failed": report.failed.len(),
-                    }),
-                ),
-            )
-            .await;
-        }
-        Err(e) => {
-            warn!(error = %e, "extension reload failed");
-            send(
-                transport,
-                &error_response(id, INTERNAL_ERROR, &e.to_string()),
-            )
-            .await;
-        }
-    }
-}
-
-// ── Message serialization ─────────────────────────────────────────────────
 
 /// Serialize a [`ChatMessage`] to a JSON value.
 ///
@@ -1493,12 +1411,6 @@ mod tests {
         .with_token_budget(rho_core::TokenBudget::default());
         App {
             agent,
-            ext_loader: rho_ext::loader::ExtensionLoader::new(
-                rho_core::ExtensionConfig::default(),
-                std::path::PathBuf::new(),
-                rho_core::denylist::CommandDenylist::default_powershell(),
-            ),
-            ext_observers: vec![],
             _log_guard: tracing_appender::non_blocking(tracing_appender::rolling::never(
                 "logs", "test.log",
             ))
@@ -1761,7 +1673,7 @@ mod tests {
         let session_id = new_session["result"]["sessionId"]
             .as_str()
             .expect("sessionId is a string");
-        assert!(!session_id.is_empty());
+        assert_ne!(session_id, "");
 
         // The model is carried over to the new session.
         assert_eq!(after["result"]["model"], "test-model");
@@ -1803,7 +1715,7 @@ mod tests {
         let mut app = test_app(MockChatClient::new(vec![]), echo_registry());
         app.agent.session_mut().user_models = vec![model];
         let (session_id, _path) = app.start_new_session();
-        assert!(!session_id.is_empty());
+        assert_ne!(session_id, "");
         assert_eq!(app.agent.session().user_models.len(), 1);
         assert_eq!(app.agent.session().user_models[0].id, "custom/x");
     }
@@ -2453,35 +2365,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_extensions_returns_array() {
-        let events = rpc_run(
-            MockChatClient::new(vec![]),
-            echo_registry(),
-            &[r#"{"jsonrpc":"2.0","method":"listExtensions","id":1}"#],
-        )
-        .await;
-
-        let resp = &responses(&events)[0];
-        assert!(resp["result"]["extensions"].as_array().is_some());
-    }
-
-    #[tokio::test]
-    async fn reload_extensions_returns_counts() {
-        let events = rpc_run(
-            MockChatClient::new(vec![]),
-            echo_registry(),
-            &[r#"{"jsonrpc":"2.0","method":"reloadExtensions","id":1}"#],
-        )
-        .await;
-
-        let resp = &responses(&events)[0];
-        assert!(resp["result"]["added"].is_number());
-        assert!(resp["result"]["reloaded"].is_number());
-        assert!(resp["result"]["removed"].is_number());
-        assert!(resp["result"]["failed"].is_number());
-    }
-
-    #[tokio::test]
     async fn compact_returns_response() {
         // Even with a small session, compact should return a response.
         // It may succeed or fail "nothing to compact" — either is fine.
@@ -2773,64 +2656,6 @@ mod tests {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // Extension reload → session tool-schema sync (regression)
-    // ═══════════════════════════════════════════════════════════════════════
-
-    /// Regression test for the stale `tool_schemas` bug.
-    ///
-    /// `handle_reload_extensions` updates `app.registry` when extensions are
-    /// added/reloaded/removed, but the `Session` caches its own copy of the
-    /// tool schemas at start time. If the session is not re-synced, newly
-    /// loaded extension tools are invisible to the model for the rest of the
-    /// conversation. This test pins the invariant: after syncing the session
-    /// with the live registry (as the reload handler now does), the session
-    /// advertises the new tools.
-    #[tokio::test]
-    async fn reload_syncs_session_tool_schemas() {
-        // Start with a one-tool registry, mirroring a freshly built session.
-        let registry = echo_registry();
-        let mut app = test_app(MockChatClient::new(vec![]), registry);
-
-        // Model session start: the session captures the live registry's tool
-        // definitions (as `build_session` does in production).
-        let schemas = app.agent.registry().tool_definitions();
-        app.agent.session_mut().set_tools(schemas);
-        assert_eq!(app.agent.session().tools().len(), 1);
-        assert_eq!(app.agent.session().tools()[0].name, "echo_tool");
-
-        // Simulate what `ExtensionLoader::reload` does to the registry on a
-        // successful reload that adds a tool: register a brand-new tool.
-        app.agent
-            .registry_mut()
-            .register(Box::new(FixedResponseTool {
-                name: "new_ext_tool",
-                response: "ext".into(),
-                risk: ToolRisk::Read,
-            }));
-
-        // Pre-sync: the registry has the new tool, but the session does not —
-        // this is exactly the drift the bug produced.
-        assert_eq!(app.agent.registry().tool_definitions().len(), 2);
-        assert_eq!(app.agent.session().tools().len(), 1);
-
-        // The reload handler now calls this after a reload with changes:
-        let schemas = app.agent.registry().tool_definitions();
-        app.agent.session_mut().set_tools(schemas);
-
-        // Post-sync: the session advertises the full live tool set.
-        assert_eq!(app.agent.session().tools().len(), 2);
-        let names: Vec<_> = app
-            .agent
-            .session()
-            .tools()
-            .iter()
-            .map(|t| t.name.as_str())
-            .collect();
-        assert!(names.contains(&"echo_tool"));
-        assert!(names.contains(&"new_ext_tool"));
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
     // 8. Mid-turn steering
     // ═══════════════════════════════════════════════════════════════════════
 
@@ -3023,7 +2848,7 @@ mod tests {
         let new_id = resp["result"]["cursorId"]
             .as_str()
             .expect("cursorId present");
-        assert!(!new_id.is_empty());
+        assert_ne!(new_id, "");
     }
     /// After a fork the roster has both cursors, and exactly one is active.
     #[tokio::test]

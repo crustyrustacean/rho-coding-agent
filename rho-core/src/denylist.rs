@@ -1,9 +1,8 @@
-//! Shell command denylist for both built-in tools and extensions.
+//! Shell command denylist for built-in tools.
 //!
 //! [`CommandDenylist`] checks commands against a list of denied names,
 //! substrings, and flag combinations before execution. The built-in
-//! `RunCommand` tool and extension `rho.runCommand()` ops both use this to
-//! reject dangerous commands.
+//! `RunCommand` tool uses this to reject dangerous commands.
 
 use crate::RhoConfig;
 use tracing::debug;

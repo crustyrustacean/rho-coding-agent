@@ -13,10 +13,8 @@ rho-coding-agent/
 │   └── src/
 │       ├── main.rs           # Thin: parse CLI, build App, run
 │       ├── lib.rs            # Module declarations
-│       ├── cli.rs            # `Cli` — CLI flags with clap; `Command::Extension` subcommand
-│       ├── app.rs            # `App` — runtime state, build/run orchestration, extension loading
-│       ├── ext_cli.rs        # `rho extension` subcommand handlers (sync/install/remove/list)
-│       ├── ext_observer.rs   # `CompositeObserver` — fans out to RPC observer + extension observers
+│       ├── cli.rs            # `Cli` — CLI flags with clap
+│       ├── app.rs            # `App` — runtime state, build/run orchestration
 │       ├── rpc.rs            # JSON-RPC 2.0: `run_rpc`, `run_rpc_on`, observer, approval gate
 │       ├── rpc_wire.rs       # Typed wire-format structs (params, results, notifications)
 │       ├── transport.rs      # `Transport` trait, `StdioTransport` (newline-delimited JSON)
@@ -35,25 +33,6 @@ rho-coding-agent/
 │       ├── types.rs         # `LlmMessage`, `LlmRequest`, `StreamEvent`, `AccumulatedResponse`
 │       └── error.rs         # `ProviderError`
 │   └── model-overrides.json # Manual catalog overrides (thinking flags, compatibility)
-├── rho-ext/                # TypeScript extension runtime (V8/deno-core)
-│   └── src/
-│       ├── lib.rs          # Re-exports: `ExtensionLoader`, `DenoTool`, `DenoObserver`, etc.
-│       ├── runtime.rs      # `ExtensionRuntime` — V8 isolate on dedicated OS thread
-│       ├── async_dispatcher.rs # Async bridge between V8 isolate and tokio
-│       ├── loader.rs       # `ExtensionLoader` — discovery, filtering, spawning, hot reload
-│       ├── deno_tool.rs    # `DenoTool` — `Tool` trait wrapper
-│       ├── deno_observer.rs# `DenoObserver` — `AgentObserver` wrapper
-│       ├── manifest.rs     # `LoadedExtension` — manifest parsing and validation
-│       ├── discover.rs     # Extension discovery (single-file and multi-file)
-│       ├── transpile.rs    # TS → JS transpilation
-│       ├── module_loader.rs# `RhoModuleLoader` — ESM module resolution
-│       ├── host.rs         # `rho.*` host ops (log, readFile, writeFile, runCommand, getModel, getCwd)
-│       ├── ops.rs          # Helper macros for host op boilerplate
-│       ├── error.rs        # `ExtensionError`
-│       ├── host_shim.js    # ESM shim for extension module loading
-│       └── std_shim.js    # Standard library shim for extensions
-│   └── types/
-│       └── rho.d.ts        # TypeScript type definitions for extension authors
 ├── rho-core/                # Agent kernel
 │   └── src/
 │       ├── lib.rs           # Module declarations, convenience re-exports

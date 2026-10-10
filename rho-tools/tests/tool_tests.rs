@@ -389,7 +389,7 @@ async fn run_command_denies_blacklisted_command() {
     );
 
     // The executor should never have been called.
-    assert!(mock.commands().is_empty());
+    assert_eq!(mock.commands(), [] as [std::string::String; 0]);
 }
 
 #[tokio::test]

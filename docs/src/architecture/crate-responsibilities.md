@@ -2,9 +2,9 @@
 
 ## `rho` (binary)
 
-The headless JSON-RPC 2.0 agent: CLI argument parsing, tool wiring, extension loading, and system prompt assembly. Reads newline-delimited JSON-RPC 2.0 requests from stdin and writes responses/notifications to stdout. Diagnostic output goes to stderr.
+The headless JSON-RPC 2.0 agent: CLI argument parsing, tool wiring, and system prompt assembly. Reads newline-delimited JSON-RPC 2.0 requests from stdin and writes responses/notifications to stdout. Diagnostic output goes to stderr.
 
-Constructs a `Session`, connects to the model via a `Provider`, and drives the agent loop. Handles provider consent checks, model resolution, startup budget diagnostics, shell-specific prompt extensions, session discovery, extension loading, and live observer output via `RpcObserver`.
+Constructs a `Session`, connects to the model via a `Provider`, and drives the agent loop. Handles provider consent checks, model resolution, startup budget diagnostics, shell-specific prompt extensions, session discovery, and live observer output via `RpcObserver`.
 
 The RPC implementation is decoupled from I/O via the `Transport` trait (`rho/src/transport.rs`); `StdioTransport` (newline-delimited JSON over stdin/stdout) is the default, and in-process tests inject a `StdioTransport` wired to canned readers and captured writers. Wire-format types in `rpc_wire.rs` give every method param, result, and notification a typed Rust struct. See [RPC Mode](../rpc-mode.md) for the full protocol reference and [`OpenRPC` schema](../../rpc-schema/openrpc.json) for machine-readable API discovery.
 
@@ -41,22 +41,6 @@ Each implements the `Tool` trait from `rho-core`.
 Persistent knowledge base for project-local docs: full-text search (SQLite FTS5), content deduplication, and soft deletes. Exposed to the agent through the `MemoryTool` in `rho-tools`. Storage lives at `<project-root>/.rho/memory.db`. Gated by the `[memory]` config section (`enabled = true`).
 
 Key types: `Memory`, `Database`, `Document`, `SearchResult`.
-
-## `rho-ext`
-
-TypeScript extension runtime (powered by `deno_core` and V8). Enables user-authored extensions that add tools, hooks, and commands to rho.
-
-- **`ExtensionRuntime`** — owns a V8 isolate on a dedicated OS thread, handles async tool/hook/command calls via tokio channels
-- **`ExtensionLoader`** — orchestrates discovery (single-file and multi-file), config-driven filtering, spawning, tool registration, and hot reload (mtime-based change detection)
-- **`DenoTool`** — wraps extension tool functions as `Box<dyn Tool>` for the `ToolRegistry`
-- **`DenoObserver`** — wraps extension hooks as `AgentObserver` for the agent loop (onLoad, onToolCall, onToolResult, onBeforeModel)
-- **TypeScript transpilation** — `deno_ast` transpiles `.ts` to JS at load time
-- **Host functions** — `rho.log()`, `rho.readFile()`, `rho.writeFile()`, `rho.runCommand()`, `rho.getModel()`, `rho.getCwd()` with permission gating
-- **Type definitions** — ships `rho.d.ts` for extension author IntelliSense
-
-Key types: `ExtensionRuntime`, `ExtensionLoader`, `DenoTool`, `DenoObserver`, `LoadedExtension`, `ExtensionError`.
-
-See [Extensions](../extensions.md) for the full extension system documentation.
 
 ## `rho-test-helpers`
 
