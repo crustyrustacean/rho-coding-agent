@@ -24,6 +24,321 @@ use super::catalog::{Model, ModelCost, ModelInput, ModelThinking};
 pub fn built_in_models() -> Vec<Model> {
     vec![
         Model {
+            id: "stepfun/step-5-preview".to_string(),
+            name: "StepFun: Step 5 Preview".to_string(),
+            provider: "stepfun".to_string(),
+            context_window: 1000000,
+            max_tokens: 64000,
+            input: ModelInput {
+                text: true,
+                image: true,
+            },
+            cost: ModelCost {
+                input: 1.0000000000,
+                output: 2.7000000000,
+                cache_read: 0.0500000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "anthropic/claude-haiku-5.5".to_string(),
+            name: "Anthropic: Claude Haiku 5.5".to_string(),
+            provider: "anthropic".to_string(),
+            context_window: 1000000,
+            max_tokens: 128000,
+            input: ModelInput {
+                text: true,
+                image: true,
+            },
+            cost: ModelCost {
+                input: 0.1000000000,
+                output: 0.5000000000,
+                cache_read: 0.0100000000,
+                cache_write: 0.1250000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "anthropic/claude-haiku-5.5:batch".to_string(),
+            name: "Anthropic: Claude Haiku 5.5 (batch)".to_string(),
+            provider: "anthropic".to_string(),
+            context_window: 1000000,
+            max_tokens: 128000,
+            input: ModelInput {
+                text: true,
+                image: true,
+            },
+            cost: ModelCost {
+                input: 0.0500000000,
+                output: 0.2500000000,
+                cache_read: 0.0050000000,
+                cache_write: 0.0625000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "google/gemini-nano-banana-2.1".to_string(),
+            name: "Google: Nano Banana 2.1".to_string(),
+            provider: "google".to_string(),
+            context_window: 65536,
+            max_tokens: 58982,
+            input: ModelInput {
+                text: true,
+                image: true,
+            },
+            cost: ModelCost {
+                input: 1.5000000000,
+                output: 7.5000000000,
+                cache_read: 0.0000000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "mistralai/mistral-large-4-0".to_string(),
+            name: "Mistral: Mistral Large 4".to_string(),
+            provider: "mistralai".to_string(),
+            context_window: 1048576,
+            max_tokens: 262144,
+            input: ModelInput {
+                text: true,
+                image: true,
+            },
+            cost: ModelCost {
+                input: 0.6800000000,
+                output: 2.0900000000,
+                cache_read: 0.0700000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "inclusionai/ling-3.1-flash".to_string(),
+            name: "inclusionAI: Ling 3.1 Flash".to_string(),
+            provider: "inclusionai".to_string(),
+            context_window: 262144,
+            max_tokens: 32768,
+            input: ModelInput {
+                text: true,
+                image: false,
+            },
+            cost: ModelCost {
+                input: 0.0000000000,
+                output: 0.0000000000,
+                cache_read: 0.0000000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "unbiased/pareto-26.10-preview".to_string(),
+            name: "Pareto 26.10 Preview".to_string(),
+            provider: "unbiased".to_string(),
+            context_window: 1048576,
+            max_tokens: 131072,
+            input: ModelInput {
+                text: true,
+                image: true,
+            },
+            cost: ModelCost {
+                input: 0.8000000000,
+                output: 3.2000000000,
+                cache_read: 0.0300000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "openai/gpt-6.1-sol-pro".to_string(),
+            name: "OpenAI: GPT-6.1 Sol Pro".to_string(),
+            provider: "openai".to_string(),
+            context_window: 1050000,
+            max_tokens: 128000,
+            input: ModelInput {
+                text: true,
+                image: true,
+            },
+            cost: ModelCost {
+                input: 2.0000000000,
+                output: 10.0000000000,
+                cache_read: 0.1000000000,
+                cache_write: 2.5000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "openai/gpt-6.1-sol-pro:batch".to_string(),
+            name: "OpenAI: GPT-6.1 Sol Pro (batch)".to_string(),
+            provider: "openai".to_string(),
+            context_window: 1050000,
+            max_tokens: 128000,
+            input: ModelInput {
+                text: true,
+                image: true,
+            },
+            cost: ModelCost {
+                input: 1.0000000000,
+                output: 5.0000000000,
+                cache_read: 0.0500000000,
+                cache_write: 1.2500000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "openai/gpt-6.1-sol".to_string(),
+            name: "OpenAI: GPT-6.1 Sol".to_string(),
+            provider: "openai".to_string(),
+            context_window: 1050000,
+            max_tokens: 128000,
+            input: ModelInput {
+                text: true,
+                image: true,
+            },
+            cost: ModelCost {
+                input: 2.0000000000,
+                output: 10.0000000000,
+                cache_read: 0.1000000000,
+                cache_write: 2.5000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "openai/gpt-6.1-sol:batch".to_string(),
+            name: "OpenAI: GPT-6.1 Sol (batch)".to_string(),
+            provider: "openai".to_string(),
+            context_window: 1050000,
+            max_tokens: 128000,
+            input: ModelInput {
+                text: true,
+                image: true,
+            },
+            cost: ModelCost {
+                input: 1.0000000000,
+                output: 5.0000000000,
+                cache_read: 0.0500000000,
+                cache_write: 1.2500000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "anthropic/claude-sonnet-5.5".to_string(),
+            name: "Anthropic: Claude Sonnet 5.5".to_string(),
+            provider: "anthropic".to_string(),
+            context_window: 1000000,
+            max_tokens: 128000,
+            input: ModelInput {
+                text: true,
+                image: true,
+            },
+            cost: ModelCost {
+                input: 2.0000000000,
+                output: 10.0000000000,
+                cache_read: 0.1000000000,
+                cache_write: 2.5000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "anthropic/claude-sonnet-5.5:batch".to_string(),
+            name: "Anthropic: Claude Sonnet 5.5 (batch)".to_string(),
+            provider: "anthropic".to_string(),
+            context_window: 1000000,
+            max_tokens: 128000,
+            input: ModelInput {
+                text: true,
+                image: true,
+            },
+            cost: ModelCost {
+                input: 1.0000000000,
+                output: 5.0000000000,
+                cache_read: 0.0500000000,
+                cache_write: 1.2500000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "typesafe/jev-router".to_string(),
+            name: "TypeSafe: Jev Router".to_string(),
+            provider: "typesafe".to_string(),
+            context_window: 1000000,
+            max_tokens: 250000,
+            input: ModelInput {
+                text: true,
+                image: true,
+            },
+            cost: ModelCost {
+                input: -1000000.0000000000,
+                output: -1000000.0000000000,
+                cache_read: 0.0000000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "perceptron/perceptron-mk1.5".to_string(),
+            name: "Perceptron: Perceptron Mk1.5".to_string(),
+            provider: "perceptron".to_string(),
+            context_window: 36864,
+            max_tokens: 8192,
+            input: ModelInput {
+                text: true,
+                image: true,
+            },
+            cost: ModelCost {
+                input: 0.1500000000,
+                output: 1.5000000000,
+                cache_read: 0.0000000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
             id: "fireworks/ember-1".to_string(),
             name: "Fireworks: Ember-1".to_string(),
             provider: "fireworks".to_string(),
@@ -79,27 +394,6 @@ pub fn built_in_models() -> Vec<Model> {
                 input: 4.0000000000,
                 output: 12.0000000000,
                 cache_read: 0.5000000000,
-                cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
-            id: "stealth/space-bunny-alpha".to_string(),
-            name: "Space Bunny Alpha".to_string(),
-            provider: "stealth".to_string(),
-            context_window: 1000000,
-            max_tokens: 524288,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
-            cost: ModelCost {
-                input: 0.0000000000,
-                output: 0.0000000000,
-                cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -402,6 +696,27 @@ pub fn built_in_models() -> Vec<Model> {
             },
         },
         Model {
+            id: "nvidia/switchyard".to_string(),
+            name: "NVIDIA: Switchyard".to_string(),
+            provider: "nvidia".to_string(),
+            context_window: 1000000,
+            max_tokens: 250000,
+            input: ModelInput {
+                text: true,
+                image: false,
+            },
+            cost: ModelCost {
+                input: -1000000.0000000000,
+                output: -1000000.0000000000,
+                cache_read: 0.0000000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
             id: "xiaomi/mimo-v2.6-pro-ultraspeed".to_string(),
             name: "Xiaomi: MiMo-V2.6-Pro-UltraSpeed".to_string(),
             provider: "xiaomi".to_string(),
@@ -426,7 +741,7 @@ pub fn built_in_models() -> Vec<Model> {
             id: "xiaomi/mimo-v2.6-flash".to_string(),
             name: "Xiaomi: MiMo-V2.6-Flash".to_string(),
             provider: "xiaomi".to_string(),
-            context_window: 1048576,
+            context_window: 1050000,
             max_tokens: 131072,
             input: ModelInput {
                 text: true,
@@ -447,7 +762,7 @@ pub fn built_in_models() -> Vec<Model> {
             id: "xiaomi/mimo-v2.6-pro".to_string(),
             name: "Xiaomi: MiMo-V2.6-Pro".to_string(),
             provider: "xiaomi".to_string(),
-            context_window: 1048576,
+            context_window: 1050000,
             max_tokens: 131072,
             input: ModelInput {
                 text: true,
@@ -475,9 +790,9 @@ pub fn built_in_models() -> Vec<Model> {
                 image: true,
             },
             cost: ModelCost {
-                input: 1.6000000000,
-                output: 4.8000000000,
-                cache_read: 0.4000000000,
+                input: 2.0000000000,
+                output: 6.0000000000,
+                cache_read: 0.5000000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -519,7 +834,7 @@ pub fn built_in_models() -> Vec<Model> {
             cost: ModelCost {
                 input: 0.0750000000,
                 output: 0.5000000000,
-                cache_read: 0.0000000000,
+                cache_read: 0.0375000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -664,9 +979,9 @@ pub fn built_in_models() -> Vec<Model> {
                 image: true,
             },
             cost: ModelCost {
-                input: 0.0600000000,
-                output: 0.1800000000,
-                cache_read: 0.0120000000,
+                input: 0.0210000000,
+                output: 0.0616000000,
+                cache_read: 0.0042000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -679,15 +994,15 @@ pub fn built_in_models() -> Vec<Model> {
             name: "DeepSeek: DeepSeek V4.1 Flash".to_string(),
             provider: "deepseek".to_string(),
             context_window: 1048576,
-            max_tokens: 393216,
+            max_tokens: 943718,
             input: ModelInput {
                 text: true,
                 image: true,
             },
             cost: ModelCost {
-                input: 0.1500000000,
-                output: 0.6000000000,
-                cache_read: 0.0030000000,
+                input: 0.3000000000,
+                output: 1.2000000000,
+                cache_read: 0.0060000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -730,6 +1045,48 @@ pub fn built_in_models() -> Vec<Model> {
                 input: 0.0400000000,
                 output: 0.1500000000,
                 cache_read: 0.0040000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "nex-agi/nex-n2.5-mini".to_string(),
+            name: "Nex AGI: Nex-N2.5-Mini".to_string(),
+            provider: "nex-agi".to_string(),
+            context_window: 262144,
+            max_tokens: 235929,
+            input: ModelInput {
+                text: true,
+                image: true,
+            },
+            cost: ModelCost {
+                input: 0.0250000000,
+                output: 0.1000000000,
+                cache_read: 0.0025000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
+            id: "nex-agi/nex-n2.5-pro".to_string(),
+            name: "Nex AGI: Nex-N2.5-Pro".to_string(),
+            provider: "nex-agi".to_string(),
+            context_window: 262144,
+            max_tokens: 235929,
+            input: ModelInput {
+                text: true,
+                image: true,
+            },
+            cost: ModelCost {
+                input: 0.0750000000,
+                output: 0.2500000000,
+                cache_read: 0.0150000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -822,6 +1179,27 @@ pub fn built_in_models() -> Vec<Model> {
             },
         },
         Model {
+            id: "inclusionai/ling-3.0-flash-sante".to_string(),
+            name: "inclusionAI: Ling 3.0 Flash Sante".to_string(),
+            provider: "inclusionai".to_string(),
+            context_window: 262144,
+            max_tokens: 32768,
+            input: ModelInput {
+                text: true,
+                image: false,
+            },
+            cost: ModelCost {
+                input: 0.0420000000,
+                output: 0.1232000000,
+                cache_read: 0.0084000000,
+                cache_write: 0.0000000000,
+            },
+            thinking: ModelThinking {
+                supported: false,
+                format: None,
+            },
+        },
+        Model {
             id: "qwen/qwen3.8-max-0902".to_string(),
             name: "Qwen: Qwen3.8 Max (0902)".to_string(),
             provider: "qwen".to_string(),
@@ -835,7 +1213,7 @@ pub fn built_in_models() -> Vec<Model> {
                 input: 2.0000000000,
                 output: 6.0000000000,
                 cache_read: 0.2500000000,
-                cache_write: 2.5000000000,
+                cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
                 supported: false,
@@ -1015,15 +1393,15 @@ pub fn built_in_models() -> Vec<Model> {
             name: "inclusionAI: Ling 3.0 Flash Fin".to_string(),
             provider: "inclusionai".to_string(),
             context_window: 262144,
-            max_tokens: 235929,
+            max_tokens: 32768,
             input: ModelInput {
                 text: true,
                 image: false,
             },
             cost: ModelCost {
-                input: 0.0600000000,
-                output: 0.1800000000,
-                cache_read: 0.0120000000,
+                input: 0.0420000000,
+                output: 0.1232000000,
+                cache_read: 0.0084000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -1045,7 +1423,7 @@ pub fn built_in_models() -> Vec<Model> {
                 input: 0.1500000000,
                 output: 0.4700000000,
                 cache_read: 0.0160000000,
-                cache_write: 0.2000000000,
+                cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
                 supported: false,
@@ -1056,16 +1434,16 @@ pub fn built_in_models() -> Vec<Model> {
             id: "z-ai/glm-5.3-flash".to_string(),
             name: "Z.ai: GLM 5.3 Flash".to_string(),
             provider: "z-ai".to_string(),
-            context_window: 1310720,
-            max_tokens: 131072,
+            context_window: 1048576,
+            max_tokens: 943717,
             input: ModelInput {
                 text: true,
                 image: true,
             },
             cost: ModelCost {
-                input: 0.0450000000,
-                output: 0.6000000000,
-                cache_read: 0.0285000000,
+                input: 0.1500000000,
+                output: 0.5000000000,
+                cache_read: 0.0300000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -1120,15 +1498,15 @@ pub fn built_in_models() -> Vec<Model> {
             name: "DeepSeek: DeepSeek V4 Flash Vision Exp".to_string(),
             provider: "deepseek".to_string(),
             context_window: 1048576,
-            max_tokens: 943718,
+            max_tokens: 262144,
             input: ModelInput {
                 text: true,
                 image: true,
             },
             cost: ModelCost {
-                input: 0.2200000000,
-                output: 0.6600000000,
-                cache_read: 0.0070000000,
+                input: 0.2156000000,
+                output: 0.6468000000,
+                cache_read: 0.0068600000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -1203,16 +1581,16 @@ pub fn built_in_models() -> Vec<Model> {
             id: "z-ai/glm-5.3".to_string(),
             name: "Z.ai: GLM 5.3".to_string(),
             provider: "z-ai".to_string(),
-            context_window: 1310720,
-            max_tokens: 943717,
+            context_window: 1048576,
+            max_tokens: 943718,
             input: ModelInput {
                 text: true,
                 image: false,
             },
             cost: ModelCost {
-                input: 1.4000000000,
-                output: 4.4000000000,
-                cache_read: 0.2600000000,
+                input: 0.0390000000,
+                output: 4.8000000000,
+                cache_read: 0.0380000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -1252,10 +1630,10 @@ pub fn built_in_models() -> Vec<Model> {
                 image: true,
             },
             cost: ModelCost {
-                input: 0.4200000000,
-                output: 3.0000000000,
+                input: 0.4250000000,
+                output: 2.5500000000,
                 cache_read: 0.0850000000,
-                cache_write: 0.0000000000,
+                cache_write: 0.5312500000,
             },
             thinking: ModelThinking {
                 supported: false,
@@ -1372,15 +1750,15 @@ pub fn built_in_models() -> Vec<Model> {
             name: "DeepSeek: DeepSeek V4 Pro 0813".to_string(),
             provider: "deepseek".to_string(),
             context_window: 1048576,
-            max_tokens: 384000,
+            max_tokens: 393216,
             input: ModelInput {
                 text: true,
                 image: false,
             },
             cost: ModelCost {
-                input: 0.4620000000,
-                output: 1.3860000000,
-                cache_read: 0.0154000000,
+                input: 0.6600000000,
+                output: 1.9800000000,
+                cache_read: 0.0220000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -1420,9 +1798,9 @@ pub fn built_in_models() -> Vec<Model> {
                 image: false,
             },
             cost: ModelCost {
-                input: 0.0800000000,
-                output: 0.2000000000,
-                cache_read: 0.0400000000,
+                input: 0.0469000000,
+                output: 0.1340000000,
+                cache_read: 0.0234500000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -1518,16 +1896,16 @@ pub fn built_in_models() -> Vec<Model> {
             id: "deepseek/deepseek-v4-flash-0731".to_string(),
             name: "DeepSeek: DeepSeek V4 Flash 0731".to_string(),
             provider: "deepseek".to_string(),
-            context_window: 1310720,
+            context_window: 1048576,
             max_tokens: 943718,
             input: ModelInput {
                 text: true,
                 image: false,
             },
             cost: ModelCost {
-                input: 0.0300000000,
-                output: 0.3200000000,
-                cache_read: 0.0160000000,
+                input: 0.0060000000,
+                output: 1.2800000000,
+                cache_read: 0.0060000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -1539,7 +1917,7 @@ pub fn built_in_models() -> Vec<Model> {
             id: "thinkingmachines/inkling-small".to_string(),
             name: "Thinking Machines: Inkling Small".to_string(),
             provider: "thinkingmachines".to_string(),
-            context_window: 1048576,
+            context_window: 524288,
             max_tokens: 262144,
             input: ModelInput {
                 text: true,
@@ -1770,7 +2148,7 @@ pub fn built_in_models() -> Vec<Model> {
             id: "thinkingmachines/inkling".to_string(),
             name: "Thinking Machines: Inkling".to_string(),
             provider: "thinkingmachines".to_string(),
-            context_window: 1048576,
+            context_window: 524288,
             max_tokens: 471859,
             input: ModelInput {
                 text: true,
@@ -1819,9 +2197,9 @@ pub fn built_in_models() -> Vec<Model> {
                 image: true,
             },
             cost: ModelCost {
-                input: 0.8845000000,
-                output: 10.5346000000,
-                cache_read: 0.3300000000,
+                input: 0.6400000000,
+                output: 13.5000000000,
+                cache_read: 0.2800000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -1863,27 +2241,6 @@ pub fn built_in_models() -> Vec<Model> {
             cost: ModelCost {
                 input: 1.2500000000,
                 output: 4.2500000000,
-                cache_read: 0.1500000000,
-                cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
-            id: "kwaipilot/kat-coder-pro-v2.5".to_string(),
-            name: "Kwaipilot: KAT-Coder-Pro V2.5".to_string(),
-            provider: "kwaipilot".to_string(),
-            context_window: 262144,
-            max_tokens: 235929,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
-            cost: ModelCost {
-                input: 0.7400000000,
-                output: 2.9600000000,
                 cache_read: 0.1500000000,
                 cache_write: 0.0000000000,
             },
@@ -2380,15 +2737,15 @@ pub fn built_in_models() -> Vec<Model> {
             name: "Z.ai: GLM 5.2".to_string(),
             provider: "z-ai".to_string(),
             context_window: 1048576,
-            max_tokens: 131072,
+            max_tokens: 943718,
             input: ModelInput {
                 text: true,
                 image: false,
             },
             cost: ModelCost {
-                input: 0.6496000000,
-                output: 2.0416000000,
-                cache_read: 0.1206400000,
+                input: 0.0600000000,
+                output: 7.0000000000,
+                cache_read: 0.0590000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -2428,8 +2785,8 @@ pub fn built_in_models() -> Vec<Model> {
                 image: true,
             },
             cost: ModelCost {
-                input: 0.6562000000,
-                output: 3.3000000000,
+                input: 0.6712000000,
+                output: 3.3500000000,
                 cache_read: 0.1800000000,
                 cache_write: 0.0000000000,
             },
@@ -2506,15 +2863,15 @@ pub fn built_in_models() -> Vec<Model> {
             name: "NVIDIA: Nemotron 3 Ultra".to_string(),
             provider: "nvidia".to_string(),
             context_window: 262144,
-            max_tokens: 182520,
+            max_tokens: 16384,
             input: ModelInput {
                 text: true,
                 image: false,
             },
             cost: ModelCost {
-                input: 0.6000000000,
-                output: 2.4000000000,
-                cache_read: 0.1200000000,
+                input: 0.5000000000,
+                output: 2.2000000000,
+                cache_read: 0.1000000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -2943,40 +3300,19 @@ pub fn built_in_models() -> Vec<Model> {
             },
         },
         Model {
-            id: "qwen/qwen3.6-max-preview".to_string(),
-            name: "Qwen: Qwen3.6 Max Preview".to_string(),
-            provider: "qwen".to_string(),
-            context_window: 262144,
-            max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
-            cost: ModelCost {
-                input: 1.0270000000,
-                output: 6.1620000000,
-                cache_read: 0.0000000000,
-                cache_write: 1.2837500000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
             id: "qwen/qwen3.6-27b".to_string(),
             name: "Qwen: Qwen3.6 27B".to_string(),
             provider: "qwen".to_string(),
             context_window: 262144,
-            max_tokens: 262140,
+            max_tokens: 81920,
             input: ModelInput {
                 text: true,
                 image: true,
             },
             cost: ModelCost {
                 input: 0.3200000000,
-                output: 2.7000000000,
-                cache_read: 0.1500000000,
+                output: 3.2000000000,
+                cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -3079,9 +3415,9 @@ pub fn built_in_models() -> Vec<Model> {
                 image: false,
             },
             cost: ModelCost {
-                input: 0.7993560000,
-                output: 1.5987120000,
-                cache_read: 0.0666130000,
+                input: 0.9483000000,
+                output: 1.8966000000,
+                cache_read: 0.0790250000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -3094,15 +3430,15 @@ pub fn built_in_models() -> Vec<Model> {
             name: "DeepSeek: DeepSeek V4 Flash 0423".to_string(),
             provider: "deepseek".to_string(),
             context_window: 1048576,
-            max_tokens: 384000,
+            max_tokens: 943718,
             input: ModelInput {
                 text: true,
                 image: false,
             },
             cost: ModelCost {
-                input: 0.0490000000,
-                output: 0.0980000000,
-                cache_read: 0.0098000000,
+                input: 0.0099000000,
+                output: 1.2800000000,
+                cache_read: 0.0099000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -3226,9 +3562,9 @@ pub fn built_in_models() -> Vec<Model> {
                 image: true,
             },
             cost: ModelCost {
-                input: 0.9500000000,
-                output: 4.0000000000,
-                cache_read: 0.1600000000,
+                input: 0.4650000000,
+                output: 2.4500000000,
+                cache_read: 0.0875000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -3283,15 +3619,15 @@ pub fn built_in_models() -> Vec<Model> {
             name: "Z.ai: GLM 5.1".to_string(),
             provider: "z-ai".to_string(),
             context_window: 204800,
-            max_tokens: 131072,
+            max_tokens: 128000,
             input: ModelInput {
                 text: true,
                 image: false,
             },
             cost: ModelCost {
-                input: 0.9646000000,
-                output: 3.0316000000,
-                cache_read: 0.1791400000,
+                input: 0.9660000000,
+                output: 3.0360000000,
+                cache_read: 0.1794000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -3310,9 +3646,9 @@ pub fn built_in_models() -> Vec<Model> {
                 image: true,
             },
             cost: ModelCost {
-                input: 0.0900000000,
-                output: 0.3000000000,
-                cache_read: 0.0500000000,
+                input: 0.0675000000,
+                output: 0.2250000000,
+                cache_read: 0.0375000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -3514,15 +3850,15 @@ pub fn built_in_models() -> Vec<Model> {
             name: "MiniMax: MiniMax M2.7".to_string(),
             provider: "minimax".to_string(),
             context_window: 204800,
-            max_tokens: 131072,
+            max_tokens: 176947,
             input: ModelInput {
                 text: true,
                 image: false,
             },
             cost: ModelCost {
-                input: 0.3000000000,
-                output: 1.2000000000,
-                cache_read: 0.0600000000,
+                input: 0.2100000000,
+                output: 0.8400000000,
+                cache_read: 0.0420000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -3913,15 +4249,15 @@ pub fn built_in_models() -> Vec<Model> {
             name: "Qwen: Qwen3.5-35B-A3B".to_string(),
             provider: "qwen".to_string(),
             context_window: 262144,
-            max_tokens: 16384,
+            max_tokens: 32768,
             input: ModelInput {
                 text: true,
                 image: true,
             },
             cost: ModelCost {
-                input: 0.3125000000,
-                output: 1.2500000000,
-                cache_read: 0.1562500000,
+                input: 0.0800000000,
+                output: 0.7500000000,
+                cache_read: 0.0400000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -3934,14 +4270,14 @@ pub fn built_in_models() -> Vec<Model> {
             name: "Qwen: Qwen3.5-27B".to_string(),
             provider: "qwen".to_string(),
             context_window: 262144,
-            max_tokens: 65536,
+            max_tokens: 81920,
             input: ModelInput {
                 text: true,
                 image: true,
             },
             cost: ModelCost {
-                input: 0.1950000000,
-                output: 1.5600000000,
+                input: 0.2600000000,
+                output: 2.6000000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
@@ -4216,27 +4552,6 @@ pub fn built_in_models() -> Vec<Model> {
                 input: 0.6000000000,
                 output: 1.9200000000,
                 cache_read: 0.1200000000,
-                cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
-            id: "qwen/qwen3-max-thinking".to_string(),
-            name: "Qwen: Qwen3 Max Thinking".to_string(),
-            provider: "qwen".to_string(),
-            context_window: 262144,
-            max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
-            cost: ModelCost {
-                input: 0.7800000000,
-                output: 3.9000000000,
-                cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -4654,9 +4969,9 @@ pub fn built_in_models() -> Vec<Model> {
                 image: false,
             },
             cost: ModelCost {
-                input: 0.0500000000,
-                output: 0.2000000000,
-                cache_read: 0.0300000000,
+                input: 0.0600000000,
+                output: 0.2400000000,
+                cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -5026,15 +5341,15 @@ pub fn built_in_models() -> Vec<Model> {
             name: "DeepSeek: DeepSeek V3.2".to_string(),
             provider: "deepseek".to_string(),
             context_window: 163840,
-            max_tokens: 65536,
+            max_tokens: 147456,
             input: ModelInput {
                 text: true,
                 image: false,
             },
             cost: ModelCost {
-                input: 0.2690000000,
-                output: 0.4000000000,
-                cache_read: 0.1345000000,
+                input: 0.2590000000,
+                output: 0.4200000000,
+                cache_read: 0.1350000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -5316,27 +5631,6 @@ pub fn built_in_models() -> Vec<Model> {
             },
         },
         Model {
-            id: "qwen/qwen3-vl-32b-instruct".to_string(),
-            name: "Qwen: Qwen3 VL 32B Instruct".to_string(),
-            provider: "qwen".to_string(),
-            context_window: 131072,
-            max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
-            cost: ModelCost {
-                input: 0.1040000000,
-                output: 0.4160000000,
-                cache_read: 0.0000000000,
-                cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
             id: "ibm-granite/granite-4.0-h-micro".to_string(),
             name: "IBM: Granite 4.0 Micro".to_string(),
             provider: "ibm-granite".to_string(),
@@ -5421,40 +5715,19 @@ pub fn built_in_models() -> Vec<Model> {
             },
         },
         Model {
-            id: "qwen/qwen3-vl-8b-thinking".to_string(),
-            name: "Qwen: Qwen3 VL 8B Thinking".to_string(),
-            provider: "qwen".to_string(),
-            context_window: 131072,
-            max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
-            cost: ModelCost {
-                input: 0.1800000000,
-                output: 2.1000000000,
-                cache_read: 0.0000000000,
-                cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
             id: "qwen/qwen3-vl-8b-instruct".to_string(),
             name: "Qwen: Qwen3 VL 8B Instruct".to_string(),
             provider: "qwen".to_string(),
             context_window: 262144,
-            max_tokens: 32768,
+            max_tokens: 235929,
             input: ModelInput {
                 text: true,
                 image: true,
             },
             cost: ModelCost {
-                input: 0.1170000000,
-                output: 0.4550000000,
-                cache_read: 0.0000000000,
+                input: 0.2500000000,
+                output: 0.7500000000,
+                cache_read: 0.1200000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -5509,14 +5782,14 @@ pub fn built_in_models() -> Vec<Model> {
             name: "Qwen: Qwen3 VL 30B A3B Thinking".to_string(),
             provider: "qwen".to_string(),
             context_window: 262144,
-            max_tokens: 32768,
+            max_tokens: 235929,
             input: ModelInput {
                 text: true,
                 image: true,
             },
             cost: ModelCost {
-                input: 0.2000000000,
-                output: 2.4000000000,
+                input: 0.2900000000,
+                output: 1.0000000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
@@ -5593,15 +5866,15 @@ pub fn built_in_models() -> Vec<Model> {
             name: "Z.ai: GLM 4.6".to_string(),
             provider: "z-ai".to_string(),
             context_window: 204800,
-            max_tokens: 16384,
+            max_tokens: 131072,
             input: ModelInput {
                 text: true,
                 image: false,
             },
             cost: ModelCost {
-                input: 0.4300000000,
-                output: 1.7500000000,
-                cache_read: 0.0800000000,
+                input: 0.5000000000,
+                output: 2.0000000000,
+                cache_read: 0.1000000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -5656,7 +5929,7 @@ pub fn built_in_models() -> Vec<Model> {
             name: "DeepSeek: DeepSeek V3.2 Exp".to_string(),
             provider: "deepseek".to_string(),
             context_window: 163840,
-            max_tokens: 65536,
+            max_tokens: 147456,
             input: ModelInput {
                 text: true,
                 image: false,
@@ -5715,27 +5988,6 @@ pub fn built_in_models() -> Vec<Model> {
             },
         },
         Model {
-            id: "qwen/qwen3-vl-235b-a22b-thinking".to_string(),
-            name: "Qwen: Qwen3 VL 235B A22B Thinking".to_string(),
-            provider: "qwen".to_string(),
-            context_window: 131072,
-            max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
-            cost: ModelCost {
-                input: 0.4000000000,
-                output: 4.0000000000,
-                cache_read: 0.0000000000,
-                cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
             id: "qwen/qwen3-vl-235b-a22b-instruct".to_string(),
             name: "Qwen: Qwen3 VL 235B A22B Instruct".to_string(),
             provider: "qwen".to_string(),
@@ -5757,53 +6009,11 @@ pub fn built_in_models() -> Vec<Model> {
             },
         },
         Model {
-            id: "qwen/qwen3-max".to_string(),
-            name: "Qwen: Qwen3 Max".to_string(),
-            provider: "qwen".to_string(),
-            context_window: 262144,
-            max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
-            cost: ModelCost {
-                input: 0.7800000000,
-                output: 3.9000000000,
-                cache_read: 0.1560000000,
-                cache_write: 0.9750000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
-            id: "qwen/qwen3-coder-plus".to_string(),
-            name: "Qwen: Qwen3 Coder Plus".to_string(),
-            provider: "qwen".to_string(),
-            context_window: 1000000,
-            max_tokens: 65536,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
-            cost: ModelCost {
-                input: 0.6500000000,
-                output: 3.2500000000,
-                cache_read: 0.1300000000,
-                cache_write: 0.8125000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
             id: "deepseek/deepseek-v3.1-terminus".to_string(),
             name: "DeepSeek: DeepSeek V3.1 Terminus".to_string(),
             provider: "deepseek".to_string(),
             context_window: 163840,
-            max_tokens: 32768,
+            max_tokens: 147456,
             input: ModelInput {
                 text: true,
                 image: false,
@@ -5811,7 +6021,7 @@ pub fn built_in_models() -> Vec<Model> {
             cost: ModelCost {
                 input: 0.2700000000,
                 output: 1.0000000000,
-                cache_read: 0.1350000000,
+                cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -5883,27 +6093,6 @@ pub fn built_in_models() -> Vec<Model> {
             },
         },
         Model {
-            id: "qwen/qwen-plus-2025-07-28".to_string(),
-            name: "Qwen: Qwen Plus 0728".to_string(),
-            provider: "qwen".to_string(),
-            context_window: 1000000,
-            max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
-            cost: ModelCost {
-                input: 0.2600000000,
-                output: 0.7800000000,
-                cache_read: 0.0000000000,
-                cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
             id: "moonshotai/kimi-k2-0905".to_string(),
             name: "MoonshotAI: Kimi K2 0905".to_string(),
             provider: "moonshotai".to_string(),
@@ -5916,27 +6105,6 @@ pub fn built_in_models() -> Vec<Model> {
             cost: ModelCost {
                 input: 0.6000000000,
                 output: 2.5000000000,
-                cache_read: 0.0000000000,
-                cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
-            id: "qwen/qwen3-30b-a3b-thinking-2507".to_string(),
-            name: "Qwen: Qwen3 30B A3B Thinking 2507".to_string(),
-            provider: "qwen".to_string(),
-            context_window: 81920,
-            max_tokens: 32768,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
-            cost: ModelCost {
-                input: 0.2000000000,
-                output: 2.4000000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
@@ -6181,15 +6349,15 @@ pub fn built_in_models() -> Vec<Model> {
             name: "OpenAI: gpt-oss-120b".to_string(),
             provider: "openai".to_string(),
             context_window: 131072,
-            max_tokens: 65536,
+            max_tokens: 117964,
             input: ModelInput {
                 text: true,
                 image: false,
             },
             cost: ModelCost {
-                input: 0.1500000000,
-                output: 0.6000000000,
-                cache_read: 0.0750000000,
+                input: 0.0370000000,
+                output: 0.1700000000,
+                cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -6231,7 +6399,7 @@ pub fn built_in_models() -> Vec<Model> {
             cost: ModelCost {
                 input: 0.0180000000,
                 output: 0.0900000000,
-                cache_read: 0.0000000000,
+                cache_read: 0.0090000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -6432,15 +6600,15 @@ pub fn built_in_models() -> Vec<Model> {
             id: "qwen/qwen3-235b-a22b-thinking-2507".to_string(),
             name: "Qwen: Qwen3 235B A22B Thinking 2507".to_string(),
             provider: "qwen".to_string(),
-            context_window: 131072,
-            max_tokens: 117964,
+            context_window: 128000,
+            max_tokens: 16384,
             input: ModelInput {
                 text: true,
                 image: false,
             },
             cost: ModelCost {
-                input: 0.2300000000,
-                output: 2.3000000000,
+                input: 0.4500000000,
+                output: 3.5000000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
@@ -6538,15 +6706,15 @@ pub fn built_in_models() -> Vec<Model> {
             name: "Qwen: Qwen3 235B A22B Instruct 2507".to_string(),
             provider: "qwen".to_string(),
             context_window: 262144,
-            max_tokens: 235929,
+            max_tokens: 16384,
             input: ModelInput {
                 text: true,
                 image: false,
             },
             cost: ModelCost {
-                input: 0.0875000000,
-                output: 0.3500000000,
-                cache_read: 0.0175000000,
+                input: 0.0900000000,
+                output: 0.5500000000,
+                cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -6660,27 +6828,6 @@ pub fn built_in_models() -> Vec<Model> {
             },
         },
         Model {
-            id: "baidu/ernie-4.5-vl-424b-a47b".to_string(),
-            name: "Baidu: ERNIE 4.5 VL 424B A47B ".to_string(),
-            provider: "baidu".to_string(),
-            context_window: 123000,
-            max_tokens: 16000,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
-            cost: ModelCost {
-                input: 0.4200000000,
-                output: 1.2500000000,
-                cache_read: 0.0000000000,
-                cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
             id: "mistralai/mistral-small-3.2-24b-instruct".to_string(),
             name: "Mistral: Mistral Small 3.2 24B".to_string(),
             provider: "mistralai".to_string(),
@@ -6712,7 +6859,7 @@ pub fn built_in_models() -> Vec<Model> {
                 image: false,
             },
             cost: ModelCost {
-                input: 0.4000000000,
+                input: 0.5500000000,
                 output: 2.2000000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
@@ -6936,7 +7083,7 @@ pub fn built_in_models() -> Vec<Model> {
             id: "qwen/qwen3-30b-a3b".to_string(),
             name: "Qwen: Qwen3 30B A3B".to_string(),
             provider: "qwen".to_string(),
-            context_window: 131072,
+            context_window: 40960,
             max_tokens: 16384,
             input: ModelInput {
                 text: true,
@@ -6954,39 +7101,18 @@ pub fn built_in_models() -> Vec<Model> {
             },
         },
         Model {
-            id: "qwen/qwen3-8b".to_string(),
-            name: "Qwen: Qwen3 8B".to_string(),
-            provider: "qwen".to_string(),
-            context_window: 131072,
-            max_tokens: 8192,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
-            cost: ModelCost {
-                input: 0.1170000000,
-                output: 0.4550000000,
-                cache_read: 0.0000000000,
-                cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: true,
-                format: Some("qwen".to_string()),
-            },
-        },
-        Model {
             id: "qwen/qwen3-14b".to_string(),
             name: "Qwen: Qwen3 14B".to_string(),
             provider: "qwen".to_string(),
-            context_window: 131072,
-            max_tokens: 16384,
+            context_window: 40960,
+            max_tokens: 36864,
             input: ModelInput {
                 text: true,
                 image: false,
             },
             cost: ModelCost {
-                input: 0.1200000000,
-                output: 0.2400000000,
+                input: 0.1000000000,
+                output: 0.2200000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
@@ -7008,27 +7134,6 @@ pub fn built_in_models() -> Vec<Model> {
             cost: ModelCost {
                 input: 0.0800000000,
                 output: 0.2800000000,
-                cache_read: 0.0000000000,
-                cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: true,
-                format: Some("qwen".to_string()),
-            },
-        },
-        Model {
-            id: "qwen/qwen3-235b-a22b".to_string(),
-            name: "Qwen: Qwen3 235B A22B".to_string(),
-            provider: "qwen".to_string(),
-            context_window: 131072,
-            max_tokens: 8192,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
-            cost: ModelCost {
-                input: 0.4550000000,
-                output: 1.8200000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
             },
@@ -7281,7 +7386,7 @@ pub fn built_in_models() -> Vec<Model> {
             cost: ModelCost {
                 input: 0.1875000000,
                 output: 0.6525000000,
-                cache_read: 0.0000000000,
+                cache_read: 0.0500000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -7315,15 +7420,15 @@ pub fn built_in_models() -> Vec<Model> {
             name: "DeepSeek: DeepSeek V3 0324".to_string(),
             provider: "deepseek".to_string(),
             context_window: 163840,
-            max_tokens: 147456,
+            max_tokens: 115200,
             input: ModelInput {
                 text: true,
                 image: false,
             },
             cost: ModelCost {
-                input: 0.2500000000,
-                output: 1.0000000000,
-                cache_read: 0.0000000000,
+                input: 0.2900000000,
+                output: 1.1400000000,
+                cache_read: 0.1100000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -7752,27 +7857,6 @@ pub fn built_in_models() -> Vec<Model> {
             },
         },
         Model {
-            id: "deepseek/deepseek-r1-distill-llama-70b".to_string(),
-            name: "DeepSeek: R1 Distill Llama 70B".to_string(),
-            provider: "deepseek".to_string(),
-            context_window: 8192,
-            max_tokens: 7372,
-            input: ModelInput {
-                text: true,
-                image: false,
-            },
-            cost: ModelCost {
-                input: 0.8000000000,
-                output: 0.8000000000,
-                cache_read: 0.0000000000,
-                cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
             id: "deepseek/deepseek-r1".to_string(),
             name: "DeepSeek: R1".to_string(),
             provider: "deepseek".to_string(),
@@ -7930,9 +8014,9 @@ pub fn built_in_models() -> Vec<Model> {
                 image: false,
             },
             cost: ModelCost {
-                input: 0.1000000000,
-                output: 0.3200000000,
-                cache_read: 0.0000000000,
+                input: 0.2200000000,
+                output: 0.5000000000,
+                cache_read: 0.1100000000,
                 cache_write: 0.0000000000,
             },
             thinking: ModelThinking {
@@ -8392,7 +8476,7 @@ pub fn built_in_models() -> Vec<Model> {
                 image: false,
             },
             cost: ModelCost {
-                input: 0.0190000000,
+                input: 0.0290000000,
                 output: 0.0300000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
@@ -8627,27 +8711,6 @@ pub fn built_in_models() -> Vec<Model> {
                 output: 15.0000000000,
                 cache_read: 0.0000000000,
                 cache_write: 0.0000000000,
-            },
-            thinking: ModelThinking {
-                supported: false,
-                format: None,
-            },
-        },
-        Model {
-            id: "anthropic/claude-3-haiku".to_string(),
-            name: "Anthropic: Claude 3 Haiku".to_string(),
-            provider: "anthropic".to_string(),
-            context_window: 200000,
-            max_tokens: 4096,
-            input: ModelInput {
-                text: true,
-                image: true,
-            },
-            cost: ModelCost {
-                input: 0.2500000000,
-                output: 1.2500000000,
-                cache_read: 0.0300000000,
-                cache_write: 0.3000000000,
             },
             thinking: ModelThinking {
                 supported: false,
