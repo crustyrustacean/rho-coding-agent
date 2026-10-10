@@ -1699,7 +1699,7 @@ dependencies = [
 
 [[package]]
 name = "rho"
-version = "0.92.2"
+version = "0.93.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1721,7 +1721,7 @@ dependencies = [
 
 [[package]]
 name = "rho-ai"
-version = "0.92.2"
+version = "0.93.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1736,7 +1736,7 @@ dependencies = [
 
 [[package]]
 name = "rho-core"
-version = "0.92.2"
+version = "0.93.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1761,7 +1761,7 @@ dependencies = [
 
 [[package]]
 name = "rho-highlight"
-version = "0.92.2"
+version = "0.93.0"
 dependencies = [
  "rho-core",
  "rho-test-helpers",
@@ -1772,7 +1772,7 @@ dependencies = [
 
 [[package]]
 name = "rho-memory"
-version = "0.92.2"
+version = "0.93.0"
 dependencies = [
  "chrono",
  "serde",
@@ -1788,7 +1788,7 @@ dependencies = [
 
 [[package]]
 name = "rho-protocol"
-version = "0.92.2"
+version = "0.93.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1801,7 +1801,7 @@ dependencies = [
 
 [[package]]
 name = "rho-schema-gen"
-version = "0.92.2"
+version = "0.93.0"
 dependencies = [
  "rho-protocol",
  "serde_json",
@@ -1809,7 +1809,7 @@ dependencies = [
 
 [[package]]
 name = "rho-test-helpers"
-version = "0.92.2"
+version = "0.93.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -1823,7 +1823,7 @@ dependencies = [
 
 [[package]]
 name = "rho-tools"
-version = "0.92.2"
+version = "0.93.0"
 dependencies = [
  "async-trait",
  "dunce",
@@ -3270,7 +3270,7 @@ checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
 name = "xtask"
-version = "0.92.2"
+version = "0.93.0"
 dependencies = [
  "anyhow",
  "clap",

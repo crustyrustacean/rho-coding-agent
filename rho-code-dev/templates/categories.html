@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+
+{% block title %}Categories - {{ site.name }}{% endblock %}
+
+{% block content %}
+<section>
+    <h1>Categories</h1>
+    {% if extra.taxonomy.terms %}
+    <ul class="taxonomy-list">
+        {% for term in extra.taxonomy.terms %}
+        <li>
+            <a href="{{ term.path }}">
+                {{ term.name }} ({{ term.page_count }})
+            </a>
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p>No categories yet.</p>
+    {% endif %}
+</section>
+{% endblock %}

@@ -63,4 +63,14 @@ jobs:
       - name: Build
         run: cargo build --workspace --all-targets
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace --exclude rho-ext
+      # `rho-ext` embeds V8: one isolate per extension, each on its own thread.
+      # Running its 200+ tests concurrently in a single process reliably aborts
+      # the test binary under load (exit 127 with empty stderr on Windows,
+      # SIGABRT on Linux). Serialising costs ~8s and is the only reliable
+      # mitigation we have — see issue #83.
+      #
+      # `nextest` gives this for free (it runs one process per test), which is
+      # why this only ever reproduced in CI, where we use plain `cargo test`.
+      - name: Test (rho-ext, serialised)
+        run: cargo test -p rho-ext -- --test-threads=1

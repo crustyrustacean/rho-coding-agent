@@ -115,10 +115,29 @@ Output is a stream of JSON-RPC responses and notifications (`ready`, `agent/star
 ## Frontends
 
 `rho` is headless by design, so you can drive it from any UI that speaks its
-JSON-RPC 2.0 protocol. Two frontends are available:
+JSON-RPC 2.0 protocol.
 
-- **[rho-code](https://github.com/crustyrustacean/rho-code)** — an interactive terminal UI (TUI) that spawns `rho` in headless JSON-RPC mode and renders a chat over the stream.
-- **[rho-ui](https://github.com/crustyrustacean/rho-ui)** — a native desktop UI for `rho`, built with [Makepad](https://makepad.nl/).
+**The official UI is [rho-egui](https://github.com/crustyrustacean/rho-egui)** —
+a native desktop app built with [egui](https://github.com/emilk/egui). It spawns
+`rho` in headless mode and renders the agent stream as a chat, with tool
+inspection, approvals, session and branch management, and live usage tracking.
+
+```sh
+git clone https://github.com/crustyrustacean/rho-egui && cd rho-egui
+cargo run
+```
+
+`rho-egui` needs `rho` on your `PATH`, or `RHO_PATH` pointed at the binary.
+
+### Other clients
+
+The protocol is documented and stable enough to write your own client against —
+see [docs/src/rpc-mode.md](docs/src/rpc-mode.md) or the
+[OpenRPC schema](docs/rpc-schema/openrpc.json). Two earlier frontends exist and
+may still be useful references, but neither is maintained:
+
+- `rho-code` — an interactive terminal UI (TUI) on the older Deno tooling.
+- `rho-ui` — a Makepad-based desktop UI, superseded by `rho-egui`.
 
 ## Configuration
 

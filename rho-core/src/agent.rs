@@ -958,19 +958,27 @@ impl LoopContext<'_> {
                 // Feed the error back to the model as a tool result so it can
                 // see what went wrong and retry.
                 warn!(error = %e, "tool execution failed, feeding error back to model");
-                let msg = self.format_tool_error(&e);
+                let result = ToolResult::error(self.format_tool_error(&e));
                 let duration = self.collector.stop_tool();
                 self.collector.record_execution(
                     &call.function.name,
                     &call.function.arguments,
                     ToolCallOutcome::Error {
-                        output: msg.clone(),
+                        output: result.output.clone(),
                     },
                     duration,
                 );
-                let _ = self
-                    .session
-                    .append_tool_result(call_id, &ToolResult::error(msg));
+                // Notify observers on the failure path too. This arm used to
+                // return without calling `on_tool_result`, so a failing tool
+                // produced no notification at all — live UIs showed the call
+                // as still running forever and the `is_error` flag on the
+                // wire was never set. The session append below is the model-
+                // facing half of the same event.
+                self.params
+                    .observer
+                    .on_tool_result(&call.function.name, &result)
+                    .await;
+                let _ = self.session.append_tool_result(call_id, &result);
                 return Ok(self.advance_to_next_call(remaining).await);
             }
         };
@@ -979,6 +987,13 @@ impl LoopContext<'_> {
         if self.params.config.stuck_loop_threshold > 0
             && let Some(nudge) = self.check_stuck_loop(&call, &result)
         {
+            // Same as above: a stuck-loop replacement is still a terminal
+            // result for this call, so observers need the notification or the
+            // call is left dangling as "running" in the UI.
+            self.params
+                .observer
+                .on_tool_result(&call.function.name, &nudge)
+                .await;
             let _ = self.session.append_tool_result(call_id, &nudge);
             return Ok(self.advance_to_next_call(remaining).await);
         }

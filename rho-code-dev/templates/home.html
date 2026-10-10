@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block title %}rho — a coding agent you pair with{% endblock %}
+
+{% block og_title %}rho — a coding agent you pair with{% endblock %}
+
+{% block content %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "rho",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "Windows, macOS, Linux",
+  "url": "{{ site.base_url }}/",
+  "description": "{{ site.description | replace(from='\"', to='\\\"') }}",
+  "author": { "@type": "Person", "name": "{{ site.author }}" },
+  "codeRepository": "https://github.com/crustyrustacean/rho-coding-agent",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+}
+</script>
+
+<article class="section-content">
+
+  {{ section.content | safe }}
+
+</article>
+{% endblock %}

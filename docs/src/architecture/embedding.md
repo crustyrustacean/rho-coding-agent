@@ -2,7 +2,7 @@
 
 > A runnable version of the example below lives at `rho-core/examples/agent_hello.rs` (`cargo run -p rho-core --example agent_hello`).
 
-`rho-core` is an embeddable library: `Agent` (built via `AgentBuilder`) owns the long-lived agent state and exposes a programmatic API, so every consumer — the `rho` binary's RPC loop, a Makepad or web frontend, headless scripts, benches — is a thin wrapper. Construction is decoupled from CLI flags, config files, and stdio.
+`rho-core` is an embeddable library: `Agent` (built via `AgentBuilder`) owns the long-lived agent state and exposes a programmatic API, so every consumer — the `rho` binary's RPC loop, the [rho-egui](https://github.com/crustyrustacean/rho-egui) desktop UI, headless scripts, benches — is a thin wrapper. Construction is decoupled from CLI flags, config files, and stdio.
 
 ```rust
 use rho_core::{Agent, AgentBuilder, TurnInputs};

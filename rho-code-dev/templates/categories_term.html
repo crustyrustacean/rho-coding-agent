@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{% block title %}Category: {{ extra.taxonomy.name }} - {{ site.name }}{% endblock %}
+
+{% block content %}
+<section>
+    <h1>Category: {{ extra.taxonomy.name }}</h1>
+    <p>{{ extra.taxonomy.page_count }} post(s)</p>
+    {% if extra.taxonomy.pages %}
+    <ul class="page-list">
+        {% for page in extra.taxonomy.pages %}
+        <li>
+            <a href="{{ page.path }}">
+                <h2>{{ page.title }}</h2>
+                {% if page.description %}
+                <p>{{ page.description }}</p>
+                {% endif %}
+            </a>
+        </li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+</section>
+{% endblock %}

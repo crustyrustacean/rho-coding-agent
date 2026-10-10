@@ -89,6 +89,71 @@ impl PowerShellExecutor {
     }
 }
 
+// ── Timeout policy ──────────────────────────────────────────────────────────
+
+/// Default wall-clock limit for a `run_command` invocation.
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Limit for commands that launch a GUI application.
+const GUI_LAUNCHER_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Command names that launch a GUI and therefore never exit on their own.
+const GUI_LAUNCHERS: &[&str] = &["zed", "code", "notepad", "explorer"];
+
+/// Decide the timeout for `command`.
+///
+/// Commands that launch a GUI application get a short limit: an editor or file
+/// browser is a detached process that never exits on its own, so waiting on it
+/// is always wrong. Everything else gets [`DEFAULT_TIMEOUT`].
+///
+/// Only the first token is inspected, so `cargo run --bin zed` is treated as a
+/// build rather than an editor launch.
+fn timeout_for(command: &str) -> Duration {
+    // An empty or whitespace-only command has no executable to classify, but
+    // still gets the default limit rather than running unbounded.
+    let first_token = command.split_whitespace().next().unwrap_or("");
+
+    // Strip any surrounding quotes, then take the last path segment so
+    // `"C:\Program Files\Zed\zed.exe"` reduces to `zed.exe`.
+    let unquoted = first_token.trim_matches(['"', '\'']);
+    let base = unquoted
+        .rsplit(['\\', '/'])
+        .next()
+        .unwrap_or(unquoted)
+        .to_lowercase();
+    let stem = base.strip_suffix(".exe").unwrap_or(&base);
+
+    if GUI_LAUNCHERS.contains(&stem) {
+        GUI_LAUNCHER_TIMEOUT
+    } else {
+        DEFAULT_TIMEOUT
+    }
+}
+
+/// The kill program and its arguments, for the host platform.
+///
+/// Windows uses `taskkill /T /F`; other platforms use `kill -9` against a
+/// negated pid, which addresses the process group.
+fn kill_program_and_args(pid: u32) -> (&'static str, Vec<String>) {
+    if cfg!(target_os = "windows") {
+        // /T terminates the specified process and any child processes it has
+        // started; /F forces termination without prompting.
+        (
+            "taskkill",
+            vec![
+                "/PID".to_owned(),
+                pid.to_string(),
+                "/T".to_owned(),
+                "/F".to_owned(),
+            ],
+        )
+    } else {
+        // macOS, Linux, and other Unixes: a negative pid addresses the process
+        // group, which is the analogue of taskkill /T.
+        ("kill", vec!["-9".to_owned(), format!("-{pid}")])
+    }
+}
+
 // NOTE: No `Default` impl — `PowerShellExecutor::new()` returns `ToolResult`
 // because PowerShell detection can fail. Use `.expect()` or `?` explicitly.
 
@@ -299,9 +364,16 @@ impl Tool for RunCommand {
         // 3. Execute the command.
         let start = Instant::now();
         debug!(command = %command, cwd = %working_dir.display(), "executing shell command");
+        let timeout = timeout_for(&command);
         let shell_output = self
             .executor
-            .execute(&command, &working_dir, None, cancel, input_arg.as_deref())
+            .execute(
+                &command,
+                &working_dir,
+                Some(timeout),
+                cancel,
+                input_arg.as_deref(),
+            )
             .await?;
         let elapsed = start.elapsed();
         info!(
@@ -412,30 +484,136 @@ fn which_exists(name: &str) -> bool {
     which::which(name).is_ok()
 }
 
-/// Kill a process by PID.
+/// Kill a process tree by PID.
 ///
-/// Uses `taskkill /F /PID <pid>` on Windows and `kill -9 <pid>` on
-/// macOS/Linux. If `child_id` is `None` or the kill fails, the error
-/// is silently ignored — we did our best.
+/// Uses `taskkill /T /F` on Windows and `kill -9 -<pid>` on macOS/Linux, both
+/// of which target every descendant rather than just the direct child. If
+/// `child_id` is `None` or the kill fails, the error is silently ignored — we
+/// did our best.
 async fn kill_process(child_id: Option<u32>) {
-    if let Some(id) = child_id {
-        if cfg!(target_os = "windows") {
-            let _ = Command::new("taskkill")
-                .args(["/PID", &id.to_string(), "/F"])
-                .output()
-                .await;
-        } else {
-            let _ = Command::new("kill")
-                .args(["-9", &id.to_string()])
-                .output()
-                .await;
-        }
-    }
+    let Some(id) = child_id else {
+        return;
+    };
+    let (program, argv) = kill_program_and_args(id);
+    let _ = Command::new(program).args(&argv).output().await;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Timeout policy ───────────────────────────────────────────────────
+
+    #[test]
+    fn ordinary_command_gets_default_timeout() {
+        assert_eq!(timeout_for("cargo test"), DEFAULT_TIMEOUT);
+    }
+
+    #[test]
+    fn long_running_build_still_gets_default_timeout() {
+        // Guards against "fix" that special-cases too broadly: a real build
+        // must still be allowed to take minutes.
+        assert_eq!(timeout_for("cargo build --release"), DEFAULT_TIMEOUT);
+    }
+
+    #[test]
+    fn gui_launcher_gets_short_timeout() {
+        // `zed .` blocks forever because the editor is a detached GUI process
+        // that never exits and holds the stdio pipes open. See the /T
+        // tree-kill tests below for the other half of that fix.
+        assert_eq!(timeout_for("zed ."), GUI_LAUNCHER_TIMEOUT);
+        assert!(GUI_LAUNCHER_TIMEOUT < DEFAULT_TIMEOUT);
+    }
+
+    #[test]
+    fn gui_launcher_detected_case_insensitively() {
+        assert_eq!(timeout_for("ZED ."), GUI_LAUNCHER_TIMEOUT);
+        assert_eq!(timeout_for("Code ."), GUI_LAUNCHER_TIMEOUT);
+    }
+
+    #[test]
+    fn gui_launcher_detected_with_path_prefix() {
+        // A path with no spaces: `"C:\bin\zed.exe" .` classifies as `zed.exe`
+        // → `zed`, so the `.exe` suffix and the separator are both stripped.
+        assert_eq!(timeout_for(r#""C:\bin\zed.exe" ."#), GUI_LAUNCHER_TIMEOUT);
+        assert_eq!(timeout_for("/usr/bin/zed ."), GUI_LAUNCHER_TIMEOUT);
+    }
+
+    #[test]
+    fn gui_launcher_with_unquoted_spaces_in_path_is_unmatched() {
+        // `split_whitespace` cannot see past an unquoted space, so
+        // `C:\Program Files\Zed\zed.exe` (typed without quotes) parses as the
+        // token `C:\Program`. It therefore gets the default limit, not the
+        // short one. Harmless — the default still bounds the hang — and
+        // documenting it beats pretending the case is handled.
+        assert_eq!(
+            timeout_for(r"C:\Program Files\Zed\zed.exe ."),
+            DEFAULT_TIMEOUT
+        );
+    }
+
+    #[test]
+    fn gui_launcher_not_matched_in_the_middle_of_a_command() {
+        // `cargo run --bin zed` is a real build, not an editor launch.
+        assert_eq!(timeout_for("cargo run --bin zed"), DEFAULT_TIMEOUT);
+    }
+
+    #[test]
+    fn gui_launcher_not_matched_by_substring() {
+        // A file named `zed-notepad.txt` must not trip the GUI policy.
+        assert_eq!(timeout_for("Get-Content zed-notepad.txt"), DEFAULT_TIMEOUT);
+    }
+
+    #[test]
+    fn empty_command_does_not_panic() {
+        assert_eq!(timeout_for(""), DEFAULT_TIMEOUT);
+    }
+
+    // ── Process-tree kill ───────────────────────────────────────────────
+
+    #[test]
+    fn windows_kill_uses_taskkill_with_tree_flag() {
+        // Without `/T`, taskkill kills only the direct child. Any process the
+        // child spawned (e.g. an editor GUI) survives, keeps the inherited
+        // stdio handles, and `wait_with_output()` never returns.
+        let (program, args) = kill_program_and_args(4321);
+        if cfg!(target_os = "windows") {
+            assert_eq!(program, "taskkill");
+            assert!(args.contains(&"/T".to_owned()), "must pass /T: {args:?}");
+            assert!(args.contains(&"/F".to_owned()), "must pass /F: {args:?}");
+            assert!(
+                args.contains(&"4321".to_owned()),
+                "must target pid: {args:?}"
+            );
+        } else {
+            assert_eq!(program, "kill");
+        }
+    }
+
+    #[test]
+    fn windows_kill_targets_the_tree_root_pid() {
+        let (_, args) = kill_program_and_args(4321);
+        if cfg!(target_os = "windows") {
+            assert!(
+                args.contains(&"/PID".to_owned()),
+                "must pass /PID: {args:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn unix_kill_signals_the_process_group() {
+        // A negative pid addresses the whole process group, which is the
+        // Unix equivalent of taskkill /T.
+        let (program, args) = kill_program_and_args(4321);
+        if cfg!(target_os = "windows") {
+            assert_eq!(program, "taskkill");
+        } else {
+            assert_eq!(program, "kill");
+            assert_eq!(args[0], "-9");
+            assert_eq!(args[1], "-4321", "must negate pid for process group");
+        }
+    }
 
     // ── CommandDenylist ────────────────────────────────────────────────────
 

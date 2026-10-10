@@ -6,3 +6,7 @@ runs/
 bench-results/
 .DS_Store
 .plans/
+
+# Landing site (rho-code.dev) — built output and wrangler local state
+/rho-code-dev/dist/
+/rho-code-dev/.wrangler/
