@@ -1,3 +1,41 @@
+## [0.94.0] - 2026-10-10
+
+### 🚀 Features
+
+- *(site)* Rebuild rho-code.dev on the taxus design
+- *(site)* Restructure content around the four pillars
+- *(site)* Landing page as four pillar cards
+- *(site)* Features page now covers the actual tool inventory
+- *(site)* Split tools onto their own page; cards link to features
+- *(site)* Cards everywhere; Features before Tools in nav
+- *(site)* Back-to-Features nav on pillar sub-pages
+
+### 🐛 Bug Fixes
+
+- *(site)* Drop the light highlight stylesheet breaking code blocks
+- *(site)* Drop the section Pages list from section pages
+- *(site)* Tighten vertical spacing so the landing page fits one screen
+- *(site)* Card links rendered empty; features index was a stub
+- *(site)* Features card links empty again; drop the intro sentence
+- *(site)* Fourth pillar reworked after the extension system's removal
+- *(changelog)* Stop skipping all chore(deps) commits
+
+### 💼 Other
+
+- Trunk (v0.93.0) — rho-ext deletion wins; Cargo.lock reconciled
+
+### 🚜 Refactor
+
+- [**breaking**] Remove the Deno-based TypeScript extension system
+
+### 📚 Documentation
+
+- *(site)* Point troubleshooting at session data and project logs
+
+### ⚙️ Miscellaneous Tasks
+
+- Drop the rho-ext serialised test step
+- *(deps)* Cargo update; regenerate schema and model catalog
 ## [0.93.0] - 2026-09-29
 
 ### 🚀 Features
