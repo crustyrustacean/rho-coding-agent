@@ -25,7 +25,7 @@ hosted model and tell it to.
 **Forged in Rust.**
 
 No runtime panics mid-edit, no GC pauses in the tool loop. Every commit runs
-format, lint, audit, build, and 1600+ tests before it lands.
+format, lint, audit, build, and 1400+ tests before it lands.
 
 </div>
 
@@ -42,13 +42,12 @@ the official rho-egui desktop app, a terminal client, or something you build.
 
 <div class="pillar-card">
 
-<h3><a href="/features/extensions/">Extendible</a></h3>
+<h3><a href="/tools/">Capable</a></h3>
 
-**Write tools in TypeScript.**
+**19 built-in tools.**
 
-A single `.ts` file exporting a manifest, running in its own V8 isolate
-behind the same approval gate as the built-ins. No separate path, no quiet
-escalation.
+Hashline-anchored editing, structured cargo diagnostics, live crates.io
+lookup, a project knowledge base — every one behind the same approval gate.
 
 </div>
 

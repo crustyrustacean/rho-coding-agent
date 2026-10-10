@@ -1,6 +1,6 @@
 +++
 title = "Features"
-description = "The four pillars - private by default, forged in Rust, frontend-agnostic, and extendible in TypeScript."
+description = "The pillars in detail - private by default, forged in Rust, and frontend-agnostic."
 +++
 
 <div class="pillar-grid">
@@ -24,7 +24,7 @@ leaves your machine.
 **Forged in Rust.**
 
 No runtime panics mid-edit, no GC pauses in the tool loop. Structured
-compiler diagnostics and 1600+ tests gating every commit.
+compiler diagnostics and 1400+ tests gating every commit.
 
 </div>
 
@@ -42,12 +42,13 @@ commitment.
 
 <div class="pillar-card">
 
-<h3><a href="/features/extensions/">Extendible</a></h3>
+<h3><a href="/tools/">Capable</a></h3>
 
-**Write tools in TypeScript.**
+**19 built-in tools.**
 
-One `.ts` file exporting a manifest, its own V8 isolate, the same approval
-gate as the built-ins. No separate path, no quiet escalation.
+Hashline editing that fails loudly on stale context, structured Rust
+diagnostics, crates.io lookup from live data, and a persistent project
+knowledge base.
 
 </div>
 

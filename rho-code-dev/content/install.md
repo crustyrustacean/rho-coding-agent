@@ -80,4 +80,4 @@ there. When something misbehaves, the session file tells you *what the agent
 saw*; the log tells you *what the agent did*.
 
 The [documentation](https://crustyrustacean.github.io/rho-coding-agent) covers
-providers, extensions, and configuration in full.
+providers, tools, and configuration in full.
