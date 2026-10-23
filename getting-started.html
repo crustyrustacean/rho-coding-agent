@@ -250,7 +250,7 @@ rho --ephemeral          # in-memory mode, no session file
 </div>
 <h2 id="session-persistence"><a class="header" href="#session-persistence">Session persistence</a></h2>
 <p>By default, every rho invocation creates a new JSONL session file under <code>~/.rho/sessions/&lt;project-hash&gt;/</code>. Sessions survive process restarts — use <code>rho -c</code> to resume the latest session or <code>--session &lt;path&gt;</code> to resume a specific one.</p>
-<p>The <code>listSessions</code> RPC method returns the 10 most recent sessions with timestamps, sizes, and entry counts. The latest session is marked so you know which one <code>rho -c</code> will pick.</p>
+<p>The <code>listSessions</code> RPC method returns all saved sessions for the project, most recent first, with path, modification time, size, and entry counts. <code>rho -c</code> resumes whichever was modified last.</p>
 <p>See <a href="./core-concepts/sessions.html">Sessions</a> for details.</p>
 <h2 id="rpc-methods"><a class="header" href="#rpc-methods">RPC methods</a></h2>
 <p>rho communicates via JSON-RPC 2.0 over stdin/stdout. See <a href="./rpc-mode.html">RPC Mode</a> for the full protocol reference, including all methods, notifications, and the approval flow.</p>

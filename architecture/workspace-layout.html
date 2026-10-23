@@ -194,9 +194,8 @@
 │       ├── lib.rs            # Module declarations
 │       ├── cli.rs            # `Cli` — CLI flags with clap
 │       ├── app.rs            # `App` — runtime state, build/run orchestration
-│       ├── rpc.rs            # JSON-RPC 2.0: `run_rpc`, `run_rpc_on`, observer, approval gate
-│       ├── rpc_wire.rs       # Typed wire-format structs (params, results, notifications)
-│       ├── transport.rs      # `Transport` trait, `StdioTransport` (newline-delimited JSON)
+│       ├── rpc.rs            # JSON-RPC 2.0: `run_rpc`, concurrent reader/demux, approval gate
+│       ├── wire_conversions.rs # `rho-core` domain types → `rho-protocol` wire types
 │       └── presenter/
 │           └── rpc.rs        # `RpcPresenter` — diagnostic output to stderr
 ├── rho-ai/                 # Unified LLM provider abstraction
@@ -212,6 +211,13 @@
 │       ├── types.rs         # `LlmMessage`, `LlmRequest`, `StreamEvent`, `AccumulatedResponse`
 │       └── error.rs         # `ProviderError`
 │   └── model-overrides.json # Manual catalog overrides (thinking flags, compatibility)
+├── rho-protocol/            # Pure-serde protocol crate (leaf — no workspace deps)
+│   └── src/
+│       ├── lib.rs           # Module declarations, re-exports
+│       ├── types.rs         # Typed wire-format structs (params, results, notifications)
+│       ├── transport.rs     # `Transport` trait, `StdioTransport` (newline-delimited JSON)
+│       ├── client.rs        # Client-side helpers: `RhoClient`, `StdioChild`, `ClientEvent`
+│       └── schema.rs        # OpenRPC schema derivation (behind the `schema` feature)
 ├── rho-core/                # Agent kernel
 │   └── src/
 │       ├── lib.rs           # Module declarations, convenience re-exports
@@ -238,11 +244,11 @@
 │       ├── sandbox.rs       # `SandboxRoot` — file sandbox validation
 │       ├── schema.rs        # `ToolSchema` — wire-format tool definitions
 │       ├── provider.rs      # `Provider` trait, `OpenAiCompatibleProvider`, `ProviderRegistry`
-│       ├── session.rs       # `Session` struct, module declarations, re-exports
+│       ├── session.rs       # `Cursor` (alias `Session`), module declarations, re-exports
 │       ├── session/
 │       │   ├── accessors.rs    # Header, leaf, entry, flush, path, getters/setters
 │       │   ├── append.rs       # Append ops, close, extension typed methods, append_entry core
-│       │   ├── builder.rs      # `new`, `in_memory`, `with_*` builder methods
+│       │   ├── builder.rs      # `new`, `in_memory`, `open`, cursor-roster construction
 │       │   ├── compaction.rs   # `CompactionStrategy`, `MechanicalCompactionStrategy`, `LlmCompactionStrategy`
 │       │   ├── context.rs      # `path_messages`, `send_current`, `compact_older_than`, `context_stats`, `prepare_context`
 │       │   ├── context_stats.rs # `ContextStats`, `RoleTokenDistribution`, `ResolutionTokenDistribution`, `PhaseTokenDistribution`
@@ -252,8 +258,9 @@
 │       │   ├── eviction.rs     # Selective downgrade planner (`plan_downgrades`)
 │       │   ├── extensions.rs   # `ExtensionEntry`, `ExtensionMessageEntry` traits
 │       │   ├── header.rs       # `SessionHeader`
+│       │   ├── log.rs          # `SessionLog` — shared append-only log behind `Arc&lt;Mutex&lt;…&gt;&gt;`
 │       │   ├── outliner.rs     # Tool-specific structural summary formatters
-│       │   ├── persist.rs      # JSONL persistence, `SessionMetadata`
+│       │   ├── persist.rs      # JSONL persistence (Header/Entry/Resolution/Cursor lines), `SessionMetadata`
 │       │   ├── phase.rs        # `SessionPhase` enum, `classify_tool_phase()`, `transition_phase()`
 │       │   ├── tree.rs         # `path_to_root`, `branch_to`, `branch_with_summary`
 │       │   └── truncation.rs   # Bounded truncation, char boundary, footer
@@ -285,6 +292,8 @@
 │       ├── edit.rs          # `EditFile` — hashline-anchored editing
 │       ├── hashline.rs      # Hashline content-addressed editing
 │       ├── shell.rs         # `RunCommand`, `PowerShellExecutor`, `CommandDenylist`
+│       ├── search.rs        # `SearchFiles` (ripgrep content search), `FindFiles` (name glob)
+│       ├── wait_for.rs      # `WaitFor` — one-iteration wait on external state
 │       ├── crates_io.rs     # `CratesIoLookup`
 │       ├── session_summary.rs # `SessionSummary` — compressed session history tool
 │       ├── memory.rs        # `MemoryTool` — knowledge base (via `rho-memory`)
@@ -298,6 +307,7 @@
 │           └── types.rs     # Shared Rust tool types
 ├── rho-test-helpers/        # Shared test infrastructure (dev-only)
 │   └── src/lib.rs           # `MockChatClient`, `TestProvider`, response builders, helpers
+├── rho-schema-gen/          # OpenRPC schema derivation from `rho-protocol` wire types (`src/main.rs`)
 └── xtask/                   # Dev task runner
     └── src/
         ├── main.rs          # CLI dispatch

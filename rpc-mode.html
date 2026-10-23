@@ -213,6 +213,10 @@
 <tr><td><code>resumeSession</code></td><td><code>{path: string}</code></td><td>Resume a previous session from JSONL</td></tr>
 <tr><td><code>newSession</code></td><td>—</td><td>Start a fresh session (preserves model, provider, tools)</td></tr>
 <tr><td><code>listTools</code></td><td>—</td><td>List registered tools with schemas and risk levels</td></tr>
+<tr><td><code>fork</code></td><td>—</td><td>Fork the session: create a new branch cursor (the previously active cursor stays active)</td></tr>
+<tr><td><code>listBranches</code></td><td>—</td><td>List every cursor in the session, flagging the active one (reads the durable roster)</td></tr>
+<tr><td><code>switchBranch</code></td><td><code>{cursorId: string}</code></td><td>Make the given cursor active — subsequent <code>prompt</code>s run on it</td></tr>
+<tr><td><code>nameBranch</code></td><td><code>{cursorId: string, name: string}</code></td><td>Label a branch; empty/whitespace <code>name</code> clears the label</td></tr>
 <tr><td><code>approvalResponse</code></td><td><code>{approved: boolean, message?: string}</code></td><td>Respond to an <code>approval/request</code>; when <code>approved</code> is false and <code>message</code> is set, the agent treats it as a redirect</td></tr>
 </tbody></table>
 </div>
@@ -275,6 +279,22 @@
 <li><code>--session &lt;path&gt;</code> — resume a specific session file</li>
 </ul>
 <p>Use <code>getSessionStats</code> to monitor context usage and <code>compact</code> to free space when the context fills up.</p>
+<h2 id="branch-management"><a class="header" href="#branch-management">Branch management</a></h2>
+<p>A session file hosts a <strong>roster of cursors</strong> — one per branch. <code>fork</code> creates a new cursor at the current leaf; the previously active cursor remains active, so forking creates a branch but does not switch to it. Cursors persist as <code>Cursor</code> lines in the session JSONL, so <code>listBranches</code> reports branches from previous runs too, in creation order.</p>
+<div class="table-wrapper"><table><thead><tr><th>Method</th><th>Params</th><th>Result</th></tr></thead><tbody>
+<tr><td><code>fork</code></td><td>—</td><td><code>{cursorId}</code> — id of the newly created cursor</td></tr>
+<tr><td><code>listBranches</code></td><td>—</td><td><code>{branches: [{cursorId, leaf, name?, active}]}</code> — <code>active</code> marks the cursor a subsequent <code>prompt</code> runs on</td></tr>
+<tr><td><code>switchBranch</code></td><td><code>{cursorId}</code></td><td><code>{cursorId}</code> — the cursor that is now active</td></tr>
+<tr><td><code>nameBranch</code></td><td><code>{cursorId, name}</code></td><td><code>{cursorId, name}</code> — the label now on the cursor (<code>null</code> when cleared)</td></tr>
+</tbody></table>
+</div>
+<pre><code class="language-json">→ {"jsonrpc":"2.0","method":"fork","id":10}
+← {"jsonrpc":"2.0","result":{"cursorId":"c4f0a21b"},"id":10}
+→ {"jsonrpc":"2.0","method":"nameBranch","params":{"cursorId":"c4f0a21b","name":"experimental"},"id":11}
+← {"jsonrpc":"2.0","result":{"cursorId":"c4f0a21b","name":"experimental"},"id":11}
+→ {"jsonrpc":"2.0","method":"switchBranch","params":{"cursorId":"c4f0a21b"},"id":12}
+← {"jsonrpc":"2.0","result":{"cursorId":"c4f0a21b"},"id":12}
+</code></pre>
 <h2 id="mid-turn-steering"><a class="header" href="#mid-turn-steering">Mid-turn steering</a></h2>
 <p>A <code>prompt</code> with <code>steer: true</code> is a <strong>steering nudge</strong> — it is queued and injected at the next tool-batch seam (between the last tool execution and the next LLM call), rather than starting a new turn. This lets the user provide course corrections while the agent is mid-turn without interrupting the active execution.</p>
 <pre><code class="language-json">→ {"jsonrpc":"2.0","method":"prompt","params":{"message":"also check the tests","steer":true},"id":3}
@@ -283,7 +303,7 @@
 <p>The steering message is drained at the tool-batch seam and appended as a user message before the next LLM call, so the model re-plans with the user's mid-turn input. If no tool batch is in flight, the message is still queued and will be drained at the next seam.</p>
 <p>Steering is backed by a concurrent reader architecture: a spawned reader task owns the transport and demuxes every inbound message. Time-sensitive messages (steering prompts, <code>approvalResponse</code>, <code>abort</code>) are routed inline so they arrive even while a turn is running on the main task. Ordinary prompts and all other methods are queued for serial processing.</p>
 <h2 id="testing"><a class="header" href="#testing">Testing</a></h2>
-<p>The RPC dispatch loop uses a concurrent reader architecture decoupled from I/O via the <code>Transport</code> trait (<code>rho/src/transport.rs</code>). <code>StdioTransport</code> (newline-delimited JSON over stdin/stdout) is the default; in-process integration tests use <code>ChannelTransport</code> (mpsc-backed, controls when each message becomes readable) and <code>SyncTool</code> (a tool that blocks until released) to inject messages deterministically mid-turn. Tests use <code>TestProvider</code> (from <code>rho-test-helpers</code>) to wrap a <code>MockChatClient</code> as a <code>Provider</code> and construct <code>App</code> directly, bypassing CLI startup. See <a href="./development/testing.html">Testing</a> for details.</p>
+<p>The RPC dispatch loop uses a concurrent reader architecture decoupled from I/O via the <code>Transport</code> trait (<code>rho-protocol/src/transport.rs</code>). <code>StdioTransport</code> (newline-delimited JSON over stdin/stdout) is the default; in-process integration tests use <code>ChannelTransport</code> (mpsc-backed, controls when each message becomes readable) and <code>SyncTool</code> (a tool that blocks until released) to inject messages deterministically mid-turn. Tests use <code>TestProvider</code> (from <code>rho-test-helpers</code>) to wrap a <code>MockChatClient</code> as a <code>Provider</code> and construct <code>App</code> directly, bypassing CLI startup. See <a href="./development/testing.html">Testing</a> for details.</p>
 <p>Run <code>cargo xtask schema</code> to update the version in the <code>OpenRPC</code> schema after a release.</p>
 <h3 id="example-test-session"><a class="header" href="#example-test-session">Example test session</a></h3>
 <pre><code class="language-text">stdin:  {"jsonrpc":"2.0","method":"prompt","params":{"message":"say hello"},"id":1}
@@ -296,7 +316,7 @@ stdout: {"jsonrpc":"2.0","method":"agent/end","params":{"reply":"hello","iterati
 stdout: {"jsonrpc":"2.0","result":{"reply":"hello"},"id":1}
 </code></pre>
 <h2 id="wire-format-types"><a class="header" href="#wire-format-types">Wire-format types</a></h2>
-<p>All wire-format structs live in <code>rho/src/rpc_wire.rs</code>. Every method param, result, and notification has a typed Rust struct with <code>Serialize</code> and (where applicable) <code>Deserialize</code>, so the dispatch layer catches malformed requests early and produces well-formed responses. The mdBook source for this page (<code>docs/src/rpc-mode.md</code>) duplicates the information in prose form; the single source of truth is the <code>OpenRPC</code> schema.</p>
+<p>All wire-format structs live in the <code>rho-protocol</code> crate (<code>rho-protocol/src/types.rs</code>), alongside the <code>Transport</code> trait and the OpenRPC schema derivation; <code>rho</code> converts between them and <code>rho-core</code>'s domain types in <code>rho/src/wire_conversions.rs</code>. Every method param, result, and notification has a typed Rust struct with <code>Serialize</code> and (where applicable) <code>Deserialize</code>, so the dispatch layer catches malformed requests early and produces well-formed responses. The mdBook source for this page (<code>docs/src/rpc-mode.md</code>) duplicates the information in prose form; the single source of truth is the <code>OpenRPC</code> schema.</p>
 
                     </main>
 

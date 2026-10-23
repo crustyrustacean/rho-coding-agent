@@ -204,7 +204,7 @@
 </ol>
 <p>The pinning of the first user turn is the fix for the amnesia bug: no matter how long the conversation, the model always sees what the user originally asked.</p>
 <h2 id="graduated-resolution"><a class="header" href="#graduated-resolution">Graduated resolution</a></h2>
-<p>Entries can exist at multiple fidelity levels, not just binary Full/Compacted. The context manager renders each entry according to its resolution:</p>
+<p>Entries can exist at multiple fidelity levels, not just binary Full/Compacted. The context manager renders each entry according to its resolution (per-cursor overlay state — see <a href="./sessions.html">Sessions</a>):</p>
 <div class="table-wrapper"><table><thead><tr><th>Resolution</th><th>Rendering</th></tr></thead><tbody>
 <tr><td><code>Full</code></td><td>Verbatim message content</td></tr>
 <tr><td><code>Outlined</code></td><td>Structural summary: tool name, key arguments, truncated output (~10-20% of original)</td></tr>
