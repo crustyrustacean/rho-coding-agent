@@ -33,7 +33,7 @@ The pinning of the first user turn is the fix for the amnesia bug: no matter how
 
 ## Graduated resolution
 
-Entries can exist at multiple fidelity levels, not just binary Full/Compacted. The context manager renders each entry according to its resolution:
+Entries can exist at multiple fidelity levels, not just binary Full/Compacted. The context manager renders each entry according to its resolution (per-cursor overlay state — see [Sessions](./sessions.md)):
 
 | Resolution | Rendering |
 |---|---|

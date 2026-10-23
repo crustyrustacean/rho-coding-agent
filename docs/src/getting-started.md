@@ -96,7 +96,7 @@ The `rho` binary runs in headless JSON-RPC 2.0 mode.
 
 By default, every rho invocation creates a new JSONL session file under `~/.rho/sessions/<project-hash>/`. Sessions survive process restarts — use `rho -c` to resume the latest session or `--session <path>` to resume a specific one.
 
-The `listSessions` RPC method returns the 10 most recent sessions with timestamps, sizes, and entry counts. The latest session is marked so you know which one `rho -c` will pick.
+The `listSessions` RPC method returns all saved sessions for the project, most recent first, with path, modification time, size, and entry counts. `rho -c` resumes whichever was modified last.
 
 See [Sessions](./core-concepts/sessions.md) for details.
 

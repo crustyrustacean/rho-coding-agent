@@ -23,7 +23,7 @@ cargo xtask test -p rho-core -- --nocapture  # Single crate
 | Tool integration tests | `rho-tools/tests/tool_tests.rs` | Tool execution, sandbox enforcement, denylist |
 | Shell executor tests | `rho-tools/tests/shell_executor_tests.rs` | Shell command execution, path normalization |
 
-RPC integration tests live in `rho/src/rpc.rs` (not `rho/tests/`) because `App`'s fields are `pub(crate)`. They use `TestProvider` to wrap a `MockChatClient` as a `Provider` and construct `App` directly, bypassing the full CLI startup sequence. The RPC dispatch loop is decoupled from I/O via the `Transport` trait (`rho/src/transport.rs`); tests inject either a `StdioTransport` over `Cursor` readers (all lines readable up front) or a `ChannelTransport` (mpsc-backed, controls when each message becomes readable) together with `SyncTool` (a tool that blocks until released) to inject messages deterministically mid-turn.
+RPC integration tests live in `rho/src/rpc.rs` (not `rho/tests/`) because `App`'s fields are `pub(crate)`. They use `TestProvider` to wrap a `MockChatClient` as a `Provider` and construct `App` directly, bypassing the full CLI startup sequence. The RPC dispatch loop is decoupled from I/O via the `Transport` trait (`rho-protocol/src/transport.rs`); tests inject either a `StdioTransport` over `Cursor` readers (all lines readable up front) or a `ChannelTransport` (mpsc-backed, controls when each message becomes readable) together with `SyncTool` (a tool that blocks until released) to inject messages deterministically mid-turn.
 
 ## Test helpers (`rho-test-helpers`)
 
