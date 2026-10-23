@@ -269,19 +269,19 @@ rho/                  # Headless JSON-RPC 2.0 agent
     lib.rs            # Module declarations
     cli.rs            # CLI argument parsing
     app.rs            # App struct — startup orchestration, AgentResult extraction
-    model.rs          # Model resolution
     rpc.rs            # JSON-RPC 2.0 protocol (methods, notifications, approval gate)
-    rpc_wire.rs        # Typed wire-format structs (params, results, notifications)
-    transport.rs       # Transport trait (StdioTransport)
+    wire_conversions.rs # rho-core domain types → rho-protocol wire types
     presenter.rs      # Presenter module root
     presenter/
       rpc.rs          # RpcPresenter — diagnostic output to stderr
 rho-ai/               # Unified LLM provider abstraction (streaming, retry, SSE)
 rho-core/             # Agent kernel (loop, types, traits, config)
-rho-tools/            # Built-in tools (files, shell, rust tooling, memory)
+rho-protocol/         # Pure-serde wire types, Transport trait, OpenRPC schema
+rho-tools/            # Built-in tools (files, search, shell, rust tooling, memory)
 rho-memory/           # Persistent knowledge base (SQLite/FTS5)
 rho-highlight/        # Tree-sitter syntax analysis
 rho-test-helpers/     # Shared test utilities (dev-only)
+rho-schema-gen/       # OpenRPC schema generation (cargo xtask schema)
 xtask/                # Dev task runner
 ```
 

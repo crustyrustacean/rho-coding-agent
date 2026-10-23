@@ -6,14 +6,26 @@ The headless JSON-RPC 2.0 agent: CLI argument parsing, tool wiring, and system p
 
 Constructs a `Session`, connects to the model via a `Provider`, and drives the agent loop. Handles provider consent checks, model resolution, startup budget diagnostics, shell-specific prompt extensions, session discovery, and live observer output via `RpcObserver`.
 
-The RPC implementation is decoupled from I/O via the `Transport` trait (`rho/src/transport.rs`); `StdioTransport` (newline-delimited JSON over stdin/stdout) is the default, and in-process tests inject a `StdioTransport` wired to canned readers and captured writers. Wire-format types in `rpc_wire.rs` give every method param, result, and notification a typed Rust struct. See [RPC Mode](../rpc-mode.md) for the full protocol reference and [`OpenRPC` schema](../../rpc-schema/openrpc.json) for machine-readable API discovery.
+The RPC implementation is decoupled from I/O via the `Transport` trait from `rho-protocol`; `StdioTransport` (newline-delimited JSON over stdin/stdout) is the default, and in-process tests inject a `StdioTransport` wired to canned readers and captured writers. Conversions between `rho-protocol` wire types and `rho-core` domain types live in `wire_conversions.rs`, keeping `rho-protocol` a pure-serde leaf. See [RPC Mode](../rpc-mode.md) for the full protocol reference and [`OpenRPC` schema](../../rpc-schema/openrpc.json) for machine-readable API discovery.
 
 ## `rho-core`
 
-The kernel: agent loop state machine (with `AgentObserver` for live output, `CollectingObserver` for structured tool call recording, phase tracking, auto-compaction) returning `AgentResult` with full structured output (reply, iterations, token usage, tool call history, duration, finish reason, context stats), session management (tree persistence, graduated resolution, phase-aware compaction, LLM compaction, selective eviction, branching, session discovery), context window management (sliding window, token estimation, enhanced `ContextStats` with role/resolution/phase token distributions), tool registry and traits, approval gates, secret redaction, file sandbox, provider abstraction (`Provider` trait, `ProviderRegistry` with named presets and additive config merge), LLM client (`RhoAiClient`), configuration loading (two-tier TOML with provider preset resolution), and all shared types.
+The kernel: agent loop state machine (with `AgentObserver` for live output, `CollectingObserver` for structured tool call recording, phase tracking, auto-compaction) returning `AgentResult` with full structured output (reply, iterations, token usage, tool call history, duration, finish reason, context stats), session management (shared `SessionLog` with a multi-cursor branch roster, tree persistence, per-cursor resolution overlay, graduated resolution, phase-aware compaction, LLM compaction, selective eviction, branching, session discovery), context window management (sliding window, token estimation, enhanced `ContextStats` with role/resolution/phase token distributions), tool registry and traits, approval gates, secret redaction, file sandbox, provider abstraction (`Provider` trait, `ProviderRegistry` with named presets and additive config merge), LLM client (`RhoAiClient`), configuration loading (two-tier TOML with provider preset resolution), and all shared types.
 
 Key types: `Cursor` (alias `Session`), `SessionLog`, `AgentConfig`, `AgentObserver`, `NopObserver`, `CollectingObserver`, `AgentResult`, `TokenUsage`, `ToolCallRecord`, `ToolCallOutcome`, `LoopFinishReason`, `LoopParams`, `ContextStats`, `RoleTokenDistribution`, `ResolutionTokenDistribution`, `PhaseTokenDistribution`, `SessionMetadata`, `ToolRegistry`, `Tool`, `Provider`, `ProviderRegistry`, `ContextManager`, `TokenBudget`, `SandboxRoot`, `Redactor`, `RhoConfig`, `SessionPhase`, `CompactionPhase`, `CompactionStrategy`, `LlmCompactionStrategy`, `MechanicalCompactionStrategy`, `CommandDenylist`.
 
+
+## `rho-protocol`
+
+Pure-serde protocol crate (no workspace dependencies): typed wire-format structs for every RPC method param, result, and notification (`types.rs`), the `Transport` trait and `StdioTransport` (`transport.rs`), client-side helpers for driving a `rho` child process (`client.rs` — `RhoClient`, `StdioChild`, `ClientEvent`), and OpenRPC schema derivation gated behind the `schema` feature (`schema.rs`).
+
+Key types: `PromptParams`, `AgentEndParams`, `ForkResult`, `BranchEntry`, `SessionEntry`, `Transport`, `StdioTransport`, `ReadResult`.
+
+## `rho-ai`
+
+Unified LLM provider abstraction: the `LlmService` trait, OpenAI Chat Completions and Responses HTTP+SSE transports, SSE parsing, exponential-backoff retry, and the model catalog (generated from OpenRouter via `cargo xtask generate-models`, plus user-defined `[[models]]` pricing).
+
+Key types: `LlmService`, `EventStream`, `Catalog`, `Model`, `StreamUsage`, `ProviderError`.
 
 ## `rho-highlight`
 
@@ -29,6 +41,7 @@ Built-in tool implementations:
 - **File tools:** `ReadFile`, `BatchRead`, `WriteFile`, `ListDir`, `EditFile`
 - **Read-tier tools:** `SearchFiles` (regex content search on the ripgrep engine, `path:line:` results), `FindFiles` (name-glob lookup) — both `Read` risk, sandbox-confined, `.gitignore`-aware; preferred over shell for locating code
 - **Shell tools:** `RunCommand`, `PowerShellExecutor`, `CommandDenylist`
+- **Waiting:** `WaitFor` — block one iteration until external state changes, instead of burning a poll loop
 - **Rust tools:** `CargoCheck`, `CargoClippy`, `CargoTest`, `CargoFix`, `RustcExplain`
 - **Lookup tools:** `RustdocTool`, `CratesIoLookup`
 - **Session tools:** `SessionSummary` (compressed turn history for context recovery)
@@ -47,6 +60,10 @@ Key types: `Memory`, `Database`, `Document`, `SearchResult`.
 Shared test infrastructure (dev-only): `MockChatClient`, `TestProvider`, `MockShellExecutor`, `AutoApproveGate`, `AutoDenyGate`, `FixedResponseTool`, `FailingTool`, `FileTestEnv`, `in_memory_session`, `empty_trust_store`, `detect_shell`, `tempdir_with_sandbox`, `assert_no_orphan_tool_results`. Depends on `rho-core` and `rho-ai`. Never published.
 
 `TestProvider` wraps a `MockChatClient` as a `Provider` impl, enabling integration tests that need a `ProviderRegistry` without a live model server.
+
+## `rho-schema-gen`
+
+Derives the `OpenRPC` schema document from `rho-protocol`'s wire types (`JsonSchema` impls gated behind the `schema` feature). Run via `cargo xtask schema`; the generated schema is pinned to the dispatch layer so it cannot drift from what `rho` actually handles.
 
 ## `xtask`
 

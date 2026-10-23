@@ -43,6 +43,10 @@ echo '{"jsonrpc":"2.0","method":"prompt","params":{"message":"explain this funct
 | `resumeSession` | `{path: string}` | Resume a previous session from JSONL |
 | `newSession` | — | Start a fresh session (preserves model, provider, tools) |
 | `listTools` | — | List registered tools with schemas and risk levels |
+| `fork` | — | Fork the session: create a new branch cursor (the previously active cursor stays active) |
+| `listBranches` | — | List every cursor in the session, flagging the active one (reads the durable roster) |
+| `switchBranch` | `{cursorId: string}` | Make the given cursor active — subsequent `prompt`s run on it |
+| `nameBranch` | `{cursorId: string, name: string}` | Label a branch; empty/whitespace `name` clears the label |
 | `approvalResponse` | `{approved: boolean, message?: string}` | Respond to an `approval/request`; when `approved` is false and `message` is set, the agent treats it as a redirect |
 
 ### Notifications (rho → stdout, no `id`)
@@ -120,6 +124,26 @@ RPC mode supports the same session options:
 
 Use `getSessionStats` to monitor context usage and `compact` to free space when the context fills up.
 
+## Branch management
+
+A session file hosts a **roster of cursors** — one per branch. `fork` creates a new cursor at the current leaf; the previously active cursor remains active, so forking creates a branch but does not switch to it. Cursors persist as `Cursor` lines in the session JSONL, so `listBranches` reports branches from previous runs too, in creation order.
+
+| Method | Params | Result |
+|---|---|---|
+| `fork` | — | `{cursorId}` — id of the newly created cursor |
+| `listBranches` | — | `{branches: [{cursorId, leaf, name?, active}]}` — `active` marks the cursor a subsequent `prompt` runs on |
+| `switchBranch` | `{cursorId}` | `{cursorId}` — the cursor that is now active |
+| `nameBranch` | `{cursorId, name}` | `{cursorId, name}` — the label now on the cursor (`null` when cleared) |
+
+```json
+→ {"jsonrpc":"2.0","method":"fork","id":10}
+← {"jsonrpc":"2.0","result":{"cursorId":"c4f0a21b"},"id":10}
+→ {"jsonrpc":"2.0","method":"nameBranch","params":{"cursorId":"c4f0a21b","name":"experimental"},"id":11}
+← {"jsonrpc":"2.0","result":{"cursorId":"c4f0a21b","name":"experimental"},"id":11}
+→ {"jsonrpc":"2.0","method":"switchBranch","params":{"cursorId":"c4f0a21b"},"id":12}
+← {"jsonrpc":"2.0","result":{"cursorId":"c4f0a21b"},"id":12}
+```
+
 ## Mid-turn steering
 
 A `prompt` with `steer: true` is a **steering nudge** — it is queued and injected at the next tool-batch seam (between the last tool execution and the next LLM call), rather than starting a new turn. This lets the user provide course corrections while the agent is mid-turn without interrupting the active execution.
@@ -135,7 +159,7 @@ Steering is backed by a concurrent reader architecture: a spawned reader task ow
 
 ## Testing
 
-The RPC dispatch loop uses a concurrent reader architecture decoupled from I/O via the `Transport` trait (`rho/src/transport.rs`). `StdioTransport` (newline-delimited JSON over stdin/stdout) is the default; in-process integration tests use `ChannelTransport` (mpsc-backed, controls when each message becomes readable) and `SyncTool` (a tool that blocks until released) to inject messages deterministically mid-turn. Tests use `TestProvider` (from `rho-test-helpers`) to wrap a `MockChatClient` as a `Provider` and construct `App` directly, bypassing CLI startup. See [Testing](./development/testing.md) for details.
+The RPC dispatch loop uses a concurrent reader architecture decoupled from I/O via the `Transport` trait (`rho-protocol/src/transport.rs`). `StdioTransport` (newline-delimited JSON over stdin/stdout) is the default; in-process integration tests use `ChannelTransport` (mpsc-backed, controls when each message becomes readable) and `SyncTool` (a tool that blocks until released) to inject messages deterministically mid-turn. Tests use `TestProvider` (from `rho-test-helpers`) to wrap a `MockChatClient` as a `Provider` and construct `App` directly, bypassing CLI startup. See [Testing](./development/testing.md) for details.
 
 Run `cargo xtask schema` to update the version in the `OpenRPC` schema after a release.
 
@@ -154,4 +178,4 @@ stdout: {"jsonrpc":"2.0","result":{"reply":"hello"},"id":1}
 
 ## Wire-format types
 
-All wire-format structs live in `rho/src/rpc_wire.rs`. Every method param, result, and notification has a typed Rust struct with `Serialize` and (where applicable) `Deserialize`, so the dispatch layer catches malformed requests early and produces well-formed responses. The mdBook source for this page (`docs/src/rpc-mode.md`) duplicates the information in prose form; the single source of truth is the `OpenRPC` schema.
+All wire-format structs live in the `rho-protocol` crate (`rho-protocol/src/types.rs`), alongside the `Transport` trait and the OpenRPC schema derivation; `rho` converts between them and `rho-core`'s domain types in `rho/src/wire_conversions.rs`. Every method param, result, and notification has a typed Rust struct with `Serialize` and (where applicable) `Deserialize`, so the dispatch layer catches malformed requests early and produces well-formed responses. The mdBook source for this page (`docs/src/rpc-mode.md`) duplicates the information in prose form; the single source of truth is the `OpenRPC` schema.

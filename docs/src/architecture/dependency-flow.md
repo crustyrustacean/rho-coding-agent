@@ -8,20 +8,25 @@ rho (binary) ──────────────────────�
     ├── rho-tools ── rho-highlight ── rho-core ─────────
     │           └──── rho-memory ── rho-core ────────────
     │
+    ├── rho-protocol ───────────────────────────────────
+    │
     └── rho-core ──── rho-ai ──────────────────────────
 
 rho-test-helpers ── rho-core, rho-ai ────────────────
 xtask ──────────────────────────────────────────────
+rho-schema-gen ──── rho-protocol ───────────────────
 ```
 
 | Crate | Depends on | Notes |
 |---|---|---|
-| `rho` | `rho-core`, `rho-tools`, `rho-ai` | Headless JSON-RPC 2.0 agent |
+| `rho` | `rho-core`, `rho-tools`, `rho-ai`, `rho-protocol`, `rho-memory` | Headless JSON-RPC 2.0 agent |
 | `rho-tools` | `rho-core`, `rho-highlight`, `rho-memory` | Tool implementations; highlight for node-splitting, memory for `MemoryTool` |
 | `rho-memory` | `rho-core` | Persistent knowledge base (SQLite/FTS5) |
 | `rho-highlight` | `rho-core` | Tree-sitter grammar; uses core diagnostic types |
 | `rho-core` | `rho-ai` | Kernel — the foundation everything else builds on |
 | `rho-ai` | none (external only) | Unified LLM provider abstraction |
+| `rho-protocol` | none (external only) | Pure-serde wire types, `Transport`, OpenRPC schema derivation |
+| `rho-schema-gen` | `rho-protocol` | Derives the OpenRPC schema from the wire types (`cargo xtask schema`) |
 | `rho-test-helpers` | `rho-core`, `rho-ai` | Dev-only — provides mocks and fixtures for testing |
 | `xtask` | none (cargo integration) | Dev-only — task runner, no rho crate dependencies |
 

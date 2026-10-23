@@ -8,12 +8,12 @@ The original `Conversation` type stored messages in a `Vec<ChatMessage>`. When t
 
 1. **Tree structure** — branching, not deletion. `/clear` and compaction create new branches; the old tree is preserved.
 2. **Typed entries** — user messages, assistant messages, tool calls, tool results, compaction summaries, and extension entries are all first-class nodes.
-3. **Resolution levels** — each entry carries a resolution (`Full`, `Outlined`, `Summarized`, `Pinned`, `Compacted`, or `Attached`) that tells the context builder how to render it.
+3. **Resolution levels** — entries render at a resolution (`Full`, `Outlined`, `Summarized`, `Pinned`, `Compacted`, or `Attached`) chosen by the context builder. Resolutions are *not* stored on entries: each cursor holds its own stamps in a sparse overlay, so two branches can resolve the same entry differently.
 4. **Persistence** — sessions auto-flush to JSONL files, surviving process restarts and crashes.
 
-## Tree structure
+## Shared log, many cursors
 
-A session is a tree of `Entry` nodes, each identified by an `EntryId` (a UUID). Every entry has a `parent_id` pointing to its predecessor, forming a single chain (the *trunk*) with possible branches.
+A session is an append-only **log** of `Entry` nodes, each identified by an `EntryId` (a UUID). Every entry has a `parent_id` pointing to its predecessor, forming a single chain (the *trunk*) with possible branches.
 
 ```text
 [System] ──→ [User: "fix the bug"] ──→ [Assistant: "ok"] ──→ [User: "read another file"]
@@ -21,7 +21,9 @@ A session is a tree of `Entry` nodes, each identified by an `EntryId` (a UUID). 
                                          └──→ [Compaction: "user asked to fix the bug"]
 ```
 
-The **leaf** is the entry the agent loop is currently building from. `branch_to(id)` moves the leaf to any existing entry, creating a divergence point. The old branch stays in the tree for later inspection or resumption.
+The log is shared by every branch in the file. A **cursor** is a named position in that log — the branch a given line of work follows — and its **leaf** is the entry the agent loop is currently building from. `fork()` creates a new cursor at the current leaf; `branch_to(id)` moves a cursor's leaf to any existing entry, creating a divergence point. Old branches stay in the log for later inspection or resumption, and each cursor carries its own resolution stamps (see below).
+
+Since 0.93.0 the type is `Cursor` — `Session` remains a type alias — wrapping a `SessionLog` shared behind an `Arc<Mutex<…>>`: cheap to clone and `Sync`, so it can be held from more than one place while the agent loop keeps its exclusive cursor.
 
 ## Persistence
 
@@ -35,14 +37,15 @@ Sessions are stored as append-only JSONL files under `~/.rho/sessions/`:
 
 - **Project hash**: first 16 hex characters of SHA-256 of the canonical project root path. This groups sessions by project.
 - **Auto-flush**: every append writes to disk immediately. A crash loses at most the last entry.
-- **Format**: each line is a JSON object with a `type` discriminator (`Header` or `Entry`). The first line is always a `Header` with session metadata.
+- **Format**: each line is a JSON object with a `type` discriminator — `Header`, `Entry`, `Resolution`, or `Cursor`. The first line is always a `Header` with session metadata. `Resolution` lines record per-cursor resolution changes (last-write-wins per `(cursor, entry)`); `Cursor` lines record each cursor's leaf and optional branch name (the last line per cursor id wins), and are how a reopened session rebuilds the full branch roster.
 
 Example JSONL file:
 
 ```json
 {"type":"Header","id":"4b021d5d","version":1,"created_at_secs":1777859536,"cwd":"/home/user/project","parent_session":null}
-{"type":"Entry","id":"a1b2c3d4","parent_id":null,"timestamp":{...},"resolution":"Full","payload":{"Message":{"content":"you are a coding assistant","role":"system"}}}
-{"type":"Entry","id":"e5f6a7b8","parent_id":"a1b2c3d4","timestamp":{...},"resolution":"Full","payload":{"Message":{"content":"fix the bug","role":"user"}}}
+{"type":"Entry","id":"a1b2c3d4","parent_id":null,"timestamp":{...},"payload":{"Message":{"content":"you are a coding assistant","role":"system"}}}
+{"type":"Entry","id":"e5f6a7b8","parent_id":"a1b2c3d4","timestamp":{...},"payload":{"Message":{"content":"fix the bug","role":"user"}}}
+{"type":"Cursor","id":"c0","leaf":"e5f6a7b8"}
 ```
 
 ## Session discovery
@@ -66,7 +69,7 @@ Returns all saved sessions for the project, sorted by filesystem modification ti
 | `mtime` | Filesystem modification time |
 | `path` | Full path to the JSONL file |
 
-The `listSessions` RPC method uses this to return the 10 most recent sessions, marking which one `rho -c` will resume.
+The `listSessions` RPC method returns every saved session for the project — most recent first, as `{path, mtimeSecs, sizeKb, entryCount}`. No session is marked as "latest": `rho -c` simply resumes whichever was modified last.
 
 ### Resuming a session
 
@@ -162,7 +165,7 @@ Each entry in the tree has a `payload` that describes what it represents:
 
 ## Resolution levels
 
-Every entry carries a `resolution` field:
+Each entry renders at one of these resolution levels. The level is *not* stored on the entry — entries are immutable data. Instead, each cursor holds a sparse overlay of stamps, persisted as `Resolution` JSONL lines and applied last-write-wins per `(cursor, entry)`. `Cursor::set_resolution()` changes one, and `pin_entry()` / `unpin_entry()` set the `Pinned` level:
 
 - **`Full`** — complete, verbatim content. Used for recent entries that fit within the context window.
 - **`Outlined`** — structural summary: tool name, key arguments, truncated output. Consumes ~10-20% of original tokens.
@@ -189,13 +192,15 @@ This prevents a single verbose tool call from consuming the entire context windo
 
 The `clear` RPC method branches back to the system message entry. This has the same practical effect as clearing the conversation, but the old tree is preserved on disk. You can resume the old branch later with `rho -c` or `--session`.
 
-## Session API
+## Cursor API
 
-The `Session` type in `rho-core` exposes:
+The `Cursor` type in `rho-core` (aliased as `Session`) exposes:
 
-- **Constructors**: `Session::new()` (persisted), `Session::in_memory()` (no disk I/O), `Session::open(path)` (resume from JSONL)
+- **Constructors**: `Cursor::new()` (persisted), `Cursor::in_memory()` (no disk I/O), `Cursor::open(path)` (resume from JSONL)
 - **Appenders**: `append_user_message()`, `append_assistant_message()`, `append_tool_result()`, `append_tool_call()`
 - **Navigation**: `path_to_root()`, `children()`, `leaf()`, `branch_to()`, `branch_with_summary()`
+- **Branches**: `fork()` (new cursor at the current leaf), `cursors()` (the full roster), `cursor_id()` (this cursor's id), `name_cursor()` (label a branch)
+- **Resolutions**: `set_resolution()`, `pin_entry()`, `unpin_entry()` (per-cursor overlay; persisted as `Resolution` lines)
 - **Context**: `path_messages()` (messages along the current branch), `send_current()` (send to model with context fitting), `context_stats()` (usage snapshot), `prepare_context()` (selective downgrade)
 - **Compaction**: `compact_older_than()` (compact entries older than a threshold)
 - **Discovery**: `find_latest_session(cwd)`, `list_sessions(cwd)` (header-only session scanning)
